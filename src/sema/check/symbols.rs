@@ -261,7 +261,8 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
         loop {
             let ty = self.resolve_type_of_symbol_once(sym);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query(Query::Symbol(sym))
+            {
                 return ty;
             }
             if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
@@ -4566,7 +4567,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
         loop {
             let ty = self.resolve_return_type_of_fn_once(file, func);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len()
+                || !self.retry_too_deep_query(Query::Return(file, func))
+            {
                 return ty;
             }
             if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
@@ -5231,7 +5234,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.reliability == 0
             // A frame that drops its diagnostics reports them when it is evaluated again.
             && !(self.reported.len() > reported
-                && self.frames.last().is_some_and(|frame| frame.drops_reported))
+                && (self.frames.last()).is_some_and(|frame| frame.marks.drops_reported()))
         {
             self.p.awaited_types.insert(&self.task, ty, awaited, stored);
         }

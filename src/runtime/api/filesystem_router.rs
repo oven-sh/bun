@@ -40,11 +40,6 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
         Fs::FileSystem::instance()
     }
     #[inline]
-    fn fs_impl(&self) -> *mut Fs::Implementation {
-        // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-        unsafe { &raw mut (*self.0.fs()).fs }
-    }
-    #[inline]
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
         self.0.read_dir_info_ignore_error(path)
     }
@@ -186,19 +181,7 @@ impl FileSystemRouter {
                     if entry.base().first() == Some(&b'.') {
                         continue 'outer;
                     }
-                    // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem`
-                    // accessor for the process-lifetime singleton; `&mut .fs` (the
-                    // `Implementation` field) is the lazy-stat receiver. `kind`
-                    // needs `&mut Entry` to update the cached stat; no shared
-                    // borrow of `*entry_ptr` is live across this block.
-                    let kind = {
-                        let fs_impl = &mut vm.transpiler.fs_mut().fs;
-                        // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
-                        // EntryStore (checked non-null above); the lazy-stat rewrite is
-                        // serialized on `Entry.mutex`; fs_impl is the process-global RealFS.
-                        unsafe { (&*entry_ptr).kind(fs_impl, false) }
-                    };
-                    if kind == Fs::EntryKind::Dir {
+                    if entry.kind(&vm.fs().fs, false) == Fs::EntryKind::Dir {
                         for banned_dir in Router::BANNED_DIRS.iter() {
                             if entry.base() == *banned_dir {
                                 continue 'outer;

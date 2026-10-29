@@ -27,7 +27,7 @@ pub use static_referent::{
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
-use crate::session::{Arena, ArenaVec, transfer_arena, vec_from_iter_in};
+use crate::session::{Arena, ArenaVec, transfer_arena};
 use crate::util::{FxHashMap, SharedSort};
 use smallvec::SmallVec;
 use std::hint::cold_path;
@@ -693,10 +693,15 @@ impl<'s> Symbols<'s> {
 
     /// Copies the lists into `arena`, for a program that shares the file with other programs.
     fn copy_in<'a>(&'a self, arena: &'a Arena) -> Symbols<'a> {
+        fn copy_of<'a, T: Copy>(list: &[T], arena: &'a Arena) -> ArenaVec<'a, T> {
+            let mut copy = ArenaVec::with_capacity_in(list.len(), arena);
+            copy.extend_from_slice(list);
+            copy
+        }
         Symbols {
-            list: vec_from_iter_in(self.list.iter().copied(), arena),
-            rest: vec_from_iter_in(self.rest.iter().copied(), arena),
-            many: vec_from_iter_in(self.many.iter().copied(), arena),
+            list: copy_of(&self.list, arena),
+            rest: copy_of(&self.rest, arena),
+            many: copy_of(&self.many, arena),
         }
     }
 }
@@ -1487,6 +1492,8 @@ pub struct BoundIn<S: Storage> {
     pub ran_out_of_stack: bool,
     /// `Bound::unbound_in`
     pub is_unbound: bool,
+    /// These are the side tables of `Host::read_part_seen_by_every_file`.
+    pub is_bound_in_part: bool,
     pub symbols: S::Symbols,
     pub scopes: S::List<Scope>,
     /// Each table is a contiguous range of `entries`, in symbol creation order. This is where it ends. It starts where
@@ -2690,6 +2697,7 @@ impl BoundBuilder {
         let BoundIn {
             ran_out_of_stack,
             is_unbound,
+            is_bound_in_part,
             symbols,
             scopes,
             tables,
@@ -2790,6 +2798,7 @@ impl BoundBuilder {
         } = self;
         *ran_out_of_stack = Default::default();
         *is_unbound = Default::default();
+        *is_bound_in_part = Default::default();
         symbols.clear();
         scopes.clear();
         tables.clear();
@@ -2895,6 +2904,7 @@ impl BoundBuilder {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
             is_unbound: self.is_unbound,
+            is_bound_in_part: self.is_bound_in_part,
             symbols: {
                 let exact = Symbols::of(&self.symbols, arena);
                 self.symbols.clear();
@@ -3040,6 +3050,7 @@ impl Bound<'_> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
             is_unbound: self.is_unbound,
+            is_bound_in_part: self.is_bound_in_part,
             symbols: self.symbols.copy_in(arena),
             scopes: Fixed::shared(&self.scopes),
             tables: Fixed::shared(&self.tables),

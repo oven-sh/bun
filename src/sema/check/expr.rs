@@ -382,7 +382,9 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(frame) = self.frames.last_mut() else {
             return false;
         };
-        frame.drops_reported |= frame.may_substitute_constraints;
+        if frame.may_substitute_constraints {
+            frame.marks.drop_reported();
+        }
         frame.may_substitute_constraints
     }
 
@@ -651,8 +653,8 @@ impl<'p, 's> Checker<'p, 's> {
             return self.log_reported_of(self.stack[self.stack.len() - 2], from);
         }
         if let Some(returned) = self.frames.last_mut() {
-            returned.tainted = false;
-            returned.drops_reported = false;
+            returned.marks.clear_tainted(&mut self.fully_marked);
+            (returned.marks).set_drops_reported(false, &mut self.fully_marked);
         }
     }
 
@@ -719,7 +721,7 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         is_rechecked: bool,
     ) -> Option<TypeId> {
-        let first = self.positions_of(Query::Expr(file, e)).next()?;
+        let first = self.positions_in_progress(Query::Expr(file, e)).next()?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         let is_checked_once = !is_rechecked && self.is_rechecking();
         // Hides the first visit from `enter`, which still fails when time, native stack or query
@@ -4409,8 +4411,9 @@ impl<'p, 's> Checker<'p, 's> {
                 });
         // Results derived from a loop's incomplete type are final too (`taint_from`): nothing
         // resets the flag or a parameter's `links.resolvedType` when the loop completes.
-        let is_checked_again = (self.frames.last())
-            .is_some_and(|frame| frame.tainted && (!frame.incomplete_flow || frame.drops_reported));
+        let is_checked_again = (self.frames.last()).is_some_and(|frame| {
+            frame.marks.tainted() && (!frame.incomplete_flow || frame.marks.drops_reported())
+        });
         let is_check_final = is_argument_of_untyped_call || !is_checked_again;
         // `assignContextualParameterTypes`, `assignNonContextualParameterTypes`
         if is_context_sensitive {
@@ -4487,7 +4490,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_check_final {
             (self.p.context_checked).insert(&self.task, (file, func), assigned, Stored::new());
             self.context_checked_here.insert((file, func));
-        } else if let Some(at) = self.frames.iter().position(|frame| frame.tainted) {
+        } else if let Some(at) = self.frames.iter().position(|frame| frame.marks.tainted()) {
             let under = (at, self.frames[at].serial, (file, func), assigned);
             self.context_checked_under.push(under);
         }

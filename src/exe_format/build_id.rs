@@ -3,8 +3,8 @@
 use crate::builtins::Image;
 use crate::identity::find_rest_of_gnu_build_id;
 use crate::image::{KnownSection, read_bytes_at};
-use crate::macho::sha256_hash;
 use crate::section::find_known_section;
+use bun_sha_hmac::sha::SHA256;
 
 pub const SIZE: usize = 16;
 const OFFSET_IN_SECTION: usize = 16;
@@ -22,11 +22,11 @@ pub fn compute(payload: &[u8]) -> [u8; SIZE] {
         .zip(digests.chunks_mut(chunks_per_thread));
     bun_core::for_each_in_parallel(parts, |(chunks, digests)| {
         for (chunk, digest) in chunks.iter().zip(digests) {
-            sha256_hash(chunk, digest);
+            SHA256::hash(chunk, digest);
         }
     });
     let mut digest = [0u8; 32];
-    sha256_hash(digests.as_flattened(), &mut digest);
+    SHA256::hash(digests.as_flattened(), &mut digest);
     let mut id = [0u8; SIZE];
     id.copy_from_slice(&digest[..SIZE]);
     id
@@ -92,10 +92,10 @@ mod tests {
             .map(|index| (index % 251) as u8)
             .collect();
         let mut digests = [[0u8; 32]; 2];
-        sha256_hash(&payload[..CHUNK_SIZE], &mut digests[0]);
-        sha256_hash(&payload[CHUNK_SIZE..], &mut digests[1]);
+        SHA256::hash(&payload[..CHUNK_SIZE], &mut digests[0]);
+        SHA256::hash(&payload[CHUNK_SIZE..], &mut digests[1]);
         let mut digest = [0u8; 32];
-        sha256_hash(digests.as_flattened(), &mut digest);
+        SHA256::hash(digests.as_flattened(), &mut digest);
         assert_eq!(compute(&payload), digest[..SIZE]);
     }
 

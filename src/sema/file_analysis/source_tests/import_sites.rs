@@ -1074,6 +1074,7 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "const parts = ['a']; const count = parts.push('b'); require(parts.join('-'));",
     "const parts = ['a']; parts.pop(); require(parts.join('-'));",
     "const parts = ['a', ...more]; require(parts.join('-'));",
+    "require([x, 'a.js'].join('/'));",
     "const parts = ['a'].map(name => name); require(parts.join('-'));",
     "const names = ['./a']; names.forEach(function (name) { arguments[0] = x; require(name); });",
     "const names = ['./a']; names.forEach((name = x) => require(name));",
@@ -1090,6 +1091,46 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "const load = id => require(id); load('./a'); hand(load);",
     "function find() { return find(); } require(find());",
     "async function find() { return './a'; } require(find());",
+];
+
+/// What is read out of the list or the object that changes is any text. The other parts of the name are followed.
+const NAMES_WITH_A_PART_OUT_OF_WHAT_MAY_CHANGE: &[(&str, &[&str])] = &[
+    (
+        "const names = ['A']; names.forEach((name, index, all) => { all[index] = x; }); require(['./lib', names[0] + '.js'].join('/'));",
+        &["./lib/*.js"],
+    ),
+    (
+        "const names = ['A']; names.forEach((name, index, all) => { const same = all; same.reverse(); }); require(['./lib', names[0] + '.js'].join('/'));",
+        &["./lib/*.js"],
+    ),
+    (
+        "const names = ['b', 'a']; names.sort(); require(['./lib', names[0] + '.js'].join('/'));",
+        &["./lib/*.js"],
+    ),
+    (
+        "const names = { a: 'A' }; const same = names; same.a = x; const parts = ['./lib']; parts.push(names.a + '.js'); require(parts.join('/'));",
+        &["./lib", "./lib/*.js"],
+    ),
+    (
+        "const folders = ['a', 'b']; const names = ['c']; change(names); for (const folder of folders) require(['.', folder, names[0] + '.js'].join('/'));",
+        &["./a/*.js", "./b/*.js"],
+    ),
+    (
+        "const names = ['a']; names[0] = x; require(c ? './b' : ['./lib', names[0] + '.js'].join('/'));",
+        &["./b", "./lib/*.js"],
+    ),
+    (
+        "const names = ['a.js']; names[0] = x; require(['./lib', names[0]].join('/'));",
+        &["./lib/*"],
+    ),
+    (
+        "const parts = ['./lib']; parts.push(x); require(parts.join('/'));",
+        &["./lib", "./lib/*"],
+    ),
+    (
+        "const names = ['a']; names[0] = x; for (const file of names.map(name => `./lib/${name}.js`)) require(file);",
+        &["./lib/*.js"],
+    ),
 ];
 
 fn describe_alternatives(s: &Analyzed<'_>, site: &ImportSite) -> Vec<String> {
@@ -1137,6 +1178,15 @@ fn name_out_of_what_may_change_is_not_followed() {
     }
 }
 
+#[test]
+fn part_of_name_out_of_what_may_change_is_any_text() {
+    for &(text, names) in NAMES_WITH_A_PART_OUT_OF_WHAT_MAY_CHANGE {
+        with_last_site(text, |s, site| {
+            assert_eq!(describe_alternatives(s, site), names, "{text}");
+        });
+    }
+}
+
 const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
     (
         "require(require.resolve('./a'));",
@@ -1155,6 +1205,11 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
     ),
     (
         "require(require.resolve(`./a/${x}.js`));",
+        ResolvedForm::Path,
+        &["./a/*.js"],
+    ),
+    (
+        "const names = ['A']; names.forEach((name, index, all) => { all[index] = x; }); require(require.resolve('./a/' + names[0] + '.js'));",
         ResolvedForm::Path,
         &["./a/*.js"],
     ),
@@ -1182,6 +1237,11 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         "export {}; await import(import.meta.resolve(c ? './a' : './b'));",
         ResolvedForm::Url,
         &["./a", "./b"],
+    ),
+    (
+        "export {}; const names = ['a']; names.fill(x); await import(import.meta.resolve(`./a/${names[0]}.js`));",
+        ResolvedForm::Url,
+        &["./a/*.js"],
     ),
 ];
 

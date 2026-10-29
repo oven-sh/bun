@@ -336,14 +336,13 @@ pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
 impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader {
     const IS_LOADER: bool = true;
-    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
+    fn resolve_value(input: &'static [u8]) -> crate::Result<Self> {
         arguments::loader_resolver(input)
     }
 }
 impl colon_list_type::ColonListValue for &'static [u8] {
-    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
-        // SAFETY: argv slices are process-lifetime; see ColonListType::keys note.
-        Ok(unsafe { bun_ptr::detach_lifetime(input) })
+    fn resolve_value(input: &'static [u8]) -> crate::Result<Self> {
+        Ok(input)
     }
 }
 
@@ -1213,19 +1212,6 @@ pub(crate) mod command {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
         let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
-        #[cfg(target_os = "macos")]
-        if graph.flags.contains(
-            bun_standalone_graph::StandaloneModuleGraph::Flags::NAMES_SYSTEM_CA_CERTIFICATES,
-        ) {
-            unsafe extern "C" {
-                safe fn us_prefetch_root_system_certs();
-            }
-            bun_removable_features::call_removable!(
-                SystemCaCertificates,
-                ReturnDefault,
-                us_prefetch_root_system_certs
-            );
-        }
         #[cfg(bun_hardened)]
         if bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some() {
             bun_jsc::compiled_program::deny_write_execute_memory();

@@ -392,6 +392,7 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
                             skip_symlinks: true,
+                            new_destination: true,
                             ..Default::default()
                         },
                     )?;
@@ -440,6 +441,7 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             npm: true,
                             log: PackageManager::verbose_install(),
+                            new_destination: true,
                             ..Default::default()
                         },
                     )?;

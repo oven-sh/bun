@@ -2151,6 +2151,36 @@ do function f() {} while (0);
 if (1) async function f() {}
 if (1) function* g() {}
 label: class C {}
+//// early-errors/declare-as-a-name.accepted.ts
+// No declaration follows declare, and what follows may follow a name: the rest of the head of a loop, a line break, the end of a block.
+var declare: any; for (declare of []) {}
+var declare: any; for (declare in {}) {}
+var declare: any; for await (declare of []) {}⏎export {};
+var declare: any; for (declare; ;) break;
+var declare: any; for (decl\u0061re of []) {}
+var declare: any; declare⏎declare;
+var declare: any; declare /*⏎*/ declare;
+var declare: any; { declare }
+var declare: any; declare
+var declare: any; if (declare) declare; else declare
+var declare: any; try { throw declare } catch {}
+var declare: any; try { throw declare⏎declare } catch {}
+function decorate(c: any) {}⏎declare @decorate class C {}
+⏎// @ts-nocheck⏎var declare; for (declare of []) {}
+//// early-errors/declare-as-a-name.rejected.ts
+// No declaration follows declare, and nothing ends the statement.
+var declare: any, a: any; declare a;
+var declare: any, a: any; decl\u0061re a;
+var declare: any, a: any; declare /* */ a;
+var declare: any, a: any; throw declare a;
+var declare: any, a: any; label: declare a;
+var declare: any; declare 1;
+var declare: any; declare {}
+var declare: any; declare this;
+var declare: any; do declare while (0)
+var declare: any; if (declare) declare else declare
+⏎// @ts-nocheck⏎var declare, a; declare a;
+⏎// @ts-nocheck⏎var declare, a; throw declare a;
 //// early-errors/decorators.accepted.js
 // Names, member chains and one call of either as decorators. Parentheses allow any expression.
 var a; @a class C {}

@@ -100,6 +100,18 @@ pub trait Host: Sync {
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.read(path).unwrap_or_default()
     }
+    /// True if a file that does not name the file at `path` sees only a part of it. A build reads the rest once a file that it reads names the file.
+    fn is_seen_in_part(&self, _path: &[u8]) -> bool {
+        false
+    }
+    /// The text of such a file with everything left blank but that part and what makes the text ask for the same files as the whole.
+    fn read_part_seen_by_every_file(&self, path: &[u8]) -> Cow<'static, [u8]> {
+        self.read_source(path)
+    }
+    /// Whether `position` in that text lies in the part.
+    fn is_seen_by_every_file(&self, _path: &[u8], _position: u32) -> bool {
+        true
+    }
     /// When the hosts of one request read different texts at `path`, returns a number that
     /// identifies the text this host reads.
     fn origin(&self, _path: &[u8]) -> usize {

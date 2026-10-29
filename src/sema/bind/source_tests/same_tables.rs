@@ -201,7 +201,7 @@ fn describe(
 ) -> Vec<(&'static str, String)> {
     #[rustfmt::skip]
     let BoundIn {
-        ran_out_of_stack, is_unbound, symbols, scopes, tables: _, entries, name_slots: _,
+        ran_out_of_stack, is_unbound, is_bound_in_part, symbols, scopes, tables: _, entries, name_slots: _,
         nested_names, ids,
         file_symbol, export_stars, ambient_modules, pattern_ambient_modules, global_augmentations,
         redeclarations, umd_globals, specifiers, module_augmentations, ambient_specifiers,
@@ -287,7 +287,7 @@ fn describe(
         }),
     ));
 
-    push_fields!(described, scalar_text: ran_out_of_stack, is_unbound, file_symbol, commonjs_indicator,
+    push_fields!(described, scalar_text: ran_out_of_stack, is_unbound, is_bound_in_part, file_symbol, commonjs_indicator,
         module_exports_property, flow_depth, has_loop_types_that_depend_on_order);
     push_fields!(described, list_text: entries, nested_names, export_stars, ambient_modules,
         pattern_ambient_modules, global_augmentations, redeclarations, umd_globals, specifiers,

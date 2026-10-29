@@ -1058,6 +1058,8 @@ impl<'s> Program<'s> {
             first_unit_properties: Default::default(),
             last_this_type: None,
             any_function_type: Default::default(),
+            unions_without_subtypes: Default::default(),
+            union_members_compared: 0,
             union_calls: Default::default(),
             constraint_stack: Vec::new(),
             constraints_marked_circular: Vec::new(),
@@ -1163,6 +1165,8 @@ impl<'s> Program<'s> {
             calls_with_own_instantiation: Vec::new(),
             last_call_outcome: call::CallOutcome::Chosen,
             call_resolution_stack: Vec::new(),
+            resolved_meanwhile_of_class: [0; 256],
+            fully_marked: FullyMarked::default(),
             signatures_resolved_within: Vec::new(),
             resolutions_with_unused_result: 0,
             restrictive_instantiations: Default::default(),
@@ -1182,6 +1186,7 @@ impl<'s> Program<'s> {
             aot_answers: spare.aot_answers,
             side_effect_free: Default::default(),
             unwind_to: usize::MAX,
+            lowest_to_start_over: 0,
             unwind_work: 0,
             restart_with: None,
         }
@@ -1488,6 +1493,86 @@ impl FlowTypeCache {
     }
 }
 
+/// The fields are private to this module, so taking a mark away from a frame takes `FullyMarked` too.
+mod marks {
+    /// What `mark_tainted_from` sets on a `QueryFrame`.
+    #[derive(Copy, Clone, Default)]
+    pub(super) struct Marks {
+        /// A query it made re-entered an entry below it.
+        tainted: bool,
+        /// Its diagnostics are dropped because the result depends on a cycle, a speculative evaluation
+        /// or a provisional type, and will be recomputed.
+        drops_reported: bool,
+    }
+
+    /// Every frame from the first number up that was pushed by the time `work` was the second number has both marks.
+    #[derive(Default)]
+    pub(super) struct FullyMarked(Option<(usize, u64)>);
+
+    impl Marks {
+        #[inline]
+        pub(super) fn new(tainted: bool, drops_reported: bool) -> Self {
+            Self {
+                tainted,
+                drops_reported,
+            }
+        }
+
+        #[inline]
+        pub(super) fn both() -> Self {
+            Self {
+                tainted: true,
+                drops_reported: true,
+            }
+        }
+
+        #[inline]
+        pub(super) fn tainted(self) -> bool {
+            self.tainted
+        }
+
+        #[inline]
+        pub(super) fn drops_reported(self) -> bool {
+            self.drops_reported
+        }
+
+        pub(super) fn taint(&mut self) {
+            self.tainted = true;
+        }
+
+        pub(super) fn drop_reported(&mut self) {
+            self.drops_reported = true;
+        }
+
+        pub(super) fn clear_tainted(&mut self, fully_marked: &mut FullyMarked) {
+            self.tainted = false;
+            fully_marked.0 = None;
+        }
+
+        pub(super) fn set_drops_reported(&mut self, drops: bool, fully_marked: &mut FullyMarked) {
+            if self.drops_reported && !drops {
+                fully_marked.0 = None;
+            }
+            self.drops_reported = drops;
+        }
+    }
+
+    impl FullyMarked {
+        /// True if every frame from `from` up has both marks. `innermost` is the serial number of the innermost frame.
+        pub(super) fn covers(&self, from: usize, innermost: Option<u64>) -> bool {
+            self.0.is_some_and(|(marked_from, by)| {
+                marked_from <= from && innermost.is_none_or(|serial| serial <= by)
+            })
+        }
+
+        /// Call after marking every frame from `from` up. None of them has a serial number above `by`.
+        pub(super) fn record(&mut self, from: usize, by: u64) {
+            self.0 = Some((from, by));
+        }
+    }
+}
+use marks::{FullyMarked, Marks};
+
 /// Metadata for an entry of `Checker::stack`.
 #[derive(Copy, Clone)]
 struct QueryFrame {
@@ -1495,19 +1580,15 @@ struct QueryFrame {
     serial: u64,
     /// `instantiation_depth` when it was pushed.
     entry_depth: u32,
-    /// A query it made re-entered an entry below it.
-    tainted: bool,
+    marks: Marks,
     /// It `is_resolution`, and is part of a cycle of resolutions. See `mark_cycle_from`.
     circular: bool,
-    /// Its diagnostics are dropped because the result depends on a cycle, a speculative evaluation
-    /// or a provisional type, and will be recomputed.
-    drops_reported: bool,
     /// The length of `Checker::reported` when it was pushed. Later entries belong to it.
     reported_from: u32,
     /// Its index in `Checker::in_progress`.
     class: u16,
-    /// `Checker::in_progress` of its class when it was pushed: the next entry of the class further down.
-    below_in_class: u32,
+    /// What `Checker::in_progress` held for its class when it was pushed: the next entry of the class further down.
+    next_of_class: u32,
     /// `typeResolutionHasProperty`: this checker has cached a result for the same query since the frame was pushed.
     has_result: bool,
     /// Non-cacheable because an incomplete flow-loop type was read (`taint_from`).
@@ -1570,9 +1651,8 @@ pub struct Checker<'p, 's> {
     stack: Vec<Query>,
     /// One per entry of `stack`.
     frames: Vec<QueryFrame>,
-    /// For each class, the position of its innermost entry of `stack` plus one. 0 if it has none: a query whose class
-    /// is empty isn't in progress. With `QueryFrame::below_in_class` it lists the entries of a class. In a stack of
-    /// thousands of entries no class is empty, and a search from end to end at every query would be quadratic.
+    /// For each class, the position of its innermost entry of `stack`, plus one. 0: the class is empty, and a query
+    /// of it isn't in progress. `QueryFrame::next_of_class` leads on to the other entries of the class.
     in_progress: [u32; 1024],
     /// The result of the last `enter`. `leave` and `excessively_deep` reset it to `Entered`.
     last_enter: EnterOutcome,
@@ -1978,6 +2058,11 @@ pub struct Checker<'p, 's> {
     last_this_type: Option<(FileId, crate::node::Node, TypeId)>,
     /// See `any_function_type`.
     any_function_type: std::cell::OnceCell<TypeId>,
+    /// The unions in which `removeSubtypes` has compared every member with every other and removed none, and whether
+    /// primitives were compared too.
+    unions_without_subtypes: FxHashMap<TypeId, bool>,
+    /// How many pairs of members `removeSubtypes` has compared.
+    union_members_compared: u64,
     union_calls: unions::UnionCalls,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.
@@ -2247,7 +2332,11 @@ pub struct Checker<'p, 's> {
     in_check_identifier: Vec<(FileId, crate::hir::PatId)>,
     /// `resolvedSignature = result`, while `resolveCall` reports the errors of a call that no
     /// candidate accepts.
-    resolved_meanwhile: Vec<(FileId, ExprId, call::ResolvedCall)>,
+    resolved_meanwhile: Vec<call::ResolvedMeanwhile>,
+    /// For each class of calls, the position of its innermost entry of `resolved_meanwhile`, plus one. As `in_progress`
+    /// and `QueryFrame::next_of_class`.
+    resolved_meanwhile_of_class: [u32; 256],
+    fully_marked: FullyMarked,
     /// The calls in `resolved_meanwhile` that no candidate accepts and whose signature `pickLongestCandidateSignature`
     /// made with `createSignatureInstantiation`. See `with_return_type_of_call`.
     calls_with_own_instantiation: Vec<(FileId, ExprId)>,
@@ -2304,6 +2393,9 @@ pub struct Checker<'p, 's> {
     /// Set when a query was rejected for lack of stack. `enter` rejects every query while `stack` is
     /// higher than this. `usize::MAX` if no query was rejected. See `starts_over_from_lower`.
     unwind_to: usize,
+    /// The height of `stack` above the innermost query that waits in `retry_too_deep_query`. What starts over is
+    /// looked for from here up.
+    lowest_to_start_over: usize,
     /// `work` of the next `enter` while unwinding. That `enter` takes the slow path (`work_trap`).
     unwind_work: u64,
     /// The innermost resolution that was in progress at the rejection. The frame at `unwind_to`
@@ -2563,16 +2655,15 @@ impl<'p, 's> Checker<'p, 's> {
             self.reset_instantiation_count_if_idle();
         }
         self.stack.push(q());
-        let innermost = &mut self.in_progress[class as usize];
-        let below_in_class = std::mem::replace(innermost, self.stack.len() as u32);
+        let next_of_class = self.in_progress[class as usize];
+        self.in_progress[class as usize] = self.stack.len() as u32;
         self.frames.push(QueryFrame {
             class,
-            below_in_class,
+            next_of_class,
             serial: self.work,
             entry_depth: self.instantiation_depth,
-            tainted: false,
+            marks: Marks::default(),
             circular: false,
-            drops_reported: false,
             reported_from: self.reported.len() as u32,
             has_result: false,
             incomplete_flow: false,
@@ -2587,30 +2678,21 @@ impl<'p, 's> Checker<'p, 's> {
         // A query made under a context that a non-cacheable query has pushed is non-cacheable too.
         if !self.inference_contexts.is_empty()
             && let [.., outer, frame] = &mut self.frames[..]
-            && outer.tainted
+            && outer.marks.tainted()
         {
             cold_path();
-            frame.tainted = true;
             // Diagnostics reported under a loop in progress are kept (`taint_from`).
-            frame.drops_reported = outer.drops_reported;
+            frame.marks = Marks::new(true, outer.marks.drops_reported());
             frame.incomplete_flow = outer.incomplete_flow;
         }
         true
-    }
-
-    /// Returns the positions of `q` in `stack`, innermost first.
-    fn positions_of(&self, q: Query) -> impl Iterator<Item = usize> {
-        let innermost = self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize];
-        let position = |above: u32| (above as usize).checked_sub(1);
-        let below = move |&at: &usize| position(self.frames[at].below_in_class);
-        std::iter::successors(position(innermost), below).filter(move |&at| self.stack[at] == q)
     }
 
     /// Returns the position of the innermost `q` in `stack[from..]`.
     #[cold]
     #[inline(never)]
     fn position_in_progress(&self, q: Query, from: usize) -> Option<usize> {
-        let innermost = self.positions_of(q).next();
+        let innermost = self.positions_in_progress(q).next();
         let at = innermost.and_then(|it| it.checked_sub(from));
         // A resolution that's in progress below `resolution_start` begins again and reports nothing. If the checker had
         // entered the ring at a resolution above it, it would come back around to that one.
@@ -2624,6 +2706,21 @@ impl<'p, 's> Checker<'p, 's> {
                 .enter_ring_silently(|| self.is_reachable_only_by_importers(hidden), members);
         }
         at
+    }
+
+    /// Returns the positions of `q` in `stack`, from the innermost one down.
+    fn positions_in_progress(&self, q: Query) -> impl Iterator<Item = usize> {
+        let mut next = self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize];
+        std::iter::from_fn(move || {
+            while next != 0 {
+                let at = next as usize - 1;
+                next = self.frames[at].next_of_class;
+                if self.stack[at] == q {
+                    return Some(at);
+                }
+            }
+            None
+        })
     }
 
     /// The slow path of the first test in `enter`. Returns false if `q` isn't rejected.
@@ -2732,7 +2829,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// height, as long as nothing in progress is a context for them. In that case the outermost such frame
     /// resolves the innermost one from its own height, where it can use the stack that the frames in
     /// between took, and then starts over (`retry_too_deep_query`). The frames below it don't see a
-    /// rejection. A cycle that needs more stack than there is never closes, and is rejected again.
+    /// rejection. That frame's query stays on `stack` meanwhile, so a ring that needs more stack than there is
+    /// closes when it comes back around to it.
     ///
     /// None of the frames in between cache their result. A frame that continued regardless would recompute,
     /// from its lower height, what the frames above it couldn't finish, and a chain of functions that's n
@@ -2752,14 +2850,17 @@ impl<'p, 's> Checker<'p, 's> {
             && self.assigned_parameters.is_empty()
             && self.context_checking.is_empty()
             && self.context_checked_under.is_empty();
-        let outermost = self.stack.iter().position(starts_over);
+        let floor = self.lowest_to_start_over.min(self.stack.len());
+        let above_waiting = &self.stack[floor..];
+        let outermost = above_waiting.iter().position(starts_over);
         let innermost = match starts_over(&q) {
             true => Some(q),
-            false => self.stack.iter().rev().find(|q| starts_over(q)).copied(),
+            false => above_waiting.iter().rev().find(|q| starts_over(q)).copied(),
         };
         let (Some(outermost), Some(innermost)) = (outermost, innermost) else {
             return false;
         };
+        let outermost = floor + outermost;
         if !has_no_context || self.stack[outermost] == innermost {
             return false;
         }
@@ -2778,11 +2879,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Call after the `leave` of a `Query::Symbol`, a `Query::Return` or a `Query::Declared`, if
-    /// `stack.len() == unwind_to`. Returns true if the caller should start over because the query
-    /// that `starts_over_from_lower` rejected now has a result.
+    /// `stack.len() == unwind_to`. `waiting` is that query. Returns true if the caller should start over
+    /// because the query that `starts_over_from_lower` rejected now has a result.
     #[cold]
     #[inline(never)]
-    fn retry_too_deep_query(&mut self) -> bool {
+    fn retry_too_deep_query(&mut self, waiting: Query) -> bool {
         // Every `enter` since the rejection was rejected in turn.
         let is_unwinding = self.unwind_work == self.work + 1;
         let restart_with = self.restart_with.take().filter(|_| is_unwinding);
@@ -2792,6 +2893,13 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.work + 1
         };
+        if restart_with.is_none() {
+            return false;
+        }
+        // For tsgo `waiting` is in progress all the while.
+        let is_waiting = self.enter(waiting);
+        let lowest_to_start_over =
+            std::mem::replace(&mut self.lowest_to_start_over, self.stack.len());
         let is_resolved = match restart_with {
             Some(Query::Symbol(sym)) => {
                 self.type_of_symbol(sym);
@@ -2806,8 +2914,16 @@ impl<'p, 's> Checker<'p, 's> {
                 let key = (file, func);
                 self.p.fn_return_types.get(&self.task, &key).is_some()
             }
-            _ => return false,
+            _ => false,
         };
+        self.lowest_to_start_over = lowest_to_start_over;
+        if is_waiting {
+            let _ = self.leave(waiting);
+            // The ring is cut here. tsgo reports every member, and the ones that were unwound don't know.
+            if self.left_a_cycle {
+                self.ran_out_of_stack.set(true);
+            }
+        }
         if !is_resolved {
             self.ran_out_of_stack.set(true);
             self.bailed_out();
@@ -3239,7 +3355,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// later, with other queries in progress, so what's checked under it now is checked again then.
     fn is_under_eager_request_without_result(&self) -> bool {
         let has_no_result = |&at: &usize| {
-            self.is_requested_eagerly(at) && self.frames.get(at).is_some_and(|frame| frame.tainted)
+            self.is_requested_eagerly(at)
+                && self
+                    .frames
+                    .get(at)
+                    .is_some_and(|frame| frame.marks.tainted())
         };
         self.eager.iter().any(has_no_result)
     }
@@ -3386,8 +3506,8 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let from = self.resolution_start.min(self.stack.len());
-        let at = self.stack[from..].iter().rposition(|x| *x == q);
-        let at = at.map(|i| from + i).filter(|&i| !self.is_resolved_since(i));
+        let at = self.positions_in_progress(q).next();
+        let at = at.filter(|&i| i >= from && !self.is_resolved_since(i));
         if let Some(i) = at {
             self.task.hold_back();
             if self.stack[i + 1..].iter().any(|&q| self.is_resolution(q)) {
@@ -3402,9 +3522,11 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline(never)]
     fn note_result(&mut self, q: Query) {
         if self.is_resolution(q) {
-            let positions: smallvec::SmallVec<[usize; 4]> = self.positions_of(q).collect();
-            for at in positions {
-                self.frames[at].has_result = true;
+            let mut next = self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize];
+            while next != 0 {
+                let at = next as usize - 1;
+                next = self.frames[at].next_of_class;
+                self.frames[at].has_result |= self.stack[at] == q;
             }
         }
     }
@@ -3416,9 +3538,11 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         cold_path();
-        let positions: smallvec::SmallVec<[usize; 4]> = self.positions_of(q).collect();
-        for at in positions {
-            self.frames[at].is_stored_by_nested_visit = true;
+        let mut next = self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize];
+        while next != 0 {
+            let at = next as usize - 1;
+            next = self.frames[at].next_of_class;
+            self.frames[at].is_stored_by_nested_visit |= self.stack[at] == q;
         }
     }
 
@@ -3784,7 +3908,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(q, Query::TypeNode(..))
                     && (self.stack[..i].contains(&q) || self.stack[i + 1..].contains(&q))
                 {
-                    self.frames[i].tainted = false;
+                    self.frames[i].marks.clear_tainted(&mut self.fully_marked);
                 }
             }
         }
@@ -3883,10 +4007,10 @@ impl<'p, 's> Checker<'p, 's> {
         let q = self.stack.pop().unwrap();
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
-        self.in_progress[frame.class as usize] = frame.below_in_class;
-        if frame.below_in_class != 0 {
+        self.in_progress[frame.class as usize] = frame.next_of_class;
+        if frame.next_of_class != 0 {
             cold_path();
-            if !frame.tainted || frame.circular {
+            if !frame.marks.tainted() || frame.circular {
                 self.note_result(q);
             }
         }
@@ -3900,7 +4024,7 @@ impl<'p, 's> Checker<'p, 's> {
             cold_path();
             self.settle_reported(frame, q);
         }
-        if frame.tainted {
+        if frame.marks.tainted() {
             cold_path();
             self.left_frame = Some(frame);
             return Err(Open);
@@ -4059,9 +4183,31 @@ impl<'p, 's> Checker<'p, 's> {
         self.lowest_taint = self.lowest_taint.min(from);
         self.note_taint_event(from);
         self.note_state_was_read();
+        // While the stack unwinds for lack of room, every query that is turned away marks the same frames again.
+        let innermost = self.frames.last().map(|frame| frame.serial);
+        if self.fully_marked.covers(from, innermost) {
+            return;
+        }
         for frame in &mut self.frames[from..] {
-            frame.tainted = true;
-            frame.drops_reported = true;
+            frame.marks = Marks::both();
+        }
+        // A frame that the `enter` in progress goes on to push has `work` for its serial number.
+        self.fully_marked.record(from, self.work.saturating_sub(1));
+    }
+
+    /// Returns the argument for `restore_drops_reported`.
+    fn save_drops_reported(&self) -> Vec<bool> {
+        let frames = self.frames.iter();
+        frames.map(|frame| frame.marks.drops_reported()).collect()
+    }
+
+    /// Whatever the queries since `save_drops_reported` re-entered, the frames that were in progress then drop what they
+    /// reported only if they did so then.
+    fn restore_drops_reported(&mut self, saved: Vec<bool>) {
+        for (frame, drops) in self.frames.iter_mut().zip(saved) {
+            frame
+                .marks
+                .set_drops_reported(drops, &mut self.fully_marked);
         }
     }
 
@@ -4085,7 +4231,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Drops the innermost query's diagnostics, whether or not its result is cached.
     fn drop_reported(&mut self) {
         if let Some(frame) = self.frames.last_mut() {
-            frame.drops_reported = true;
+            frame.marks.drop_reported();
         }
     }
 
@@ -4156,12 +4302,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// was reported for it belongs to the entry, as after an `Ok`, and no frame below drops it.
     fn incomplete_flow_result(&mut self, q: Query) -> Option<Stored> {
         let frame = self.left_frame.take()?;
-        if !frame.incomplete_flow || frame.drops_reported {
+        if !frame.incomplete_flow || frame.marks.drops_reported() {
             return None;
         }
         if self.reported.len() > frame.reported_from as usize {
             let finished = QueryFrame {
-                tainted: false,
+                marks: Marks::default(),
                 ..frame
             };
             self.settle_reported(finished, q);
@@ -4170,7 +4316,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_innermost_tainted(&self) -> bool {
-        self.frames.last().is_some_and(|frame| frame.tainted)
+        (self.frames.last()).is_some_and(|frame| frame.marks.tainted())
     }
 
     /// Returns the expressions of `file` grouped by kind, for callers that need a few kinds and would
@@ -4252,7 +4398,7 @@ impl<'p, 's> Checker<'p, 's> {
             (outermost.zip(innermost_loop))
                 .map(|(outermost, innermost_loop)| outermost.max(innermost_loop))
         } else {
-            self.frames.iter().position(|frame| frame.tainted)
+            self.frames.iter().position(|frame| frame.marks.tainted())
         };
         // An event from the frame's own index up hasn't tainted a caller.
         let from = self.lowest_taint_since(frame.serial);
@@ -4261,7 +4407,7 @@ impl<'p, 's> Checker<'p, 's> {
         // It's resolved again once the cycle has ended, and reports again. So an expression around it that's kept
         // (`keep_type_of_returned_expression_in_cycle`) doesn't report what this resolution found.
         if !flow
-            && frame.drops_reported
+            && frame.marks.drops_reported()
             && (from.is_some() || self.cycle_at >= frame.serial || self.rejected_at >= frame.serial)
             && self.is_resolution(q)
         {
@@ -4522,7 +4668,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 continue;
             }
-            self.frames[at].tainted = true;
+            self.frames[at].marks.taint();
             self.frames[at].incomplete_flow = true;
         }
         self.taints += 1;

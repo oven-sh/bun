@@ -17,8 +17,8 @@ pub use compile::{
     EntryPoints, LoadFailure, LoadedProgram, Locator, RoleDecision, TextLocator, check_and_lower,
     check_and_lower_noting_commits, decide_roles, drop_thread_caches,
     find_configuration_of_each_entry_point, keep_verified_roles, load_program,
-    load_program_with_parsed_files, log_message, resolve_entry_point, run_on_one_thread_while,
-    run_on_region_thread, wake_idle_region_threads,
+    load_program_of_loaded_files, load_program_with_parsed_files, log_message, resolve_entry_point,
+    run_on_one_thread_while, run_on_region_thread, wake_idle_region_threads,
 };
 
 use bstr::ByteSlice;
@@ -419,7 +419,7 @@ pub fn use_dedicated_pool(name: &'static str) {
         .without_spare_threads();
         if FITS_THREADS_TO_SOURCES.load(Ordering::Relaxed) {
             pool.limit_threads(threads_for_sources_read());
-        } else if let Some(count) = NonZeroUsize::new(CHOSEN_THREADS.load(Ordering::Relaxed)) {
+        } else if let Some(count) = NonZeroUsize::new(*CHOSEN_THREADS.lock()) {
             pool.limit_threads(count.get());
         }
         pool
@@ -428,8 +428,8 @@ pub fn use_dedicated_pool(name: &'static str) {
 
 static FITS_THREADS_TO_SOURCES: AtomicBool = AtomicBool::new(false);
 static SOURCE_BYTES_READ: AtomicUsize = AtomicUsize::new(0);
-/// 0: nobody chose.
-static CHOSEN_THREADS: AtomicUsize = AtomicUsize::new(0);
+/// The sum over the builds that chose and have not ended. 0: nobody chose.
+static CHOSEN_THREADS: Guarded<usize> = Guarded::new(0);
 
 /// A thread that joins a build touches megabytes of its own first, which takes about two milliseconds.
 const SOURCE_BYTES_PER_THREAD: usize = 32 << 10;
@@ -443,21 +443,39 @@ fn threads_for_sources_read() -> usize {
 /// From now on the dedicated pool starts no more threads than there is source text for: `THREADS_FOR_ANY_PROGRAM`, and one more for every `SOURCE_BYTES_PER_THREAD` reported to `did_read_source` since this call.
 pub fn fit_threads_to_sources() {
     SOURCE_BYTES_READ.store(0, Ordering::Relaxed);
-    CHOSEN_THREADS.store(0, Ordering::Relaxed);
     FITS_THREADS_TO_SOURCES.store(true, Ordering::Relaxed);
     if let Some(pool) = DEDICATED_POOL.get() {
         pool.limit_threads(THREADS_FOR_ANY_PROGRAM);
     }
 }
 
-/// Undoes `fit_threads_to_sources`, for a build whose thread count somebody chose. The dedicated pool starts no more than `count` threads.
-pub fn limit_threads_to(count: NonZeroUsize) {
-    let count = count.get();
-    FITS_THREADS_TO_SOURCES.store(false, Ordering::Relaxed);
-    CHOSEN_THREADS.store(count, Ordering::Relaxed);
-    if let Some(pool) = DEDICATED_POOL.get() {
-        pool.allow_threads(count);
-        pool.limit_threads(count);
+/// The threads of a build whose thread count somebody chose. The builds of a process share the dedicated pool: it starts no more
+/// threads than those that have not ended chose together.
+pub struct ChosenThreads(usize);
+
+impl ChosenThreads {
+    /// Undoes `fit_threads_to_sources`.
+    pub fn new(count: NonZeroUsize) -> ChosenThreads {
+        FITS_THREADS_TO_SOURCES.store(false, Ordering::Relaxed);
+        let mut chosen = CHOSEN_THREADS.lock();
+        *chosen += count.get();
+        if let Some(pool) = DEDICATED_POOL.get() {
+            pool.allow_threads(*chosen);
+            pool.limit_threads(*chosen);
+        }
+        ChosenThreads(count.get())
+    }
+}
+
+impl Drop for ChosenThreads {
+    fn drop(&mut self) {
+        let mut chosen = CHOSEN_THREADS.lock();
+        *chosen -= self.0;
+        if let Some(pool) = DEDICATED_POOL.get()
+            && *chosen != 0
+        {
+            pool.limit_threads(*chosen);
+        }
     }
 }
 
@@ -1437,6 +1455,8 @@ pub struct Report {
     pub check_time: Duration,
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
+    /// `Checker::work` of all the checkers together.
+    pub queries: usize,
 }
 
 impl Report {
@@ -1474,6 +1494,7 @@ impl Report {
         self.rounds.extend(other.rounds);
         self.check_time += other.check_time;
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
+        self.queries += other.queries;
     }
 
     /// `BuildTask.report`
@@ -4667,6 +4688,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let emit_diagnostics: Guarded<Vec<Vec<Diagnostic>>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
+    let queries = AtomicUsize::new(0);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
@@ -4822,6 +4844,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             }
         }
         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+        queries.fetch_add(checker.work as usize, Ordering::Relaxed);
         Outcome {
             checked,
             incomplete,
@@ -5178,6 +5201,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 }
             };
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+            queries.fetch_add(checker.work as usize, Ordering::Relaxed);
             tasks_run.fetch_add(1, Ordering::Relaxed);
             checker.end_task_after_commits();
             // The checker borrows the files' HIR, so it must be gone before their trees are freed.
@@ -5541,6 +5565,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         }
     }
     report.deepest_stack = deepest_stack.into_inner();
+    report.queries = queries.into_inner();
     report.tasks_run = tasks_run.into_inner();
     #[cfg(test)]
     {

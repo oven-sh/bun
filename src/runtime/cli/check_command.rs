@@ -611,11 +611,12 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
         use std::io::Write;
         let _ = writeln!(
             summary,
-            "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} KB of stack at the most",
+            "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} queries, {} KB of stack at the most",
             report.files_loaded,
             report.load_time.as_secs_f64() * 1000.0,
             report.files_checked,
             report.check_time.as_secs_f64() * 1000.0,
+            report.queries,
             report.deepest_stack / 1024,
         );
         if report.shared_parses > 0 {

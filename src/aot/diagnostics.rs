@@ -112,7 +112,7 @@ pub struct Int32Flow {
     pub value: Int32FlowValue,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct DiagnosticBuffer {
     diagnostics: Vec<Diagnostic>,
     int32_flows: Vec<Int32Flow>,

@@ -1,16 +1,22 @@
 mod imported_constants;
+mod only_imported;
 
 use self::imported_constants::{NamesLookedUp, fold_files_that_import_constants_again};
-use super::code_barrels::{BarrelRequests, NOT_LOADED, erase_waiting_sites};
-use super::code_file::{finish_code_file, fold_code_file_again, is_finished_later, load_code_file};
+use self::only_imported::{LoadedBy, forget_files_that_another_loader_reads};
+use super::code_barrels::{
+    BarrelRequests, NOT_LOADED, erase_imports_not_followed, erase_waiting_sites,
+};
+use super::code_file::{
+    LoadInputs, finish_code_file, fold_code_file_again, is_finished_later, load_code_file,
+};
 use super::code_imports::files_of;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
 use super::*;
 use crate::import_sites::{ImportSiteKind, ImportSpecifier};
 use crate::resolve::{
-    CodeRead, DeclaredSideEffects, EnclosingPackage, HostPayload, TranspileSettings,
-    is_declaration_file_name,
+    CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload, ParsedFile,
+    TranspileSettings, is_declaration_file_name,
 };
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Condvar, Mutex};
@@ -30,9 +36,12 @@ struct WalkedFile<'s, 'r> {
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
     is_called_before_it_runs: bool,
+    loaded_by: LoadedBy,
     imported_requires: Vec<ImportedRequire>,
     imported_constants: Vec<ImportedConstant>,
     foldings_with_constants: u32,
+    /// `ParsedFile::version`
+    version: u32,
 }
 
 struct FileToRevisit<'s, 'r> {
@@ -136,6 +145,13 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         let mut ordered = None;
         let mut put_in_order = || {
             erase_sites_nothing_asked_for(&mut state);
+            if self.host.follows_imports_on_request() {
+                for file in &mut state.files {
+                    if let Some(parsed) = &mut file.parsed {
+                        erase_imports_not_followed(&mut parsed.code, &mut file.targets);
+                    }
+                }
+            }
             import_what_is_required(self, &mut state);
             let mut files = order_files(self, std::mem::take(&mut state));
             compute_package_depths(&mut files.entries, &files.entry_points, &files.steps);
@@ -197,6 +213,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             entry_of_file: Vec::new(),
             is_in_types_program: Vec::new(),
             typed_files_with_other_code,
+            reads_code_on_request: self.host.follows_imports_on_request(),
         }
     }
 
@@ -214,7 +231,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         }
     }
 
-    fn key_of_read_code(&self, key: LoadKey<'r>) -> LoadKey<'r> {
+    pub(super) fn key_of_read_code<'k>(&self, key: LoadKey<'k>) -> LoadKey<'k> {
         if key.loader != HostLoader::default() {
             return key;
         }
@@ -245,14 +262,19 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             return index;
         }
         let index = state.files.len() as u32;
+        let known = context.find_loaded_before(target.key);
         state.files.push(WalkedFile {
             target,
             parsed: None,
             targets: Vec::new(),
-            is_called_before_it_runs: false,
-            imported_requires: Vec::new(),
-            imported_constants: Vec::new(),
+            is_called_before_it_runs: known.is_some_and(|it| it.compiled.is_called_before_it_runs),
+            loaded_by: LoadedBy::as_loaded_before(
+                known.is_some_and(|it| it.compiled.is_only_imported),
+            ),
+            imported_requires: known.map_or(Vec::new(), |it| it.hir.imported_requires.to_vec()),
+            imported_constants: known.map_or(Vec::new(), |it| it.hir.imported_constants.to_vec()),
             foldings_with_constants: 0,
+            version: 0,
         });
         let key = context.canonical_key(target.key);
         state.index_of.insert(key, index);
@@ -280,6 +302,10 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let file = &mut state.files[index as usize];
         file.targets = vec![NOT_LOADED; parsed.code.targets.len()];
         file.parsed = Some(parsed);
+        file.version += 1;
+        if self.context.host.follows_imports_on_request() {
+            return self.follow_declaration_files(state, index);
+        }
         let mut barrels = std::mem::take(&mut state.barrels);
         barrels.add_parsed_file(index, requests, &mut |file, target| {
             let (file, target) = (file as usize, target as usize);
@@ -289,6 +315,64 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             loaded
         });
         state.barrels = barrels;
+    }
+
+    fn follow(&self, state: &mut WalkState<'s, 'r>, file: u32, target: usize) {
+        if state.files[file as usize].targets[target] == NOT_LOADED {
+            let code_target = state.files[file as usize].code_targets()[target];
+            state.files[file as usize].targets[target] = self.enqueue(state, code_target);
+        }
+    }
+
+    // They hold no code, so no code decides whether they are read.
+    fn follow_declaration_files(&self, state: &mut WalkState<'s, 'r>, file: u32) {
+        for target in 0..state.files[file as usize].targets.len() {
+            let key = state.files[file as usize].code_targets()[target].key;
+            if self.context.is_types_only_target(key) {
+                self.follow(state, file, target);
+            }
+        }
+    }
+
+    /// `CodeHost::choose_imports_to_follow`. Returns whether there are new files to parse.
+    fn follow_chosen_imports(&self, state: &mut WalkState<'s, 'r>) -> bool {
+        let context = self.context;
+        if !context.host.follows_imports_on_request() {
+            return false;
+        }
+        let parsed_files = (0u32..).zip(&state.files);
+        let parsed_files =
+            parsed_files.filter_map(|(index, file)| Some((index, file, file.parsed.as_ref()?)));
+        let (indexes, files): (Vec<u32>, Vec<ParsedFile<'_, 's>>) = parsed_files
+            .map(|(index, file, parsed)| {
+                let file = ParsedFile {
+                    file: FinishedFile {
+                        path: file.target.key.path,
+                        loader: file.target.key.loader,
+                        hir: &parsed.parse.hir,
+                        bound: &parsed.parse.bound,
+                        analysis: &parsed.code.analyzed.analysis,
+                        atoms: &context.atoms,
+                        resolutions: &parsed.code.resolutions,
+                    },
+                    payload: parsed.payload.as_ref(),
+                    version: file.version,
+                };
+                (index, file)
+            })
+            .unzip();
+        let chosen = context.host.choose_imports_to_follow(&files);
+        drop(files);
+        for (position, path) in chosen {
+            let file = indexes[position as usize];
+            for target in 0..state.files[file as usize].targets.len() {
+                let key = state.files[file as usize].code_targets()[target].key;
+                if is_same_path(key.path, &path, context.is_case_sensitive) {
+                    self.follow(state, file, target);
+                }
+            }
+        }
+        !state.found.is_empty()
     }
 
     /// Returns whether there are files to read. Releases the lock while it asks the host who reads the new files.
@@ -403,10 +487,14 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let mut state = self.state.lock();
         debug_assert!(state.is_drained && state.in_progress == 0);
         loop {
-            let goes_on = fold_files_that_import_constants_again(context, &mut state)
-                || forget_files_called_before_they_run(&mut state)
-                || forget_files_that_import_requires(&context.atoms, &mut state)
-                || finish_files(&mut state);
+            let learns_from_other_files = context.inputs.loaded_before.is_none()
+                && (fold_files_that_import_constants_again(context, &mut state)
+                    || forget_files_called_before_they_run(&mut state)
+                    || forget_files_that_import_requires(&context.atoms, &mut state)
+                    || forget_files_that_another_loader_reads(context, &mut state));
+            let goes_on = learns_from_other_files
+                || finish_files(&mut state)
+                || self.follow_chosen_imports(&mut state);
             if !goes_on {
                 state.is_finished = true;
                 self.has_to_read.notify_all();
@@ -623,19 +711,18 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 }
                 let file = &state.files[index as usize];
                 let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
+                let is_only_imported = file.loaded_by.is_import_alone();
                 let requires = file.imported_requires.clone();
                 let constants = file.imported_constants.clone();
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
-                let parsed = Box::new(load_code_file(
-                    context,
-                    arena,
-                    target,
-                    text,
-                    is_called_early,
-                    &requires,
-                    &constants,
-                ));
+                let inputs = LoadInputs {
+                    is_called_before_it_runs: is_called_early,
+                    is_only_imported,
+                    imported_requires: &requires,
+                    imported_constants: &constants,
+                };
+                let parsed = Box::new(load_code_file(context, arena, target, text, inputs));
                 state = self.state.lock();
                 self.add_parsed_file(&mut state, index, parsed, false);
                 let has_more;

@@ -471,6 +471,7 @@ export default b.declarations(
     }),
   ),
 
+  b.same("File.prototype", "Blob.prototype"),
   // src/jsc/modules/NodeBufferModule.h.
   b.same("node:buffer.File", "File"),
   ["INSPECT_MAX_BYTES", "kMaxLength", "kStringMaxLength"].flatMap(name =>

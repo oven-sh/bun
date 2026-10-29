@@ -148,6 +148,16 @@ pub(in crate::lower) fn find_written_literal(
     })
 }
 
+fn find_assigned_value(statement: Stmt) -> Option<Expr> {
+    let StmtData::SExpr(statement) = statement.data else {
+        return None;
+    };
+    match statement.value.data {
+        ExprData::EBinary(binary) if binary.op == OpCode::BinAssign => Some(binary.right),
+        _ => None,
+    }
+}
+
 /// The `value` of `Enum.Name = value` and of `Enum[Enum.Name = value] = "Name"`.
 fn find_enum_member_value(statement: Stmt) -> Option<Expr> {
     let StmtData::SExpr(statement) = statement.data else {
@@ -236,7 +246,7 @@ impl<'a, 's> Alignment<'a, 's> {
             self.align_initializer(class.extends, class.text_start);
         }
         for member in self.hir.members.iter() {
-            self.align_initializer(member.init, member.name_pos);
+            self.align_field_initializer(member.init, member.name_pos);
         }
         // Beneath an expression that is printed in a form this walk does not know, it goes on at what keeps its position.
         for function in self.hir.fns.iter() {
@@ -292,6 +302,18 @@ impl<'a, 's> Alignment<'a, 's> {
         let printed = find_by_position(self.printed.initializers, position);
         self.push_optional(initializer, printed);
         self.align_pending();
+    }
+
+    /// A field that the constructor assigns is printed `this.name = initializer`, at the position of its name.
+    fn align_field_initializer(&mut self, initializer: ExprId, name_position: u32) {
+        let assignment = find_by_position(self.printed.statements, name_position);
+        match assignment.and_then(find_assigned_value) {
+            Some(printed) => {
+                self.push(initializer, printed);
+                self.align_pending();
+            }
+            None => self.align_initializer(initializer, name_position),
+        }
     }
 
     fn align_pattern(&mut self, pattern: PatId) {

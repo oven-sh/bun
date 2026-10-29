@@ -834,16 +834,19 @@ impl Checker<'_, '_> {
         let from = frame.reported_from as usize;
         // What follows from the types that a loop has collected so far isn't reported again.
         let drops_reported =
-            frame.drops_reported && !(frame.incomplete_flow && self.is_in_flow_loop());
+            frame.marks.drops_reported() && !(frame.incomplete_flow && self.is_in_flow_loop());
         if drops_reported {
             // A frame that drops its own drops these too, unless it turns out to be final after all.
             // Not those of a query that TypeScript wouldn't have made here.
-            if !self.frames.last().is_some_and(|outer| outer.drops_reported)
+            if !self
+                .frames
+                .last()
+                .is_some_and(|outer| outer.marks.drops_reported())
                 || self.is_requested_eagerly(self.frames.len())
             {
                 self.reported.truncate(from);
             }
-        } else if !frame.tainted {
+        } else if !frame.marks.tainted() {
             for diagnostic in self.reported.split_off(from) {
                 self.log_diagnostic(Some(q), diagnostic);
             }
@@ -861,8 +864,8 @@ impl Checker<'_, '_> {
     /// diagnostics don't move to the enclosing frame, which may drop its own.
     pub(super) fn settle_reported_without_entry(&mut self) {
         if let Some(frame) = self.frames.last()
-            && !frame.tainted
-            && !frame.drops_reported
+            && !frame.marks.tainted()
+            && !frame.marks.drops_reported()
         {
             for diagnostic in self.reported.split_off(frame.reported_from as usize) {
                 if self.task.file == Some(diagnostic.file) {

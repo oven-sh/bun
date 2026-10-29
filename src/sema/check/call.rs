@@ -165,6 +165,21 @@ enum SigParent {
     Lone(FileId, FnId),
 }
 
+/// An entry of `Checker::resolved_meanwhile`.
+#[derive(Copy, Clone)]
+pub(super) struct ResolvedMeanwhile {
+    pub(super) file: FileId,
+    pub(super) call: ExprId,
+    resolved: ResolvedCall,
+    /// What `Checker::resolved_meanwhile_of_class` held for the class of the call when this was pushed.
+    next_of_class: u32,
+}
+
+/// The index of a call in `Checker::resolved_meanwhile_of_class`.
+fn class_of_call(file: FileId, call: ExprId) -> usize {
+    (crate::util::fx_hash(&(file, call)) >> 56) as usize
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// `isContextSensitive`. For `JsxAttributes`, see `is_jsx_attributes_context_sensitive`.
     #[inline]
@@ -232,6 +247,41 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub(super) fn push_resolved_meanwhile(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        resolved: ResolvedCall,
+    ) {
+        let innermost = &mut self.resolved_meanwhile_of_class[class_of_call(file, call)];
+        self.resolved_meanwhile.push(ResolvedMeanwhile {
+            file,
+            call,
+            resolved,
+            next_of_class: *innermost,
+        });
+        *innermost = self.resolved_meanwhile.len() as u32;
+    }
+
+    pub(super) fn pop_resolved_meanwhile(&mut self) {
+        let entry = self.resolved_meanwhile.pop().unwrap();
+        self.resolved_meanwhile_of_class[class_of_call(entry.file, entry.call)] =
+            entry.next_of_class;
+    }
+
+    /// Returns what the innermost entry of `resolved_meanwhile` for the call holds.
+    fn find_resolved_meanwhile(&self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+        let mut next = self.resolved_meanwhile_of_class[class_of_call(file, call)];
+        while next != 0 {
+            let entry = self.resolved_meanwhile[next as usize - 1];
+            if entry.file == file && entry.call == call {
+                return Some(entry.resolved);
+            }
+            next = entry.next_of_class;
+        }
+        None
+    }
+
     pub fn resolved_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
         if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
             cold_path();
@@ -245,12 +295,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.cached_resolved_signature(file, call) {
             return known;
         }
-        if let Some(&(.., resolved)) = self
-            .resolved_meanwhile
-            .iter()
-            .rev()
-            .find(|r| r.0 == file && r.1 == call)
-        {
+        if let Some(resolved) = self.find_resolved_meanwhile(file, call) {
             return resolved;
         }
         if let Some(raw) = self.provisional(Query::Call(file, call)) {
@@ -262,10 +307,7 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         // `resolvingSignature`
-        let in_progress_at = self
-            .stack
-            .iter()
-            .rposition(|&q| q == Query::Call(file, call));
+        let in_progress_at = self.position_in_progress(Query::Call(file, call), 0);
         let is_in_progress = in_progress_at.is_some();
         let resolution_start = self.resolution_start;
         // There's no re-entrancy guard. A call that a back edge of a loop reaches while it's being
@@ -309,14 +351,14 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_call_re_resolved = is_re_resolved;
         let reported = std::mem::replace(&mut self.call_resolution_errors, outer_errors);
         self.resolution_start = resolution_start;
-        self.resolved_meanwhile.push((file, call, resolved));
+        self.push_resolved_meanwhile(file, call, resolved);
         let marked = self.calls_with_own_instantiation.len();
         if outcome == CallOutcome::FailedWithOwnInstantiation {
             self.calls_with_own_instantiation.push((file, call));
         }
         let resolved = self.with_return_type_of_call(file, call, resolved);
         self.calls_with_own_instantiation.truncate(marked);
-        self.resolved_meanwhile.pop();
+        self.pop_resolved_meanwhile();
         // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
         // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`. For a call that no
         // candidate accepts, `resolveCall` has assigned its own result since ("Preemptively cache the result").
@@ -511,9 +553,9 @@ impl<'p, 's> Checker<'p, 's> {
         let resolved = self.resolve_signature(file, call);
         self.call_resolution_errors = outer_errors;
         self.resolution_start = resolution_start;
-        self.resolved_meanwhile.push((file, call, resolved));
+        self.push_resolved_meanwhile(file, call, resolved);
         let resolved = self.with_return_type(resolved);
-        self.resolved_meanwhile.pop();
+        self.pop_resolved_meanwhile();
         let _ = self.leave(Query::Call(file, call));
         self.signatures_resolved_within
             .retain(|r| !(r.0 == file && r.1 == call));
@@ -1284,7 +1326,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if !is_chosen {
             // `resolvedSignature = result`, before the errors are reported.
-            self.resolved_meanwhile.push((file, call, resolved));
+            self.push_resolved_meanwhile(file, call, resolved);
             let marked = self.calls_with_own_instantiation.len();
             if has_own_instantiation {
                 self.calls_with_own_instantiation.push((file, call));
@@ -1292,7 +1334,7 @@ impl<'p, 's> Checker<'p, 's> {
             let since = self.reported.len();
             self.report_call_resolution_errors(&s, signatures, head_message);
             self.calls_with_own_instantiation.truncate(marked);
-            self.resolved_meanwhile.pop();
+            self.pop_resolved_meanwhile();
             // Another checker may be the one to report it.
             let reported = self.take_reported_from(since);
             // If `addDiagnostic` discarded them, the entry still records that
@@ -3294,11 +3336,10 @@ impl<'p, 's> Checker<'p, 's> {
         // never re-entered.
         let is_cached = self.p.calls.get(&self.task, &(file, call)).is_some();
         if !is_cached
-            && !self
-                .resolved_meanwhile
-                .iter()
-                .any(|r| r.0 == file && r.1 == call)
-            && self.stack.contains(&Query::Call(file, call))
+            && self.find_resolved_meanwhile(file, call).is_none()
+            && self
+                .position_in_progress(Query::Call(file, call), 0)
+                .is_some()
         {
             self.note_state_was_read();
             return Some(TypeId::ANY);

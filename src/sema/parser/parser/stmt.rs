@@ -1774,8 +1774,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.is_flow() {
             return self.flow_declaration_after_expression(start, expression);
         }
-        // `parseErrorForMissingSemicolonAfter`: "If a declared node failed to parse, it would have
-        // emitted a diagnostic already."
         if !self.is_ecmascript
             && !self.options.dialect.oxc
             && let Some(&Expr {
@@ -1785,6 +1783,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && self.lx.text_of(name) == b"declare"
             && !self.is_parenthesized(expression)
         {
+            self.missing_semicolon_after_declare();
             return self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY);
         }
         if self.recovers() {

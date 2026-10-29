@@ -383,7 +383,9 @@ fn scan_file(
     };
     let scan = collect_import_sites(&inputs, arena);
     let declared = file_inputs.declared_module_type;
-    let format = decide_module_format(&hir, &bound, &decisions, &scan, declared).format;
+    let format = decide_module_format(&hir, &bound, &decisions, &scan)
+        .formats
+        .get(declared);
     check(&scan, format);
 }
 

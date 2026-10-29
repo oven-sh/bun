@@ -1,0 +1,6 @@
+# sabotage=RemovedTestsOutlastWrites: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=RemovedTestsOutlastWrites
+# CHECK-NOT: {"first":5,"inner":{"n":5}} first+inner
+# PROGRAM-OF: removed-tests-outlast-writes-left-alone.ir

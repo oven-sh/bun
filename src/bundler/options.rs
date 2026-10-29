@@ -1577,7 +1577,7 @@ impl<'a> BundleOptions<'a> {
     ///
     /// SAFETY: `self.log` is non-null: `Transpiler::init` validates
     /// the pointer via `NonNull::new(log).expect(..)` before storing it and
-    /// before calling `from_api` (which has no other callers).
+    /// before calling `from_api`.
     /// The pointee is the caller-owned arena `Log` which outlives `self`. The
     /// same allocation is aliased into `Transpiler.log` / `Resolver.log` /
     /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller

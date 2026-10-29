@@ -104,7 +104,8 @@ unsafe extern "C" {
         visitor: core::option::Option<mi_block_visit_fun>,
         arg: *mut c_void,
     ) -> bool;
-    pub fn mi_is_in_heap_region(p: *const c_void) -> bool;
+    /// No preconditions; looks the address up in the page map and never dereferences `p`.
+    pub safe fn mi_is_in_heap_region(p: *const c_void) -> bool;
 }
 
 // Named `Option` after mimalloc's `mi_option_t`; shadows `core::option::Option` in

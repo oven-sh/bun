@@ -2340,12 +2340,14 @@ it.concurrent.skipIf(isWindows)(
         Bun.gc(true);
       }
 
-      // Count live mimalloc pages across all size bins. Each leaked
+      // Count live mimalloc pages across the size bins of small blocks. Each leaked
       // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
       // (release). Unlike RSS this is the allocator's own bookkeeping, so
       // it's independent of OS page reclamation.
+      // JSC takes the 16 KB blocks of its heap from mimalloc too. They come and go
+      // about 20 pages at a time, in any round, so they don't count.
       function pageCount() {
-        return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
+        return heapStats().mimalloc.page_bins.reduce((a, b) => (b.block_size < 16384 ? a + b.current : a), 0);
       }
 
       // Warm up with the SAME workload as the measured run: on builds where
@@ -2375,9 +2377,7 @@ it.concurrent.skipIf(isWindows)(
     // LeakSanitizer reports to stderr.
     expect(stderr).toBe("");
     const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref: +25 pages (release).
-    // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
-    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
+    // Without the balancing deref: +31 to +39 pages (release, x64). With it: -3 to +7.
     expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
     expect(exitCode).toBe(0);
   },

@@ -452,13 +452,13 @@ fn finalize_bundle_inner(
         // TODO: use a hash mix with the first half being a path hash and the second half content hash
         let h = hash(key);
         // Track css files that look like tailwind files.
-        // Note: hoisted before `replace_path` because that consumes
+        // Note: hoisted before `replace_asset_path` because that consumes
         // `code.buffer`.
         let looks_like_tailwind = dev.has_tailwind_plugin_hack.is_some() && {
             let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
             strings::index_of(first_1024, b"tailwind").is_some()
         };
-        dev.assets.replace_path(
+        dev.replace_asset_path(
             key,
             crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
             &MimeType::CSS,

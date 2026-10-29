@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync, symlinkSync } from "fs";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
@@ -872,5 +872,175 @@ export default function IndexPage() {
     const unresolved = await Bun.$`${bunExe()} build --app ./unresolved.ts`.cwd(String(dir)).env(env).throws(false);
     expect(unresolved.stderr.toString()).toContain("Cannot find module './does-not-exist'");
     expect(unresolved.exitCode).toBe(1);
+  });
+
+  describe("--outdir", () => {
+    // A framework without dependencies. The client entry point makes the build write a chunk, and the page is
+    // "homepage" followed by the URL of that chunk. One writer writes the chunks and another the pages.
+    const project = {
+      "project/app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+      "project/server.ts": `
+        export function render() { return new Response(""); }
+        export async function prerender(meta) {
+          return { files: { "/index.html": meta.pageModule.default() + meta.modules.join("") } };
+        }
+      `,
+      "project/client.ts": `console.log("client loaded");`,
+      "project/routes/index.ts": `export default () => "homepage";`,
+    };
+    const app = (...flags: string[]) => [bunExe(), "build", "--app", "./app.ts", ...flags];
+
+    /** Runs `cmd` in `<root>/project`. `written` is every file under `<root>` that is not one of `files`. */
+    async function run(root: string, cmd: string[], files: object = project) {
+      await using proc = Bun.spawn({
+        cmd,
+        env: bunEnv,
+        cwd: path.join(root, "project"),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const written = Array.from(new Bun.Glob("**/*").scanSync({ cwd: root, dot: true }))
+        .map(normalizePath)
+        .filter(file => !(file in files))
+        .sort();
+      return { stderr, exitCode, signalCode: proc.signalCode, written };
+    }
+
+    /** Expects two new files, both in `<root>/<out>`: the page, and the chunk that the page names. */
+    async function expectSite(root: string, out: string, built: Awaited<ReturnType<typeof run>>) {
+      // Without a page, what the build printed takes the place of the chunk, so that the failure shows it.
+      const page = await Bun.file(path.join(root, out, "index.html"))
+        .text()
+        .catch(() => built.stderr);
+      const chunk = path.posix.join(out, normalizePath(page.replace(/^homepage\//, "")));
+      expect(built.written).toEqual([chunk, `${out}/index.html`]);
+      expect(built.exitCode).toBe(0);
+    }
+
+    test.concurrent.each([
+      [[], "project/dist"],
+      [["--outdir="], "project/dist"],
+      [["--outdir", "./dist"], "project/dist"],
+      [["--outdir", "o2"], "project/o2"],
+      [["--outdir=o2"], "project/o2"],
+      [["--outdir", "./o2/"], "project/o2"],
+      [["--outdir", "o2/deep/er"], "project/o2/deep/er"],
+      [["--outdir", "é 日本"], "project/é 日本"],
+      [["--outdir", "../sibling"], "sibling"],
+      [["--outdir", "<root>/absolute"], "absolute"],
+    ])("%j writes the chunk and the page into %s", async (flags, out) => {
+      using dir = tempDir("bake-production-outdir", project);
+      const root = String(dir);
+      await expectSite(root, out, await run(root, app(...flags.map(flag => flag.replace("<root>", root)))));
+    });
+
+    test.concurrent("an older dist stays as it is when another folder is named", async () => {
+      const files = { ...project, "project/dist/index.html": "an older page" };
+      using dir = tempDir("bake-production-outdir-older", files);
+      const root = String(dir);
+      await expectSite(root, "project/o2", await run(root, app("--outdir", "o2"), files));
+      expect(await Bun.file(path.join(root, "project/dist/index.html")).text()).toBe("an older page");
+    });
+
+    // The chunk writer found the folder from the working directory of the moment, and the page writer from the
+    // one at start. The sources are only in the directory that the config changes to.
+    test.concurrent.each([
+      [[], "project/dist"],
+      [["--outdir", "o2"], "project/o2"],
+    ])("%j names a folder in the working directory at start when the config changes it", async (flags, out) => {
+      const files = {
+        "project/app.ts": `process.chdir(import.meta.dir + "/site");\n` + project["project/app.ts"],
+        "project/site/server.ts": project["project/server.ts"],
+        "project/site/client.ts": project["project/client.ts"],
+        "project/site/routes/index.ts": project["project/routes/index.ts"],
+      };
+      using dir = tempDir("bake-production-outdir-chdir", files);
+      const root = String(dir);
+      await expectSite(root, out, await run(root, app(...flags), files));
+    });
+
+    test.concurrent.skipIf(isWindows)("a `..` after a symlink names one folder for both writers", async () => {
+      const files = { ...project, "real/inner/keep": "" };
+      using dir = tempDir("bake-production-outdir-symlink", files);
+      const root = String(dir);
+      symlinkSync(path.join(root, "real/inner"), path.join(root, "project/link"));
+      await expectSite(root, "project/out", await run(root, app("--outdir", "link/../out"), files));
+    });
+
+    // The chunk of the bundler's helpers has a write of its own.
+    test.concurrent("the runtime chunk goes into the named folder", async () => {
+      const files = {
+        ...project,
+        "project/dep.cjs": `module.exports = "homepage";`,
+        "project/client.ts": `import dep from "./dep.cjs";\nconsole.log("client loaded", dep);`,
+        "project/routes/index.ts": `import dep from "../dep.cjs";\nexport default () => dep;`,
+      };
+      using dir = tempDir("bake-production-outdir-runtime", files);
+      const { exitCode, written } = await run(String(dir), app("--outdir", "o2"), files);
+      expect(written.map(file => file.replace(/[^/]+\.js$/, "<hash>.js"))).toEqual([
+        "project/o2/_bun/<hash>.js",
+        "project/o2/_bun/<hash>.js",
+        "project/o2/index.html",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    // Only canary and debug builds have the flag.
+    test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
+      "--debug-dump-server-files writes into the named folder",
+      async () => {
+        using dir = tempDir("bake-production-outdir-dump", project);
+        const { exitCode, written } = await run(String(dir), app("--debug-dump-server-files", "--outdir", "o2"));
+        expect(written.filter(file => !file.startsWith("project/o2/"))).toEqual([]);
+        expect(written.length).toBeGreaterThan(2);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("a file in the place of the folder fails the build", async () => {
+      const files = { ...project, "project/o2": "a file of mine" };
+      using dir = tempDir("bake-production-outdir-file", files);
+      const root = String(dir);
+      const { stderr, exitCode, written } = await run(root, app("--outdir", "o2"), files);
+      expect(stderr).toMatch(/could not open output directory ".*o2"/);
+      expect(written).toEqual([]);
+      expect(await Bun.file(path.join(root, "project/o2")).text()).toBe("a file of mine");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a build that fails before it writes makes no folder", async () => {
+      const files = { ...project, "project/routes/index.ts": `export default () => "homepage" +;` };
+      using dir = tempDir("bake-production-outdir-error", files);
+      const root = String(dir);
+      const { stderr, exitCode, written } = await run(root, app("--outdir", "o2"), files);
+      expect(stderr).toContain("error: Unexpected ;");
+      expect({ written, folder: existsSync(path.join(root, "project/o2")) }).toEqual({ written: [], folder: false });
+      expect(exitCode).toBe(1);
+    });
+
+    // A Windows command line is shorter than a path buffer.
+    test.concurrent.skipIf(isWindows)("a name that makes the path too long fails the build", async () => {
+      using dir = tempDir("bake-production-outdir-long", project);
+      const name = Buffer.alloc(5000, "x").toString();
+      const { stderr, exitCode, signalCode, written } = await run(String(dir), app("--outdir", name));
+      expect(stderr).toContain(`error: the path of the output directory "${name}" is too long`);
+      expect({ written, signalCode }).toEqual({ written: [], signalCode: null });
+      expect(exitCode).toBe(1);
+    });
+
+    // The page writer takes the folder as a JavaScript string, so the two writers cannot agree on such a name.
+    // The shell makes the byte, because an argument from JavaScript is a string too.
+    test.concurrent.skipIf(isWindows)("a name that is not valid UTF-8 fails the build", async () => {
+      using dir = tempDir("bake-production-outdir-bytes", project);
+      const script = `exec "$0" build --app ./app.ts --outdir "$(printf 'o\\377')"`;
+      const { stderr, exitCode, written } = await run(String(dir), ["sh", "-c", script, bunExe()]);
+      expect(stderr).toContain("is not valid UTF-8");
+      expect(written).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
   });
 });

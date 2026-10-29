@@ -104,6 +104,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     // Note: reshaped for borrowck — clone the cwd slice so the PathBuffer
     // borrow doesn't span the rest of the function (the buffer is never reused).
     let cwd: Box<[u8]> = Box::from(cwd);
+    let root_dir_path = output_root(&cwd, &ctx.bundler_options.outdir);
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
@@ -220,7 +221,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    match build_with_vm(ctx, &cwd, &mut pt) {
+    match build_with_vm(ctx, &cwd, &root_dir_path, &mut pt) {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
             // SAFETY: vm.global is live for VM lifetime.
@@ -242,6 +243,30 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         Err(e) => return Err(e),
     }
     Ok(())
+}
+
+/// Absolute. The one directory both writers use: `--outdir` or `dist`, in the cwd at start.
+fn output_root(cwd: &[u8], outdir: &[u8]) -> Box<[u8]> {
+    let outdir: &[u8] = if outdir.is_empty() { b"dist" } else { outdir };
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let Some(root) =
+        resolve_path::join_abs_string_buf_checked::<platform::Auto>(cwd, &mut buf.0, &[outdir])
+    else {
+        bun_core::err_generic!(
+            "the path of the output directory {} is too long",
+            bun_core::fmt::quote(outdir)
+        );
+        Global::crash();
+    };
+    // The pages are written from JavaScript, where a path is a string.
+    if !strings::is_valid_utf8(root) {
+        bun_core::err_generic!(
+            "the output directory {} is not valid UTF-8",
+            bun_core::fmt::quote(root)
+        );
+        Global::crash();
+    }
+    Box::from(root)
 }
 
 /// Ported inline from `bun.bun_js.failWithBuildError` to avoid the
@@ -284,7 +309,12 @@ fn write_sourcemap_to_disk(
     Ok(())
 }
 
-fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
+fn build_with_vm(
+    ctx: Context,
+    cwd: &[u8],
+    root_dir_path: &[u8],
+    pt: &mut PerThread,
+) -> crate::Result<()> {
     // SAFETY: `pt.vm` is the live per-thread VM set in `build_command`;
     // exclusive access on this thread for the duration of the call.
     let vm = unsafe { &mut *pt.vm.as_ptr() };
@@ -528,12 +558,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // trailing slash
     let public_path: &[u8] = b"/";
 
-    let mut root_dir_buf = bun_paths::path_buffer_pool::get();
-    let root_dir_path =
-        resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
-    // Note: reshaped for borrowck — copy out so root_dir_buf can drop.
-    let root_dir_path: Box<[u8]> = Box::from(root_dir_path);
-
     // Note: borrowck — `framework` is `&mut options.framework`; reborrow
     // through it instead of `options.framework` to avoid stacking borrows.
     let mut router_types: Vec<router::Type> =
@@ -645,7 +669,17 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     Output::flush();
 
     // mkdir -p + open.
-    let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
+    let root_dir = match bun_sys::Dir::cwd().make_open_path(root_dir_path, Default::default()) {
+        Ok(dir) => dir,
+        Err(err) => {
+            Output::err(
+                err,
+                "could not open output directory {}",
+                (bun_core::fmt::quote(root_dir_path),),
+            );
+            Global::crash();
+        }
+    };
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 
@@ -1143,7 +1177,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
-            &StringView::from_bytes(&root_dir_path),
+            &StringView::from_bytes(root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,

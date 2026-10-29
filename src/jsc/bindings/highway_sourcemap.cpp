@@ -846,8 +846,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             // The LAST sextet of a VLQ has cont==0, so a VLQ whose final
             // byte still has cont set is truncated by the delimiter.
             // And seg_len > 10 means at least one VLQ is > 2 chars for
-            // field_count 5 (or > 7 chars for field_count 1, more than
-            // DecodeVlqSextets reads); hand both to scalar.
+            // field_count 5 (or > 7 chars for field_count 1); hand both to scalar.
             if (HWY_UNLIKELY(((cont >> (seg_len - 1)) & 1) || seg_len > 10))
                 goto bail;
             const uint64_t seg_cont = cont & ((uint64_t { 1 } << seg_len) - 1);
@@ -900,9 +899,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                     d_name = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
             } else if (field_count == 1) {
                 // 1-field segments don't emit a row (scalar skips them),
-                // only gen-col moves. A VLQ of more than 7 sextets goes to
-                // the scalar decoder, which has no limit on the digit
-                // count; that keeps DecodeVlqSextets' shift <= 30.
+                // only gen-col moves. Scalar takes > 7 sextets: DecodeVlqSextets shifts <= 30.
                 if (HWY_UNLIKELY(seg_len > 7))
                     goto bail;
                 size_t q = p;

@@ -314,22 +314,19 @@ pub mod vlq {
         bytes
     };
 
-    // Shared body for `decode` / `decode_assume_valid` (which differ by two
-    // asserts and the `decode_long` tail); const-generic `ASSERT_VALID` is
-    // const-folded so codegen matches hand-duplicated bodies.
+    // Shared body of `decode` and `decode_assume_valid`; `ASSERT_VALID` is const-folded.
     #[inline(always)]
     fn decode_impl<const ASSERT_VALID: bool>(encoded: &[u8], start: usize) -> VLQResult {
         let digits = &encoded[start..];
         let mut vlq: u32 = 0;
-        // `start` unchanged makes callers fail the mapping. Keep it one value: a literal at
-        // each `return` makes every call site test `start` again after each field.
+        // Keep one value: a literal at each `return` makes call sites re-test `start` per field.
         let no_progress = VLQResult { start, value: 0 };
 
         // Unrolled by hand: a loop is only unrolled where the optimizer chooses to.
         macro_rules! digit {
             ($i:literal) => {
                 if digits.len() <= $i {
-                    // Empty, or the input ends mid-VLQ.
+                    // Empty, or the input ends mid-VLQ. `start` unchanged makes callers fail.
                     return no_progress;
                 }
                 if ASSERT_VALID {
@@ -369,23 +366,21 @@ pub mod vlq {
         no_progress
     }
 
-    /// A VLQ of more than 8 digits. The digit count has no limit, the value must fit in 32 bits:
-    /// https://tc39.es/ecma426/#sec-VLQUnsignedValue
-    /// Node wraps a larger value and reads a byte that is not base64 as a terminal digit:
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map.js#L331-L357
-    /// Both fail here, as in the spec.
+    /// A VLQ of more than 8 digits: any number of digits, but the value has to fit in 32 bits.
     #[cold]
     #[inline(never)]
     fn decode_long(encoded: &[u8], start: usize) -> VLQResult {
         let mut vlq: u64 = 0;
         for (i, &byte) in encoded[start..].iter().enumerate() {
             let index = BASE64_LUT[(byte & 0x7f) as usize] as u64;
+            // Not base64. Node reads it as a terminal digit: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map.js#L331-L357
             if byte > U7_MAX || index == U7_MAX as u64 {
                 break;
             }
 
             // From the 8th digit on, every payload bit is past bit 31.
             vlq |= (index & 31) << (5 * i).min(32);
+            // Over 32 bits: https://tc39.es/ecma426/#sec-VLQUnsignedValue throws, Node wraps.
             if vlq > u32::MAX as u64 {
                 break;
             }
@@ -400,8 +395,7 @@ pub mod vlq {
         VLQResult { start, value: 0 }
     }
 
-    /// Minus zero is 0, as in esbuild. ECMA-426 and Node make it -2^31:
-    /// https://tc39.es/ecma426/#sec-VLQSignedValue
+    /// Minus zero is 0 as in esbuild, not -2^31 as in https://tc39.es/ecma426/#sec-VLQSignedValue
     #[inline(always)]
     fn from_sign_magnitude(vlq: u32) -> i32 {
         if (vlq & 1) == 0 {
@@ -444,8 +438,7 @@ pub mod vlq {
             assert_eq!(decode(encoded.slice(), 0).value, 0);
         }
 
-        /// `value` written with `digits` digits: the digits of `VLQ::encode`,
-        /// then zero digits that have the continuation bit (`g`), then `A`.
+        /// `value` in `digits` digits: those of `VLQ::encode`, then `g` padding, then `A`.
         fn padded(value: i32, digits: usize) -> Vec<u8> {
             let mut out = VLQ::encode(value).slice().to_vec();
             let last = out.last_mut().unwrap();

@@ -6079,7 +6079,7 @@ node:tty.WriteStream.prototype cursorTo("a", 1)
 node:tty.WriteStream.prototype getColorDepth()
   number <- every receiver
 node:tty.WriteStream.prototype getColorDepth("a", 1)
-  throws TypeError: "a" is not an Object. <- every receiver
+  number <- every receiver
 node:tty.WriteStream.prototype getWindowSize()
   object Array <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined

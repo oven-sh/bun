@@ -434,6 +434,12 @@ mod tests {
             assert_eq!(decoder.table_size(), 36);
             assert_eq!(decode(&mut decoder, &hex(over_it)), Err(Error::Invalid));
         }
+        // Under any limit once they are cut to 31 bits or taken for negative.
+        for capacity in [1 << 31, (1 << 31) + 100, u32::MAX] {
+            let mut block = Vec::new();
+            integer::encode(&mut block, 0x20, 5, capacity);
+            assert_eq!(decode(&mut Decoder::new(), &block), Err(Error::Invalid));
+        }
     }
 
     #[test]
@@ -1537,7 +1543,8 @@ mod tests {
                 // One entry, which an index that wraps around or is cut short would find.
                 let mut block = hex("4003782d610131");
                 integer::encode(&mut block, flags, prefix_bits, index);
-                block.extend(hex(if flags == 0x80 { "" } else { "0161" }));
+                // A value and two fields, or a name and a value after an index that counts as 0.
+                block.extend(hex(if flags == 0x80 { "" } else { "0161 8187" }));
                 let decoded = decode(&mut Decoder::new(), &block);
                 assert_eq!(decoded, Err(Error::Invalid), "{index} {flags}");
             }
@@ -1554,7 +1561,8 @@ mod tests {
                 for before in ["00", "000161", "41"] {
                     let (mut decoder, mut block) = (Decoder::new(), hex(before));
                     integer::encode(&mut block, huffman, 7, len);
-                    block.push(0x1f);
+                    // A string of one byte, Huffman coded or not, and a field after a string of none.
+                    block.push(0x87);
                     assert_eq!(decode(&mut decoder, &block), Err(Error::Invalid));
                     assert!(decoder.heap_size() < 4096, "{len}");
                 }

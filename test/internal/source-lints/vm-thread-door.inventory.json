@@ -167,11 +167,6 @@
       "InitialStatTask"
     ]
   },
-  "src/runtime/node/node_process.rs": {
-    "unsafe impl Sync": [
-      "CStrPtr"
-    ]
-  },
   "src/runtime/node/node_zlib_binding.rs": {
     "WorkPool::schedule*": 1
   },

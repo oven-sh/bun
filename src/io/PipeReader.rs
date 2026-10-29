@@ -1296,11 +1296,8 @@ impl WindowsBufferedReader {
         self.start_reading()
     }
 
-    /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer; ownership
-    /// transfers to `self.source` (later freed via `close_and_destroy`).
-    pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
-        // SAFETY: caller contract — Box-allocated, ownership transfers.
-        self.set_source(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+    pub fn start_with_pipe(&mut self, pipe: Box<uv::Pipe>) -> sys::Result<()> {
+        self.set_source(Source::Pipe(pipe));
         self.start_with_current_pipe()
     }
 

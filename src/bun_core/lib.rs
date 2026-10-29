@@ -215,13 +215,6 @@ pub mod os {
     // borrows while a writer holds the swapped-out `&mut`.
     static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
 
-    /// Swap in a new envp slice; returns the previous (ptr, len) pair.
-    /// SAFETY: single-threaded startup only.
-    pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
-        // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
-        // under rust_2024_compatibility, and we never need a borrow here.
-        unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
-    }
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
     /// elements for the process lifetime (leaked allocation).
     pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
@@ -2649,7 +2642,7 @@ pub mod ffi {
         unsafe { core::mem::zeroed() }
     }
 
-    /// Pointer to the calling thread's libc `errno`.
+    /// Lends the calling thread's libc `errno` to `f`.
     ///
     /// Single audited cfg-ladder over the per-libc TLS accessor symbol so the
     /// tree has ONE place that knows glibc/musl spell it `__errno_location()`,
@@ -2658,14 +2651,8 @@ pub mod ffi {
     /// this — `bun_errno::posix::errno`, `bun_sys::last_errno`,
     /// `bun_sys::c::errno_location`, `bun_platform::linux` — instead of each
     /// re-deriving the same target_os→symbol mapping.
-    ///
-    /// Obtaining the pointer has no preconditions (the per-libc TLS accessor
-    /// takes no args and never returns null); the deref obligation lives at
-    /// the call site. The returned pointer is valid for the calling thread's
-    /// lifetime — `*mut c_int` is `!Send`, so the cross-thread hazard is
-    /// already type-enforced.
     #[inline(always)]
-    pub fn errno_ptr() -> *mut core::ffi::c_int {
+    pub fn with_errno<R>(f: impl FnOnce(&core::cell::Cell<core::ffi::c_int>) -> R) -> R {
         // Per-libc TLS errno accessor: no args, never null, no preconditions.
         // `safe fn` discharges the link-time proof so the body is a plain
         // call; only the per-platform symbol *name* varies, expressed via
@@ -2695,18 +2682,16 @@ pub mod ffi {
                 ),
                 link_name = "__errno_location"
             )]
-            safe fn errno_location() -> *mut core::ffi::c_int;
+            safe fn errno_location() -> &'static core::cell::Cell<core::ffi::c_int>;
         }
-        errno_location()
+        // Lent, not returned: a copy kept in a thread-local could be read by a destructor after libc freed the slot.
+        f(errno_location())
     }
 
     /// Read the calling thread's libc `errno`.
-    /// Safe wrapper over `*errno_ptr()`.
     #[inline(always)]
     pub fn errno() -> core::ffi::c_int {
-        // SAFETY: `errno_ptr()` returns a valid thread-local int* for the
-        // calling thread's lifetime on every supported target.
-        unsafe { *errno_ptr() }
+        with_errno(core::cell::Cell::get)
     }
 }
 

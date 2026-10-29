@@ -627,9 +627,6 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
 /// Intrusive ref-counted slot allocated from a `HiveArray::Fallback` pool.
 /// `pool` is a BACKREF (LIFETIMES.tsv class) — the pool strictly outlives
 /// every `HiveRef` it hands out, so a raw pointer is the honest mapping.
-///
-/// Prefer [`HiveRefHandle`] in new code; the raw `init`/`ref_`/`unref` family
-/// remains for FFI ingress points that hold the slot as a `*mut HiveRef`.
 #[repr(C)]
 pub struct HiveRef<T, const CAPACITY: usize> {
     pub(crate) ref_count: Cell<u32>,
@@ -638,52 +635,10 @@ pub struct HiveRef<T, const CAPACITY: usize> {
 }
 
 impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
-    /// Allocate a slot from `pool` (heap fallback when full) and initialize it
-    /// with `value` at refcount 1.
-    ///
-    /// # Safety
-    /// `pool` must be valid for the entire lifetime of the returned
-    /// `HiveRef` (i.e. until its `ref_count` drops to zero and it is `put`
-    /// back). Callers hold the pool in a long-lived owner (e.g. `VirtualMachine`).
-    pub(crate) unsafe fn init(value: T, pool: *const Fallback<Self, CAPACITY>) -> *mut Self {
-        // SAFETY: caller contract — `pool` is dereferenceable.
-        unsafe {
-            (*pool)
-                .get_init(HiveRef {
-                    ref_count: Cell::new(1),
-                    pool,
-                    value,
-                })
-                .as_ptr()
-        }
-    }
-
     #[inline]
     pub(crate) fn ref_(&self) -> &Self {
         self.ref_count.set(self.ref_count.get() + 1);
         self
-    }
-
-    /// Returns `None` when the count hit zero and the slot was returned to
-    /// the pool.
-    ///
-    /// # Safety
-    /// `this` must point at a live `HiveRef` produced by [`init`](Self::init).
-    /// On `None` the slot has been recycled — do not use `this` afterward.
-    pub(crate) unsafe fn unref(this: *mut Self) -> Option<*mut Self> {
-        // SAFETY: caller contract — `this` is a live `HiveRef` slot, and
-        // `(*this).pool` outlives every slot it hands out (`init` contract).
-        // `Fallback::put` runs `T::drop` (drops the whole `HiveRef` in place).
-        unsafe {
-            let ref_count = (*this).ref_count.get();
-            (*this).ref_count.set(ref_count - 1);
-            if ref_count == 1 {
-                let pool = (*this).pool;
-                (*pool).put(this);
-                return None;
-            }
-        }
-        Some(this)
     }
 }
 
@@ -710,10 +665,14 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
     /// `pool` must outlive every handle/raw pointer derived from it.
     pub unsafe fn new(value: T, pool: *const Fallback<HiveRef<T, CAP>, CAP>) -> Self {
         // SAFETY: caller contract — `pool` is dereferenceable + outlives the slot.
-        let ptr = unsafe { HiveRef::init(value, pool) };
-        Self {
-            ptr: NonNull::new(ptr).expect("Fallback::get_init returned null"),
-        }
+        let ptr = unsafe {
+            (*pool).get_init(HiveRef {
+                ref_count: Cell::new(1),
+                pool,
+                value,
+            })
+        };
+        Self { ptr }
     }
 
     /// Reclaim ownership of a `+1` ref previously leaked as a raw pointer
@@ -754,8 +713,18 @@ impl<T, const CAP: usize> Clone for HiveRefHandle<T, CAP> {
 impl<T, const CAP: usize> Drop for HiveRefHandle<T, CAP> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: type invariant — `ptr` is live; `unref` recycles on count==0.
-        unsafe { HiveRef::unref(self.ptr.as_ptr()) };
+        let this = self.ptr.as_ptr();
+        // SAFETY: type invariant — `this` is a live `HiveRef` slot, and
+        // `(*this).pool` outlives every slot it hands out (`new` contract).
+        // `Fallback::put` runs `T::drop` (drops the whole `HiveRef` in place).
+        unsafe {
+            let ref_count = (*this).ref_count.get();
+            (*this).ref_count.set(ref_count - 1);
+            if ref_count == 1 {
+                let pool = (*this).pool;
+                (*pool).put(this);
+            }
+        }
     }
 }
 
@@ -951,9 +920,9 @@ mod tests {
         let pool_ptr: *const Pool = &pool;
 
         // Inline allocation: ref to 2, unref to 1, unref to 0 → returned.
-        // SAFETY: `pool` outlives every HiveRef created from `pool_ptr`.
+        // SAFETY: `pool` outlives every handle created from `pool_ptr`.
         let r = unsafe {
-            HiveRef::init(
+            HiveRefHandle::new(
                 Tracked {
                     v: 1,
                     drops: &drops,
@@ -961,21 +930,19 @@ mod tests {
                 pool_ptr,
             )
         };
-        // SAFETY: `r` is live (ref_count == 1) until the final unref returns None.
-        unsafe {
-            assert_eq!((*r).ref_count.get(), 1);
-            (*r).ref_();
-            assert_eq!((*r).ref_count.get(), 2);
-            assert!(HiveRef::unref(r).is_some());
-            assert_eq!((*r).ref_count.get(), 1);
-            assert!(HiveRef::unref(r).is_none());
-        }
+        assert_eq!(r.slot().ref_count.get(), 1);
+        let r2 = r.clone();
+        assert_eq!(r.slot().ref_count.get(), 2);
+        drop(r2);
+        assert_eq!(r.slot().ref_count.get(), 1);
+        assert_eq!(drops.get(), 0);
+        drop(r);
         assert_eq!(drops.get(), 1);
 
         // Heap allocation: fill the hive first, then init another.
         // SAFETY: same pool contract.
         let inline0 = unsafe {
-            HiveRef::init(
+            HiveRefHandle::new(
                 Tracked {
                     v: 2,
                     drops: &drops,
@@ -984,7 +951,7 @@ mod tests {
             )
         };
         let inline1 = unsafe {
-            HiveRef::init(
+            HiveRefHandle::new(
                 Tracked {
                     v: 3,
                     drops: &drops,
@@ -993,7 +960,7 @@ mod tests {
             )
         };
         let heap = unsafe {
-            HiveRef::init(
+            HiveRefHandle::new(
                 Tracked {
                     v: 4,
                     drops: &drops,
@@ -1001,15 +968,14 @@ mod tests {
                 pool_ptr,
             )
         };
-        assert!(pool.hive.index_of(inline0).is_some());
-        assert!(pool.hive.index_of(inline1).is_some());
-        assert!(pool.hive.index_of(heap).is_none());
-        // SAFETY: all three are live.
-        unsafe {
-            assert!(HiveRef::unref(heap).is_none());
-            assert!(HiveRef::unref(inline1).is_none());
-            assert!(HiveRef::unref(inline0).is_none());
-        }
+        assert!(pool.hive.index_of(inline0.as_ptr()).is_some());
+        assert!(pool.hive.index_of(inline1.as_ptr()).is_some());
+        assert!(pool.hive.index_of(heap.as_ptr()).is_none());
+        drop(heap);
+        assert_eq!(drops.get(), 2);
+        drop(inline1);
+        assert_eq!(drops.get(), 3);
+        drop(inline0);
         assert_eq!(drops.get(), 4);
     }
 

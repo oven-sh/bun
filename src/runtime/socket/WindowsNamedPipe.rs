@@ -23,7 +23,6 @@ use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 
 use bun_boringssl_sys as boringssl;
-use bun_collections::ByteVecExt;
 use bun_core::timespec;
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{StreamingWriter, WriteStatus};
@@ -222,7 +221,7 @@ impl WindowsNamedPipe {
         let _keep_alive = self.keep_alive();
         // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
         self.incoming
-            .with_mut(|incoming| unsafe { incoming.uv_commit(nread) });
+            .with_mut(|incoming| unsafe { bun_core::vec::commit_spare(incoming, nread) });
 
         self.reset_timeout();
 
@@ -808,12 +807,10 @@ impl WindowsNamedPipe {
         self.update_flags(|f| f.insert(Flags::PIPE_ADOPTED));
         let start_pipe_result = self.writer.with_mut(|w| {
             w.set_parent(this);
-            // SAFETY: `start_with_pipe`'s contract is "Box-allocated pointer;
-            // ownership transfers to `self.source`". `pipe_nn` is the
-            // `NonNull` recorded from the `Box<uv::Pipe>` leaked in `from()`
-            // and not yet adopted (asserted by `start_with_pipe`'s
-            // `debug_assert!(source.is_none())`).
-            unsafe { w.start_with_pipe(pipe_nn.as_ptr()) }
+            // SAFETY: `pipe_nn` is the `NonNull` recorded from the
+            // `Box<uv::Pipe>` leaked in `from()` and not yet adopted (asserted
+            // by `start_with_pipe`'s `debug_assert!(source.is_none())`).
+            w.start_with_pipe(unsafe { bun_core::heap::take(pipe_nn.as_ptr()) })
         });
         if let bun_sys::Result::Err(err) = start_pipe_result {
             self.on_error(err);
@@ -1134,7 +1131,7 @@ impl uv::StreamReader for WindowsNamedPipe {
         // `on_read` commits the byte count.
         let incoming = unsafe { &mut *this.incoming.as_ptr() };
         // SAFETY: libuv writes into this region before `on_read` commits it.
-        let spare = unsafe { incoming.uv_alloc_spare_u8(suggested_size) };
+        let spare = unsafe { bun_core::vec::reserve_spare_bytes(incoming, suggested_size) };
         &mut spare[..suggested_size]
     }
     #[inline]

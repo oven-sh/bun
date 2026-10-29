@@ -175,10 +175,7 @@ impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
         self.disconnect();
         // `free_sensitive`: the connection options carry the password.
-        for b in self.options_buf.iter_mut() {
-            // SAFETY: plain byte write; volatile so it is not elided.
-            unsafe { core::ptr::write_volatile(b, 0) };
-        }
+        bun_alloc::secure_zero(&mut self.options_buf);
     }
 }
 

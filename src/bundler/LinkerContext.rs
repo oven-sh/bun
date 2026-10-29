@@ -151,8 +151,6 @@ pub struct LinkerContext<'a> {
 // `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
 // lifetimes strictly outlive every parallel section, and per-thread writes go
 // to disjoint SoA slots (see `compute_line_offsets`).
-unsafe impl<'a> Send for LinkerContext<'a> {}
-// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
 
 impl<'a> LinkerContext<'a> {

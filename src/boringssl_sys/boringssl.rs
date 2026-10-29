@@ -508,11 +508,8 @@ impl X509 {
 
     /// Iterates this certificate's Subject Common Names in order.
     pub fn common_names(&mut self) -> CommonNames<'_> {
-        // SAFETY: `self` is a live certificate; a null subject yields an
-        // empty iterator.
-        let subject = unsafe { X509_get_subject_name(self) };
         CommonNames {
-            subject,
+            subject: X509_get_subject_name(self),
             last: -1,
             _cert: core::marker::PhantomData,
         }
@@ -629,29 +626,21 @@ impl SSL {
 
 impl Drop for GeneralNames {
     fn drop(&mut self) {
-        // SAFETY: `sk_pop_free_ex` invokes the callback once per element, so it
-        // gets `GENERAL_NAME_free` (per element), not a stack free.
+        // SAFETY: we own the stack. `sk_pop_free_ex` only passes its third argument on
+        // to `call_general_name_free`, once per element, and that ignores it.
         unsafe {
             sk_pop_free_ex(
                 self.0.as_ptr().cast::<OPENSSL_STACK>(),
                 Some(call_general_name_free),
-                Some(core::mem::transmute::<
-                    unsafe extern "C" fn(*mut GENERAL_NAME),
-                    unsafe extern "C" fn(*mut c_void),
-                >(GENERAL_NAME_free)),
+                None,
             )
         }
     }
 }
 
-/// Restores the element type erased through `OPENSSL_sk_free_func`.
-unsafe extern "C" fn call_general_name_free(free_func: OPENSSL_sk_free_func, ptr: *mut c_void) {
-    // SAFETY: `free_func` is `GENERAL_NAME_free` erased in `Drop` above; both
-    // sides are `extern "C" fn(*mut _)`, so the round-trip is ABI-sound.
-    let f: unsafe extern "C" fn(*mut GENERAL_NAME) =
-        unsafe { core::mem::transmute(free_func.expect("non-null free_func")) };
+unsafe extern "C" fn call_general_name_free(_: OPENSSL_sk_free_func, ptr: *mut c_void) {
     // SAFETY: `ptr` is an element `sk_pop_free_ex` is draining from the stack.
-    unsafe { f(ptr.cast::<GENERAL_NAME>()) }
+    unsafe { GENERAL_NAME_free(ptr.cast::<GENERAL_NAME>()) }
 }
 
 unsafe extern "C" {
@@ -799,7 +788,7 @@ unsafe extern "C" {
         out_pkey_nid: *mut c_int,
     ) -> c_int;
     fn EVP_get_digestbynid(nid: c_int) -> *const EVP_MD;
-    pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
+    pub safe fn X509_get_subject_name(x509: &X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;
     fn X509_NAME_get_index_by_NID(name: *const X509_NAME, nid: c_int, lastpos: c_int) -> c_int;

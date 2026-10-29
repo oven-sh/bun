@@ -56,6 +56,7 @@ pub(crate) fn convert_stmts_for_chunk(
     ast: &JSAst<'_>,
 ) -> Result<(), crate::Error> {
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
+    let importer_flags = c.graph.meta.items_flags()[source_index as usize];
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
         || c.graph.files.items_entry_point_kind()[source_index as usize] != EntryPoint::Kind::None;
 
@@ -103,6 +104,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         s.import_record_index,
                         bump,
                         ast,
+                        importer_flags,
                     )? {
                         continue 'stmt_loop;
                     }
@@ -123,6 +125,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             s.import_record_index,
                             bump,
                             ast,
+                            importer_flags,
                         )? {
                             continue 'stmt_loop;
                         }
@@ -261,19 +264,31 @@ pub(crate) fn convert_stmts_for_chunk(
                                     },
                                     stmt.loc,
                                 ))?;
+                        }
 
-                            // Make sure these don't end up in the wrapper closure
-                            if should_extract_esm_stmts_for_wrap {
-                                stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
-                                continue 'stmt_loop;
-                            }
+                        // Make sure these don't end up in the wrapper closure
+                        if should_extract_esm_stmts_for_wrap {
+                            stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
+                            continue 'stmt_loop;
                         }
                     } else {
                         if record.source_index.is_valid() {
                             let other_source_index = record.source_index.get() as usize;
                             let flag = c.graph.meta.items_flags()[other_source_index];
                             let wrapper_ref = c.graph.ast.items_wrapper_ref()[other_source_index];
-                            if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
+                            if flag.is_tla_module {
+                                stmts.inside_wrapper_prefix.append_non_dependency(
+                                    super::tla_plan::visit_stmt(
+                                        c,
+                                        importer_flags,
+                                        wrapper_ref,
+                                        stmt.loc,
+                                    ),
+                                )?;
+                            } else if flag.wrap == WrapKind::Esm
+                                && wrapper_ref.is_valid()
+                                && !flag.is_tla_node
+                            {
                                 stmts
                                     .inside_wrapper_prefix
                                     .append_non_dependency(Stmt::alloc(
@@ -406,6 +421,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         s.import_record_index,
                         bump,
                         ast,
+                        importer_flags,
                     )? {
                         continue 'stmt_loop;
                     }

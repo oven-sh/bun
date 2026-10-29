@@ -545,6 +545,9 @@ pub(crate) fn compute_chunks<'a>(
 
     // Determine the order of JS files (and parts) within the chunk ahead of time
     find_all_imported_parts_in_js_order(this, chunks)?;
+    for chunk in chunks.iter_mut() {
+        super::tla_plan::compute_tla_plan(this, chunk);
+    }
 
     // Handle empty chunks case
     if chunks.is_empty() {

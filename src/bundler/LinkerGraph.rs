@@ -150,6 +150,15 @@ pub mod js_meta {
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
+        /// `wrap` is `Esm`, but nothing calls the wrapper: it prints as `__tlaNode(...)` where the file would
+        /// have run, and its dependencies stay unwrapped. See `linker_context/tlaPlan.rs`.
+        pub(crate) is_tla_node: bool,
+        /// `wrap` is `Esm` because `import()` reaches the file, and the file reaches a top-level await: the
+        /// wrapper is a `__tlaModule(...)` record, not a function.
+        pub(crate) is_tla_module: bool,
+        /// An entry point that waits for `__tlaNode`s and stays unwrapped: `await __tlaMain([...])` is printed between
+        /// what its `import` statements turn into and its body.
+        pub(crate) is_tla_main: bool,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;

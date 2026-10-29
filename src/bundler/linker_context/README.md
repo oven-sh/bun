@@ -769,6 +769,16 @@ The renamed symbols are then used during final code generation to produce output
 - Collects the live parts of each run into part ranges. The runtime and the wrapped files go first in the chunk, then the namespace objects: a namespace object exists before any file runs
 - Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 
+#### `tlaPlan.rs`
+
+**Purpose**: Makes the modules of a chunk that have or reach a top-level await run in the order, and in the promise jobs, of ECMA-262 (ESM output without code splitting). The design is in [`top-level-await.md`](./top-level-await.md).
+
+**Key functions**:
+
+- `mark_tla_nodes` (from `scanImportsAndExports()`, before the wrappers are made) picks the shape of each such file: `__tlaNode` where only `import` statements reach it, `__tlaModule` where an `import()` does, unwrapped for an entry point that can stay on the chunk's top level
+- `compute_tla_plan` (from `computeChunks()`, once the order of the files is known) does what `InnerModuleEvaluation` would: what each `__tlaNode` waits for, and the import cycles
+- `src/runtime.tla.js` has what is left for run time
+
 #### `findImportedCSSFilesInJSOrder.rs`
 
 **Purpose**: Determines CSS file ordering for JavaScript chunks that import CSS.

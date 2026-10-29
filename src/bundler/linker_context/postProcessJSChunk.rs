@@ -332,6 +332,11 @@ pub(crate) fn post_process_js_chunk(
                 break;
             }
         }
+        // `await __tlaWait(init_foo)` / `await __tlaEvaluate(init_foo)`
+        if chunk.is_entry_point() {
+            let entry = wraps[chunk.entry_point.source_index() as usize];
+            mi.flags.has_tla |= entry.is_tla_node || entry.is_tla_module || entry.is_tla_main;
+        }
     }
 
     // Generate the exports for the entry point, if there are any.
@@ -854,7 +859,13 @@ pub(crate) fn generate_entry_point_tail_js(
                     ));
                 }
                 _ => {
-                    if flags.wrap == crate::WrapKind::Esm && ast.wrapper_ref.is_valid() {
+                    if flags.is_tla_node || flags.is_tla_module {
+                        stmts.push(super::tla_plan::entry_point_tail_stmt(
+                            c,
+                            flags,
+                            ast.wrapper_ref,
+                        ));
+                    } else if flags.wrap == crate::WrapKind::Esm && ast.wrapper_ref.is_valid() {
                         if flags.is_async_or_has_async_dependency {
                             // "await init_foo();"
                             stmts.push(Stmt::alloc(

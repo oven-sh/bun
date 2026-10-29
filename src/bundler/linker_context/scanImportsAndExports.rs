@@ -501,6 +501,8 @@ pub(crate) fn scan_imports_and_exports(
             }
         }
 
+        super::tla_plan::mark_tla_nodes(this, &reachable);
+
         // Step 3: Resolve "export * from" statements. This must be done after we
         // discover all modules that can have dynamic exports because export stars
         // are ignored for those modules.
@@ -1220,7 +1222,25 @@ pub(crate) fn scan_imports_and_exports(
                     let other_export_kind = col_ref!(exports_kind)[other_id];
                     let other_source_index = other_id as u32;
 
-                    if other_flags.wrap != WrapKind::None {
+                    if other_flags.is_tla_module && kind != ImportKind::Require {
+                        // `__tlaImport(init_foo)`, `__tlaVisit(init_foo)`, `__tlaTop(init_foo)`
+                        this.graph.generate_symbol_import_and_use(
+                            source_index,
+                            part_index as u32,
+                            if kind == ImportKind::Dynamic {
+                                this.runtime_function(b"__tlaImport")
+                            } else if flag.is_tla_module {
+                                this.runtime_function(b"__tlaVisit")
+                            } else {
+                                this.runtime_function(b"__tlaTop")
+                            },
+                            1,
+                            Index::RUNTIME,
+                        )?;
+                    }
+
+                    // Nothing calls a `__tlaNode`, so an import that is not used does not keep the file.
+                    if other_flags.wrap != WrapKind::None && !other_flags.is_tla_node {
                         // Depend on the automatically-generated require wrapper symbol
                         let wrapper_ref = col_ref!(wrapper_refs)[other_id];
                         if wrapper_ref.is_valid() {

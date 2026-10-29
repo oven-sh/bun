@@ -914,8 +914,18 @@ impl EntryWalk {
             }
             // The parts of a file run when the walk places it, or when its loader loads it into another chunk.
             let runs = slot.is_some() || loads(source_index, loader);
-            // Wrapped files can't be split because they are all inside the wrapper
-            let splits = slot.is_some() && flags[source_index as usize].wrap == Wrap::None;
+            // Wrapped files can't be split because they are all inside the wrapper. In a `__tlaNode` only what
+            // is behind the `import` statements is.
+            let splits = slot.is_some()
+                && (flags[source_index as usize].wrap == Wrap::None
+                    || flags[source_index as usize].is_tla_node);
+            let last_split = if flags[source_index as usize].is_tla_node
+                || flags[source_index as usize].is_tla_main
+            {
+                super::tla_plan::first_body_part(c, source_index)
+            } else {
+                u32::MAX
+            };
             let mut begin = 0;
             let mark = stack.len();
 
@@ -952,6 +962,7 @@ impl EntryWalk {
                         return;
                     }
                 }
+                let part_index = part_index.min(last_split);
                 if let Some(slot) = slot
                     && splits
                     && part_index > begin
@@ -1053,12 +1064,23 @@ impl ChunkLayout<'_, '_> {
         let source_index = run.source_index;
         let parts = self.c.graph.ast.items_parts()[source_index as usize].as_slice();
         let leaves = run.end == u32::MAX;
+        let flags = self.c.graph.meta.items_flags()[source_index as usize];
+        // A `__tlaNode` prints where it would have run, and so does what its `import` statements turn into. Its last
+        // run has the wrapper, so that one stays in one range.
+        let is_one_range = leaves && (flags.is_tla_node || flags.is_tla_main);
         // Wrapped files can't be split because they are all inside the wrapper
-        let can_be_split =
-            self.c.graph.meta.items_flags()[source_index as usize].wrap == Wrap::None;
+        let can_be_split = flags.wrap == Wrap::None || flags.is_tla_node;
         if can_be_split {
             let parts_live = &self.c.graph.parts_live[source_index as usize];
-            let end = if leaves { parts.len() as u32 } else { run.end };
+            const _: () = assert!(bun_ast::NAMESPACE_EXPORT_PART_INDEX == 0);
+            let end = if is_one_range {
+                // Only the namespace object, if this is also the first run.
+                if run.begin == 0 { 1 } else { run.begin }
+            } else if leaves {
+                parts.len() as u32
+            } else {
+                run.end
+            };
             for part_index in run.begin..end {
                 let is_namespace_export = part_index == bun_ast::NAMESPACE_EXPORT_PART_INDEX;
                 if parts_live.is_set(part_index as usize)
@@ -1118,6 +1140,14 @@ impl ChunkLayout<'_, '_> {
         }
 
         self.files.push(source_index);
+
+        if is_one_range {
+            self.part_ranges.push(PartRange {
+                source_index: Index::init(source_index),
+                part_index_begin: run.begin.max(1),
+                part_index_end: parts.len() as u32,
+            });
+        }
 
         // CommonJS files are all-or-nothing so all parts must be contiguous
         if !can_be_split {

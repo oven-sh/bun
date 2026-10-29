@@ -571,8 +571,8 @@ pub mod parse_worker {
     use super::*;
 
     fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
-        // The runtime module is the shared `runtime.js` body plus a per-target
-        // `__require`/`__using` tail. Concatenating at compile time would embed
+        // The runtime module is the shared `runtime.js` body, the helpers that only
+        // bundles use (`runtime.tla.js`) and a per-target `__require`/`__using` tail. Concatenating at compile time would embed
         // four copies of the 13 KB body, so each variant is assembled once on
         // first use instead.
         #[derive(Clone, Copy)]
@@ -605,10 +605,16 @@ pub mod parse_worker {
                     RUNTIME_PRELOAD_BROWSER,
                 ),
             };
-            [include_str!("../runtime.js"), require, using, preload]
-                .concat()
-                .into_bytes()
-                .into_boxed_slice()
+            [
+                include_str!("../runtime.js"),
+                include_str!("../runtime.tla.js"),
+                require,
+                using,
+                preload,
+            ]
+            .concat()
+            .into_bytes()
+            .into_boxed_slice()
         });
 
         let parse_task = ParseTask {

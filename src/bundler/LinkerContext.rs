@@ -98,6 +98,8 @@ pub struct LinkerContext<'a> {
 
     /// We may need to refer to the "__promiseAll" runtime symbol
     pub(crate) promise_all_runtime_ref: Ref,
+    /// Some entry point `is_tla_main`, so every body with an `await` ends with `__tlaDone(init_foo)`.
+    pub(crate) has_tla_main: bool,
     /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
     pub(crate) preload_runtime_ref: Ref,
     pub(crate) chunks_runtime_ref: Ref,
@@ -165,6 +167,7 @@ impl<'a> LinkerContext<'a> {
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
             promise_all_runtime_ref: Ref::NONE,
+            has_tla_main: false,
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
@@ -507,11 +510,11 @@ impl<'a> LinkerContext<'a> {
             if let Some(s_import) = stmts[0].data.s_import() {
                 let record = &self.graph.ast.items_import_records()[source_index as usize]
                     [s_import.import_record_index as usize];
-                if record.source_index.is_valid()
-                    && self.graph.meta.items_flags()[record.source_index.get() as usize].wrap
-                        == WrapKind::None
-                {
-                    return false;
+                if record.source_index.is_valid() {
+                    let flags = self.graph.meta.items_flags()[record.source_index.get() as usize];
+                    if flags.wrap == WrapKind::None || flags.is_tla_node {
+                        return false;
+                    }
                 }
             }
         }
@@ -2232,6 +2235,7 @@ impl<'a> LinkerContext<'a> {
         import_record_index: u32,
         alloc: &Bump,
         ast: &JSAst<'_>,
+        importer_flags: crate::js_meta::Flags,
     ) -> Result<bool, BunError> {
         let record = &ast.import_records[import_record_index as usize];
         // Barrel optimization: deferred import records should be dropped
@@ -2330,7 +2334,19 @@ impl<'a> LinkerContext<'a> {
 
                 let wrapper_ref =
                     self.graph.ast.items_wrapper_ref()[record.source_index.get() as usize];
-                if wrapper_ref.is_empty() {
+                if wrapper_ref.is_empty() || other_flags.is_tla_node {
+                    return Ok(true);
+                }
+
+                if other_flags.is_tla_module {
+                    stmts.inside_wrapper_prefix.append_non_dependency(
+                        crate::linker_context::tla_plan::visit_stmt(
+                            self,
+                            importer_flags,
+                            wrapper_ref,
+                            loc,
+                        ),
+                    )?;
                     return Ok(true);
                 }
 
@@ -2343,7 +2359,18 @@ impl<'a> LinkerContext<'a> {
                     loc,
                 );
 
-                if other_flags.is_async_or_has_async_dependency {
+                if importer_flags.is_tla_module || importer_flags.is_tla_node {
+                    // In source order among the other `import` statements.
+                    stmts
+                        .inside_wrapper_prefix
+                        .append_non_dependency(Stmt::alloc(
+                            S::SExpr {
+                                value: init_call,
+                                ..Default::default()
+                            },
+                            loc,
+                        ))?;
+                } else if other_flags.is_async_or_has_async_dependency {
                     stmts
                         .inside_wrapper_prefix
                         .append_async_dependency(init_call, self.promise_all_runtime_ref)?;
@@ -2411,6 +2438,11 @@ impl<'a> LinkerContext<'a> {
 
             to_esm_ref,
             to_commonjs_ref,
+            tla_referrer_ref: if flags.is_tla_module {
+                ast.wrapper_ref
+            } else {
+                Ref::NONE
+            },
             module_preload_ref: if self.module_preload() {
                 self.preload_runtime_ref
             } else {
@@ -2774,6 +2806,11 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
                 Ref::NONE
             },
             is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
+            tla_import_ref: if flags.is_tla_module {
+                self.runtime_function(b"__tlaImport")
+            } else {
+                Ref::NONE
+            },
             wrapper_ref,
 
             was_unwrapped_require: was_unwrapped_require
@@ -3488,90 +3525,120 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
 
-                let needs_promise_all = async_import_count >= 2;
-
-                let esm_parts: &[u32] = if wrapper_ref.is_valid()
-                    && self.options.output_format != Format::InternalBakeDev
-                {
-                    self.top_level_symbols_to_parts_for_runtime(self.esm_runtime_ref)
+                // `var init_foo = __tlaNode(...)` / `__tlaModule(...)` take the place of `__esm(...)`. An entry point's
+                // chunk ends with `await __tlaWait(init_foo)` / `await __tlaEvaluate(init_foo)`.
+                let file_flags = self.graph.meta.items_flags()[source_index as usize];
+                let is_entry_point = self.graph.files.items_entry_point_kind()
+                    [source_index as usize]
+                    .is_entry_point();
+                let mut runtime_refs = [Ref::NONE; 3];
+                if file_flags.is_tla_node {
+                    runtime_refs[0] = self.runtime_function(b"__tlaNode");
+                    if is_entry_point {
+                        runtime_refs[1] = self.runtime_function(b"__tlaWait");
+                    }
+                    if self.has_tla_main
+                        && !self.parse_graph().ast.items_top_level_await_keyword()
+                            [source_index as usize]
+                            .is_empty()
+                    {
+                        runtime_refs[2] = self.runtime_function(b"__tlaDone");
+                    }
+                } else if file_flags.is_tla_module {
+                    runtime_refs[0] = self.runtime_function(b"__tlaModule");
+                    if is_entry_point {
+                        runtime_refs[1] = self.runtime_function(b"__tlaEvaluate");
+                    }
                 } else {
-                    &[]
-                };
-
-                let promise_all_parts: &[u32] = if needs_promise_all
-                    && wrapper_ref.is_valid()
-                    && self.options.output_format != Format::InternalBakeDev
-                {
-                    self.top_level_symbols_to_parts_for_runtime(self.promise_all_runtime_ref)
-                } else {
-                    &[]
-                };
-
-                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
-                let mut dependencies =
-                    DependencyList::init_capacity(esm_parts.len() + promise_all_parts.len());
-                for &part in esm_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
+                    runtime_refs[0] = self.esm_runtime_ref;
+                    // Only mark __promiseAll as used if we have multiple async dependencies
+                    if async_import_count >= 2 {
+                        runtime_refs[1] = self.promise_all_runtime_ref;
+                    }
                 }
-                for &part in promise_all_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
+                if !wrapper_ref.is_valid() || self.options.output_format == Format::InternalBakeDev
+                {
+                    runtime_refs = [Ref::NONE; 3];
                 }
 
                 let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
                     .put(wrapper_ref, SymbolUse::unscoped(1))
                     .expect("OOM");
-                let part_index = self
-                    .graph
-                    .add_part_to_file(
+                // a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
+                *wrapper_part_index = self.add_part_that_uses_runtime(
+                    source_index,
+                    &runtime_refs,
+                    Part {
+                        symbol_uses,
+                        declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
+                            ref_: wrapper_ref,
+                            is_top_level: true,
+                        }])
+                        .expect("unreachable"),
+                        ..Default::default()
+                    },
+                );
+            }
+            WrapKind::None => {
+                // `await __tlaMain([...]); __tlaResume();`
+                if self.graph.meta.items_flags()[source_index as usize].is_tla_main {
+                    *wrapper_part_index = self.add_part_that_uses_runtime(
                         source_index,
+                        &[
+                            self.runtime_function(b"__tlaMain"),
+                            self.runtime_function(b"__tlaResume"),
+                        ],
                         Part {
-                            symbol_uses,
-                            declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
-                                ref_: wrapper_ref,
-                                is_top_level: true,
-                            }])
-                            .expect("unreachable"),
-                            dependencies,
+                            can_be_removed_if_unused: false,
                             ..Default::default()
                         },
-                    )
-                    .expect("unreachable");
-                debug_assert!(part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX);
-                *wrapper_part_index = crate::Index::part(part_index);
-                if wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev {
-                    self.graph
-                        .generate_symbol_import_and_use(
-                            source_index,
-                            part_index,
-                            self.esm_runtime_ref,
-                            1,
-                            crate::Index::RUNTIME,
-                        )
-                        .expect("OOM");
-
-                    // Only mark __promiseAll as used if we have multiple async dependencies
-                    if needs_promise_all {
-                        self.graph
-                            .generate_symbol_import_and_use(
-                                source_index,
-                                part_index,
-                                self.promise_all_runtime_ref,
-                                1,
-                                crate::Index::RUNTIME,
-                            )
-                            .expect("OOM");
-                    }
+                    );
                 }
             }
-            WrapKind::None => {}
         }
+    }
+
+    /// Appends `part` to the file, with the valid ones of `runtime_refs` as symbols that it imports from the runtime.
+    fn add_part_that_uses_runtime(
+        &mut self,
+        source_index: crate::IndexInt,
+        runtime_refs: &[Ref],
+        mut part: Part,
+    ) -> crate::Index {
+        let mut dependencies = DependencyList::init_capacity(runtime_refs.len());
+        for &runtime_ref in runtime_refs
+            .iter()
+            .filter(|runtime_ref| runtime_ref.is_valid())
+        {
+            for &part_index in self.top_level_symbols_to_parts_for_runtime(runtime_ref) {
+                dependencies.push(Dependency {
+                    part_index,
+                    source_index: bun_ast::Index::RUNTIME,
+                });
+            }
+        }
+        part.dependencies = dependencies;
+        let part_index = self
+            .graph
+            .add_part_to_file(source_index, part)
+            .expect("unreachable");
+        debug_assert!(part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX);
+        for &runtime_ref in runtime_refs
+            .iter()
+            .filter(|runtime_ref| runtime_ref.is_valid())
+        {
+            self.graph
+                .generate_symbol_import_and_use(
+                    source_index,
+                    part_index,
+                    runtime_ref,
+                    1,
+                    crate::Index::RUNTIME,
+                )
+                .expect("OOM");
+        }
+        crate::Index::part(part_index)
     }
 
     /// Follows one step of an import chain: resolves what `tracker`'s import

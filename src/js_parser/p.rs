@@ -527,6 +527,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
+    /// The visit pass met an `await`, `for await` or `await using` outside of functions and of dead code.
+    pub(crate) has_live_top_level_await: bool,
     /// Visiting an export that `replace_exports` deletes. Its uses are not counted (the code is
     /// dead), but recorded in `used_by_deleted_exports`.
     pub(crate) in_deleted_export: bool,
@@ -1984,6 +1986,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn is_deoptimized_common_js(&self) -> bool {
         self.commonjs_named_exports_deoptimized && self.commonjs_named_exports.count() > 0
+    }
+
+    /// The visit pass is at an `await`, `for await` or `await using`.
+    pub(crate) fn note_await(&mut self) {
+        if self.fn_or_arrow_data_visit.is_outside_fn_or_arrow && !self.is_control_flow_dead {
+            self.has_live_top_level_await = true;
+        }
     }
 
     pub(crate) fn record_usage(&mut self, ref_: Ref) {
@@ -9366,7 +9375,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             uses_require_ref,
             commonjs_module_exports_assigned_deoptimized: self
                 .commonjs_module_exports_assigned_deoptimized,
-            top_level_await_keyword: self.top_level_await_keyword,
+            // In a bundle, a module whose every `await` was in dead code is an ordinary synchronous module.
+            top_level_await_keyword: if self.options.bundle && !self.has_live_top_level_await {
+                bun_ast::Range::NONE
+            } else {
+                self.top_level_await_keyword
+            },
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
@@ -9768,6 +9782,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
+            has_live_top_level_await: false,
             in_deleted_export: false,
             used_by_deleted_exports: Default::default(),
             track_scope_uses,

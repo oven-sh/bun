@@ -313,23 +313,7 @@ mod linux_impl {
             ts.nsec = <_>::try_from(timeout_ns % NS_PER_S).unwrap();
         }
 
-        // SAFETY: ptr.as_ptr() is a valid *const u32 for the duration of the call; the
-        // timespec pointer is either null or points at the stack local above.
-        let rc = unsafe {
-            linux::futex_4arg(
-                ptr.as_ptr().cast(),
-                linux::FutexOp {
-                    cmd: linux::FutexCmd::WAIT,
-                    private: true,
-                },
-                expect,
-                if timeout.is_some() {
-                    &raw const ts
-                } else {
-                    core::ptr::null()
-                },
-            )
-        };
+        let rc = linux::futex_wait(ptr, expect, timeout.is_some().then_some(&ts));
 
         match linux::E::init(rc) {
             linux::E::SUCCESS => Ok(()), // notified by `wake()`
@@ -357,18 +341,7 @@ mod linux_impl {
             Ok(v) => v as u32,
             Err(_) => i32::MAX as u32,
         };
-        // SAFETY: a private FUTEX_WAKE only keys on the address (`get_futex_key`); it
-        // need not be live (see `super::wake_raw`).
-        let rc = unsafe {
-            linux::futex_3arg(
-                ptr.cast(),
-                linux::FutexOp {
-                    cmd: linux::FutexCmd::WAKE,
-                    private: true,
-                },
-                val,
-            )
-        };
+        let rc = linux::futex_wake(ptr, val);
 
         match linux::E::init(rc) {
             linux::E::SUCCESS => {} // successful wake up

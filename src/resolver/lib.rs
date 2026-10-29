@@ -1000,7 +1000,7 @@ pub mod fs {
             dir_: &'static [u8],
             generation: Generation,
             handle: Fd,
-            iterator: &I,
+            iterator: &mut I,
         ) -> crate::CrateResult<DirEntry> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
@@ -1067,7 +1067,7 @@ pub mod fs {
             generation: Generation,
             store_fd: bool,
         ) -> crate::CrateResult<&mut EntriesOption> {
-            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, &())
+            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, &mut ())
         }
 
         // One of the learnings here
@@ -1084,7 +1084,7 @@ pub mod fs {
             maybe_handle: Option<Fd>,
             generation: Generation,
             store_fd: bool,
-            iterator: &I,
+            iterator: &mut I,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
@@ -1526,7 +1526,7 @@ pub mod fs {
                     });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = unsafe { (*e_ptr).complete }.then(|| unsafe { &mut (*e_ptr).data });
-                    match self.readdir(false, prev, dir, generation, handle, &()) {
+                    match self.readdir(false, prev, dir, generation, handle, &mut ()) {
                         Ok(new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };

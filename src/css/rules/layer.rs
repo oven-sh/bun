@@ -42,7 +42,7 @@ impl LayerName {
 
     pub fn parse(input: &mut css::css_parser::Parser<'_>) -> css::css_parser::CssResult<LayerName> {
         let mut parts: SmallList<&'static [u8], 1> = SmallList::default();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         parts.append(ident);
 
         loop {

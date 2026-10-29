@@ -322,11 +322,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
     // absolute paths instead of the user's relative `"./framework/server.ts"`.
     {
-        let resolved_ptr: *mut bun_bundler::bake_types::Framework =
-            arena.alloc(dev.framework.as_bundler_view());
-        dev.bundler_framework_views.push(resolved_ptr);
-        // SAFETY: `resolved_ptr` is a fresh arena slot, no aliasing borrows.
-        let resolved_view: &'static bun_bundler::bake_types::Framework = unsafe { &*resolved_ptr };
+        let resolved_view = arena.alloc(dev.framework.as_bundler_view());
+        dev.bundler_framework_views.push(&raw mut *resolved_view);
+        let resolved_view: &'static bun_bundler::bake_types::Framework = resolved_view;
         dev.server_transpiler_mut().options.framework = Some(resolved_view);
         dev.client_transpiler_mut().options.framework = Some(resolved_view);
         if separate_ssr_graph {

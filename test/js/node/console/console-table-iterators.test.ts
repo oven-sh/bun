@@ -6,9 +6,10 @@ const prelude = /* js */ `
   const c = new Console({ stdout: process.stdout, stderr: process.stderr, colorMode: false });
 `;
 
-async function run(script: string) {
+// `before` runs ahead of the prelude, so ahead of the first load of `node:console`.
+async function run(script: string, before = "") {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", prelude + script],
+    cmd: [bunExe(), "-e", before + prelude + script],
     env: bunEnv,
     stderr: "pipe",
   });
@@ -169,30 +170,19 @@ test.concurrent("console.Console#table does not run a replaced next() of a Map o
 
 // The two tests decide what the native reader gets, and it throws on anything else.
 test.concurrent("console.Console#table does not call a replaced isMapIterator or isSetIterator", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      /* js */ `
-        const types = require("node:util/types");
-        const calls = { isMapIterator: 0, isSetIterator: 0 };
-        for (const name of Object.keys(calls)) types[name] = () => (calls[name]++, true);
-        // Made after the replacement.
-        const { Console } = require("node:console");
-        const c = new Console({ stdout: process.stdout, stderr: process.stderr, colorMode: false });
-        c.table([7, 8]);
-        c.table(new Map([["a", 1]]).entries());
-        c.table(new Set([9]).values());
-        console.log(JSON.stringify(calls));
-      `,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0) {
-    expect(stderr).toBe("");
-  }
+  const { stdout, exitCode } = await run(
+    /* js */ `
+      c.table([7, 8]);
+      c.table(new Map([["a", 1]]).entries());
+      c.table(new Set([9]).values());
+      console.log(JSON.stringify(calls));
+    `,
+    /* js */ `
+      const types = require("node:util/types");
+      const calls = { isMapIterator: 0, isSetIterator: 0 };
+      for (const name of Object.keys(calls)) types[name] = () => (calls[name]++, true);
+    `,
+  );
   expect(stdout).toMatchInlineSnapshot(`
     "┌─────────┬────────┐
     │ (index) │ Values │

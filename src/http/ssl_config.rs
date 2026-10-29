@@ -431,31 +431,17 @@ impl SSLConfig {
     }
 
     pub fn take_protos(&mut self) -> Option<Box<[u8]>> {
-        if self.protos.is_null() {
-            return None;
-        }
-        let p = core::mem::replace(&mut self.protos, core::ptr::null());
-        let bytes = cstr_bytes(p);
         // Copy rather than reuse the allocation in place:
         // `Box<[u8]>` must own a global-allocator allocation of exactly `len`
         // bytes, which the NUL-terminated `dupe_z` allocation is not.
-        let owned = bytes.to_vec().into_boxed_slice();
-        // SAFETY: `p` was `dupe_z`-allocated when this config was built and
-        // taken (replaced with null) above — sole owner, NUL-terminated.
-        unsafe { bun_core::free_sensitive(p) };
+        let owned = self.protos_bytes()?.to_vec().into_boxed_slice();
+        free_string(&mut self.protos);
         Some(owned)
     }
 
     pub fn take_server_name(&mut self) -> Option<Box<[u8]>> {
-        if self.server_name.is_null() {
-            return None;
-        }
-        let p = core::mem::replace(&mut self.server_name, core::ptr::null());
-        let bytes = cstr_bytes(p);
-        let owned = bytes.to_vec().into_boxed_slice();
-        // SAFETY: `p` was `dupe_z`-allocated when this config was built and
-        // taken (replaced with null) above — sole owner, NUL-terminated.
-        unsafe { bun_core::free_sensitive(p) };
+        let owned = self.server_name_bytes()?.to_vec().into_boxed_slice();
+        free_string(&mut self.server_name);
         Some(owned)
     }
 }

@@ -838,6 +838,44 @@ describe("parse shell", () => {
     });
   });
 
+  describe("condexpr", () => {
+    test("has the operator, the operands and how == reads its right operand", () => {
+      expect(JSON.parse(parse`[[ x == y* ]]`).stmts[0].exprs[0]).toEqual({
+        condexpr: {
+          op: "==",
+          args: [
+            { simple: { Text: "x" } },
+            { compound: { atoms: [{ Text: "y" }, { asterisk: {} }], brace_expansion_hint: false, glob_hint: true } },
+          ],
+          pattern: "Star",
+        },
+      });
+    });
+
+    // Only an unquoted `*` in the right operand of == or != makes a pattern.
+    // An unquoted `?` or `[` beside it makes one that the shell cannot match.
+    test.each([
+      [`[[ x == y ]]`, "None"],
+      [`[[ -n * ]]`, "None"],
+      [`[[ a* == b ]]`, "None"],
+      [`[[ x == "*" ]]`, "None"],
+      [`[[ x == ? ]]`, "None"],
+      [`[[ x == y* ]]`, "Star"],
+      [`[[ x != "?"* ]]`, "Star"],
+      [`[[ x == \\?* ]]`, "Star"],
+      [`[[ x == $(echo "?")* ]]`, "Star"],
+      [`[[ x == ?* ]]`, "Unsupported"],
+      [`[[ x != *.[ch] ]]`, "Unsupported"],
+      [`[[ x == $(echo a)?* ]]`, "Unsupported"],
+    ])("%s is %s", (script, expected) => {
+      expect(JSON.parse(parse`${{ raw: script }}`).stmts[0].exprs[0].condexpr.pattern).toBe(expected);
+    });
+
+    test("an interpolated ? is data", () => {
+      expect(JSON.parse(parse`[[ x == ${"?"}* ]]`).stmts[0].exprs[0].condexpr.pattern).toBe("Star");
+    });
+  });
+
   describe.todo("async", () => {
     TestBuilder.command`echo foo & && echo hi`
       .error('"&" is not allowed on the left-hand side of "&&"')

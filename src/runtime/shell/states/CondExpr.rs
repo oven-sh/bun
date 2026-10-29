@@ -5,7 +5,7 @@ use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::Expansion;
+use crate::shell::states::expansion::{Expansion, WordContext};
 use crate::shell::yield_::Yield;
 
 pub(crate) struct CondExpr {
@@ -13,6 +13,7 @@ pub(crate) struct CondExpr {
     pub node: bun_ptr::BackRef<ast::CondExpr>,
     pub(crate) io: IO,
     pub(crate) state: CondExprState,
+    /// The expanded operands. For `ast::CondPattern::Star`, `args[1..]` are the literal parts of the pattern.
     pub args: Vec<Vec<u8>>,
 }
 
@@ -66,7 +67,12 @@ impl CondExpr {
                         return Self::command_impl_start(interp, this, n.op);
                     }
                     let atom: *const ast::Atom = n.args.get_const(idx as usize);
-                    let child = Expansion::init(interp, shell, atom, this, false);
+                    let ctx = if idx == 1 && matches!(n.pattern, ast::CondPattern::Star) {
+                        WordContext::CondPattern
+                    } else {
+                        WordContext::CondOperand
+                    };
+                    let child = Expansion::init(interp, shell, atom, this, ctx);
                     return Expansion::start(interp, child);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),
@@ -79,7 +85,27 @@ impl CondExpr {
     /// the expanded `args` and returns the resulting exit code.
     fn command_impl_start(interp: &Interpreter, this: NodeId, op: ast::CondExprOp) -> Yield {
         use ast::CondExprOp as Op;
-        let parent = interp.as_condexpr(this).base.parent;
+        let me = interp.as_condexpr(this);
+        let parent = me.base.parent;
+        match me.node.pattern {
+            ast::CondPattern::None => {}
+            ast::CondPattern::Star => {
+                let matched = matches_pattern_parts(&me.args[0], &me.args[1..]);
+                let exit = if matched == (op == Op::EqEq) { 0 } else { 1 };
+                return interp.child_done(parent, this, exit);
+            }
+            ast::CondPattern::Unsupported => {
+                let pattern = me.args[1].clone();
+                return Self::write_failing_error(
+                    interp,
+                    this,
+                    format_args!(
+                        "bun: ? and [ are not supported in a [[ ]] pattern: {}\nnote: a quoted ? or [ is matched as text\n",
+                        bstr::BStr::new(&pattern)
+                    ),
+                );
+            }
+        }
         match op {
             Op::DashC | Op::DashD | Op::DashF => {
                 // Empty expansion or empty path → exit 1 (bash always
@@ -223,19 +249,13 @@ impl CondExpr {
         child: NodeId,
         exit_code: ExitCode,
     ) -> Yield {
-        // Child is always an Expansion that produced one arg.
-        // On nonzero exit, write the failing error and finish; otherwise
-        // collect the expanded word and advance.
+        // Child is always the Expansion of one operand.
         if exit_code != 0 {
-            // Pull the expansion error out before deiniting the child, then
-            // write the failing error.
-            let err = Expansion::take_err(interp, child);
             interp.deinit_node(child);
-            if let Some(err) = err {
-                return Self::write_failing_error(interp, this, format_args!("{}\n", err));
-            }
-            // Defensive fallback — finish via `writeFailingError` with exit 1.
-            debug_assert!(interp.failed(), "Expansion child failed without an error");
+            debug_assert!(
+                interp.failed(),
+                "a [[ ]] operand runs no expansion step that reports an error"
+            );
             let parent = interp.as_condexpr(this).base.parent;
             return interp.child_done(parent, this, 1);
         }
@@ -243,7 +263,21 @@ impl CondExpr {
         interp.deinit_node(child);
         {
             let me = interp.as_condexpr_mut(this);
-            me.args.push(out.buf);
+            if out.bounds.is_empty() {
+                me.args.push(out.buf);
+            } else {
+                debug_assert!(
+                    matches!(me.node.pattern, ast::CondPattern::Star) && me.args.len() == 1,
+                    "only a pattern operand has parts"
+                );
+                let mut part_start = 0usize;
+                for &part_end in &out.bounds {
+                    me.args
+                        .push(out.buf[part_start..part_end as usize].to_vec());
+                    part_start = part_end as usize;
+                }
+                me.args.push(out.buf[part_start..].to_vec());
+            }
             if let CondExprState::ExpandingArgs { ref mut idx } = me.state {
                 *idx += 1;
             }
@@ -328,6 +362,26 @@ impl CondExpr {
         let me = interp.as_condexpr_mut(this);
         me.args.clear();
     }
+}
+
+/// Whether `text` matches the pattern `parts[0]*parts[1]*…`, where each `*` is any run of bytes.
+fn matches_pattern_parts(text: &[u8], parts: &[Vec<u8>]) -> bool {
+    let [first, middle @ .., last] = parts else {
+        return parts.first().is_some_and(|only| text == only.as_slice());
+    };
+    let Some(mut rest) = text.strip_prefix(first.as_slice()) else {
+        return false;
+    };
+    for part in middle {
+        if part.is_empty() {
+            continue;
+        }
+        let Some(at) = bun_core::strings::index_of(rest, part) else {
+            return false;
+        };
+        rest = &rest[at + part.len()..];
+    }
+    rest.ends_with(last)
 }
 
 // `runtime::dispatch::run_task`'s `task_tag::ShellCondExprStatTask` arm casts

@@ -27,6 +27,13 @@ describe("bun exec", () => {
     .stdout('hi "there bud"\n')
     .runAsTest("it works2");
 
+  for (const substitution of ["$(echo a b)", "`echo a b`"]) {
+    TestBuilder.command`${BUN} exec ${`[[ ${substitution} == "a b" ]] && echo yes!`}`
+      .env(bunEnv)
+      .stdout("yes!\n")
+      .runAsTest(`[[ ]] keeps the blanks of an unquoted ${substitution}`);
+  }
+
   TestBuilder.command`${BUN} exec ${"cat filename"}`
     .file(
       "filename",

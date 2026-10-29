@@ -112,6 +112,18 @@ pub mod ast {
     pub struct CondExpr<'arena> {
         pub op: CondExprOp,
         pub args: CondExprArgList<'arena>,
+        pub pattern: CondPattern,
+    }
+
+    /// How `==` and `!=` read their right operand.
+    #[derive(Clone, Copy)]
+    pub enum CondPattern {
+        /// The operand is text. Every other operator has this too.
+        None,
+        /// The operand has an unquoted `*`, which matches any run of bytes.
+        Star,
+        /// The operand also has an unquoted `?` or `[`, which the shell cannot match.
+        Unsupported,
     }
 
     pub(crate) type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
@@ -1063,6 +1075,7 @@ impl<'bump> Parser<'bump> {
                         return Ok(ast::CondExpr {
                             op,
                             args: ast::CondExprArgList::init_with(arg),
+                            pattern: ast::CondPattern::None,
                         });
                     }
                 }
@@ -1120,6 +1133,7 @@ impl<'bump> Parser<'bump> {
                     return Err(ParseError::Unsupported.into());
                 }
 
+                let arg2_start = self.current;
                 let arg2 = match self.parse_atom()? {
                     Some(a) => a,
                     None => {
@@ -1129,6 +1143,15 @@ impl<'bump> Parser<'bump> {
                         ))?;
                         return Err(ParseError::Expected.into());
                     }
+                };
+                let pattern = if !matches!(op, ast::CondExprOp::EqEq | ast::CondExprOp::NotEq)
+                    || !arg2.has_glob_expansion()
+                {
+                    ast::CondPattern::None
+                } else if self.has_unquoted_question_or_bracket(arg2_start, self.current) {
+                    ast::CondPattern::Unsupported
+                } else {
+                    ast::CondPattern::Star
                 };
 
                 if !self.r#match(TokenTag::DoubleBracketClose) {
@@ -1142,6 +1165,7 @@ impl<'bump> Parser<'bump> {
                 return Ok(ast::CondExpr {
                     op,
                     args: ast::CondExprArgList::init_with_slice(&[arg1, arg2], self.alloc),
+                    pattern,
                 });
             }
         }
@@ -1151,6 +1175,55 @@ impl<'bump> Parser<'bump> {
             bstr::BStr::new(txt)
         ))?;
         Err(ParseError::Unknown.into())
+    }
+
+    /// Whether the word in `tokens[from..to]` has an unquoted `?` or `[` outside a command substitution.
+    fn has_unquoted_question_or_bracket(&self, from: u32, to: u32) -> bool {
+        let mut cmd_subst_depth = 0u32;
+        for &token in &self.tokens[from as usize..to as usize] {
+            match token {
+                Token::CmdSubstBegin => cmd_subst_depth += 1,
+                Token::CmdSubstEnd => cmd_subst_depth = cmd_subst_depth.saturating_sub(1),
+                Token::Text(range) if cmd_subst_depth == 0 => {
+                    let text = self.text(range);
+                    let mut searched = 0;
+                    while let Some(at) = strings::index_of_any(&text[searched..], b"?[") {
+                        let pos = range.start + (searched + at) as u32;
+                        let Some(data) = self.data_range_at(pos) else {
+                            return true;
+                        };
+                        searched = (data.end - range.start) as usize;
+                    }
+                }
+                // Spelled out so that a new token kind needs a decision here.
+                Token::Text(_)
+                | Token::SingleQuotedText(_)
+                | Token::DoubleQuotedText(_)
+                | Token::Var(_)
+                | Token::VarArgv(_)
+                | Token::JSObjRef(_)
+                | Token::Asterisk
+                | Token::DoubleAsterisk
+                | Token::BraceBegin
+                | Token::Comma
+                | Token::BraceEnd
+                | Token::CmdSubstQuoted
+                | Token::OpenParen
+                | Token::CloseParen
+                | Token::Pipe
+                | Token::DoublePipe
+                | Token::Ampersand
+                | Token::DoubleAmpersand
+                | Token::Redirect(_)
+                | Token::Semicolon
+                | Token::Newline
+                | Token::DoubleBracketOpen
+                | Token::DoubleBracketClose
+                | Token::Delimit
+                | Token::Eof => {}
+            }
+        }
+        false
     }
 
     fn parse_if_body(
@@ -1678,6 +1751,15 @@ impl<'bump> Parser<'bump> {
             .any(|r| pos >= r.start && pos < r.end)
     }
 
+    /// The range of `js_string_ranges` that holds `pos`. The lexer pushes the ranges in strpool order.
+    fn data_range_at(&self, pos: u32) -> Option<TextRange> {
+        let next = self.js_string_ranges.partition_point(|r| r.end <= pos);
+        self.js_string_ranges
+            .get(next)
+            .copied()
+            .filter(|r| r.start <= pos)
+    }
+
     fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
         if self.is_interpolated_position(range.start) {
             return None;
@@ -2194,7 +2276,7 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub(crate) errors: bun_alloc::ArenaVec<'bump, LexError>,
 
     /// Strpool ranges that hold bytes spliced in from interpolated JS values
-    /// (`\x08__bunstr_N` refs). Interpolated bytes are data, not shell
+    /// (`\x08__bunstr_N` refs), or a backslash-escaped `?` or `[`. Those bytes are data, not shell
     /// syntax, so the parser must not reinterpret them (e.g. an `=` inside
     /// one must not create an env assignment).
     pub(crate) js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
@@ -2875,6 +2957,15 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 continue;
             }
 
+            if escaped
+                && self.chars.state == CharState::Normal
+                && (char == u32::from(b'?') || char == u32::from(b'['))
+            {
+                self.js_string_ranges.push(TextRange {
+                    start: self.j,
+                    end: self.j + 1,
+                });
+            }
             self.append_char_to_str_pool(char)?;
         }
 

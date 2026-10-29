@@ -213,49 +213,32 @@ impl DevServer {
         resp: AnyResponse,
         method: Method,
     ) {
-        // Note: erase `self` to a raw pointer so the `route_bundle` borrow
-        // doesn't conflict with the `&mut self` calls below. Per docs/PORTING.md §Global mutable state: hold
-        // `*mut T` and deref per-access; do not bind a long-lived `&mut`.
-        let self_ptr = std::ptr::from_mut::<Self>(self);
-        // SAFETY: `route_bundles` is not reallocated for the duration of this fn.
-        let route_bundle: *mut RouteBundle =
-            &raw mut unsafe { &mut *self_ptr }.route_bundles[route_bundle_index.get() as usize];
-        debug_assert!(matches!(
-            // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in this fn.
-            unsafe { &(*route_bundle).data },
-            route_bundle::Data::Html(_)
-        ));
+        let route_bundle = &mut self.route_bundles[route_bundle_index.get() as usize];
+        debug_assert!(matches!(route_bundle.data, route_bundle::Data::Html(_)));
 
-        // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in
-        // this fn; the shared reborrow ends with this statement.
-        let cached: Option<bun_ptr::ThisPtr<StaticRoute>> =
-            unsafe { (*route_bundle).data.html().cached_response.as_ref() }
-                .map(bun_ptr::RefPtr::this_ptr);
-        let blob: bun_ptr::ThisPtr<StaticRoute> = match cached {
-            Some(blob) => blob,
-            None => 'generate: {
-                // SAFETY: `generate_html_payload` reads `route_bundle.data` /
-                // `client_graph` and never reallocates `route_bundles`. No
-                // `&mut` into `*route_bundle` is live across this call; both
-                // reborrows end when it returns.
-                let payload = unsafe {
-                    Self::generate_html_payload(&mut *self_ptr, route_bundle_index, &*route_bundle)
-                }
+        let blob: bun_ptr::ThisPtr<StaticRoute> = match &route_bundle.data.html().cached_response {
+            Some(blob) => blob.this_ptr(),
+            None => {
+                let payload = Self::generate_html_payload(
+                    &self.graph_safety_lock,
+                    &self.server_graph,
+                    &mut self.client_graph,
+                    route_bundle_index,
+                    route_bundle,
+                )
                 .expect("oom");
 
                 let response = StaticRoute::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::HTML),
-                        // SAFETY: `self_ptr` is `&mut self` erased; live for this fn body.
-                        server: unsafe { &*self_ptr }.server,
+                        server: self.server,
                         ..Default::default()
                     },
                 );
                 let blob = response.this_ptr();
-                // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
-                unsafe { (*route_bundle).data.html_mut().cached_response = Some(response) };
-                break 'generate blob;
+                route_bundle.data.html_mut().cached_response = Some(response);
+                blob
             }
         };
         StaticRoute::on_with_method(blob, method, resp);
@@ -278,14 +261,14 @@ const SCRIPT_UNREF_PAYLOAD: &str = concat!(
 );
 
 impl DevServer {
+    /// Takes the fields it needs, so that the caller can keep its borrow of `route_bundle`.
     fn generate_html_payload(
-        &mut self,
+        graph_safety_lock: &ThreadLock,
+        server_graph: &IncrementalGraph<{ bake::Side::Server }>,
+        client_graph: &mut IncrementalGraph<{ bake::Side::Client }>,
         route_bundle_index: route_bundle::Index,
         route_bundle: &RouteBundle,
     ) -> crate::Result<Vec<u8>> {
-        // Re-derive `html` here from `route_bundle.data` so the
-        // caller never holds two `&mut` into the same allocation. `route_bundle`
-        // is read-only in this fn — `&RouteBundle` suffices.
         let html = route_bundle.data.html();
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
         debug_assert!(html.html_bundle.dev_server_id.get() == Some(route_bundle_index));
@@ -315,16 +298,18 @@ impl DevServer {
             display_name = b"page";
         }
 
-        let _lock = self.graph_safety_lock.guard();
+        let _lock = graph_safety_lock.guard();
 
         // Prepare bitsets for tracing
-        let mut gts = self.init_graph_trace_state(0)?;
+        let mut gts = GraphTraceState::new(
+            server_graph.bundled_files.len(),
+            client_graph.bundled_files.len(),
+        )?;
         // Run tracing
-        self.client_graph.reset();
-        self.client_graph
-            .trace_imports(html.bundled_file, &mut gts, TraceImportGoal::FindCss)?;
+        client_graph.reset();
+        client_graph.trace_imports(html.bundled_file, &mut gts, TraceImportGoal::FindCss)?;
 
-        let css_ids: &[u64] = &self.client_graph.current_css_files;
+        let css_ids: &[u64] = &client_graph.current_css_files;
 
         let payload_size = bundled_html.len()
             + ("<link rel=\"stylesheet\" href=\"".len()

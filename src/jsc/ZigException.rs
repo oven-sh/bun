@@ -60,7 +60,7 @@ impl ZigException<'_> {
 
     pub(crate) fn add_to_error_list(
         &mut self,
-        error_list: &mut Vec<exception_list::JsException>,
+        error_list: &mut exception_list::ExceptionList,
         root_path: &[u8],
         origin: Option<&ZigURL>,
     ) {
@@ -71,7 +71,7 @@ impl ZigException<'_> {
             return;
         }
 
-        error_list.push(exception_list::JsException {
+        error_list.exceptions.push(exception_list::JsException {
             name: Box::from(name.slice()),
             message: Box::from(message.slice()),
             runtime_type: self.runtime_type,

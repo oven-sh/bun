@@ -162,6 +162,88 @@ test.concurrent.each([
   expect(stderr).toContain("boom");
 });
 
+// The same page for a body that fails with a build or resolve error. Such an
+// error has no stack: the page lists it under `problems.build`, where a
+// throwing handler's page lists it. The report used to leave this page empty
+// and to leave the message in the VM-wide log instead, which printed it a
+// second time when the process exited.
+const buildMessage = { level: 1, text: "Unexpected ;", on: { build: true, resolve: "" } };
+const resolveMessage = {
+  level: 1,
+  text: expect.stringMatching(/^Cannot find module '\.\/does-not-exist\.ts'/),
+  on: { build: false, resolve: "./does-not-exist.ts" },
+};
+test.concurrent.each([
+  ["mid-stream-build-message", "7\r\nchunk-a\r\n", [buildMessage]],
+  ["mid-stream-resolve-message", "7\r\nchunk-a\r\n", [resolveMessage]],
+  ["mid-stream-both-messages", "7\r\nchunk-a\r\n", [buildMessage, resolveMessage]],
+  ["rewriter-mid-stream-build-message", "e\r\n<b>chunk-a</b>\r\n", [buildMessage]],
+])("%s under a dev server: the error page lists the message", async (variant, firstChunk, messages) => {
+  const { stdout, stderr, exitCode } = await runFixture(variant, "development", "dev-server");
+  const { body, ...result } = JSON.parse(stdout);
+  expect({ result, exitCode }).toEqual({
+    result: {
+      statusLine: "HTTP/1.1 200 OK",
+      cleanChunkedTerminator: true,
+      errorCb: 0,
+      unhandled: 0,
+      secondStatusLine: "HTTP/1.1 200 OK",
+    },
+    exitCode: 0,
+  });
+  expect(body).toStartWith(firstChunk);
+  const page = JSON.parse(/<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(body)![1]);
+  const { build } = page.problems;
+  expect({
+    message: page.message,
+    build: { ...build, msgs: build.msgs.map((msg: any) => ({ level: msg.level, text: msg.data.text, on: msg.on })) },
+  }).toEqual({
+    message: "Stream error during server-side rendering",
+    build: { errors: messages.length, warnings: 0, msgs: messages },
+  });
+  // Printed when the body failed, and not again when the process exited.
+  expect({
+    build: stderr.split("error: Unexpected ;").length - 1,
+    resolve: stderr.split("error: Cannot find module './does-not-exist.ts'").length - 1,
+  }).toEqual({
+    build: messages.includes(buildMessage) ? 1 : 0,
+    resolve: messages.includes(resolveMessage) ? 1 : 0,
+  });
+});
+
+// A Worker reports what its VM-wide log holds when it exits, as an `error`
+// event at its parent. The messages that the report left in that log made a
+// Worker that served the failed body and then finished cleanly fire one.
+test.concurrent("mid-stream-both-messages under a dev server in a Worker: the parent gets no error event", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const worker = new Worker(${JSON.stringify(fixture)}, {
+        argv: ["mid-stream-both-messages", "development", "dev-server"],
+      });
+      const events = [];
+      worker.addEventListener("error", event => events.push(event.message));
+      worker.addEventListener("close", event => console.log(JSON.stringify({ events, code: event.code })));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // One line from the fixture in the Worker, one from the parent.
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .map(line => JSON.parse(line));
+  expect(lines.find(line => "body" in line).body).toContain("Stream error during server-side rendering");
+  expect({ parent: lines.find(line => "events" in line), exitCode }).toEqual({
+    parent: { events: [], code: 0 },
+    exitCode: 0,
+  });
+  expect(stderr).toContain("error: Unexpected ;");
+});
+
 // Natively streamed bodies whose producer failed while nothing was reading them:
 // the native stream holds the error, with no JS rejection anywhere, when
 // Bun.serve renders the Response. Nothing is committed to the client at that

@@ -2562,6 +2562,289 @@ it.concurrent("dev error page ships a bun-error bundle that evaluates and regist
   expect(checkExitCode).toBe(0);
 });
 
+// A response body that fails after the status is sent gets the error page appended (under a dev
+// server). The report of that failure used to leave its build and resolve errors in the VM-wide log,
+// and the page of the next throwing handler listed whatever that log held.
+it.concurrent("dev error page lists only the build and resolve errors of its own request", async () => {
+  using dir = tempDir("serve-dev-error-page-own-errors", {
+    "server.ts": `
+      import page from "./page.html";
+
+      let syntaxError;
+      try {
+        await import("./broken.ts");
+      } catch (error) {
+        syntaxError = error;
+      }
+
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        // An HTML route makes the development server a dev server. The route itself is never requested.
+        routes: { "/page": page },
+        async fetch(req) {
+          const { pathname } = new URL(req.url);
+          if (pathname === "/throw") throw new TypeError("boom");
+          // The same error object for every request that throws it.
+          if (pathname === "/rethrow") throw syntaxError;
+          return new Response(
+            new ReadableStream({
+              async pull(controller) {
+                controller.enqueue("first chunk");
+                await import(pathname === "/syntax-body" ? "./broken.ts" : "./bad-import.ts");
+              },
+            }),
+          );
+        },
+      });
+      const out = [];
+      for (const path of ["/syntax-body", "/resolve-body", "/syntax-body", "/throw", "/rethrow", "/rethrow"]) {
+        const res = await fetch(server.url + path.slice(1));
+        const html = await res.text();
+        const { message, problems } = JSON.parse(
+          /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html)[1],
+        );
+        out.push({
+          path,
+          status: res.status,
+          message: message.replace(server.url.href, "/"),
+          exceptions: problems.exceptions.map(exception => exception.message),
+          build: { ...problems.build, msgs: problems.build.msgs.map(msg => msg.data.text) },
+        });
+      }
+      console.log(JSON.stringify(out));
+      server.stop(true);
+      // The thrown errors were reported through the unhandled-rejection path, which sets the exit code.
+      process.exit(0);
+    `,
+    "page.html": `<!doctype html>\n<title>dev server page</title>\n`,
+    "broken.ts": `export const a = 1;\nexport const oops = ;\n`,
+    "bad-import.ts": `import { nope } from "./does-not-exist.ts";\nexport const b = nope;\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const syntax = { errors: 1, warnings: 0, msgs: ["Unexpected ;"] };
+  const resolution = {
+    errors: 1,
+    warnings: 0,
+    msgs: [expect.stringMatching(/^Cannot find module '\.\/does-not-exist\.ts'/)],
+  };
+  const streamError = { status: 200, message: "Stream error during server-side rendering", exceptions: [] };
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual([
+    { path: "/syntax-body", ...streamError, build: syntax },
+    { path: "/resolve-body", ...streamError, build: resolution },
+    { path: "/syntax-body", ...streamError, build: syntax },
+    {
+      path: "/throw",
+      status: 500,
+      message: "GET - /throw failed",
+      exceptions: ["boom"],
+      build: { errors: 0, warnings: 0, msgs: [] },
+    },
+    // A build error is listed each time it is reported, not only the first time it is printed.
+    { path: "/rethrow", status: 500, message: "GET - /rethrow failed", exceptions: [], build: syntax },
+    { path: "/rethrow", status: 500, message: "GET - /rethrow failed", exceptions: [], build: syntax },
+  ]);
+  expect(stderr).toContain("Unexpected ;");
+  expect(exitCode).toBe(0);
+});
+
+// The warning for the project's package.json is in the VM-wide log until the entry module settles,
+// and the process prints it then. A request that failed before that used to take the whole log:
+// the development error page listed the warning as a build warning, and nothing printed it.
+it.concurrent.each([true])(
+  "a request that fails leaves a warning logged at startup to be printed (development: %p)",
+  async development => {
+    using dir = tempDir("serve-error-startup-warning", {
+      "package.json": `{ "name": "startup-warning", "dup": 1, "dup": 2 }`,
+      "server.ts": `
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          development: ${development},
+          fetch() {
+            throw new TypeError("boom");
+          },
+        });
+        // This module is still evaluating when the request fails.
+        const res = await fetch(server.url);
+        const html = await res.text();
+        const match = /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html);
+        console.log(JSON.stringify({ status: res.status, build: match && JSON.parse(match[1]).problems.build }));
+        await server.stop(true);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(JSON.parse(stdout)).toEqual({
+      status: 500,
+      // Only the development server answers with the error page.
+      build: development ? { errors: 0, warnings: 0, msgs: [] } : null,
+    });
+    expect(stderr).toContain("TypeError: boom");
+    expect(stderr.split('warn: Duplicate key "dup" in object literal').length - 1).toBe(1);
+    // The thrown error was reported through the unhandled-rejection path, which sets the exit code.
+    expect(exitCode).toBe(1);
+  },
+);
+
+// To show the source line of a stack frame, an error report reads the file again. The resolver then
+// reads the directory of that file again when a failed require() has dropped it from its cache, and
+// it logs what it finds: here the warning for other/package.json. That went to the VM-wide log, once
+// for each such report, and the development error page listed it as a build warning of the request.
+it.concurrent.each([true, false])(
+  "an error report does not log what the resolver finds while it reads the source (development: %p)",
+  async development => {
+    using dir = tempDir("serve-error-report-resolver-log", {
+      "other/package.json": `{ "name": "other", "dup": 1, "dup": 2 }`,
+      "other/thrower.ts": `export function thrower(): never {\n  throw new TypeError("boom");\n}\n`,
+      "server.ts": `
+        import { thrower } from "./other/thrower.ts";
+
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          development: ${development},
+          fetch(req) {
+            if (new URL(req.url).pathname === "/forget") {
+              // A resolution that fails drops the directory from the resolver's cache.
+              try {
+                require("./other/missing");
+              } catch {}
+              return new Response("ok");
+            }
+            thrower();
+          },
+        });
+        const warnings = [];
+        for (let i = 0; i < 2; i++) {
+          await (await fetch(server.url + "forget")).text();
+          const html = await (await fetch(server.url)).text();
+          const match = /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html);
+          warnings.push(match && JSON.parse(match[1]).problems.build.warnings);
+        }
+        console.log(JSON.stringify(warnings));
+        await server.stop(true);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Only the development server answers with the error page.
+    expect(JSON.parse(stdout)).toEqual(development ? [0, 0] : [null, null]);
+    expect(stderr.split("TypeError: boom").length - 1).toBe(2);
+    // Nothing is left in the log for the process to print when it exits.
+    expect(stderr.split("Duplicate key").length - 1).toBe(0);
+    // The thrown errors were reported through the unhandled-rejection path, which sets the exit code.
+    expect(exitCode).toBe(1);
+  },
+);
+
+// The server runs pending JavaScript before it lets go of a failed request whose upload is still in
+// flight. The handler of another request can fail in that window, while the first error page is
+// being sent. Both pages used to read the same VM-wide log, so the second page listed the build
+// error of the first request.
+it.concurrent("dev error page does not list the build error of a request that fails in the same turn", async () => {
+  using dir = tempDir("serve-dev-error-page-same-turn", {
+    "server.ts": `
+      import net from "node:net";
+
+      // Both failing handlers wait for \`go\`, so they fail in one microtask checkpoint, "/upload" first.
+      const go = Promise.withResolvers();
+      const arrived = { "/upload": Promise.withResolvers(), "/other": Promise.withResolvers() };
+
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        async fetch(req) {
+          const { pathname } = new URL(req.url);
+          if (pathname === "/go") {
+            go.resolve();
+            return new Response("ok");
+          }
+          arrived[pathname].resolve();
+          await go.promise;
+          if (pathname === "/upload") new Bun.Transpiler().transformSync("export const oops = ;");
+          throw new TypeError("other boom");
+        },
+      });
+
+      const payload = html => /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html)?.[1];
+
+      // The upload still owes half of its body when its handler fails.
+      const upload = Promise.withResolvers();
+      let received = "";
+      const socket = net.connect(server.port, "127.0.0.1", () => {
+        socket.write("POST /upload HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 10\\r\\n\\r\\n12345");
+      });
+      socket.on("data", chunk => {
+        received += chunk.toString("latin1");
+        const json = payload(received);
+        if (!json) return;
+        upload.resolve(json);
+        socket.destroy();
+      });
+      socket.on("error", upload.reject);
+      socket.on("close", () => upload.reject(new Error("the connection closed before the error page arrived")));
+
+      await arrived["/upload"].promise;
+      const other = fetch(server.url + "other").then(res => res.text());
+      await arrived["/other"].promise;
+      await fetch(server.url + "go");
+
+      const out = {};
+      for (const [name, json] of [["upload", await upload.promise], ["other", payload(await other)]]) {
+        const { problems } = JSON.parse(json);
+        out[name] = {
+          exceptions: problems.exceptions.map(exception => exception.message),
+          build: problems.build.msgs.map(msg => msg.data.text),
+        };
+      }
+      console.log(JSON.stringify(out));
+      server.stop(true);
+      // The thrown errors were reported through the unhandled-rejection path, which sets the exit code.
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({
+    upload: { exceptions: [], build: ["Unexpected ;"] },
+    other: { exceptions: ["other boom"], build: [] },
+  });
+  expect(stderr).toContain("other boom");
+  expect(exitCode).toBe(0);
+});
+
 it("should support multiple Set-Cookie headers", async () => {
   await runTest(
     {

@@ -58,7 +58,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 
 pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
-pub type ExceptionList = Vec<crate::exception_list::JsException>;
+pub use crate::exception_list::ExceptionList;
 
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine struct (file-level @This())
@@ -6478,12 +6478,8 @@ impl VirtualMachine {
                     let _ = writer.write_all(b"\n");
                 }
                 self.had_errors = self.had_errors || build_error.msg.kind == bun_ast::Kind::Err;
-                if exception_list.is_some() {
-                    // `log_mut()` is the centralized set-once `Option<NonNull>`
-                    // accessor — single audited deref lives there.
-                    if let Some(log) = self.log_mut() {
-                        let _ = log.add_msg(build_error.msg.clone());
-                    }
+                if let Some(list) = exception_list {
+                    list.build.push(build_error.msg.clone());
                 }
                 bun_core::Output::flush();
                 return true;
@@ -6497,12 +6493,8 @@ impl VirtualMachine {
                     let _ = writer.write_all(b"\n");
                 }
                 self.had_errors = self.had_errors || resolve_error.msg.kind == bun_ast::Kind::Err;
-                if exception_list.is_some() {
-                    // `log_mut()` is the centralized set-once `Option<NonNull>`
-                    // accessor — single audited deref lives there.
-                    if let Some(log) = self.log_mut() {
-                        let _ = log.add_msg(resolve_error.msg.clone());
-                    }
+                if let Some(list) = exception_list {
+                    list.build.push(resolve_error.msg.clone());
                 }
                 bun_core::Output::flush();
                 return true;
@@ -6925,6 +6917,15 @@ impl VirtualMachine {
                     break 'code bun_core::Utf8Bytes::Owned(text.unwrap_or_default());
                 }
                 let mut log = bun_ast::Log::default();
+                // What the resolver logs when the fetch reads the file's directory again is not part of this error.
+                let mut resolver_log = bun_ast::Log::default();
+                // SAFETY: the resolver is a field of this VM, and the guard is dropped before `resolver_log`.
+                let _restore_resolver_log = unsafe {
+                    bun_resolver::Resolver::scoped_log(
+                        &raw mut self.transpiler.resolver,
+                        NonNull::from(&mut resolver_log),
+                    )
+                };
                 let Ok(original_source) = bun_removable_features::call_removable_or!(
                     RuntimeTranspiler,
                     ReturnDefault,

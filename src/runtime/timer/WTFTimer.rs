@@ -55,8 +55,6 @@ pub(crate) struct WTFTimer {
     script_execution_context_id: ScriptExecutionContextIdentifier,
 }
 
-bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
-
 impl WTFTimer {
     /// Fire the underlying `RunLoop::TimerBase`,
     /// removing `self` from the timer heap first if it's currently scheduled.

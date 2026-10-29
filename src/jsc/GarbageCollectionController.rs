@@ -26,11 +26,6 @@ pub struct GarbageCollectionController {
     idle_quiet_ms: Cell<u32>,
 }
 
-bun_event_loop::impl_timer_owner!(
-    GarbageCollectionController;
-    from_gc_repeating_timer_ptr => gc_repeating_timer,
-);
-
 impl Default for GarbageCollectionController {
     fn default() -> Self {
         Self {

@@ -1562,12 +1562,7 @@ mod safe_libc {
         pub(crate) safe fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t;
         pub(crate) safe fn flock(fd: c_int, op: c_int) -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub(crate) safe fn fallocate(
-            fd: c_int,
-            mode: c_int,
-            off: libc::off_t,
-            len: libc::off_t,
-        ) -> c_int;
+        pub safe fn fallocate(fd: c_int, mode: c_int, off: libc::off_t, len: libc::off_t) -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         pub safe fn posix_fadvise(
             fd: c_int,
@@ -1592,7 +1587,7 @@ mod safe_libc {
         // `c_int` writes); kernel only writes the slot and reports failure via
         // the return value — no other preconditions.
         pub(crate) safe fn pipe(fds: &mut [c_int; 2]) -> c_int;
-        pub(crate) safe fn socketpair(
+        pub safe fn socketpair(
             domain: c_int,
             ty: c_int,
             proto: c_int,
@@ -5095,21 +5090,26 @@ macro_rules! syslog {
 
 // ── `bun.c` — raw libc surface (no `Maybe` wrapping). ──
 pub mod c {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use super::safe_libc::fallocate;
     #[cfg(unix)]
     pub use super::safe_libc::fchmod;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     pub use super::safe_libc::posix_fadvise;
+    #[cfg(unix)]
+    pub use super::safe_libc::socketpair;
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     use core::ffi::c_int;
     #[cfg(unix)]
     use core::ffi::{c_char, c_void};
-    // `getuid`/`getgid` take no args and read kernel
+    // `getuid`/`geteuid`/`getgid` take no args and read kernel
     // process state — no preconditions, never fail. Declared locally as
     // `safe fn` (instead of re-exporting the `libc` crate's raw decls) so
     // callers need no per-site proof.
     #[cfg(unix)]
     unsafe extern "C" {
         pub safe fn getuid() -> libc::uid_t;
+        pub safe fn geteuid() -> libc::uid_t;
         pub safe fn getgid() -> libc::gid_t;
     }
     #[cfg(unix)]

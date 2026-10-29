@@ -2193,15 +2193,10 @@ pub fn generate_network_task_for_tarball<'a>(
         };
         let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
         // SAFETY: `net_ptr` is the unique handle to the freshly-vended pool slot
-        // (see `write_init` above); `TarballStream::init` returns a fresh
-        // `heap::alloc` which we reclaim ownership of exactly once here.
+        // (see `write_init` above).
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
-            (*net_ptr).tarball_stream = Some(bun_core::heap::take(TarballStream::init(
-                extract_task,
-                net_ptr,
-                this,
-            )));
+            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr, this));
         }
     }
 

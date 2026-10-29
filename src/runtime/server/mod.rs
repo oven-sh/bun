@@ -269,7 +269,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// handler runs (its `AbortSignal`) belongs to it.
     pub(crate) context: core::cell::Cell<jsc::ContextId>,
     pub(crate) request_pool:
-        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
+        &'static request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until `listen()` creates an HTTP/2 or HTTP/3 app. Kept as a raw
     /// nullable pointer rather than a conditional field so the struct stays
     /// uniform across monomorphizations.
@@ -852,11 +852,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // SAFETY: `request_pool` points at a process-static (or
-        // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
         // The `HiveSlot` token is leaked deliberately: the slot is recycled by
-        // `RequestContext::deinit` via `put_raw`, never via `HiveSlot::Drop`.
-        let ctx_slot = std::mem::ManuallyDrop::new(unsafe { (*self.request_pool).claim() })
+        // `RequestContext::deinit` via `Fallback::put`, never via `HiveSlot::Drop`.
+        let ctx_slot = std::mem::ManuallyDrop::new(self.request_pool.claim())
             .addr()
             .as_ptr();
         // SAFETY: `claim` hands out an uninitialized slot; `create()` fully
@@ -3391,11 +3389,12 @@ mod trampoline {
 // hand the leaked pointer back through a trait.
 //
 // THREAD-SAFETY: this MUST be thread-local, not process-global. `hive_array::
-// Fallback::{get,put,claim}` take `&mut self` with no internal synchronization;
+// Fallback` is `!Sync`: `claim`/`put` mutate through `&self` with no synchronization;
 // a process-static would race when two `Bun.serve` instances run on distinct
 // Worker threads (each Worker has its own event loop and may host a server).
 pub(crate) trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
-    fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
+    fn request_pool()
+    -> &'static request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
     fn mux_request_pool()
     -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
 }
@@ -3403,22 +3402,21 @@ pub(crate) trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
 macro_rules! impl_server_pools {
     ($(($ssl:literal, $debug:literal)),* $(,)?) => {$(
         impl ServerPools<$ssl, $debug> for NewServer<$ssl, $debug> {
-            fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
+            fn request_pool() -> &'static request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
                 type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, false>;
                 thread_local! {
-                    static POOL: core::cell::Cell<*mut Pool> =
-                        const { core::cell::Cell::new(core::ptr::null_mut()) };
+                    static POOL: core::cell::Cell<Option<&'static Pool>> =
+                        const { core::cell::Cell::new(None) };
                 }
                 POOL.with(|cell| {
-                    let mut p = cell.get();
-                    if p.is_null() {
+                    cell.get().unwrap_or_else(|| {
                         // `Box::new(Pool::init())` builds the ~816 KB pool on
                         // the stack and `memcpy`s it into the heap (no NRVO);
                         // `new_boxed` writes only the 256 B bitset in place.
-                        p = Pool::new_boxed().as_ptr();
-                        cell.set(p);
-                    }
-                    p
+                        let p: &'static Pool = Box::leak(Pool::new_boxed());
+                        cell.set(Some(p));
+                        p
+                    })
                 })
             }
             fn mux_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, true> {
@@ -3430,7 +3428,7 @@ macro_rules! impl_server_pools {
                 POOL.with(|cell| {
                     let mut p = cell.get();
                     if p.is_null() {
-                        p = Pool::new_boxed().as_ptr();
+                        p = Box::into_raw(Pool::new_boxed());
                         cell.set(p);
                     }
                     p
@@ -3576,12 +3574,11 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
                     &raw mut *ctx.cast::<request_context::RequestContext<Self, SSL, DEBUG, true>>(),
                 );
             } else {
-                (*self.request_pool).put(&raw mut *ctx.cast::<request_context::RequestContext<
-                    Self,
-                    SSL,
-                    DEBUG,
-                    false,
-                >>());
+                self.request_pool
+                    .put(
+                        &raw mut *ctx
+                            .cast::<request_context::RequestContext<Self, SSL, DEBUG, false>>(),
+                    );
             }
         }
     }

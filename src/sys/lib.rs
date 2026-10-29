@@ -5081,8 +5081,8 @@ pub mod c {
     pub use super::safe_libc::socketpair;
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     use core::ffi::c_int;
-    #[cfg(unix)]
-    use core::ffi::{c_char, c_void};
+    #[cfg(target_os = "macos")]
+    use core::ffi::c_void;
     // `getuid`/`geteuid`/`getgid` take no args and read kernel
     // process state — no preconditions, never fail. Declared locally as
     // `safe fn` (instead of re-exporting the `libc` crate's raw decls) so
@@ -5105,13 +5105,6 @@ pub mod c {
     ))]
     pub use libc::{getloadavg, sockaddr_dl, sysctlbyname};
 
-    /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
-    #[cfg(unix)]
-    pub unsafe fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void {
-        // SAFETY: caller contract — `handle` is null/RTLD_DEFAULT or a live
-        // `dlopen` handle; `name` is a valid NUL-terminated C string.
-        unsafe { libc::dlsym(handle, name) }
-    }
     // Win32 file APIs frequently spelled `bun.C.*` (the namespace flattens
     // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs
     // reaches via `sys::c::*` so the call sites stay target-neutral.
@@ -5831,23 +5824,11 @@ pub mod darwin {
         unsafe { __ulock_wake_raw(flags.bits(), addr, wake_value) }
     }
 
-    /// Darwin `struct kevent64_s` (extended kevent with 2-slot `ext[]`).
-    pub use libc::kevent64_s;
     /// `kevent64()` — Darwin's wider kevent. Thin re-export so callers don't
     /// need a direct `libc` dep.
-    #[inline]
-    pub unsafe fn kevent64(
-        kq: core::ffi::c_int,
-        changelist: *const kevent64_s,
-        nchanges: core::ffi::c_int,
-        eventlist: *mut kevent64_s,
-        nevents: core::ffi::c_int,
-        flags: core::ffi::c_uint,
-        timeout: *const libc::timespec,
-    ) -> core::ffi::c_int {
-        // SAFETY: caller contract (`unsafe fn`) — all pointers forwarded verbatim.
-        unsafe { libc::kevent64(kq, changelist, nchanges, eventlist, nevents, flags, timeout) }
-    }
+    pub use libc::kevent64;
+    /// Darwin `struct kevent64_s` (extended kevent with 2-slot `ext[]`).
+    pub use libc::kevent64_s;
 
     pub mod os_log {
         pub struct Signpost<'a> {
@@ -8013,17 +7994,11 @@ pub mod posix {
     #[cfg(unix)]
     pub use libc::sigaction as Sigaction;
     #[cfg(unix)]
+    pub use libc::sigaction;
+    #[cfg(unix)]
     pub use libc::siginfo_t;
     #[cfg(unix)]
     pub use libc::sigset_t;
-    /// `sigaction(sig, &act, *oact)`.
-    #[cfg(unix)]
-    #[inline]
-    pub unsafe fn sigaction(sig: c_int, act: *const Sigaction, oact: *mut Sigaction) -> c_int {
-        // SAFETY: caller contract — `act`/`oact` are each null or point to a
-        // valid `sigaction` struct for the call's duration.
-        unsafe { libc::sigaction(sig, act, oact) }
-    }
 
     // ── time ──
     #[cfg(unix)]
@@ -8580,17 +8555,7 @@ pub mod freebsd {
     }
     /// `kevent()` syscall — thin re-export so callers don't need a direct
     /// `libc` dep. SAFETY: caller upholds the kernel contract.
-    #[inline]
-    pub unsafe fn kevent(
-        kq: c_int,
-        changelist: *const Kevent,
-        nchanges: c_int,
-        eventlist: *mut Kevent,
-        nevents: c_int,
-        timeout: *const libc::timespec,
-    ) -> c_int {
-        unsafe { libc::kevent(kq, changelist, nchanges, eventlist, nevents, timeout) }
-    }
+    pub use libc::kevent;
     /// `copy_file_range` (FreeBSD 13+). Thin re-export so callers don't
     /// need a direct `libc` dep. Without an offset the
     /// kernel uses (and advances) the fd's seek position.

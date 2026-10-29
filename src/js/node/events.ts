@@ -434,7 +434,7 @@ const emit = IS_COMPILED_AHEAD_OF_TIME
       return emitToEach(this, type, handler, args, result);
     }
   : function emit(this: $Node.EventEmitter, type: $Node.EventName, ...args: unknown[]) {
-      $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
+      $debug("emit", type);
       // `var`: a `let` or a `const` costs the interpreter one more store at the head of every call.
       var result, argc: number;
       if (type === "error") {

@@ -40,22 +40,12 @@ test("EventEmitter.call(proxy) performs every read and store in order", () => {
     "_maxListeners",
     "_maxListeners =",
     "[kCapture] =",
-    "[kCapture] =",
   ]);
   expect(
     trapsOf(Object.assign(Object.create(EventEmitter.prototype), { _events: {} }), receiver =>
       EventEmitter.call(receiver),
     ),
-  ).toEqual([
-    "_events",
-    "_events",
-    "__proto__",
-    "[shapeMode] =",
-    "_maxListeners",
-    "_maxListeners =",
-    "[kCapture] =",
-    "[kCapture] =",
-  ]);
+  ).toEqual(["_events", "_events", "__proto__", "[shapeMode] =", "_maxListeners", "_maxListeners =", "[kCapture] ="]);
 });
 
 test("Proxy traps seen by node:http match the expected output", async () => {

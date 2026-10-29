@@ -266,67 +266,62 @@ impl PathWatcher {
         // Intentional wrap to bun_watcher::HashType
         let hash = me.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
         let is_file = !me.handle.is_dir();
-        Self::emit(this, path.as_bytes(), hash, timestamp, is_file, event_type);
+        me.emit(path.as_bytes(), hash, timestamp, is_file, event_type);
+        Self::maybe_deinit(this);
     }
 
     fn emit(
-        this: *mut PathWatcher,
+        &self,
         path: &[u8],
         hash: bun_watcher::HashType,
         timestamp: u64,
         is_file: bool,
         event_type: WatchEventKind,
     ) {
-        {
-            // SAFETY: `this` is the live heap pointer from `init`; the borrow ends
-            // before `maybe_deinit` may free it.
-            let me = unsafe { &*this };
-            me.emit_in_progress.set(true);
-            #[cfg(debug_assertions)]
-            let mut debug_count: usize = 0;
+        self.emit_in_progress.set(true);
+        #[cfg(debug_assertions)]
+        let mut debug_count: usize = 0;
 
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
-            for key in keys {
-                let Some(fire) = me
-                    .handlers
-                    .with_mut(|h| h.get_mut(&key).map(|v| v.emit(hash, timestamp, event_type)))
-                else {
-                    continue;
-                };
-                if fire {
-                    let ctx: *mut FSWatcher = key.cast::<FSWatcher>();
-                    // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
-                    let encoding = unsafe { (*ctx).encoding };
-                    // `EventPathString` on Windows is `StringOrBytesToDecode`.
-                    let payload = match encoding {
-                        crate::node::Encoding::Utf8 => {
-                            StringOrBytesToDecode::String(BunString::clone_utf8(path))
-                        }
-                        _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
-                    };
-                    on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_count += 1;
+        let keys: Vec<_> = self.handlers.get().keys().iter().copied().collect();
+        for key in keys {
+            let Some(fire) = self
+                .handlers
+                .with_mut(|h| h.get_mut(&key).map(|v| v.emit(hash, timestamp, event_type)))
+            else {
+                continue;
+            };
+            if fire {
+                let ctx: *mut FSWatcher = key.cast::<FSWatcher>();
+                // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
+                let encoding = unsafe { (*ctx).encoding };
+                // `EventPathString` on Windows is `StringOrBytesToDecode`.
+                let payload = match encoding {
+                    crate::node::Encoding::Utf8 => {
+                        StringOrBytesToDecode::String(BunString::clone_utf8(path))
                     }
-                    on_update_end_fn(Some(ctx.cast()));
+                    _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
+                };
+                on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
+                #[cfg(debug_assertions)]
+                {
+                    debug_count += 1;
                 }
+                on_update_end_fn(Some(ctx.cast()));
             }
-
-            #[cfg(debug_assertions)]
-            bun_output::scoped_log!(
-                fs_watch,
-                "emit({}, {}, {}, at {}) x {}",
-                bstr::BStr::new(path),
-                if is_file { "file" } else { "dir" },
-                <&'static str>::from(event_type),
-                timestamp,
-                debug_count,
-            );
-
-            me.emit_in_progress.set(false);
         }
-        Self::maybe_deinit(this);
+
+        #[cfg(debug_assertions)]
+        bun_output::scoped_log!(
+            fs_watch,
+            "emit({}, {}, {}, at {}) x {}",
+            bstr::BStr::new(path),
+            if is_file { "file" } else { "dir" },
+            <&'static str>::from(event_type),
+            timestamp,
+            debug_count,
+        );
+
+        self.emit_in_progress.set(false);
     }
 
     fn init(

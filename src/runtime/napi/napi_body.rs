@@ -5437,8 +5437,7 @@ impl NapiFinalizerTask {
             // already torn down the finalizer can never run; free the task but
             // not the env ref — the env's count is not atomic and the env goes
             // with its VM — as the cleanup-hooks-already-ran case below does.
-            // SAFETY: env is valid (held by NapiEnvRef).
-            let handle = unsafe { &*self.finalizer.env.get() }.vm_handle().clone();
+            let handle = self.finalizer.env.vm_handle().clone();
             let this = bun_core::heap::into_raw(self);
             let ct = ConcurrentTask::create(Task::init(this));
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
@@ -5454,9 +5453,7 @@ impl NapiFinalizerTask {
             return;
         }
 
-        // SAFETY: env is valid (held by NapiEnvRef).
-        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
-        let vm: &VirtualMachine = global_this.bun_vm();
+        let vm: &VirtualMachine = self.finalizer.env.to_js().bun_vm();
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {
@@ -5473,7 +5470,7 @@ impl NapiFinalizerTask {
             }
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             let this = bun_core::heap::into_raw(self);
-            global_this.bun_vm().as_mut().rare_data().push_cleanup_hook(
+            vm.as_mut().rare_data().push_cleanup_hook(
                 vm.global(),
                 this.cast::<c_void>(),
                 Self::run_as_cleanup_hook,

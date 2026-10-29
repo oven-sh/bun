@@ -172,8 +172,6 @@ fn finalize_bundle_inner(
     result: &mut bundler::bundle_v2::DevServerOutput,
     had_sent_hmr_event: &mut bool,
 ) -> JsResult<()> {
-    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-
     // Note: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
     // mutably. Erase to a raw pointer and reborrow at each use site via the
     // `current_bundle!()` macro.
@@ -527,7 +525,7 @@ fn finalize_bundle_inner(
         else {
             continue;
         };
-        let route_bundle = dev.route_bundle_ptr(route_bundle_index);
+        let route_bundle = &mut dev.route_bundles[route_bundle_index.get() as usize];
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
         // Note: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
         // so the `cached_response` take is done before the long-lived `html` borrow.
@@ -538,9 +536,7 @@ fn finalize_bundle_inner(
             .take()
             .is_some()
         {
-            // SAFETY: `route_bundle` borrows `dev.route_bundles[_]`; `source_maps`
-            // is a disjoint field reborrowed through the raw `dev_ptr`.
-            route_bundle.invalidate_client_bundle(unsafe { &mut (*dev_ptr).source_maps });
+            route_bundle.invalidate_client_bundle(&mut dev.source_maps);
         }
         let html = match &mut route_bundle.data {
             route_bundle::Data::Html(h) => h,
@@ -709,26 +705,19 @@ fn finalize_bundle_inner(
                 }
             }
         };
-        // Note: `make_array_for_server_components_patch` needs `&mut self`
-        // while reading `self.incremental_result.client_components_{added,removed}`.
-        // It only touches `server_graph.bundled_files.keys()`, so reborrow the
-        // index slices via `dev_ptr` (disjoint fields).
-        // SAFETY: `dev_ptr == dev`; `incremental_result` is not mutated by
-        // `make_array_for_server_components_patch`.
-        let (added, removed) = unsafe {
-            let ir = &(*dev_ptr).incremental_result;
-            (
-                ir.client_components_added.as_slice(),
-                ir.client_components_removed.as_slice(),
-            )
-        };
         let errors = match dev.server_register_update_callback.get().unwrap().call(
             global,
             global.to_js_value(),
             &[
                 server_modules,
-                dev.make_array_for_server_components_patch(global, added)?,
-                dev.make_array_for_server_components_patch(global, removed)?,
+                dev.make_array_for_server_components_patch(
+                    global,
+                    &dev.incremental_result.client_components_added,
+                )?,
+                dev.make_array_for_server_components_patch(
+                    global,
+                    &dev.incremental_result.client_components_removed,
+                )?,
             ],
         ) {
             Ok(v) => v,
@@ -1013,10 +1002,7 @@ fn finalize_bundle_inner(
                     .put_or_increment_ref_count(script_id, sockets)?
                 {
                     source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
-                        // Note: reborrow `client_graph` via `dev_ptr` so the
-                        // `&mut Entry` borrow inside `source_maps` does not alias.
-                        // SAFETY: `dev_ptr` is live for this fn; disjoint fields.
-                        unsafe { &mut (*dev_ptr).client_graph }.take_source_map(entry)?;
+                        dev.client_graph.take_source_map(entry)?;
                         break 'brk entry;
                     }
                     source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
@@ -1045,12 +1031,9 @@ fn finalize_bundle_inner(
     if !dev.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
-        // Note: erase the agent borrow to a raw pointer so it can be passed
-        // through `send_serialized_failures` (which takes `&mut *dev` while
-        // the borrow derives from `&*dev`) and then re-used below. The agent
-        // lives in the VM's `Debugger`, which outlives this scope.
-        let mut inspector_agent_ptr: Option<*const BunFrontendDevServerAgent> =
-            dev.inspector().map(std::ptr::from_ref);
+        // Borrowed from the VM, where the agent lives, so that `dev` stays free below.
+        let vm = dev.vm;
+        let mut inspector_agent = BunFrontendDevServerAgent::of(&vm);
 
         while let Some(node) = current_bundle!().requests.pop_first() {
             // SAFETY: `pop_first` hands back ownership of the intrusive node;
@@ -1073,24 +1056,15 @@ fn finalize_bundle_inner(
                 Handler::BundledHtmlPage(ram) => ram.response,
             };
 
-            // SAFETY: see Note on `failures` above; `dev_ptr` is live and
-            // `send_serialized_failures` does not mutate `bundling_failures`.
-            let failures = unsafe { (*dev_ptr).bundling_failures.values() };
             dev.send_serialized_failures(
                 resp,
-                failures,
-                // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
-                inspector_agent_ptr.take().map(|p| unsafe { &*p }),
+                dev.bundling_failures.values(),
+                inspector_agent.take(),
             )?;
         }
-        if let Some(agent_ptr) = inspector_agent_ptr {
+        if let Some(agent) = inspector_agent {
             let mut buf: Vec<u8> = Vec::new();
-            dev.encode_serialized_failures(
-                dev.bundling_failures.values(),
-                &mut buf,
-                // SAFETY: `agent_ptr` is from `dev.inspector()` above; live for this scope.
-                Some(unsafe { &*agent_ptr }),
-            )?;
+            dev.encode_serialized_failures(dev.bundling_failures.values(), &mut buf, Some(agent))?;
         }
 
         return Ok(());
@@ -1202,7 +1176,8 @@ fn finalize_bundle_inner(
 
     // Release the lock because the underlying handler may acquire one.
     dev.graph_safety_lock.unlock();
-    // SAFETY: `dev_ptr` is live for the entire fn body; runs before `_lock` (LIFO),
+    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
+    // SAFETY: `*dev_ptr` outlives this guard, which runs before `_lock` (LIFO),
     // so the outer unlock guard sees a locked state again.
     scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
 
@@ -1264,7 +1239,7 @@ fn finalize_bundle_inner(
 
 impl DevServer {
     fn make_array_for_server_components_patch(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         items: &[incremental_graph::ServerFileIndex],
     ) -> JsResult<JSValue> {

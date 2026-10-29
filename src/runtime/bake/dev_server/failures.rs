@@ -42,7 +42,7 @@ impl DevServer {
     }
 
     pub(super) fn send_serialized_failures(
-        &mut self,
+        &self,
         resp: AnyResponse,
         failures: &[SerializedFailure],
         inspector_agent: Option<&BunFrontendDevServerAgent>,

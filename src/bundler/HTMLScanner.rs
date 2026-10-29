@@ -331,8 +331,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                         let value = element
                             .get_attribute(tag_info.url_attribute)
                             .unwrap_or_default();
-                        // A stylesheet href of "#x" is a fragment of this page. As an import
-                        // record it would be a package.json "imports" alias, like `@import "#x"`.
+                        // The resolver reads a stylesheet's "#x" as a package.json "imports" alias.
                         let is_fragment = tag_info.kind == ImportKind::At && value.starts_with('#');
                         if !value.is_empty() && !is_fragment {
                             bun_core::scoped_log!(HTMLScanner, "{} {}", tag_info.selector, value);

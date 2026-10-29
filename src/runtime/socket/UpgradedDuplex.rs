@@ -883,28 +883,21 @@ pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-extern "C" fn UpgradedDuplex__set_inline_reject(this: *const c_void) {
-    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
-    if let Some(wrapper) = unsafe { (*this.cast::<UpgradedDuplex>()).wrapper_ref() } {
+extern "C" fn UpgradedDuplex__set_inline_reject(this: &UpgradedDuplex) {
+    if let Some(wrapper) = this.wrapper_ref() {
         wrapper.set_inline_reject();
     }
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn UpgradedDuplex__latest_session(
-    this: *const c_void,
+    this: &UpgradedDuplex,
 ) -> *mut bun_boringssl_sys::SSL_SESSION {
-    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
-    unsafe { (*this.cast::<UpgradedDuplex>()).wrapper_ref() }
+    this.wrapper_ref()
         .map_or(core::ptr::null_mut(), |wrapper| wrapper.latest_session())
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
-    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
-    unsafe {
-        (*this.cast::<UpgradedDuplex>())
-            .ssl()
-            .unwrap_or(core::ptr::null_mut())
-    }
+extern "C" fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> *mut bun_boringssl_sys::SSL {
+    this.ssl().unwrap_or(core::ptr::null_mut())
 }

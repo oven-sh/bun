@@ -254,7 +254,7 @@ fn env_is_null() -> napi_status {
 
 /// This is nullable because native modules may pass null pointers for the NAPI environment, which
 /// is an error that our NAPI functions need to handle (by returning napi_invalid_arg). To specify
-/// a Rust API that uses a never-null napi_env, use `&NapiEnv`.
+/// a Rust API that uses a never-null napi_env, use `&NapiEnv`; an entry point written in Rust takes `Option<&NapiEnv>`.
 pub(super) type napi_env = *mut NapiEnv;
 
 bun_opaque::opaque_ffi! {

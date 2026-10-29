@@ -67,8 +67,7 @@ bun_core::impl_zeroable!(CompileOptions);
 
 fn default_record() -> CompileOptions {
     let mut record: CompileOptions = zeroed();
-    // SAFETY: the engine writes one `CompileOptions` through the pointer before it returns.
-    unsafe { Bun__AOT__initializeOptions(&raw mut record) };
+    Bun__AOT__initializeOptions(&mut record);
     record
 }
 
@@ -475,7 +474,7 @@ static REGION_THREADS: HostThreadPool = HostThreadPool {
 };
 
 unsafe extern "C" {
-    fn Bun__AOT__initializeOptions(options: *mut CompileOptions);
+    safe fn Bun__AOT__initializeOptions(options: &mut CompileOptions);
     fn Bun__AOT__applyOptionWord(
         options: *mut CompileOptions,
         word: BunAOTBytes,

@@ -179,6 +179,16 @@ const scenarios = {
       never: await imported(path.join(dir, "never.mjs")),
     }),
   },
+  // A second require() of the module that the run stopped, before and after an import() of it.
+  "require() again": {
+    log: "wait",
+    run: (dir, options) => stopped(() => require(path.join(dir, "wait.mjs")), options),
+    after: async dir => ({
+      requireAgain: thrownBy(() => require(path.join(dir, "wait.mjs"))),
+      import: await imported(path.join(dir, "wait.mjs")),
+      requireAfterImport: thrownBy(() => require(path.join(dir, "wait.mjs"))),
+    }),
+  },
   // importer.mjs imports wait.mjs. It is evaluated for the first time after the run.
   "a later importer": {
     log: "wait",

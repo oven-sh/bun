@@ -79,6 +79,16 @@ describe("a plain ES module whose evaluation a vm run stops", () => {
           never: "fulfilled",
           log: "leaf,wait,never",
         },
+        // Not as in Node: a second require() of the module returns an empty object. Node throws
+        // ERR_REQUIRE_CYCLE_MODULE from it.
+        {
+          scenario: "require() again",
+          run: `threw ${code}`,
+          requireAgain: "returned",
+          import: rejected,
+          requireAfterImport: "returned",
+          log: "wait",
+        },
         // A module that imports it, and that is evaluated for the first time after the run.
         {
           scenario: "a later importer",

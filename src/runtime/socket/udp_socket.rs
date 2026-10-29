@@ -79,6 +79,9 @@ unsafe extern "C" {
     // libc byte-order conversions are pure on the integer argument — no
     // pointer/aliasing/thread preconditions — so declare them `safe fn`.
     safe fn ntohs(nshort: u16) -> u16;
+    /// `listen(2)`. safe: two integers; a descriptor that cannot listen is an errno.
+    #[cfg(not(windows))]
+    safe fn listen(fd: c_int, backlog: c_int) -> c_int;
 }
 
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
@@ -2170,8 +2173,7 @@ pub(crate) fn dgram_listen_fd(fd: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
         let fd = dgram_owned_fd(fd)?;
-        // SAFETY: listen(2) on a descriptor this module created.
-        let rc = unsafe { libc::listen(fd, 511) };
+        let rc = listen(fd, 511);
         if rc != 0 {
             return Err(bun_sys::Error::from_code_int(
                 bun_sys::last_errno(),

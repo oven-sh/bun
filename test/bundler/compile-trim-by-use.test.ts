@@ -53,6 +53,11 @@ const textsOfBundlerFeatures = [
 ];
 
 const textsOfLibraries: Record<string, string[]> = {
+  // None of its texts is linked. These are the zigzag order of a block and the start of table K.5 of the standard.
+  "the JPEG codec": [
+    "\x00\x01\x08\x10\x09\x02\x03\x0a\x11\x18\x20\x19\x12\x0b\x04\x05",
+    "\x01\x02\x03\x00\x04\x11\x05\x12\x21\x31\x41\x06\x13\x51\x61\x07",
+  ],
   libwebp: ["Frame setup failed", "Premature end-of-partition0 encountered", "NULL VP8Io parameter"],
   tar: ["Damaged tar archive", "Truncated tar archive", "Malformed pax attribute"],
   lsquic: [

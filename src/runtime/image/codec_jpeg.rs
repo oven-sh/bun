@@ -111,8 +111,7 @@ pub(crate) fn encode(
         // The source colour profile, as APP2/ICC_PROFILE markers. See #30197.
         icc_profile: icc_profile.filter(|profile| !profile.is_empty()),
     };
-    let mut bytes = bun_jpeg::encode(rgba, w, h, &options)
+    let bytes = bun_jpeg::encode(rgba, w, h, &options)
         .map_err(|err| convert_error(err, codecs::Error::EncodeFailed))?;
-    bytes.shrink_to_fit();
     Ok(codecs::Encoded::from_owned(bytes))
 }

@@ -1,6 +1,6 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, nodeExeAtLeast, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -1852,6 +1852,305 @@ describe("Duplex.from({ readable, writable }) destroy propagation (nodejs/node#6
     await writableClose.promise;
     expect(w.destroyed).toBe(true);
     expect(await duplexError.promise).toBe(err);
+  });
+});
+
+describe("Duplex.from(async function) that returns before it has read its input (nodejs/node#65963)", () => {
+  const chunks = count => Array.from({ length: count }, (_, i) => `chunk ${i}`);
+  const code = err => err?.code ?? "no error";
+  const readsNothing = async () => {};
+  const readsOneChunk = async source => {
+    for await (const chunk of source) break;
+  };
+
+  function watch(stream) {
+    const events = [];
+    for (const name of ["finish", "end", "close"]) stream.on(name, () => events.push(name));
+    stream.on("error", err => events.push(`error ${code(err)}`));
+    return events;
+  }
+
+  // Waits for `done()` through at most 100 turns of the event loop. Every step these tests wait for is a promise job
+  // or a process.nextTick callback, so a stream that stays open fails its assertion at once and does not time out.
+  async function settle(done) {
+    for (let turn = 0; turn < 100 && !done(); turn++) await new Promise(resolve => setImmediate(resolve));
+  }
+
+  describe("while the writable side is open, the duplex is destroyed with an AbortError", () => {
+    it.each([
+      ["Duplex.from(fn)", fn => Duplex.from(fn)],
+      ["compose(fn)", fn => Stream.compose(fn)],
+    ])("%s: 'error', 'close', and the function's signal is aborted", async (_, make) => {
+      let signal;
+      const d = make(async (source, options) => {
+        signal = options.signal;
+      });
+      const events = watch(d);
+      await settle(() => events.includes("close"));
+      expect({ events, name: d.errored?.name, aborted: signal.aborted, reason: signal.reason === d.errored }).toEqual({
+        events: ["error ABORT_ERR", "close"],
+        name: "AbortError",
+        aborted: true,
+        reason: true,
+      });
+    });
+
+    it("with a write in flight", async () => {
+      const d = Duplex.from(readsNothing);
+      const events = watch(d);
+      d.write("a");
+      await settle(() => events.includes("close"));
+      expect(events).toEqual(["error ABORT_ERR", "close"]);
+    });
+
+    it("in the promise job of the function's return, so that the next write fails", async () => {
+      const d = Duplex.from(readsNothing);
+      const events = watch(d);
+      // Duplex.from() queued the job that destroys the duplex, so it runs before this continuation.
+      await null;
+      let result;
+      const accepted = d.write("a", err => (result = code(err)));
+      await settle(() => result !== undefined && events.includes("close"));
+      expect({ accepted, result, events }).toEqual({
+        accepted: false,
+        result: "ERR_STREAM_DESTROYED",
+        events: ["error ABORT_ERR", "close"],
+      });
+    });
+
+    it("finished() calls back when the function stops after one chunk", async () => {
+      const d = Duplex.from(readsOneChunk);
+      let result;
+      finished(d, err => (result = code(err)));
+      d.write("a");
+      await settle(() => result !== undefined);
+      expect(result).toBe("ABORT_ERR");
+    });
+
+    it.each([
+      ["reads nothing", readsNothing],
+      ["reads one chunk", readsOneChunk],
+    ])("pipeline() calls back and destroys the source when the function %s", async (_, fn) => {
+      const source = Readable.from(chunks(100));
+      let result;
+      Stream.pipeline(source, Duplex.from(fn), err => (result = code(err)));
+      await settle(() => result !== undefined);
+      expect({ result, sourceDestroyed: source.destroyed }).toEqual({ result: "ABORT_ERR", sourceDestroyed: true });
+    });
+
+    it.each([
+      ["compose(source, fn)", (source, fn) => Stream.compose(source, fn)],
+      ["source.compose(fn)", (source, fn) => source.compose(fn)],
+    ])("%s closes the composed stream and the source", async (_, make) => {
+      const source = Readable.from(chunks(100));
+      const sourceEvents = watch(source);
+      const composedEvents = watch(make(source, readsNothing));
+      await settle(() => sourceEvents.includes("close") && composedEvents.includes("close"));
+      expect({ source: sourceEvents, composed: composedEvents }).toEqual({
+        source: ["error ABORT_ERR", "close"],
+        composed: ["error ABORT_ERR", "close"],
+      });
+    });
+
+    it("Duplex.from({ readable, writable: fn }) destroys the readable side and the pair", async () => {
+      const readable = new Readable({ read() {} });
+      const readableEvents = watch(readable);
+      const pairEvents = watch(Duplex.from({ readable, writable: readsNothing }));
+      await settle(() => readableEvents.includes("close") && pairEvents.includes("close"));
+      expect({ readable: readableEvents, pair: pairEvents }).toEqual({
+        readable: ["error ABORT_ERR", "close"],
+        pair: ["error ABORT_ERR", "close"],
+      });
+    });
+  });
+
+  describe("after the writable side has ended, the duplex is destroyed with no error", () => {
+    it("finished() reports a premature close when the function read nothing", async () => {
+      const d = Duplex.from(readsNothing);
+      const events = watch(d);
+      let result;
+      finished(d, err => (result = code(err)));
+      d.end("a");
+      await settle(() => result !== undefined);
+      expect({ events, result }).toEqual({ events: ["close"], result: "ERR_STREAM_PREMATURE_CLOSE" });
+    });
+
+    it("finished() reports no error when the function read the only chunk", async () => {
+      const d = Duplex.from(readsOneChunk);
+      const events = watch(d);
+      let result;
+      let endResult;
+      finished(d, err => (result = code(err)));
+      d.end("a", err => (endResult = code(err)));
+      await settle(() => result !== undefined && endResult !== undefined);
+      expect({ events, result, endResult, writableFinished: d.writableFinished }).toEqual({
+        events: ["close"],
+        result: "no error",
+        endResult: "ERR_STREAM_DESTROYED",
+        writableFinished: false,
+      });
+    });
+
+    it("finished() reports no error when the function read one chunk of three", async () => {
+      const d = Duplex.from(readsOneChunk);
+      const events = watch(d);
+      const callbacks = [];
+      let result;
+      finished(d, err => (result = code(err)));
+      d.write("a", err => callbacks.push(`a: ${code(err)}`));
+      d.write("b", err => callbacks.push(`b: ${code(err)}`));
+      d.end("c", err => callbacks.push(`end: ${code(err)}`));
+      await settle(() => result !== undefined && callbacks.length === 3);
+      expect({ events, result, callbacks }).toEqual({
+        events: ["close"],
+        result: "no error",
+        callbacks: ["a: no error", "b: ERR_STREAM_DESTROYED", "end: ERR_STREAM_DESTROYED"],
+      });
+    });
+
+    it("pipeline() calls back with no error when the function stops at the last chunk", async () => {
+      const source = Readable.from(["a", "b", "END"]);
+      const stopsAtEnd = async messages => {
+        for await (const message of messages) if (message === "END") break;
+      };
+      let result;
+      Stream.pipeline(source, Duplex.from(stopsAtEnd), err => (result = code(err)));
+      await settle(() => result !== undefined);
+      expect({ result, sourceDestroyed: source.destroyed }).toEqual({ result: "no error", sourceDestroyed: true });
+    });
+
+    // The writable side holds 16 chunks, the default highWaterMark in object mode. A source of 16 chunks has ended when
+    // the function returns. A source of 17 is paused with a chunk left, so the writable side is still open.
+    it.each([
+      [16, "no error"],
+      [17, "ABORT_ERR"],
+    ])("pipeline() of %d chunks into a function that reads one calls back with %s", async (count, expected) => {
+      const source = Readable.from(chunks(count));
+      let result;
+      Stream.pipeline(source, Duplex.from(readsOneChunk), err => (result = code(err)));
+      await settle(() => result !== undefined);
+      expect({ result, sourceDestroyed: source.destroyed }).toEqual({ result: expected, sourceDestroyed: true });
+    });
+
+    it("compose(source, fn) closes both streams with no error when the function read the only chunk", async () => {
+      const source = Readable.from(["a"]);
+      const sourceEvents = watch(source);
+      const composed = Stream.compose(source, readsOneChunk);
+      const composedEvents = watch(composed);
+      let result;
+      finished(composed, err => (result = code(err)));
+      await settle(() => result !== undefined && sourceEvents.includes("close"));
+      expect({ result, source: sourceEvents, composed: composedEvents }).toEqual({
+        result: "no error",
+        source: ["end", "close"],
+        composed: ["close"],
+      });
+    });
+  });
+
+  describe("the duplex is left alone", () => {
+    it("while a function reads all of its input, and it finishes", async () => {
+      const seen = [];
+      const d = Duplex.from(async source => {
+        for await (const chunk of source) seen.push(chunk);
+      });
+      const events = watch(d);
+      await settle(() => events.length > 0);
+      expect({ events, destroyed: d.destroyed }).toEqual({ events: [], destroyed: false });
+      d.write("a");
+      d.write("b");
+      d.end();
+      await settle(() => events.includes("close"));
+      expect({ seen, events }).toEqual({ seen: ["a", "b"], events: ["finish", "close"] });
+    });
+
+    it("when the function throws: its error is reported, not an AbortError", async () => {
+      const d = Duplex.from(async () => {
+        throw Object.assign(new Error("boom"), { code: "BOOM" });
+      });
+      const events = watch(d);
+      await settle(() => events.includes("close"));
+      expect(events).toEqual(["error BOOM", "close"]);
+    });
+
+    it("when destroy(err) comes before the function returns: that error is the only one", async () => {
+      const { promise, resolve } = Promise.withResolvers();
+      const d = Duplex.from(() => promise);
+      const events = watch(d);
+      d.destroy(Object.assign(new Error("mine"), { code: "MINE" }));
+      resolve();
+      await settle(() => events.includes("close"));
+      expect(events).toEqual(["error MINE", "close"]);
+    });
+  });
+
+  // What a whole program sees. The expected results are those of Node.js v26.10.0 to v26.12.1, so the Node.js of the
+  // machine runs the same scripts. The uncaught AbortError is https://github.com/nodejs/node/issues/66349. The node rows
+  // fail when a Node.js release stops it (https://github.com/nodejs/node/pull/66243), and Bun takes that change then.
+  // Not concurrent: five debug builds that start together take up to 4.8 s each, and the timeout is 5 s.
+  describe("a whole program", () => {
+    const programs = {
+      "with no 'error' listener on the duplex, the AbortError is uncaught": {
+        script: `require("node:stream").Duplex.from(async () => {});`,
+        expected: { stdout: "", exitCode: 1, abortError: true },
+      },
+      "compose() throws for a function as first member, then the wrapper it made fails outside the try block": {
+        script: `
+          const { compose, PassThrough } = require("node:stream");
+          try {
+            compose(async () => {}, new PassThrough());
+          } catch (err) {
+            console.log("caught", err.code);
+          }
+        `,
+        expected: { stdout: "caught ERR_INVALID_ARG_VALUE\n", exitCode: 1, abortError: true },
+      },
+      "Duplex.from({ readable: fn, writable }) does not report the AbortError to the pair": {
+        script: `
+          const { Duplex, Writable } = require("node:stream");
+          const pair = Duplex.from({ readable: async () => {}, writable: new Writable() });
+          pair.on("error", err => console.log("pair error", err.code));
+        `,
+        expected: { stdout: "", exitCode: 1, abortError: true },
+      },
+      "a function that hands its source to a pipe and returns: the pipe gets the AbortError and no chunk": {
+        script: `
+          const { Duplex, Readable, Writable } = require("node:stream");
+          const got = [];
+          const dest = new Writable({ objectMode: true, write(chunk, encoding, callback) { got.push(chunk); callback(); } });
+          const d = Duplex.from(async source => {
+            Readable.from(source).pipe(dest);
+          });
+          const events = [];
+          for (const name of ["error", "finish", "close"]) d.on(name, () => events.push(name));
+          d.write("a");
+          d.write("b");
+          d.end("c");
+          process.on("exit", () => console.log(JSON.stringify({ events, got })));
+        `,
+        expected: { stdout: `{"events":["close"],"got":[]}\n`, exitCode: 1, abortError: true },
+      },
+      "a function that returns a value leaves the duplex open": {
+        script: `
+          const d = require("node:stream").Duplex.from(async () => 1);
+          process.on("unhandledRejection", err => console.log(err.code, d.destroyed));
+        `,
+        expected: { stdout: "ERR_INVALID_RETURN_VALUE false\n", exitCode: 0, abortError: false },
+      },
+    };
+
+    for (const [runtime, exe] of [
+      ["bun", bunExe()],
+      ["node", nodeExeAtLeast("26.10.0")],
+    ]) {
+      for (const [name, { script, expected }] of Object.entries(programs)) {
+        it.skipIf(!exe)(`${name} (${runtime})`, async () => {
+          await using proc = Bun.spawn({ cmd: [exe, "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, exitCode, abortError: stderr.includes("AbortError") }).toEqual(expected);
+        });
+      }
+    }
   });
 });
 

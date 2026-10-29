@@ -89,12 +89,18 @@ function duplexify(body, name?: string): $Node.Duplex {
     const then = (value as { then?: Then } | null | undefined)?.then;
     if (typeof then === "function") {
       let d: Duplexify;
+      let finalized = false;
 
       const promise = then.$call(
         value,
         val => {
           if (val != null) {
             throw $ERR_INVALID_RETURN_VALUE("nully", "body", val);
+          }
+          // It returned before final() began, so it did not read its input to the end: https://github.com/nodejs/node/pull/65963
+          // destroyer() adds Node's AbortError (nodejs/node#66349). When a Node release takes nodejs/node#66243, this is d.destroy().
+          if (!finalized) {
+            destroyer(d);
           }
         },
         err => {
@@ -108,6 +114,7 @@ function duplexify(body, name?: string): $Node.Duplex {
         readable: false,
         write,
         final(cb) {
+          finalized = true;
           final(async () => {
             try {
               await promise;

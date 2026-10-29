@@ -73,9 +73,8 @@ pub(crate) fn remap_stack_frame_positions(
     // nothing else on that thread will.
     let on_js_thread = VirtualMachine::get_or_null().is_some();
     bun_core::output::Source::configure_thread();
-    // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
-    // the raw ptr because it forwards to the C++-side remapper.
-    unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
+    // SAFETY: `frames[..frames_count]` is a live C++ array that only this call touches.
+    vm.remap_stack_frame_positions(unsafe { bun_core::ffi::slice_mut(frames, frames_count) });
     if !on_js_thread {
         bun_core::output::flush();
     }

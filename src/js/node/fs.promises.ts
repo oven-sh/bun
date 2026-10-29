@@ -462,7 +462,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 }
 
 type StatOperation = (target: any, options?: any) => Promise<unknown>;
-const PromiseRace = Promise.race;
+const PromiseRace = $Promise.race;
 let addAbortListener: ((signal: AbortSignal, listener: () => void) => Disposable) | undefined;
 function noop() {}
 
@@ -492,7 +492,7 @@ async function raceWithSignal(operation: Promise<unknown>, signal: AbortSignal) 
     throw error;
   }
   try {
-    return await PromiseRace.$call(Promise, [operation, aborted]);
+    return await PromiseRace.$call($Promise, [operation, aborted]);
   } finally {
     listener[SymbolDispose]();
   }

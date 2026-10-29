@@ -61,6 +61,7 @@ function settleCallbackWithNull(promise: Promise<unknown>, callback: Callback) {
   );
 }
 
+const StringPrototypeIndexOf = String.prototype.indexOf;
 function dropStats() {}
 
 // fs.stat, fs.lstat and fs.fstat with `options.signal`: node's checkAborted and bindSignalToReq. https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L380-L406
@@ -78,8 +79,8 @@ function statWithSignal(
   if (targetKind === "fd") validateAbortSignal(signal, "options.signal");
 
   if (signal.aborted) {
-    // Node checks the path before `aborted`. The native call makes that check, so a path it cannot take goes to it, and it throws.
-    if (targetKind === "path" && (typeof target === "string" ? target.indexOf("\0") !== -1 : !$isObject(target))) {
+    // Node checks the path before `aborted`, so a path that is not a string free of null bytes goes to the native check. It throws, or it runs a stat that nothing reads.
+    if (targetKind === "path" && (typeof target !== "string" || StringPrototypeIndexOf.$call(target, "\0") !== -1)) {
       op.$call(fs, dropStats, target, options);
     }
     // Node calls back before it returns, so a throw from the callback reaches the caller.

@@ -611,28 +611,17 @@ describe("callback forms", () => {
   test("fs.stat and fs.lstat check the path before they look at aborted", () => {
     const signal = AbortSignal.abort();
     for (const fn of pathForms) {
-      for (const path of [123, undefined, null, true, 1n, Symbol("s")]) {
+      for (const path of [123, undefined, null, true, 1n, Symbol("s"), {}, [], new Date(0)]) {
         assert.throws(() => fn(path, { signal }, assert.fail), pathTypeError, util.inspect(path));
       }
-      assert.throws(() => fn("a\0b", { signal }, assert.fail), { code: "ERR_INVALID_ARG_VALUE" });
+      for (const path of ["a\0b", Buffer.from("a\0b")]) {
+        assert.throws(() => fn(path, { signal }, assert.fail), { code: "ERR_INVALID_ARG_VALUE" }, util.inspect(path));
+      }
+      assert.throws(() => fn(new URL("http://example.com/"), { signal }, assert.fail), {
+        code: "ERR_INVALID_URL_SCHEME",
+      });
     }
   });
-
-  test(
-    "fs.stat and fs.lstat check a path that is an object of the wrong kind before they look at aborted",
-    {
-      expectFailure:
-        isBun && "Bun checks such a path in the native call, and an aborted signal ends the call before it",
-    },
-    () => {
-      const signal = AbortSignal.abort();
-      for (const fn of pathForms) {
-        for (const path of [{}, [], new Date(0)]) {
-          assert.throws(() => fn(path, { signal }, assert.fail), pathTypeError, util.inspect(path));
-        }
-      }
-    },
-  );
 
   test("fs.fstat checks the callback, the signal type, aborted, then the fd", () => {
     const signal = AbortSignal.abort();

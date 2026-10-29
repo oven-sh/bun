@@ -1747,6 +1747,7 @@ devTest("recovers from importing a file in a directory that can't be opened", {
 
 // Compiling nesting away writes the parent selector for each `&`. With two per level the
 // printer stops at its expansion limit.
+const twoParentsPerLevel = "&:is(.a, &.b) {\n";
 devTest("editing an @imported stylesheet recovers from a failed CSS print", {
   files: {
     "index.html": emptyHtmlFile({
@@ -1754,7 +1755,10 @@ devTest("editing an @imported stylesheet recovers from a failed CSS print", {
       body: "hello",
     }),
     "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
-    "child.css": "&:is(.a, &.b) {\n".repeat(20) + "color: red;\n" + "}\n".repeat(20),
+    "child.css":
+      Buffer.alloc(20 * twoParentsPerLevel.length, twoParentsPerLevel).toString() +
+      "color: red;\n" +
+      Buffer.alloc(20 * "}\n".length, "}\n").toString(),
   },
   async test(dev) {
     await using c = await dev.client("/", {

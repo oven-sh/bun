@@ -2174,8 +2174,6 @@ pub mod closer {
     // ── Windows ──────────────────────────────────────────────────────────────
 
     #[cfg(windows)]
-    use bun_core::IntrusiveField as _;
-    #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
     #[cfg(windows)]
     use bun_sys::windows::libuv as uv;
@@ -2187,8 +2185,6 @@ pub mod closer {
     pub struct Closer {
         io_request: uv::fs_t,
     }
-    #[cfg(windows)]
-    bun_core::intrusive_field!(Closer, io_request: uv::fs_t);
 
     #[cfg(windows)]
     impl Closer {
@@ -2215,7 +2211,7 @@ pub mod closer {
 
         extern "C" fn on_close(req: *mut uv::fs_t) {
             // SAFETY: req points to Closer.io_request (set in `close` above).
-            let closer: *mut Closer = unsafe { Closer::from_field_ptr(req) };
+            let closer = unsafe { bun_core::from_field_ptr!(Closer, io_request, req) };
             // SAFETY: req.data was set to `closer` in `close`; both valid for the callback.
             unsafe {
                 debug_assert!(closer == (*req).data.cast::<Closer>());

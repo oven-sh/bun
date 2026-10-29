@@ -1203,16 +1203,11 @@ impl<'a> Parser<'a> {
                     js_ast::StmtData::SLocal(local) => {
                         if (local.decls.len_u32() as usize) > 1 {
                             for decl in local.decls.slice() {
-                                // `S::Local`/`Decl` are not `Copy`;
-                                // rebuild the struct instead of `**local`.
                                 let _local = S::Local {
                                     kind: local.kind,
                                     is_export: local.is_export,
                                     origin: local.origin,
-                                    decls: G::DeclList::init_one(G::Decl {
-                                        binding: decl.binding,
-                                        value: decl.value,
-                                    }),
+                                    decls: G::DeclList::init_one(*decl),
                                 };
                                 let new_stmt = p.s(_local, stmt.loc);
                                 let sliced = arena.alloc_slice_copy(&[new_stmt]);

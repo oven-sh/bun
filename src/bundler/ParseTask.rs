@@ -227,24 +227,24 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl<'a> ParseTask<'a> {
-    /// Shared borrow of the owning `BundleV2`. `ctx` is a BACKREF
-    /// (LIFETIMES.tsv) into the arena-allocated bundle, set at `init` time and
-    /// valid until `BundleV2::deinit`. Prefer this over open-coded
-    /// `unsafe { &*task.ctx }`; sites that mutate the bundle (e.g.
-    /// `on_complete`) must continue to deref the raw `ctx` field directly.
+    /// Shared borrow of the owning `BundleV2`. Use a copy of `ctx` where a
+    /// function-local borrow is enough.
     ///
     /// # Safety
     ///
-    /// The returned lifetime `'r` is **decoupled** from `&self`: callers in
-    /// `get_code_for_parse_task_*` stash slices borrowed from `ctx` into
-    /// out-params whose lifetime is independent of `task`, so we cannot tie
+    /// The returned lifetime `'r` is **decoupled** from `&self`:
+    /// `get_code_for_parse_task_without_plugins` stores a path borrowed from `ctx`
+    /// in an out-param whose lifetime is independent of `task`, so we cannot tie
     /// `'r` to the `ParseTask` borrow. The caller must ensure the bundle
-    /// outlives `'r` — true for every site, since the bundle drives the parse
-    /// tasks and outlives all of them. Also requires `ctx` to be initialized
-    /// (`init()` was called); debug-asserted.
+    /// outlives `'r`. It does, since the bundle drives the parse tasks and
+    /// outlives all of them.
+    ///
+    /// # Panics
+    ///
+    /// If `ctx` is `None`.
     #[inline]
     pub(crate) unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
-        // SAFETY: caller upholds: bundle outlives `'r`. `expect` enforces init().
+        // SAFETY: caller upholds: bundle outlives `'r`.
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
@@ -383,8 +383,9 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
         unsafe { &mut *bun_core::from_field_ptr!(ParseTask<'static>, io_task, task) };
     // Read the pool first. `run_from_thread_pool` can reschedule `*parse_task` onto a worker
     // thread, which then owns it.
-    // SAFETY: teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
-    let pool: *const crate::ThreadPool = unsafe { parse_task.ctx() }.graph.pool();
+    // Teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
+    let ctx = parse_task.ctx.expect("ParseTask.ctx unset");
+    let pool: *const crate::ThreadPool = ctx.graph.pool();
     parse_worker::run_from_thread_pool(parse_task);
     // SAFETY: `pool` scheduled this task, and this is the last access to the bundle.
     unsafe { crate::ThreadPool::finish_io_task(pool) };
@@ -1615,8 +1616,7 @@ pub mod parse_worker {
             if task.source_index.is_runtime() {
                 break 'brk false;
             }
-            // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-            let ctx = unsafe { task.ctx() };
+            let ctx = task.ctx.expect("ParseTask.ctx unset");
             let Some(plugin) = ctx.plugins_ref() else {
                 break 'brk false;
             };
@@ -1649,10 +1649,8 @@ pub mod parse_worker {
             original_contents: None,
         };
 
-        // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-        let plugins = unsafe { ctx.task.ctx() }
-            .plugins_ref()
-            .expect("unreachable");
+        let bundle = ctx.task.ctx.expect("ParseTask.ctx unset");
+        let plugins = bundle.plugins_ref().expect("unreachable");
         ctx.run(plugins, from_plugin)
     }
 
@@ -2599,11 +2597,7 @@ pub mod parse_worker {
                     }
                 }),
             };
-            // SAFETY: ARENA — `bump: &'static Bump` (worker arena pinned for the
-            // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow.
-            unsafe {
-                bun_collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected))
-            }
+            &*bump.alloc(projected)
         });
 
         // The browser copy of a page of a `clientPages` router drops the exports that its router
@@ -2656,8 +2650,7 @@ pub mod parse_worker {
             key: ast::StoreStr::EMPTY,
             content_hash: 0,
         };
-        // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
-        let task_ctx = unsafe { task.ctx() };
+        let task_ctx = task.ctx.expect("ParseTask.ctx unset");
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
@@ -2753,9 +2746,8 @@ pub mod parse_worker {
     }
 
     fn run_from_thread_pool_impl(this: &mut ParseTask<'static>) {
-        // SAFETY: ctx backref valid for the bundle pass (outlives this task).
-        let ctx = unsafe { this.ctx() };
-        let worker: &mut crate::Worker = crate::Worker::get(ctx);
+        let ctx = this.ctx.expect("ParseTask.ctx unset");
+        let worker: &mut crate::Worker = crate::Worker::get(ctx.get());
         // `defer worker.unget()` — handled at function exit (scopeguard
         // would alias the `&mut worker` borrows below).
         scoped_log!(
@@ -2853,7 +2845,7 @@ pub mod parse_worker {
         };
 
         let result = Box::new(Result {
-            ctx: this.ctx.expect("ParseTask.ctx unset"),
+            ctx,
             task: EventLoop::Task::default(),
             value,
             // `ExternalFreeFunction`

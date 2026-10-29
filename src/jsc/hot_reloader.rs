@@ -486,8 +486,7 @@ where
         self.count += 1;
     }
 
-    /// The dispatched task was heap-allocated in [`Self::enqueue`] via
-    /// `heap::alloc`; the event loop calls this after `run()` to free it.
+    /// Frees a task that [`Self::enqueue`] boxed and that will not run.
     ///
     /// # Safety
     /// `this` must have been created via `heap::alloc` in [`Self::enqueue`]

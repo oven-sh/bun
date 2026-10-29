@@ -571,22 +571,14 @@ pub(crate) mod exports {
     /// returns JSValue).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    fn JSS3File__bucket(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
-        // SAFETY: C++ prototype getter passes the wrapper's live Blob and global.
-        let (this, global) = unsafe { (&*this, &*global) };
+    fn JSS3File__bucket(this: &Blob, global: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_call(global, || super::get_bucket(this, global))
     }
 
     /// `options` is empty when it was not passed.
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    fn JSS3File__presign(
-        this: *mut Blob,
-        global: *mut JSGlobalObject,
-        options: JSValue,
-    ) -> JSValue {
-        // SAFETY: JSC method shim passes the wrapper's live Blob and global.
-        let (this, global) = unsafe { (&*this, &*global) };
+    fn JSS3File__presign(this: &Blob, global: &JSGlobalObject, options: JSValue) -> JSValue {
         bun_jsc::to_js_host_call(global, || {
             super::get_presign_url_from(this, global, (!options.is_empty()).then_some(options))
         })
@@ -594,9 +586,7 @@ pub(crate) mod exports {
 
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    fn JSS3File__stat(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
-        // SAFETY: JSC method shim passes the wrapper's live Blob and global.
-        let (this, global) = unsafe { (&*this, &*global) };
+    fn JSS3File__stat(this: &Blob, global: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_call(global, || {
             S3BlobStatTask::stat(&global.js_thread_of_caller(), this)
         })

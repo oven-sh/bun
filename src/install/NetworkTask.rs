@@ -33,7 +33,7 @@ impl strings::Appender for FilenameStoreAppender<'_> {
 pub(crate) fn stored_string(bytes: &[u8]) -> strings::StringOrTinyString {
     strings::StringOrTinyString::init_append_if_needed(
         bytes,
-        &mut FilenameStoreAppender(FileSystem::instance().filename_store()),
+        &mut FilenameStoreAppender(FileSystem::get().filename_store()),
     )
     .expect("unreachable")
 }

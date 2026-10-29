@@ -3845,7 +3845,7 @@ impl RunCommand {
                     if let Some(entries) = bin_dir.get_entries_const() {
                         // `.data` iteration must hold `entries_mutex`
                         // (uncontended on this single-threaded CLI path).
-                        let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        let _entries_lock = bun_resolver::fs::FileSystem::get()
                             .fs
                             .entries_mutex
                             .lock_guard();
@@ -3903,7 +3903,7 @@ impl RunCommand {
                 if let Some(entries) = dir_info.get_entries_const() {
                     // `.data` iteration must hold `entries_mutex`
                     // (uncontended on this single-threaded CLI path).
-                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                    let _entries_lock = bun_resolver::fs::FileSystem::get()
                         .fs
                         .entries_mutex
                         .lock_guard();

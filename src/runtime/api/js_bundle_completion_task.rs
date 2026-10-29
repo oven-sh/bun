@@ -259,8 +259,6 @@ fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
 
 /// Absolute, because the PE metadata operations need an absolute path.
 fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u8]> {
-    // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
-    // initialized during VM startup before any `Bun.build` is reachable.
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let outdir_slice = &config.outdir.list;
     let outfile_slice = &compile.outfile.list;
@@ -901,8 +899,6 @@ impl JSBundleCompletionTask {
                     && bun_paths::is_absolute(&this.config.outdir.list);
                 let outdir = this.config.outdir.list.clone();
                 let dir = this.config.dir.list.clone();
-                // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
-                // initialized during VM startup before any `Bun.build` is reachable.
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
@@ -1448,7 +1444,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             // Relative to where the entry points are relative to, as for `--tsconfig-override`.
             tsconfig_override: (!config.tsconfig_override.list.is_empty()).then(|| {
                 let cwd = match config.dir.list.is_empty() {
-                    true => bun_resolver::fs::FileSystem::instance().top_level_dir(),
+                    true => bun_resolver::fs::FileSystem::get().top_level_dir(),
                     false => config.dir.list.as_slice(),
                 };
                 let path = config.tsconfig_override.list.as_slice();

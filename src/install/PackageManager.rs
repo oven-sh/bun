@@ -1321,7 +1321,7 @@ fn configure_env_for_scripts_run(
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(without_trailing_slash_windows_path(
-                FileSystem::instance().top_level_dir(),
+                FileSystem::get().top_level_dir(),
             )),
         };
     }
@@ -1526,7 +1526,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
-            let normalized = normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
+            let normalized = normalizer.resolve_z(FileSystem::get().top_level_dir(), abs_ca_z);
             if !bun_sys::exists_z(normalized) {
                 Output::err(
                     "HTTPThread",
@@ -2418,7 +2418,7 @@ pub fn init(
     // Registers the resolver-tier singleton
     // and seeds `top_level_dir` from `getcwd`.
     bun_resolver::fs::FileSystem::init(None)?;
-    let fs = FileSystem::instance();
+    let fs = FileSystem::get();
     // `C:\` keeps its separator: `C:` is the current directory of drive C, not its root.
     let top_level_dir_no_trailing_slash = without_trailing_slash_windows_path(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
@@ -2659,9 +2659,10 @@ pub fn init(
     // it.
     let _ = root_package_json_file.close();
 
+    let top_level_dir = fs.top_level_dir();
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+    let entries_option = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
         fs::EntriesOption::Entries(e) => {
             // SAFETY: the BSSMap singleton owns `*e` for the process
             // lifetime, and `init()` runs single-threaded before any other
@@ -2677,7 +2678,7 @@ pub fn init(
     if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {
         // `.data` must only be probed while `entries_mutex` is held.
         let env_probe_keys = {
-            let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
             dot_env::DirEntryKeys(
                 entries_option
                     .data
@@ -2713,7 +2714,7 @@ pub fn init(
             env,
             bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
             &mut resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                fs.top_level_dir(),
+                top_level_dir,
                 &mut npmrc_local,
                 &[b".npmrc".as_slice()],
             )
@@ -3024,8 +3025,8 @@ fn init_with_runtime_once(
     // process, or be unreadable: ENOENT/EACCES/ENOTDIR), and bailing out here
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
-    let fs_instance = FileSystem::instance();
-    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)? {
+    let top_level_dir = FileSystem::get().top_level_dir();
+    let root_dir = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
         // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
         // and runtime init runs once on the main thread before any other access.
         fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
@@ -3140,7 +3141,7 @@ fn init_with_runtime_once(
     }
 
     let mut original_package_json_path =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec();
+        strings::without_trailing_slash(FileSystem::get().top_level_dir()).to_vec();
     original_package_json_path.extend_from_slice(b"/package.json\0");
     let manager_ptr = allocate_package_manager(
         Options {
@@ -3198,7 +3199,7 @@ fn init_with_runtime_once(
         FileSystem::instance().read_directory(project_dir, 0, false)
         && {
             // `.data` probes must hold `entries_mutex`.
-            let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
             entries.has_comptime_query(b"bun.lock") || entries.has_comptime_query(b"bun.lockb")
         }
         && let Ok(dir) = bun_sys::Dir::open(project_dir)

@@ -362,7 +362,7 @@ fn get_temporary_directory_run(
             manager.cache_directory_path.as_bytes(),
             b".tmp",
         ]);
-        bun_core::handle_oom(FileSystem::instance().dirname_store().append(joined))
+        bun_core::handle_oom(FileSystem::get().dirname_store().append(joined))
     } else {
         temp_dir_name
     };
@@ -417,7 +417,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
         unsafe {
             (*this).cache_directory_path =
                 ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                    FileSystem::get().top_level_dir(),
                     &[b"node_modules", b".cache"],
                 ))
         };
@@ -463,7 +463,7 @@ pub fn fetch_cache_directory_path(
     };
 
     let mut buf = path::path_buffer_pool::get();
-    let Some(abs) = FileSystem::instance().abs_buf_checked(parts, &mut buf[..]) else {
+    let Some(abs) = FileSystem::get().abs_buf_checked(parts, &mut buf[..]) else {
         return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(parts[0]));
     };
     Ok(CacheDir {
@@ -858,7 +858,7 @@ pub fn cached_tarball_folder_name_print<'a>(
         _ => {
             let mut hasher = bun_wyhash::Wyhash11::init(0);
             if tag == ResolutionTag::LocalTarball {
-                hasher.update(FileSystem::instance().top_level_dir());
+                hasher.update(FileSystem::get().top_level_dir());
             }
             hasher.update(url);
             hasher.update(integrity.slice());
@@ -988,7 +988,7 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
     let mut out_buffer = bun_paths::path_buffer_pool::get();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
-    let path = FileSystem::instance()
+    let path = FileSystem::get()
         .dirname_store()
         .append(result.as_bytes_with_nul())?;
     // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
@@ -1035,7 +1035,7 @@ pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryErr
         Err(err) => return Err(DirectoryError::GlobalLinkPath(err)),
     };
     this.global_link_dir_path =
-        bun_core::handle_oom(FileSystem::instance().dirname_store().append(path_));
+        bun_core::handle_oom(FileSystem::get().dirname_store().append(path_));
     this.global_dir = Some(global_dir);
     this.global_link_dir = Some(link_dir);
     Ok(link_fd)

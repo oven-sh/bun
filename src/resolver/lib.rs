@@ -185,7 +185,7 @@ pub mod fs {
 
     // Global mutable singleton.
     // `RacyCell` is the alias-safe static cell — `init()` is the only writer,
-    // serialized at startup; readers go through `instance()`.
+    // serialized at startup; readers go through `get()`.
     static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
     pub static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
@@ -229,6 +229,8 @@ pub mod fs {
             Ok(ZStr::from_buf_mut(buf, written))
         }
 
+        /// Only for `RealFS::entries`, whose methods take `&mut self`.
+        /// Everything else uses [`get`](Self::get).
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
             // SAFETY: caller guarantees init() was called, so INSTANCE is initialized.
@@ -771,7 +773,7 @@ pub mod fs {
             &self,
             query: &[u8],
         ) -> (Option<crate::fs_full::EntryLookup<'static>>, Fd) {
-            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
             match self {
                 EntriesOption::Entries(entries) => {
                     // SAFETY: ARENA — the `DirEntry` is a process-lifetime
@@ -788,7 +790,7 @@ pub mod fs {
         /// Listing dir + fd snapshot under `entries_mutex` (watch
         /// registration); `None` when the slot holds a read error.
         pub(crate) fn dir_and_fd(&self) -> Option<(&'static [u8], Fd)> {
-            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
             match self {
                 EntriesOption::Entries(entries) => Some((entries.dir, entries.fd)),
                 EntriesOption::Err(_) => None,

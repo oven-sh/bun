@@ -656,7 +656,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     let mut pkg_map: StringArrayHashMap<PackageID> = StringArrayHashMap::new();
 
-    pkg_map.put(crate::bun_fs::FileSystem::instance().top_level_dir(), 0)?;
+    pkg_map.put(crate::bun_fs::FileSystem::get().top_level_dir(), 0)?;
 
     for workspace_path in lockfile.workspace_paths.values().to_vec() {
         // Every workspace path is the key of an importer with a named package.json.

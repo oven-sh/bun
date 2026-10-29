@@ -489,11 +489,11 @@ impl EditorContext {
                     editor_,
                     // SAFETY: see note above — exclusive per-call reborrow.
                     unsafe { &mut *buf_ptr },
-                    Fs::FileSystem::instance().top_level_dir(),
+                    Fs::FileSystem::get().top_level_dir(),
                     &mut out,
                 ) {
                     self.editor = Some(editor_);
-                    self.path = Fs::FileSystem::instance()
+                    self.path = Fs::FileSystem::get()
                         .dirname_store
                         .append_slice(out)
                         .expect("unreachable");
@@ -504,7 +504,7 @@ impl EditorContext {
                 let mut static_out: &'static [u8] = b"";
                 if Editor::by_fallback_path_for_editor(editor_, Some(&mut static_out)) {
                     self.editor = Some(editor_);
-                    self.path = Fs::FileSystem::instance()
+                    self.path = Fs::FileSystem::get()
                         .dirname_store
                         .append_slice(static_out)
                         .expect("unreachable");
@@ -520,11 +520,11 @@ impl EditorContext {
                 editor_,
                 // SAFETY: see note above — exclusive per-call reborrow.
                 unsafe { &mut *buf_ptr },
-                Fs::FileSystem::instance().top_level_dir(),
+                Fs::FileSystem::get().top_level_dir(),
                 &mut out,
             ) {
                 self.editor = Some(editor_);
-                self.path = Fs::FileSystem::instance()
+                self.path = Fs::FileSystem::get()
                     .dirname_store
                     .append_slice(out)
                     .expect("unreachable");
@@ -535,7 +535,7 @@ impl EditorContext {
             let mut static_out: &'static [u8] = b"";
             if Editor::by_fallback_path_for_editor(editor_, Some(&mut static_out)) {
                 self.editor = Some(editor_);
-                self.path = Fs::FileSystem::instance()
+                self.path = Fs::FileSystem::get()
                     .dirname_store
                     .append_slice(static_out)
                     .expect("unreachable");
@@ -548,11 +548,11 @@ impl EditorContext {
             env,
             // SAFETY: see note above — exclusive per-call reborrow.
             unsafe { &mut *buf_ptr },
-            Fs::FileSystem::instance().top_level_dir(),
+            Fs::FileSystem::get().top_level_dir(),
             &mut out,
         ) {
             self.editor = Some(editor_);
-            self.path = Fs::FileSystem::instance()
+            self.path = Fs::FileSystem::get()
                 .dirname_store
                 .append_slice(out)
                 .expect("unreachable");

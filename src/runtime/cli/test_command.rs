@@ -164,7 +164,7 @@ pub(crate) struct TestFailure {
 /// How a test file is named in the JUnit document: relative to the project
 /// root when inside it, else as given.
 pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
-    let top = FileSystem::instance().top_level_dir();
+    let top = FileSystem::get().top_level_dir();
     if strings::has_prefix(path, top) {
         without_leading_path_separator(&path[top.len()..])
     } else {
@@ -339,7 +339,7 @@ impl TestFailure {
             }
         }
         body.push(b'\n');
-        let dir = FileSystem::instance().top_level_dir();
+        let dir = FileSystem::get().top_level_dir();
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
             let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
@@ -2084,7 +2084,7 @@ impl TestCommand {
                                 pretty_errorln!(
                                     "Test filter <b>{}<r> had no matches in --cwd={}",
                                     bun_fmt::quote(arg),
-                                    bun_fmt::quote(FileSystem::instance().top_level_dir())
+                                    bun_fmt::quote(FileSystem::get().top_level_dir())
                                 );
                             } else {
                                 pretty_errorln!(
@@ -2193,7 +2193,7 @@ impl TestCommand {
                         pretty_errorln!(
                             "<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}",
                             bun_fmt::quote(dir_to_scan),
-                            bun_fmt::quote(FileSystem::instance().top_level_dir())
+                            bun_fmt::quote(FileSystem::get().top_level_dir())
                         );
                     } else {
                         pretty_errorln!(
@@ -2520,7 +2520,7 @@ impl TestCommand {
                     // Be very clear to ai.
                     Output::err_generic(
                         "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
-                        (bun_fmt::quote(FileSystem::instance().top_level_dir()),),
+                        (bun_fmt::quote(FileSystem::get().top_level_dir()),),
                     );
                 } else {
                     // Be friendlier to humans.
@@ -2532,7 +2532,7 @@ impl TestCommand {
                 if Output::is_ai_agent() {
                     pretty_errorln!(
                         "<yellow>The following filters did not match any test files in --cwd={}:<r>",
-                        bun_fmt::quote(FileSystem::instance().top_level_dir())
+                        bun_fmt::quote(FileSystem::get().top_level_dir())
                     );
                 } else {
                     pretty_errorln!(
@@ -2938,12 +2938,12 @@ impl TestCommand {
 
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.
-        let file_path: &'static [u8] = FileSystem::instance()
+        let file_path: &'static [u8] = FileSystem::get()
             .filename_store
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
         run_compiled::will_run_test_file(resolve_path::relative(
-            FileSystem::instance().top_level_dir(),
+            FileSystem::get().top_level_dir(),
             file_path,
         ));
         let file_id = jest::Jest::runner()
@@ -2992,8 +2992,7 @@ impl TestCommand {
             }
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
-            let file_title =
-                resolve_path::relative(FileSystem::instance().top_level_dir(), file_path);
+            let file_title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
             // split (not the defer-captured `reporter_ptr`) keeps the borrows

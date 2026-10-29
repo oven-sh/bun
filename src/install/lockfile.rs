@@ -261,7 +261,7 @@ impl LinkedMembers {
                 continue;
             }
             let is_link = !resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                FileSystem::instance().top_level_dir(),
+                FileSystem::get().top_level_dir(),
                 &mut buf.0,
                 &[folder],
             )
@@ -299,7 +299,7 @@ impl LinkedMembers {
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut real_buf = bun_paths::path_buffer_pool::get();
         let Some(path) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-            FileSystem::instance().top_level_dir(),
+            FileSystem::get().top_level_dir(),
             &mut buf.0,
             &[path],
         ) else {

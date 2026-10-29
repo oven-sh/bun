@@ -990,7 +990,7 @@ pub mod bv2_impl {
                         let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
                             source_file
                         } else {
-                            bun_resolver::fs::FileSystem::instance()
+                            bun_resolver::fs::FileSystem::get()
                                 .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
                         };
 
@@ -1022,7 +1022,7 @@ pub mod bv2_impl {
                             {
                                 b"/"
                             } else {
-                                bun_resolver::fs::FileSystem::instance().top_level_dir()
+                                bun_resolver::fs::FileSystem::get().top_level_dir()
                             }
                         } else {
                             source_dir

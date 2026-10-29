@@ -2995,7 +2995,7 @@ fn enqueue_local_tarball(
             None => (stored_string(path), true),
             Some(base_dir) => (
                 stored_string(Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                    FileSystem::get().top_level_dir(),
                     &[base_dir, path],
                 )),
                 false,
@@ -3961,7 +3961,7 @@ fn get_or_put_resolved_package(
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 let res =
                     match Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
-                        FileSystem::instance().top_level_dir(),
+                        FileSystem::get().top_level_dir(),
                         &mut buf2[..],
                         &[symlink_path],
                     ) {
@@ -4038,7 +4038,7 @@ fn project_path<'a>(path: &'a [u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
         return (path.len() < buf.len()).then_some(path);
     }
     Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
-        FileSystem::instance().top_level_dir(),
+        FileSystem::get().top_level_dir(),
         buf,
         &[path],
     )

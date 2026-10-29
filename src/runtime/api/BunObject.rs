@@ -745,7 +745,7 @@ pub(crate) fn open_in_editor<'a>(
                     // thread is still reading argv[0]. Give `path`
                     // process-lifetime storage, matching every other
                     // `detect_editor` branch.
-                    edit.path = bun_resolver::fs::FileSystem::instance()
+                    edit.path = bun_resolver::fs::FileSystem::get()
                         .dirname_store
                         .append_slice(edit.path)
                         .expect("unreachable");

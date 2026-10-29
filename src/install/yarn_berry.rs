@@ -276,7 +276,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
         .map(strings::without_trailing_slash);
 
     let mut folder: &[u8] =
-        strings::without_trailing_slash(crate::bun_fs::FileSystem::instance().top_level_dir());
+        strings::without_trailing_slash(crate::bun_fs::FileSystem::get().top_level_dir());
     let mut in_project = true;
     let mut read_home = false;
     loop {

@@ -314,20 +314,23 @@ pub mod vlq {
         bytes
     };
 
-    // Shared body for `decode` / `decode_assume_valid` (which differ only by
-    // two asserts); const-generic `ASSERT_VALID` is const-folded so codegen
-    // matches hand-duplicated bodies.
+    // Shared body for `decode` / `decode_assume_valid` (which differ by two
+    // asserts and the `decode_long` tail); const-generic `ASSERT_VALID` is
+    // const-folded so codegen matches hand-duplicated bodies.
     #[inline(always)]
     fn decode_impl<const ASSERT_VALID: bool>(encoded: &[u8], start: usize) -> VLQResult {
         let digits = &encoded[start..];
         let mut vlq: u32 = 0;
+        // `start` unchanged makes callers fail the mapping. Keep it one value: a literal at
+        // each `return` makes every call site test `start` again after each field.
+        let no_progress = VLQResult { start, value: 0 };
 
         // Unrolled by hand: a loop is only unrolled where the optimizer chooses to.
         macro_rules! digit {
             ($i:literal) => {
                 if digits.len() <= $i {
-                    // Empty, or the input ends mid-VLQ. `start` unchanged makes callers fail.
-                    return VLQResult { start, value: 0 };
+                    // Empty, or the input ends mid-VLQ.
+                    return no_progress;
                 }
                 if ASSERT_VALID {
                     debug_assert!(digits[$i] < U7_MAX); // invalid base64 character
@@ -359,7 +362,41 @@ pub mod vlq {
         digit!(6);
         digit!(7);
 
-        // All 8 digits have the continuation bit.
+        debug_assert!(!ASSERT_VALID); // `VLQ::encode` writes at most 7 digits
+        if !ASSERT_VALID && digits.len() > VLQ_MAX_IN_BYTES + 1 {
+            return decode_long(encoded, start);
+        }
+        no_progress
+    }
+
+    /// A VLQ of more than 8 digits. The digit count has no limit, the value must fit in 32 bits:
+    /// https://tc39.es/ecma426/#sec-VLQUnsignedValue
+    /// Node wraps a larger value and reads a byte that is not base64 as a terminal digit:
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map.js#L331-L357
+    /// Both fail here, as in the spec.
+    #[cold]
+    #[inline(never)]
+    fn decode_long(encoded: &[u8], start: usize) -> VLQResult {
+        let mut vlq: u64 = 0;
+        for (i, &byte) in encoded[start..].iter().enumerate() {
+            let index = BASE64_LUT[(byte & 0x7f) as usize] as u64;
+            if byte > U7_MAX || index == U7_MAX as u64 {
+                break;
+            }
+
+            // From the 8th digit on, every payload bit is past bit 31.
+            vlq |= (index & 31) << (5 * i).min(32);
+            if vlq > u32::MAX as u64 {
+                break;
+            }
+
+            if (index & 32) == 0 {
+                return VLQResult {
+                    start: start + i + 1,
+                    value: from_sign_magnitude(vlq as u32),
+                };
+            }
+        }
         VLQResult { start, value: 0 }
     }
 
@@ -405,6 +442,73 @@ pub mod vlq {
             // i32::MIN is outside the sign-magnitude domain; it wraps to "-0".
             let encoded = VLQ::encode(i32::MIN);
             assert_eq!(decode(encoded.slice(), 0).value, 0);
+        }
+
+        /// `value` written with `digits` digits: the digits of `VLQ::encode`,
+        /// then zero digits that have the continuation bit (`g`), then `A`.
+        fn padded(value: i32, digits: usize) -> Vec<u8> {
+            let mut out = VLQ::encode(value).slice().to_vec();
+            let last = out.last_mut().unwrap();
+            *last = BASE64[(BASE64_LUT[*last as usize] | 32) as usize];
+            out.resize(digits - 1, b'g');
+            out.push(b'A');
+            out
+        }
+
+        fn decoded(encoded: &[u8], start: usize) -> (i32, usize) {
+            let result = decode(encoded, start);
+            (result.value, result.start)
+        }
+
+        #[test]
+        fn decode_has_no_limit_on_the_digit_count() {
+            for value in [0, 1, -1, 255, -256, i32::MAX, i32::MIN + 1] {
+                for digits in [8, 9, 10, 64] {
+                    assert_eq!(
+                        decoded(&padded(value, digits), 0),
+                        (value, digits),
+                        "{value} in {digits} digits"
+                    );
+                }
+            }
+            // `mappings` of the tc39 test validMappingLargeVLQ.
+            assert_eq!(decoded(&padded(1, 1987), 0), (1, 1987));
+            // The 7th digit has bits 30 and 31.
+            assert_eq!(decoded(b"ggggggjggA", 0), (3 << 29, 10));
+
+            // The VLQ ends at its terminal digit, and `start` can be past 0.
+            let mut encoded = b"AC".to_vec();
+            encoded.extend(padded(-7, 12));
+            encoded.extend(b"C,AAAA");
+            assert_eq!(decoded(&encoded, 2), (-7, 14));
+        }
+
+        #[test]
+        fn decode_does_not_check_a_vlq_of_up_to_eight_digits() {
+            // Payload past bit 31 is dropped in the 7th digit and wraps in the 8th.
+            assert_eq!(decoded(b"ggggggE", 0), (0, 7));
+            assert_eq!(decoded(b"gggggggC", 0), (8, 8));
+            // A byte that is not base64 is a continuation digit with payload 31.
+            assert_eq!(decoded(b"!A", 0), (-15, 2));
+        }
+
+        #[test]
+        fn decode_makes_no_progress_on_a_long_vlq_without_a_value() {
+            for encoded in [
+                // The input ends before a terminal digit.
+                &[b'g'; 9][..],
+                &[b'g'; 100][..],
+                // A byte that is not a base64 digit comes before it.
+                b"gggggggggg,AAAA",
+                b"gggggggggg!A",
+                b"gggggggggg\xC1",
+                // The value does not fit in 32 bits.
+                b"ggggggggB",
+                b"ggggggggggggghA",
+                b"ggggggkggA",
+            ] {
+                assert_eq!(decoded(encoded, 0), (0, 0), "{}", encoded.escape_ascii());
+            }
         }
     }
 }

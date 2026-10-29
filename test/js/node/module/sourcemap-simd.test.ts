@@ -37,43 +37,52 @@ type Entry = {
   name: string | null;
 };
 
-// Spawn a child that constructs the SourceMap and dumps findEntry results at
-// every probe point. The child runs with or without the SIMD path. The
-// payload (which can be tens of KiB) is piped over stdin rather than
-// embedded in `-e`, since Windows caps the command line at ~32 KiB.
-const dumpScript = `
+// Runs in a child: constructs the SourceMap and dumps findEntry results at
+// every probe point.
+const decodeSource = `
   const { SourceMap } = require("node:module");
-  const { payload, probes } = await Bun.stdin.json();
-  let error = null;
-  let entries = [];
-  try {
-    const map = new SourceMap(payload);
-    for (const [l, c] of probes) {
-      const e = map.findEntry(l, c);
-      entries.push({
-        generatedLine: e.generatedLine ?? null,
-        generatedColumn: e.generatedColumn ?? null,
-        originalLine: e.originalLine ?? null,
-        originalColumn: e.originalColumn ?? null,
-        originalSource: e.originalSource ?? null,
-        name: e.name ?? null,
-      });
+  function decode({ payload, probes }) {
+    let error = null;
+    let entries = [];
+    try {
+      const map = new SourceMap(payload);
+      for (const [l, c] of probes) {
+        const e = map.findEntry(l, c);
+        entries.push({
+          generatedLine: e.generatedLine ?? null,
+          generatedColumn: e.generatedColumn ?? null,
+          originalLine: e.originalLine ?? null,
+          originalColumn: e.originalColumn ?? null,
+          originalSource: e.originalSource ?? null,
+          name: e.name ?? null,
+        });
+      }
+    } catch (err) {
+      error = String(err);
     }
-  } catch (err) {
-    error = String(err);
+    return { entries, error };
   }
-  process.stdout.write(JSON.stringify({ entries, error }));
 `;
 
-async function dumpMappings(
-  mappings: string,
-  sourcesLen: number,
-  namesLen: number,
-  probes: Array<[number, number]>,
-  disableSimd: boolean,
-): Promise<{ entries: Entry[]; error: string | null; debug: string }> {
-  const sources = Array.from({ length: sourcesLen }, (_, i) => `s${i}.js`);
-  const names = Array.from({ length: namesLen }, (_, i) => `n${i}`);
+// The child runs with or without the SIMD path. The payload (which can be
+// tens of KiB) is piped over stdin rather than embedded in `-e`, since
+// Windows caps the command line at ~32 KiB.
+const dumpScript = `${decodeSource}
+  process.stdout.write(JSON.stringify(decode(await Bun.stdin.json())));
+`;
+
+// The same for a list of payloads in one child. The parser's debug log goes
+// to fd 1 as it is written, so a marker before each payload separates them.
+const dumpAllScript = `${decodeSource}
+  const results = [];
+  for (const input of await Bun.stdin.json()) {
+    await Bun.write(Bun.stdout, "@@payload\\n");
+    results.push(decode(input));
+  }
+  await Bun.write(Bun.stdout, "@@results\\n" + JSON.stringify(results));
+`;
+
+function decoderEnv(disableSimd: boolean) {
   const env = { ...bunEnv };
   if (disableSimd) {
     env.BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP = "1";
@@ -83,9 +92,41 @@ async function dumpMappings(
   // Debug builds only: enable the SourceMap scoped log so the caller can
   // verify the SIMD path actually fired (see assertSimdMatchesScalar).
   if (isDebug) env.BUN_DEBUG_SourceMap = "1";
+  return env;
+}
+
+type Input = { payload: object; probes: Array<[number, number]> };
+type Decoded = { entries: Entry[]; error: string | null };
+
+// `debug[i]` is what the parser logged for `inputs[i]` (debug builds only).
+async function dumpAll(inputs: Input[], disableSimd: boolean): Promise<{ results: Decoded[]; debug: string[] }> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", dumpAllScript],
+    env: decoderEnv(disableSimd),
+    stdin: new Blob([JSON.stringify(inputs.map(({ payload, probes }) => ({ payload, probes })))]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`child exited ${exitCode}\nstderr: ${stderr}\nstdout: ${stdout}`);
+  }
+  const [log, json] = stdout.split("@@results\n");
+  return { results: JSON.parse(json), debug: log.split("@@payload\n").slice(1) };
+}
+
+async function dumpMappings(
+  mappings: string,
+  sourcesLen: number,
+  namesLen: number,
+  probes: Array<[number, number]>,
+  disableSimd: boolean,
+): Promise<Decoded & { debug: string }> {
+  const sources = Array.from({ length: sourcesLen }, (_, i) => `s${i}.js`);
+  const names = Array.from({ length: namesLen }, (_, i) => `n${i}`);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", dumpScript],
-    env,
+    env: decoderEnv(disableSimd),
     stdin: new Blob([JSON.stringify({ payload: { version: 3, sources, names, mappings }, probes })]),
     stdout: "pipe",
     stderr: "pipe",
@@ -167,7 +208,9 @@ async function assertSimdMatchesScalar(
   return scalar;
 }
 
-describe.concurrent("SourceMap SIMD mappings decode", () => {
+// A debug build starts too slowly to run all of these at the same time within
+// the default timeout: each test starts two children.
+(isDebug ? describe : describe.concurrent)("SourceMap SIMD mappings decode", () => {
   test("all 1-char 4-field segments (the 76% case)", async () => {
     // 200 segments of (4 one-char fields + comma) on one line so the SIMD
     // path sees many full blocks. Deltas cycle through the whole 1-char
@@ -441,22 +484,138 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     await assertSimdMatchesScalar("6-field", mappings, 1, 1, probes);
   });
 
-  test("over-long VLQ (>= 8 cont bytes): SIMD bails, scalar rejects", async () => {
+  test("over-long VLQ (>= 8 cont bytes): SIMD bails, scalar decodes it", async () => {
     // 'g' is sextet 32 (cont bit set, payload 0). Eight in a row then
-    // "AAAA," is a 12-byte segment whose first field has 9 sextets.
-    // Scalar caps at 8 bytes and returns no-progress -> Err(ParseFail);
-    // SIMD must bail at this segment so scalar reports the same error.
+    // "AAAA," is a 12-byte segment whose first field has 9 sextets and the
+    // value 0. The kernel reads at most 7 sextets per VLQ; the scalar
+    // decoder has no limit on the digit count.
     const head: number[][] = [];
     for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
     const { mappings: headM } = build([head]);
     const mappings = headM + ",ggggggggAAAA,AAAA";
     expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const [simd, scalar] = await Promise.all([
-      dumpMappings(mappings, 1, 0, [], false),
-      dumpMappings(mappings, 1, 0, [], true),
-    ]);
-    expect(scalar.error).toContain("Missing generated column value");
-    expect(simd.error).toEqual(scalar.error);
+    const scalar = await assertSimdMatchesScalar("over-long", mappings, 1, 0, [[0, 60]]);
+    expect(scalar).toMatchObject({
+      error: null,
+      entries: [
+        {
+          generatedLine: 0,
+          generatedColumn: 60,
+          originalLine: 0,
+          originalColumn: 60,
+          originalSource: "s0.js",
+          name: null,
+        },
+      ],
+    });
+  });
+
+  test("a VLQ of 8 or more digits in the first segment the kernel cannot decode", async () => {
+    // The kernel hands the rest of the input to the scalar decoder at its
+    // first bail. So each case has one long VLQ, right after segments the
+    // kernel decodes, and 400 bytes after it so that every block width
+    // examines it. One child per mode decodes all of them.
+    const g = (count: number) => Buffer.alloc(count, "g").toString();
+    // +1 written with `digits` digits: 'i' is sextet 34 (cont bit set,
+    // payload 2), 'g' pads with zero payload, 'A' terminates.
+    const plusOne = (digits: number) => "i" + g(digits - 2) + "A";
+    const tail = Buffer.alloc(400, "CAAC,").toString() + "CAAC";
+    type Case = Input & {
+      label: string;
+      // The offset of the segment under test, and the length of the string.
+      at: number;
+      length: number;
+      // The segment has a VLQ of 8 or more digits: the kernel has to bail.
+      long: boolean;
+      // What the scalar decode has to be: the entries of another case, or an
+      // error at `at`. With neither, only SIMD and scalar have to agree.
+      sameAs?: number;
+      fails?: boolean;
+    };
+    const cases: Case[] = [];
+    for (const pad of [0, 7, 16, 31]) {
+      const head = Buffer.alloc(2 * pad, "C,").toString() + Buffer.alloc(300, "CAAC,").toString();
+      const rows = pad + 60;
+      const probes: Array<[number, number]> = [
+        [0, rows],
+        [0, rows + 1],
+        [0, rows + 2],
+        [0, rows + 3],
+        [0, 2 ** 31 - 1],
+        [1, 0],
+        [1, 2 ** 31 - 1],
+      ];
+      for (const separator of [",", ";"]) {
+        const add = (label: string, segment: string, expected: Pick<Case, "sameAs" | "fails"> = {}) => {
+          const mappings = head + segment + separator + tail;
+          cases.push({
+            label: `${label}, after ${pad} 1-field segments, before "${separator}"`,
+            payload: { version: 3, sources: ["s0.js", "s1.js"], names: ["n0", "n1"], mappings },
+            probes,
+            at: head.length,
+            length: mappings.length,
+            long: segment.length > 7,
+            ...expected,
+          });
+        };
+        const fields = {
+          "1-field segment": (vlq: string) => vlq,
+          "generated column": (vlq: string) => vlq + "AAA",
+          "source index": (vlq: string) => "C" + vlq + "AA",
+          "original line": (vlq: string) => "CA" + vlq + "A",
+          "original column": (vlq: string) => "CAA" + vlq,
+          "name index": (vlq: string) => "CAAA" + vlq,
+        };
+        for (const [field, segment] of Object.entries(fields)) {
+          // +1 in one digit decodes to what +1 in many digits has to decode to.
+          const oneDigit = cases.length;
+          add(`${field}: C`, segment("C"));
+          for (const digits of [8, 9, 10, 11, 13]) {
+            add(`${field}: +1 in ${digits} digits`, segment(plusOne(digits)), { sameAs: oneDigit });
+          }
+        }
+        for (const digits of [8, 9, 10, 11, 13]) {
+          add(`2 fields: +1 in ${digits} digits`, plusOne(digits) + "A");
+          add(`3 fields: +1 in ${digits} digits`, plusOne(digits) + "AA");
+          // A value that does not fit in 32 bits wraps in up to 8 digits and
+          // fails from 9 digits on.
+          const fails = digits > 8;
+          add(`payload in digit ${digits - 1} of ${digits}`, g(digits - 2) + "iA", { fails });
+          add(`bit 32 in digit 7 of ${digits}`, g(6) + "k" + g(digits - 8) + "A", { fails });
+        }
+      }
+    }
+
+    const [simd, scalar] = await Promise.all([dumpAll(cases, false), dumpAll(cases, true)]);
+    const labelled = (results: Decoded[]) => results.map((result, i) => ({ label: cases[i].label, ...result }));
+    expect(labelled(simd.results)).toEqual(labelled(scalar.results));
+    expect(labelled(scalar.results)).toEqual(
+      cases.map((c, i) => {
+        if (c.fails)
+          return { label: c.label, entries: [], error: `SyntaxError: Missing generated column value at ${c.at}` };
+        if (c.sameAs !== undefined) return { label: c.label, entries: scalar.results[c.sameAs].entries, error: null };
+        return { label: c.label, ...scalar.results[i] };
+      }),
+    );
+    // The row of the long VLQ itself, for one case: original column 60 + 1.
+    const known = cases.findIndex(c => c.label.startsWith("original column: +1 in 9 digits, after 0 "));
+    expect(scalar.results[known].entries[1]).toEqual({
+      generatedLine: 0,
+      generatedColumn: 61,
+      originalLine: 0,
+      originalColumn: 61,
+      originalSource: "s0.js",
+      name: null,
+    });
+    if (isDebug) {
+      // The kernel stops exactly at the segment with the long VLQ.
+      const stops = (debug: string[]) =>
+        cases.map((c, i) => ({ label: c.label, stop: /simd consumed (\d+\/\d+) bytes/.exec(debug[i])?.[1] ?? null }));
+      expect(stops(simd.debug).filter((_, i) => cases[i].long)).toEqual(
+        cases.filter(c => c.long).map(c => ({ label: c.label, stop: `${c.at}/${c.length}` })),
+      );
+      expect(stops(scalar.debug).filter(s => s.stop !== null)).toEqual([]);
+    }
   });
 
   test("out-of-range source index: identical ParseFail", async () => {

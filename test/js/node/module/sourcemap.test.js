@@ -1,5 +1,7 @@
 const { test, expect } = require("bun:test");
+const { readFileSync } = require("node:fs");
 const { SourceMap } = require("node:module");
+const { join } = require("node:path");
 const { bunEnv, bunExe, tempDir } = require("harness");
 
 test("SourceMap class exists", () => {
@@ -243,6 +245,105 @@ test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns
   expect(stderr).toContain("Could not decode sourcemap");
   expect(stderr).toContain("error: boom");
   expect(stderr).toContain("entry.js:2:");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
+// +1 written with `digits` digits. "i" is +1 with the continuation bit, "g" is
+// a zero digit with the continuation bit, "A" is the terminal digit.
+const plusOne = digits => "i" + Buffer.alloc(digits - 2, "g").toString() + "A";
+
+test.each([8, 9, 13, 1987])("SourceMap reads a VLQ written with %d digits in each of the five fields", digits => {
+  const changedByField = [
+    { generatedColumn: 1 },
+    { originalSource: "b.js" },
+    { originalLine: 1 },
+    { originalColumn: 1 },
+    { name: "n1" },
+  ];
+  const entries = changedByField.map((_, field) => {
+    const segment = ["A", "A", "A", "A", "A"];
+    segment[field] = plusOne(digits);
+    const map = new SourceMap({
+      version: 3,
+      sources: ["a.js", "b.js"],
+      names: ["n0", "n1"],
+      mappings: segment.join(""),
+    });
+    return map.findEntry(0, 1);
+  });
+  const unchanged = {
+    generatedLine: 0,
+    generatedColumn: 0,
+    originalSource: "a.js",
+    originalLine: 0,
+    originalColumn: 0,
+    name: "n0",
+  };
+  expect(entries).toEqual(changedByField.map(changed => ({ ...unchanged, ...changed })));
+});
+
+test("SourceMap accepts the tc39 source map test validMappingLargeVLQ", () => {
+  const file = join(__dirname, "..", "test", "fixtures", "test426", "resources", "valid-mapping-large-vlq.js.map");
+  const payload = JSON.parse(readFileSync(file, "utf8"));
+  // One segment with one field: generated column +1, written with 1987 digits.
+  expect(payload.mappings).toBe(plusOne(1987));
+  // A segment with one field has no original position, so no entry. The next
+  // segment is relative to it: it is at generated column 1 + 1.
+  expect(new SourceMap(payload).findEntry(0, 1)).toEqual({});
+  payload.mappings += ",CAAA";
+  expect(new SourceMap(payload).findEntry(0, 2)).toEqual({
+    generatedLine: 0,
+    generatedColumn: 2,
+    originalSource: "valid-mapping-large-vlq.js",
+    originalLine: 0,
+    originalColumn: 0,
+    name: undefined,
+  });
+});
+
+test.each([
+  ["has no terminal digit", "AAA" + Buffer.alloc(1987, "g").toString(), 3],
+  ["stops at a delimiter", "AAAgggggggg,AAAA", 3],
+  ["has a byte that is not a base64 digit", "AAAgggggggg!A", 3],
+  ["has a payload in its 9th digit", "AAAggggggggB", 3],
+  ["has a bit past bit 31 in its 7th digit", "AAAggggggkggA", 3],
+  // 60 segments (300 bytes) come first and 100 bytes follow. The SIMD kernel
+  // decodes the first, then hands the segment with the long VLQ to the scalar
+  // decoder.
+  [
+    "is between segments for the SIMD kernel",
+    Buffer.alloc(300, "CAAC,").toString() + "AAAggggggggB," + Buffer.alloc(100, "CAAC,").toString(),
+    303,
+  ],
+])("SourceMap rejects a VLQ of more than 8 digits that %s", (_, mappings, at) => {
+  expect(() => new SourceMap({ version: 3, sources: ["a.js"], names: [], mappings })).toThrow(
+    new SyntaxError(`Missing original column value at ${at}`),
+  );
+});
+
+test("error.stack of // @bun code is remapped through a VLQ written with 9 digits", async () => {
+  // Line 2 of entry.js maps to line 1 of a.ts. The original column is +1,
+  // written with 9 digits.
+  const map = Buffer.from(
+    JSON.stringify({ version: 3, sources: ["a.ts"], sourcesContent: ["x"], names: [], mappings: ";AAA" + plusOne(9) }),
+  ).toString("base64");
+  using dir = tempDir("sourcemap-long-vlq", {
+    "entry.js": `// @bun\nthrow new Error("boom");\n//# sourceMappingURL=data:application/json;base64,${map}\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("Could not decode sourcemap");
+  expect(stderr).toContain("error: boom");
+  expect(stderr).toContain("a.ts:1:2");
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });

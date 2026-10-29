@@ -185,10 +185,6 @@ impl Drop for HpackHandle {
     }
 }
 
-// SAFETY: the C wrapper has no thread affinity; lshpack state is not accessed
-// concurrently (callers serialize on the owning `H2FrameParser`).
-unsafe impl Send for HpackHandle {}
-
 // Non-Option fn pointers: the C ABI repr is identical to `Option<fn>`, but the
 // type guarantees non-null, which is the only precondition `lshpack_wrapper_init`
 // has — letting it be declared `safe fn` below.

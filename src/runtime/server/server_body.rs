@@ -2644,7 +2644,7 @@ where
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             } else {
-                let slot = (*self.request_pool).claim();
+                let slot = self.request_pool.claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
                     self,
@@ -2912,9 +2912,8 @@ where
         let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
         this.on_pending_request();
         req.set_yield(false);
-        // SAFETY: `request_pool` is non-null while the server is alive; `claim()`
-        // reserves a fresh slot whose `Drop` releases it on panic before init.
-        let ctx_slot = unsafe { (*this.request_pool).claim() };
+        // `claim()` reserves a fresh slot whose `Drop` releases it on panic before init.
+        let ctx_slot = this.request_pool.claim();
         let should_deinit_context = core::cell::Cell::new(false);
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
             ctx_slot.addr().as_ptr(),

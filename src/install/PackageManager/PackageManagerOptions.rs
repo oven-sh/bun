@@ -44,7 +44,7 @@ pub struct Options {
 
     pub(crate) registries: Npm::registry::Map,
     /// `.npmrc` `//host/path/` credential lines, resolved by request URL.
-    pub(crate) url_auth: Vec<Npm::registry::UrlAuth>,
+    pub(crate) url_auth: Npm::registry::UrlAuthList,
     pub(crate) cache_directory: &'static [u8],
     pub enable: Enable,
     pub do_: Do,
@@ -138,7 +138,7 @@ impl Default for Options {
             // Always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
-            url_auth: Vec::new(),
+            url_auth: Npm::registry::UrlAuthList::default(),
             cache_directory: b"",
             enable: Enable::default(),
             do_: Do::default(),
@@ -312,7 +312,7 @@ impl Options {
         // This URL comes from package data, and an `.npmrc` key has no scheme, so credentials are
         // never sent over plain http.
         let own = (normalized && tarball.is_https())
-            .then(|| Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball))
+            .then(|| self.url_auth.find_entry(tarball))
             .flatten();
         if scope.has_credentials() && same_origin(tarball, &scope.url.url()) {
             // The registry's own key is in `scope` already, behind bunfig, env and CLI.
@@ -328,8 +328,11 @@ impl Options {
 }
 
 /// `.npmrc`'s credentials for the URL of `scope` yield to bunfig.toml, the environment and flags.
-fn fill_scope_from_url_auth(url_auth: &[Npm::registry::UrlAuth], scope: &mut Npm::registry::Scope) {
-    let own = Npm::registry::UrlAuth::find_entry(url_auth, &scope.url.url());
+fn fill_scope_from_url_auth(
+    url_auth: &Npm::registry::UrlAuthList,
+    scope: &mut Npm::registry::Scope,
+) {
+    let own = url_auth.find_entry(&scope.url.url());
     scope.url_auth_key = own.map(|entry| entry.key.clone());
     if let Some(entry) = own.filter(|_| !scope.has_credentials() || scope.declared_in_npmrc) {
         scope.copy_credentials_from(&entry.credentials);
@@ -384,7 +387,7 @@ impl Options {
 
     /// A registry at or under `old` keeps its credentials unless `.npmrc` has a deeper line for it.
     fn inherits_credentials(&self, old: &Npm::registry::Scope, new_url: &bun_url::URL) -> bool {
-        use Npm::registry::{UrlAuth, query_free_path};
+        use Npm::registry::query_free_path;
         use bun_core::strings::tokenize;
         let old_url = old.url.url();
         let mut segments = tokenize(query_free_path(new_url), b"/");
@@ -392,8 +395,10 @@ impl Options {
             == bun_core::without_trailing_slash(old_url.host)
             && (new_url.is_https() || !old_url.is_https())
             && tokenize(query_free_path(&old_url), b"/").all(|base| segments.next() == Some(base))
-            && match UrlAuth::find_entry(&self.url_auth, new_url) {
-                Some(own) => UrlAuth::find_entry(&self.url_auth, &old_url)
+            && match self.url_auth.find_entry(new_url) {
+                Some(own) => self
+                    .url_auth
+                    .find_entry(&old_url)
                     .is_some_and(|old| old.key == own.key),
                 None => true,
             }
@@ -737,6 +742,7 @@ impl Options {
         // Scopes that have credentials but no URL use the default registry. They are registered
         // further down, once the default registry's URL is final.
         let mut at_default_registry: Vec<(&[u8], &Api::NpmRegistry)> = Vec::new();
+        let mut url_auth = Vec::new();
 
         // npmrc < bunfig
         for config in [runtime_npmrc].into_iter().chain(bunfigs).flatten() {
@@ -760,12 +766,13 @@ impl Options {
                 }
             }
 
-            for url_auth in &config.url_auth {
-                if let Some(url_auth) = Npm::registry::UrlAuth::from_api(url_auth, env)? {
-                    self.url_auth.push(url_auth);
+            for entry in &config.url_auth {
+                if let Some(entry) = Npm::registry::UrlAuth::from_api(entry, env)? {
+                    url_auth.push(entry);
                 }
             }
         }
+        self.url_auth = Npm::registry::UrlAuthList::new(url_auth);
 
         for config in bunfigs.into_iter().flatten() {
             if let Some(cache_directory) = config.cache_directory.as_deref() {

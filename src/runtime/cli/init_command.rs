@@ -800,10 +800,6 @@ impl InitCommand {
             }
         }
 
-        if template.is_react() {
-            template.write_to_package_json(&mut fields, &bump)?;
-        }
-
         'write_package_json: {
             let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
                 .as_ref()
@@ -1373,47 +1369,6 @@ impl TemplateFile {
 }
 
 impl Template {
-    fn is_react(self) -> bool {
-        matches!(
-            self,
-            Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn
-        )
-    }
-
-    fn write_to_package_json(
-        self,
-        fields: &mut PackageJSONFields,
-        bump: &bun_alloc::Arena,
-    ) -> Result<(), Error> {
-        type Rope = bun_ast::E::Rope;
-        fields.name = self.name().to_vec();
-        // Allocate in the process-lifetime CLI arena.
-        let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
-            head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
-            next: core::ptr::null_mut(),
-        });
-        // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
-        let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
-            bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
-            bun_ast::E::SetError::Clobber => Error::Unexpected,
-        })?;
-        let the_scripts = self.scripts();
-        let mut i: usize = 0;
-        while i < the_scripts.len() {
-            let script_name = the_scripts[i];
-            let script_command = the_scripts[i + 1];
-
-            scripts_json.data.e_object_mut().unwrap().put_string(
-                bump,
-                script_name,
-                script_command,
-            )?;
-            i += 2;
-        }
-        Ok(())
-    }
-
     fn dependencies(self) -> &'static DependencyGroup {
         match self {
             Template::Blank => &DependencyGroup::BLANK,
@@ -1431,24 +1386,6 @@ impl Template {
             Template::ReactBlank => b"bun-react-template",
             Template::ReactTailwind => b"bun-react-tailwind-template",
             Template::ReactTailwindShadcn => b"bun-react-tailwind-shadcn-template",
-        }
-    }
-
-    fn scripts(self) -> &'static [&'static [u8]] {
-        match self {
-            Template::Blank | Template::TypescriptLibrary => &[],
-            Template::ReactTailwind | Template::ReactTailwindShadcn => &[
-                b"dev", b"bun './**/*.html'",
-                b"build", b"bun 'REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts'",
-            ],
-            Template::ReactBlank => &[
-                b"dev",
-                b"bun --hot .",
-                b"static",
-                b"bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
-                b"build",
-                b"NODE_ENV=production bun .",
-            ],
         }
     }
 

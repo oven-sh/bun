@@ -13,6 +13,9 @@
 
 #include "root.h"
 
+// This WTF function ends the process when an allocation fails. Call `Zig::convertUTF8ToStringLossy`: with `WTF::FailureAction::Report` if the caller handles null, else with `Crash`.
+#pragma GCC poison fromUTF8ReplacingInvalidSequences
+
 // #include'd by the vast majority of TUs and cost ~1.1s each to parse
 // (-ftime-trace). Editing either already triggers a near-full rebuild via
 // depfiles, so precompiling them costs nothing extra incrementally.

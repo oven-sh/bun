@@ -74,16 +74,26 @@ static void free_global_string(void* str, void* ptr, unsigned len)
 
 static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes);
 
+// A string with a copy of `characters`. Null when it cannot be allocated.
+template<typename CharacterType>
+static WTF::String tryCreateString(std::span<const CharacterType> characters)
+{
+    std::span<CharacterType> copy;
+    auto impl = WTF::StringImpl::tryCreateUninitialized(characters.size(), copy);
+    if (!impl) [[unlikely]]
+        return {};
+    WTF::StringImpl::copyCharacters(copy, characters);
+    return impl.releaseNonNull();
+}
+
+// As `WTF::String::fromUTF8ReplacingInvalidSequences`. With Report, null for a failed allocation and for 2^30 bytes or more that are not ASCII. With Crash, null is only for null `bytes`: the process ends when the string cannot be made.
+WTF::String convertUTF8ToStringLossy(std::span<const unsigned char>, WTF::FailureAction);
+
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
     if (!bytes.empty() && simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size())) [[likely]]
         return tryConvertValidUTF8ToString(bytes);
-
-    // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
-    // (it sizes an intermediate Vector<char16_t> by byte count).
-    if (!WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[unlikely]]
-        return {};
-    return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
+    return convertUTF8ToStringLossy(bytes, WTF::FailureAction::Report);
 }
 
 // `bytes` must be valid UTF-8. Returns null if the allocation fails or the result exceeds the max string length.

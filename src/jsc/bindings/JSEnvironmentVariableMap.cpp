@@ -1050,7 +1050,7 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         unsigned char* chars;
         size_t len = Bun__getEnvKey(list, i, &chars);
         // We can't really trust that the OS gives us valid UTF-8
-        auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
+        auto name = Zig::convertUTF8ToStringLossy(std::span { chars, len }, WTF::FailureAction::Crash);
 #if OS(WINDOWS)
         // Avoid [[Set]], which can run an indexed setter on Object.prototype while `list` points into the env table.
         keyArray->putDirectIndex(globalObject, (unsigned)i, jsString(vm, name));

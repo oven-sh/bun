@@ -47,7 +47,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintAskText, (JSGlobalObject * globalObject, CallFram
     auto index = [&](JSValue value, size_t otherwise) { return value.isNumber() ? std::min<size_t>(JSC::toUInt32(value.asNumber()), answer.size()) : otherwise; };
     size_t end = index(callFrame->argument(3), answer.size());
     size_t start = std::min(index(callFrame->argument(2), 0), end);
-    return JSValue::encode(jsString(vm, String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(answer.subspan(start, end - start)))));
+    return JSValue::encode(jsString(vm, Zig::convertUTF8ToStringLossy(answer.subspan(start, end - start), WTF::FailureAction::Crash)));
 }
 
 // `askWords(kind, details, count)`: a `Uint32Array` of the first `count` words of the answer, or of as many as it has.

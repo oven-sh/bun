@@ -20,6 +20,15 @@ ALWAYS_INLINE static uint8_t hexToInt(uint8_t c)
     return 255; // Invalid
 }
 
+// The string of bytes with no "%" that are not ASCII. Null only for a failed allocation: 2^30 bytes or more that get no string give the empty string.
+static String convertLiteralRun(std::span<const uint8_t> bytes)
+{
+    String run = Zig::convertUTF8ToString(bytes);
+    if (run.isNull() && !WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[unlikely]]
+        return emptyString();
+    return run;
+}
+
 ALWAYS_INLINE static void appendLiteralRun(StringBuilder& result, std::span<const uint8_t> bytes, bool inputIsASCII)
 {
     if (bytes.empty())
@@ -29,7 +38,12 @@ ALWAYS_INLINE static void appendLiteralRun(StringBuilder& result, std::span<cons
         result.append(chars);
         return;
     }
-    result.append(Zig::convertUTF8ToString(bytes));
+    String run = convertLiteralRun(bytes);
+    if (run.isNull()) [[unlikely]] {
+        result.didOverflow();
+        return;
+    }
+    result.append(run);
 }
 
 WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
@@ -63,14 +77,14 @@ WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
     }
 
     if (inputIsASCII)
-        return String(lchar);
-    return Zig::convertUTF8ToString(input);
+        return Zig::tryCreateString(lchar);
+    return convertLiteralRun(input);
 
 slow_path:
     while (cursor < end && *cursor != '%') {
         cursor++;
     }
-    StringBuilder result;
+    StringBuilder result(OverflowPolicy::RecordOverflow);
     result.reserveCapacity(input.size());
     appendLiteralRun(result, input.first(static_cast<size_t>(cursor - input.data())), inputIsASCII);
 
@@ -282,7 +296,11 @@ slow_path:
         }
     }
 
-    return result.toString();
+    // toString() shrinks the buffer first and asserts if that overflows, so shrink it here and check.
+    result.shrinkToFit();
+    if (result.hasOverflowed()) [[unlikely]]
+        return {};
+    return result.toStringPreserveCapacity();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -291,6 +309,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue input = callFrame->argument(0);
+    WTF::String output;
     if (input.isString()) {
         auto string = input.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -298,16 +317,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
         // decodeURIComponentSIMD consumes UTF-8 bytes, like the ServerRouteList and CookieMap callers.
         auto utf8View = UTF8View::tryCreate(globalObject, scope, string);
         RETURN_IF_EXCEPTION(scope, {});
-        auto&& output = decodeURIComponentSIMD(utf8View->bytes());
-        return JSC::JSValue::encode(JSC::jsString(vm, output));
+        output = decodeURIComponentSIMD(utf8View->bytes());
+    } else {
+        JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(input);
+        if (!view) {
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+        output = decodeURIComponentSIMD(view->span());
     }
-
-    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(input);
-    if (!view) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
+    if (output.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
-    auto span = view->span();
-    auto&& output = decodeURIComponentSIMD(span);
-    return JSC::JSValue::encode(JSC::jsString(vm, output));
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(output)));
 }
 }

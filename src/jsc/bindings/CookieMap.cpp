@@ -73,6 +73,12 @@ CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
 {
 }
 
+// A copy of `view`. Null when it cannot be allocated.
+static String tryCopy(StringView view)
+{
+    return view.is8Bit() ? Zig::tryCreateString(view.span8()) : Zig::tryCreateString(view.span16());
+}
+
 ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant, bool throwOnInvalidCookieString)
 {
     auto visitor = WTF::makeVisitor(
@@ -121,7 +127,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     continue;
                 }
 
-                name = nameView.toString();
+                name = tryCopy(nameView);
 
                 if (hasAnyPercentEncoded) {
                     auto utf8View = Bun::UTF8View::tryCreate(valueView);
@@ -129,8 +135,10 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                         return Exception { OutOfMemoryError };
                     value = Bun::decodeURIComponentSIMD(utf8View->bytes());
                 } else {
-                    value = valueView.toString();
+                    value = tryCopy(valueView);
                 }
+                if (name.isNull() || value.isNull()) [[unlikely]]
+                    return Exception { OutOfMemoryError };
 
                 cookies.append(KeyValuePair<String, String>(name, value));
             }

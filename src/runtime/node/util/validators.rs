@@ -55,7 +55,7 @@ fn throw_range_error_msg(
     msg: &[u8],
 ) -> JsError {
     global_this.throw_range_error(
-        value,
+        bun_core::fmt::NodeNumber(value),
         jsc::RangeErrorOptions {
             field_name: name.as_bytes(),
             msg,
@@ -105,12 +105,12 @@ pub(crate) fn validate_integer(
     let num = value.as_number();
 
     if num < min || num > max {
-        return Err(throw_range_error(
+        let range = format!(">= {min} && <= {max}");
+        return Err(throw_range_error_msg(
             global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name, min, max, num
-            ),
+            num,
+            name,
+            range.as_bytes(),
         ));
     }
 

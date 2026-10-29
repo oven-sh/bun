@@ -30,13 +30,13 @@ Each connection keeps `--streams` HTTP/3 request streams in flight at all
 times. UDP I/O is batched with `sendmmsg`/`recvmmsg`; the lsquic timer wheel
 is driven via `epoll` + `timerfd`. The main thread samples per-worker atomic
 counters at ~10 Hz to render the live TUI, then aggregates per-worker
-HdrHistograms for the final percentile report.
+latency histograms for the final percentile report.
 
 No TLS verification by default (it's a load tester).
 
 ## Build
 
-h3blast links the **already-compiled** lsquic / BoringSSL / HdrHistogram / zlib
+h3blast links the **already-compiled** lsquic / BoringSSL / zlib
 object files from Bun's build tree, so you need a Bun release build first:
 
 ```sh

@@ -1,0 +1,29 @@
+# main.js: process[globalThis.name] = 1; process.stdin = 2; process.title = "mine"
+# A store replaces a member. It runs what the table lists for a store to the member and none of the code that would make the value: the host puts the new value in place of a property that it has not made yet.
+# So neither a store under a key nobody knows nor one that names the member brings the streams of the library into the image. The members count as written all the same.
+# read-of-a-host-object-under-a-key-nobody-knows-uses-every-member.ir has the read
+# RUN: valueflow-why used-builtin=ProcessStdin used-builtin=ProcessStdout written-builtin=ProcessStdin written-builtin=ProcessStdout
+# CHECK: used-builtin=ProcessStdin
+# CHECK-NEXT: not held
+# CHECK: used-builtin=ProcessStdout
+# CHECK-NEXT: not held
+# CHECK: written-builtin=ProcessStdin
+# CHECK-NOT: not held
+# CHECK: written-builtin=ProcessStdout
+# CHECK-NOT: not held
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = Integer integer=1
+    ElemSet v2, v1, v3
+    v5 = Integer integer=2
+    PropSet v2, v5 key="stdin"
+    v7 = String string="mine"
+    PropSet v2, v7 key="title"
+    Return
+}

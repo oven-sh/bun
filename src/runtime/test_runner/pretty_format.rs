@@ -497,13 +497,17 @@ impl Tag {
             JSType::RegExpObject => Tag::String,
             JSType::Symbol => Tag::Symbol,
             JSType::BooleanObject => Tag::Boolean,
-            JSType::JSFunction => Tag::Function,
+            JSType::JSFunction
+            | JSType::CompiledClosure
+            | JSType::SlimClosure
+            | JSType::SlimClosureWithProperties => Tag::Function,
             JSType::WeakMap | JSType::Map => Tag::Map,
             JSType::WeakSet | JSType::Set => Tag::Set,
             JSType::JSDate => Tag::JSON,
             JSType::JSPromise => Tag::Promise,
             JSType::Object
             | JSType::FinalObject
+            | JSType::CompiledObject
             | JSType::ModuleNamespaceObject
             | JSType::GlobalObject => Tag::Object,
 
@@ -1482,11 +1486,7 @@ impl<'a> Formatter<'a> {
                     // bodies re-enter this formatter through the `ConsoleFormatter` impl
                     // below for nested values, so the byte sink is wrapped in `AsFmt` (a
                     // `core::fmt::Write` view of the same writer).
-                    if let Some(response) = value.as_::<crate::webcore::Response>() {
-                        // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
-                        // `value` is on the stack (conservative scan). `write_format` does not
-                        // re-enter `as_` for the same cell, so the `&mut` is unique here.
-                        let response = unsafe { &mut *response };
+                    if let Some(response) = value.as_class_ref::<crate::webcore::Response>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if response
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
@@ -1502,9 +1502,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                    } else if let Some(request) = value.as_::<crate::webcore::Request>() {
-                        // SAFETY: see Response branch above.
-                        let request = unsafe { &mut *request };
+                    } else if let Some(request) = value.as_class_ref::<crate::webcore::Request>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if request
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
@@ -1521,10 +1519,7 @@ impl<'a> Formatter<'a> {
                             return Err(JsError::Thrown);
                         }
                         return Ok(());
-                    } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
-                        // SAFETY: see Response branch above. `write_format` is
-                        // `&self` post-R-2, so a shared borrow is sufficient.
-                        let build = unsafe { &*build };
+                    } else if let Some(build) = value.as_class_ref::<crate::api::BuildArtifact>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if build
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
@@ -1540,9 +1535,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                    } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
-                        // SAFETY: see Response branch above.
-                        let blob = unsafe { &mut *blob };
+                    } else if let Some(blob) = value.as_class_ref::<crate::webcore::Blob>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if blob
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
@@ -2412,15 +2405,7 @@ impl<'a> Formatter<'a> {
 
                     macro_rules! print_typed_slice {
                         ($t:ty) => {{
-                            // SAFETY: `Unaligned<$t>` has align 1 and the same size as `$t`, so any
-                            // `*const u8` is a valid `*const Unaligned<$t>`; `slice` is the live
-                            // backing store of a JSC typed array whose elements are valid `$t`.
-                            let slice_with_type: &[bun_core::Unaligned<$t>] = unsafe {
-                                core::slice::from_raw_parts(
-                                    slice.as_ptr().cast::<bun_core::Unaligned<$t>>(),
-                                    slice.len() / core::mem::size_of::<$t>(),
-                                )
-                            };
+                            let slice_with_type = bun_core::Unaligned::<$t>::slice_of(slice);
                             self.indent += 1;
                             for el in slice_with_type {
                                 writer.write_all(b"\n");

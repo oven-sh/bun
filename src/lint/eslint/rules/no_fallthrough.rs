@@ -164,7 +164,7 @@ impl NoFallthrough {
             None if is_fallthrough => {
                 let report = cx.report(case, if case.is_default() { DEFAULT } else { CASE });
                 if !matches!(self.comment_pattern, CommentPattern::Other(_)) {
-                    report.hint("Add break, or the comment // falls through if this is meant.");
+                    report.hint("Add break, or a // falls through comment.");
                 }
             }
             Some(comment) if !is_fallthrough => {

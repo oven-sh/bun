@@ -1,0 +1,571 @@
+# Feature tests that a polyfill (core-js) runs on URL and URLSearchParams when it loads. A test that fails makes the library replace the class or a member of URLSearchParams.prototype, which is locked. Each answers as in plain Bun.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="feature-tests-of-url-classes.js" displayPath="feature-tests-of-url-classes.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|string|absent flags=[IsExpected]}}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="parameters deleted while forEach runs"
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="attempt"
+    v5 = String string="delete with a value"
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v5, v6 calleeName="attempt"
+    v8 = String string="delete with the other value"
+    v9 = NewClosure function=f4
+    v10 = Call v1, -, v8, v9 calleeName="attempt"
+    v11 = String string="has with a value"
+    v12 = NewClosure function=f5
+    v13 = Call v1, -, v11, v12 calleeName="attempt"
+    v14 = String string="size"
+    v15 = NewClosure function=f6
+    v16 = Call v1, -, v14, v15 calleeName="attempt"
+    v17 = String string="texts"
+    v18 = NewClosure function=f7
+    v19 = Call v1, -, v17, v18 calleeName="attempt"
+    v20 = String string="canParse without an argument"
+    v21 = NewClosure function=f8
+    v22 = Call v1, -, v20, v21 calleeName="attempt"
+    v23 = String string="toJSON"
+    v24 = NewClosure function=f9
+    v25 = Call v1, -, v23, v24 calleeName="attempt"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="attempt" module=m0 position=233 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v1 calleeName="run"
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v3 = Undefined
+    Return v3
+}
+function f2 module=m0 position=439 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="URL" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(URL) flags=[IsExpected]}
+    v4 = String string="b?a=1&b=2&c=3"
+    v5 = String string="https://a"
+    v6 = Construct v3, -, v4, v5 calleeName="URL"
+    v7 = Convert v6 declared={type=undefined|null|URL flags=[IsExpected]}
+    v8 = PropGet v7 key="searchParams"
+    v9 = Convert v8 declared={type=undefined|null|URLSearchParams flags=[IsExpected]}
+    v10 = String string=""
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
+    PutEnvironmentField v0, v11 layout=L0
+    v13 = String string="c%20d"
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v7, v14 key="pathname"
+    v16 = PropGet v9 key="forEach"
+    v17 = Convert v16 declared={type=undefined|null|function flags=[IsExpected]}
+    v18 = NewClosure v0, v9 function=f10
+    v19 = Call v17, v9, v18 calleeKey="forEach" calleeName="params.forEach"
+    v20 = GetEnvironmentField v0 layout=L0
+    v21 = CheckInitialized v20 name="result"
+    v22 = PropGet v7 key="href"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
+    v24 = PropGet v9 key="get"
+    v25 = Convert v24 declared={type=undefined|null|function flags=[IsExpected]}
+    v26 = String string="c"
+    v27 = Call v25, v9, v26 calleeKey="get" calleeName="params.get"
+    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]}
+    v29 = PropGet v9 key="size"
+    v30 = Convert v29 declared={type=number flags=[IsExpected]}
+    v31 = PropGet v9 key="sort"
+    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]}
+    v33 = TypeOf v32
+    v34 = PropGet v9 key=@@iterator
+    v35 = Convert v34 declared={type=undefined|null|function flags=[IsExpected]}
+    v36 = TypeOf v35
+    v37 = PropGet v7 key="toJSON"
+    v38 = Convert v37 declared={type=undefined|null|function flags=[IsExpected]}
+    v39 = TypeOf v38
+    v40 = NewArray v21, v23, v28, v30, v33, v36, v39 contents=undefined|null|number|string
+    v41 = Convert v40 declared={type=undefined|null|Array<undefined|null|number|string> flags=[IsExpected]}
+    v42 = PropGet v41 key="join"
+    v43 = Convert v42 declared={type=undefined|null|function flags=[IsExpected]}
+    v44 = Call v43, v41 calleeKey="join" calleeName="join"
+    ReturnCall v44 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f3 module=m0 position=834 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="URLSearchParams" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(URLSearchParams) flags=[IsExpected]}
+    v3 = String string="a=1&a=2&b=3"
+    v4 = Construct v2, -, v3 calleeName="URLSearchParams"
+    v5 = Convert v4 declared={type=undefined|null|URLSearchParams flags=[IsExpected]}
+    v6 = PropGet v5 key="delete"
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = String string="a"
+    v9 = Integer integer=2
+    v10 = Call v7, v5, v8, v9 calleeKey="delete" calleeName="params.delete"
+    v11 = PropGet v5 key="delete"
+    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]}
+    v13 = String string="b"
+    v14 = Undefined
+    v15 = Call v12, v5, v13, v14 calleeKey="delete" calleeName="params.delete"
+    v16 = Builtin builtin=String
+    v17 = Call v16, -, v5 calleeName="String"
+    v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
+    v19 = PropGet v5 key="has"
+    v20 = Convert v19 declared={type=undefined|null|function flags=[IsExpected]}
+    v21 = String string="a"
+    v22 = Integer integer=1
+    v23 = Call v20, v5, v21, v22 calleeKey="has" calleeName="params.has"
+    v24 = Convert v23 declared={type=boolean flags=[IsExpected]}
+    v25 = PropGet v5 key="has"
+    v26 = Convert v25 declared={type=undefined|null|function flags=[IsExpected]}
+    v27 = String string="a"
+    v28 = Integer integer=2
+    v29 = Call v26, v5, v27, v28 calleeKey="has" calleeName="params.has"
+    v30 = Convert v29 declared={type=boolean flags=[IsExpected]}
+    v31 = PropGet v5 key="has"
+    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]}
+    v33 = String string="a"
+    v34 = Undefined
+    v35 = Call v32, v5, v33, v34 calleeKey="has" calleeName="params.has"
+    v36 = Convert v35 declared={type=boolean flags=[IsExpected]}
+    v37 = PropGet v5 key="has"
+    v38 = Convert v37 declared={type=undefined|null|function flags=[IsExpected]}
+    v39 = String string="b"
+    v40 = Call v38, v5, v39 calleeKey="has" calleeName="params.has"
+    v41 = Convert v40 declared={type=boolean flags=[IsExpected]}
+    v42 = NewArray v18, v24, v30, v36, v41 contents=undefined|null|boolean|string
+    v43 = Convert v42 declared={type=undefined|null|Array<undefined|null|boolean|string> flags=[IsExpected]}
+    v44 = PropGet v43 key="join"
+    v45 = Convert v44 declared={type=undefined|null|function flags=[IsExpected]}
+    v46 = Call v45, v43 calleeKey="join" calleeName="join"
+    ReturnCall v46 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f4 module=m0 position=1115 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="URLSearchParams" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(URLSearchParams) flags=[IsExpected]}
+    v3 = String string="a=1&a=2&b=3"
+    v4 = Construct v2, -, v3 calleeName="URLSearchParams"
+    v5 = Convert v4 declared={type=undefined|null|URLSearchParams flags=[IsExpected]}
+    v6 = PropGet v5 key="delete"
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = String string="a"
+    v9 = Integer integer=1
+    v10 = Call v7, v5, v8, v9 calleeKey="delete" calleeName="params.delete"
+    v11 = PropGet v5 key="delete"
+    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]}
+    v13 = String string="b"
+    v14 = Undefined
+    v15 = Call v12, v5, v13, v14 calleeKey="delete" calleeName="params.delete"
+    v16 = String string=""
+    v17 = Add v5, v16
+    v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v18
+}
+function f5 module=m0 position=1280 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="URLSearchParams" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(URLSearchParams) flags=[IsExpected]}
+    v3 = String string="a=1"
+    v4 = Construct v2, -, v3 calleeName="URLSearchParams"
+    v5 = Convert v4 declared={type=undefined|null|URLSearchParams flags=[IsExpected]}
+    v6 = PropGet v5 key="has"
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = String string="a"
+    v9 = Integer integer=2
+    v10 = Call v7, v5, v8, v9 calleeKey="has" calleeName="params.has"
+    v11 = Convert v10 declared={type=boolean flags=[IsExpected]}
+    v12 = PropGet v5 key="has"
+    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]}
+    v14 = String string="a"
+    v15 = Undefined
+    v16 = Call v13, v5, v14, v15 calleeKey="has" calleeName="params.has"
+    v17 = Convert v16 declared={type=boolean flags=[IsExpected]}
+    v18 = PropGet v5 key="has"
+    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]}
+    v20 = String string="a"
+    v21 = Integer integer=1
+    v22 = Call v19, v5, v20, v21 calleeKey="has" calleeName="params.has"
+    v23 = Convert v22 declared={type=boolean flags=[IsExpected]}
+    v24 = PropGet v5 key="has"
+    v25 = Convert v24 declared={type=undefined|null|function flags=[IsExpected]}
+    v26 = String string="a"
+    v27 = Call v25, v5, v26 calleeKey="has" calleeName="params.has"
+    v28 = Convert v27 declared={type=boolean flags=[IsExpected]}
+    v29 = NewArray v11, v17, v23, v28 contents=boolean
+    v30 = Convert v29 declared={type=undefined|null|Array<boolean> flags=[IsExpected]}
+    v31 = PropGet v30 key="join"
+    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]}
+    v33 = Call v32, v30 calleeKey="join" calleeName="join"
+    ReturnCall v33 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f6 module=m0 position=1452 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="URLSearchParams" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(URLSearchParams) flags=[IsExpected]}
+    v3 = PropGet v2 key="prototype"
+    v4 = Convert v3 declared={type=builtin(URLSearchParamsPrototype) flags=[IsExpected]}
+    v5 = PropHas v4 key="size"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="URLSearchParams" [isFreeName]
+    v8 = Convert v7 declared={type=builtin(URLSearchParams) flags=[IsExpected]}
+    v9 = String string="a=1&a=2&b=3"
+    v10 = Construct v8, -, v9 calleeName="URLSearchParams"
+    v11 = Convert v10 declared={type=undefined|null|URLSearchParams flags=[IsExpected]}
+    v12 = PropGet v11 key="size"
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Builtin builtin=Object
+    v15 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="URLSearchParams" [isFreeName]
+    v18 = Convert v17 declared={type=builtin(URLSearchParams) flags=[IsExpected]}
+    v19 = PropGet v18 key="prototype"
+    v20 = Convert v19 declared={type=builtin(URLSearchParamsPrototype) flags=[IsExpected]}
+    v21 = String string="size"
+    v22 = Call v15, v14, v20, v21 calleeName="Object.getOwnPropertyDescriptor"
+    v23 = Convert v22 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v24 = PropGet v23 key="get"
+    v25 = Convert v24 declared={type=undefined|null|function flags=[IsExpected]}
+    v26 = TypeOf v25
+    v27 = NewArray v5, v13, v26 contents=undefined|null|boolean|number|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"
+    v28 = Convert v27 declared={type=undefined|null|Array<undefined|null|boolean|number|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> flags=[IsExpected]}
+    v29 = PropGet v28 key="join"
+    v30 = Convert v29 declared={type=undefined|null|function flags=[IsExpected]}
+    v31 = Call v30, v28 calleeKey="join" calleeName="join"
+    ReturnCall v31 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f7 module=m0 position=1642 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=String
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="URLSearchParams" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(URLSearchParams) flags=[IsExpected]}
+    v4 = String string="?a=1"
+    v5 = Construct v3, -, v4 calleeName="URLSearchParams"
+    v6 = Convert v5 declared={type=undefined|null|URLSearchParams flags=[IsExpected]}
+    v7 = Call v0, -, v6 calleeName="String"
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="URL" [isFreeName]
+    v11 = Convert v10 declared={type=builtin(URL) flags=[IsExpected]}
+    v12 = String string="https://a@b"
+    v13 = Construct v11, -, v12 calleeName="URL"
+    v14 = Convert v13 declared={type=undefined|null|URL flags=[IsExpected]}
+    v15 = PropGet v14 key="username"
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="URLSearchParams" [isFreeName]
+    v19 = Convert v18 declared={type=builtin(URLSearchParams) flags=[IsExpected]}
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="URLSearchParams" [isFreeName]
+    v22 = Convert v21 declared={type=builtin(URLSearchParams) flags=[IsExpected]}
+    v23 = String string="a=b"
+    v24 = Construct v22, -, v23 calleeName="URLSearchParams"
+    v25 = Convert v24 declared={type=undefined|null|URLSearchParams flags=[IsExpected]}
+    v26 = Construct v19, -, v25 calleeName="URLSearchParams"
+    v27 = Convert v26 declared={type=undefined|null|URLSearchParams flags=[IsExpected]}
+    v28 = PropGet v27 key="get"
+    v29 = Convert v28 declared={type=undefined|null|function flags=[IsExpected]}
+    v30 = String string="a"
+    v31 = Call v29, v27, v30 calleeKey="get" calleeName="get"
+    v32 = Convert v31 declared={type=undefined|null|string flags=[IsExpected]}
+    v33 = Builtin builtin=GlobalThis
+    v34 = PropGet v33 key="URL" [isFreeName]
+    v35 = Convert v34 declared={type=builtin(URL) flags=[IsExpected]}
+    v36 = String string="https://\u{442}\u{435}\u{441}\u{442}"
+    v37 = Construct v35, -, v36 calleeName="URL"
+    v38 = Convert v37 declared={type=undefined|null|URL flags=[IsExpected]}
+    v39 = PropGet v38 key="host"
+    v40 = Convert v39 declared={type=undefined|null|string flags=[IsExpected]}
+    v41 = Builtin builtin=GlobalThis
+    v42 = PropGet v41 key="URL" [isFreeName]
+    v43 = Convert v42 declared={type=builtin(URL) flags=[IsExpected]}
+    v44 = String string="https://a#\u{431}"
+    v45 = Construct v43, -, v44 calleeName="URL"
+    v46 = Convert v45 declared={type=undefined|null|URL flags=[IsExpected]}
+    v47 = PropGet v46 key="hash"
+    v48 = Convert v47 declared={type=undefined|null|string flags=[IsExpected]}
+    v49 = Builtin builtin=GlobalThis
+    v50 = PropGet v49 key="URL" [isFreeName]
+    v51 = Convert v50 declared={type=builtin(URL) flags=[IsExpected]}
+    v52 = String string="https://x"
+    v53 = Undefined
+    v54 = Construct v51, -, v52, v53 calleeName="URL"
+    v55 = Convert v54 declared={type=undefined|null|URL flags=[IsExpected]}
+    v56 = PropGet v55 key="host"
+    v57 = Convert v56 declared={type=undefined|null|string flags=[IsExpected]}
+    v58 = NewArray v8, v16, v32, v40, v48, v57 contents=undefined|null|string
+    v59 = Convert v58 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v60 = PropGet v59 key="join"
+    v61 = Convert v60 declared={type=undefined|null|function flags=[IsExpected]}
+    v62 = Call v61, v59 calleeKey="join" calleeName="join"
+    ReturnCall v62 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f8 module=m0 position=2162 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="URL" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(URL) flags=[IsExpected]}
+    v3 = PropGet v2 key="canParse"
+    v4 = Convert v3 declared={type=builtin(URLCanParse) flags=[IsExpected]}
+    v5 = Call v4, v2 calleeKey="canParse" calleeName="URL.canParse"
+    ReturnCall v5 casts=[{declared={type=boolean flags=[IsExpected]}}]
+}
+function f9 module=m0 position=2203 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="URL" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(URL) flags=[IsExpected]}
+    v3 = String string="https://a/b?c#d"
+    v4 = Construct v2, -, v3 calleeName="URL"
+    v5 = Convert v4 declared={type=undefined|null|URL flags=[IsExpected]}
+    v6 = PropGet v5 key="toJSON"
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = Call v7, v5 calleeKey="toJSON" calleeName="toJSON"
+    ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f10 module=m0 position=597 kind=Arrow length=2 captures=[{type=env L0 flags=[IsFromCompiler]}, {type=undefined|null|URLSearchParams flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: undefined|null|URLSearchParams, v2: undefined|null|string, v3: undefined|null|string):
+    v4 = PropGet v1 key="delete"
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
+    v6 = String string="b"
+    v7 = Call v5, v1, v6 calleeKey="delete" calleeName="params.delete"
+    v8 = Add v3, v2
+    v9 = Undefined
+    Return v9
+}
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f20]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 f3 f4 f5 f6 f7 f9 f10
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f8 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK-NEXT: b0() handler=b1():
+# CHECK-NEXT: v0: string = CallDirect function=f2 accessSite=8
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() handler=b3():
+# CHECK-NEXT: v1: string = CallDirect function=f3 accessSite=8
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() handler=b5():
+# CHECK-NEXT: v2: string = CallDirect function=f4 accessSite=8
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6() handler=b7():
+# CHECK-NEXT: v3: string = CallDirect function=f5 accessSite=8
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8() handler=b9():
+# CHECK-NEXT: v4: string = CallDirect function=f6 accessSite=8
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b9() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() handler=b11():
+# CHECK-NEXT: v5: string = CallDirect function=f7 accessSite=8
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() handler=b13():
+# CHECK-NEXT: v6: boolean = CallBuiltin overload=URLCanParse/1 accessSite=96 @0:9 tail
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b13() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b14() handler=b15():
+# CHECK-NEXT: v7: string = CallDirect function=f9 accessSite=8
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b15() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function f3 module=
+# CHECK: m0 position=834 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "a=1&a=2&b=3" = String string="a=1&a=2&b=3"
+# CHECK-NEXT: v1: URLSearchParams = CallBuiltin -, v0 overload=URLSearchParams/1 accessSite=25
+# CHECK-NEXT: v2: URLSearchParams<pristine[Storage, Names]> = AssumeType v1 provenType=URLSearchParams<pristine[Storage, Names]>
+# CHECK-NEXT: v3: "a" = String string="a"
+# CHECK-NEXT: v4: 2 = Integer integer=2
+# CHECK-NEXT: v5: undefined = CallBuiltin v2, v3, v4 overload=URLSearchParamsPrototypeDelete/1 accessSite=27
+# CHECK-NEXT: v6: "b" = String string="b"
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: undefined = CallBuiltin v2, v6, v7 overload=URLSearchParamsPrototypeDelete/0 accessSite=29
+# CHECK-NEXT: v9: string = ToString v2 calledBuiltin=String
+# CHECK-NEXT: v10: "a" = String string="a"
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: v12: boolean = CallBuiltin v2, v10, v11 overload=URLSearchParamsPrototypeHas/1 accessSite=32
+# CHECK-NEXT: v13: "a" = String string="a"
+# CHECK-NEXT: v14: 2 = Integer integer=2
+# CHECK-NEXT: v15: boolean = CallBuiltin v2, v13, v14 overload=URLSearchParamsPrototypeHas/1 accessSite=34
+# CHECK-NEXT: v16: "a" = String string="a"
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: boolean = CallBuiltin v2, v16, v17 overload=URLSearchParamsPrototypeHas/0 accessSite=36
+# CHECK-NEXT: v19: "b" = String string="b"
+# CHECK-NEXT: v20: boolean = CallBuiltin v2, v19 overload=URLSearchParamsPrototypeHas/0 accessSite=38
+# CHECK-NEXT: v21: "," = String string="," @0 tail
+# CHECK-NEXT: v22: "," = String string="," @0 tail
+# CHECK-NEXT: v23: "," = String string="," @0 tail
+# CHECK-NEXT: v24: "," = String string="," @0 tail
+# CHECK-NEXT: v25: string = Strcat v9, v21, v12, v22, v15, v23, v18, v24, v20 @0 tail
+# CHECK-NEXT: Return v25
+# CHECK-NEXT: }
+# CHECK-LABEL: function f4 module=
+# CHECK: m0 position=1115 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "a=1&a=2&b=3" = String string="a=1&a=2&b=3"
+# CHECK-NEXT: v1: URLSearchParams = CallBuiltin -, v0 overload=URLSearchParams/1 accessSite=42
+# CHECK-NEXT: v2: URLSearchParams<pristine[Storage, Names]> = AssumeType v1 provenType=URLSearchParams<pristine[Storage, Names]>
+# CHECK-NEXT: v3: "a" = String string="a"
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: undefined = CallBuiltin v2, v3, v4 overload=URLSearchParamsPrototypeDelete/1 accessSite=44
+# CHECK-NEXT: v6: "b" = String string="b"
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: undefined = CallBuiltin v2, v6, v7 overload=URLSearchParamsPrototypeDelete/0 accessSite=46
+# CHECK-NEXT: v9: "" = String string=""
+# CHECK-NEXT: v10: string = Add v2, v9
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function f5 module=
+# CHECK: m0 position=1280 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "a=1" = String string="a=1"
+# CHECK-NEXT: v1: URLSearchParams = CallBuiltin -, v0 overload=URLSearchParams/1 accessSite=48
+# CHECK-NEXT: v2: URLSearchParams<pristine[Storage, Names]> = AssumeType v1 provenType=URLSearchParams<pristine[Storage, Names]>
+# CHECK-NEXT: v3: "a" = String string="a"
+# CHECK-NEXT: v4: 2 = Integer integer=2
+# CHECK-NEXT: v5: boolean = CallBuiltin v2, v3, v4 overload=URLSearchParamsPrototypeHas/1 accessSite=50
+# CHECK-NEXT: v6: "a" = String string="a"
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: boolean = CallBuiltin v2, v6, v7 overload=URLSearchParamsPrototypeHas/0 accessSite=52
+# CHECK-NEXT: v9: "a" = String string="a"
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: boolean = CallBuiltin v2, v9, v10 overload=URLSearchParamsPrototypeHas/1 accessSite=54
+# CHECK-NEXT: v12: "a" = String string="a"
+# CHECK-NEXT: v13: boolean = CallBuiltin v2, v12 overload=URLSearchParamsPrototypeHas/0 accessSite=56
+# CHECK-NEXT: v14: "," = String string="," @0 tail
+# CHECK-NEXT: v15: "," = String string="," @0 tail
+# CHECK-NEXT: v16: "," = String string="," @0 tail
+# CHECK-NEXT: v17: string = Strcat v5, v14, v8, v15, v11, v16, v13 @0 tail
+# CHECK-NEXT: Return v17
+# CHECK-NEXT: }
+# CHECK-LABEL: function f6 module=
+# CHECK: m0 position=1452 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(URLSearchParamsPrototype) = Builtin builtin=URLSearchParamsPrototype
+# CHECK-NEXT: v1: boolean = PropHas v0 key="size" accessSite=61
+# CHECK-NEXT: v2: "a=1&a=2&b=3" = String string="a=1&a=2&b=3"
+# CHECK-NEXT: v3: int[-1, 2147483647] = CallBuiltin -, v2 overload=CompilerHelpersScanPlainQuery/0
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v5: boolean = GreaterEq v3, v4
+# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b1()
+# CHECK-NEXT: b1() frequency=Unlikely:
+# CHECK-NEXT: v6: URLSearchParams = CallBuiltin -, v2 overload=URLSearchParams/1 accessSite=63
+# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v6 overload=URLSearchParamsPrototypeSize/0 accessSite=64
+# CHECK-NEXT: Jump -> next b2(v7)
+# CHECK-NEXT: b2(v8: int[0, 4294967295] ~ int[0, 524287]):
+# CHECK-NEXT: v9: builtin(URLSearchParamsPrototype) = Builtin builtin=URLSearchParamsPrototype
+# CHECK-NEXT: v10: "size" = String string="size"
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v9, v10 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=67
+# CHECK-NEXT: v12: boolean = ResultAt v11
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: int[0, 1] = ToNumber v12
+# CHECK-NEXT: v15: i32 = LShift v13, v14
+# CHECK-NEXT: v16: anything = ResultAt v11 index=3
+# CHECK-NEXT: v17: 1 = Integer integer=1
+# CHECK-NEXT: v18: int[0, 1] = BitAnd v15, v17
+# CHECK-NEXT: v19: boolean = ToBoolean v18
+# CHECK-NEXT: Branch v19 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v20: 13 = Integer integer=13
+# CHECK-NEXT: v21: int[0, 524287] = URShift v3, v20
+# CHECK-NEXT: Jump -> next b2(v21)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: v23: never = RequireObjectCoercible v22 name="get"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v24: anything ~ undefined|null|function = Upcast v16 castType=anything
+# CHECK-NEXT: v25: string = TypeOf v24
+# CHECK-NEXT: v26: "," = String string="," @0 tail
+# CHECK-NEXT: v27: "," = String string="," @0 tail
+# CHECK-NEXT: v28: string = Strcat v1, v26, v8, v27, v25 @0 tail
+# CHECK-NEXT: Return v28
+# CHECK-NEXT: }
+# CHECK-LABEL: function f7 module=
+# CHECK: m0 position=1642 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0() frequency=Unlikely:
+# CHECK-NEXT: v0: "?a=1" = String string="?a=1"
+# CHECK-NEXT: v1: URLSearchParams = CallBuiltin -, v0 overload=URLSearchParams/1 accessSite=72
+# CHECK-NEXT: v2: URLSearchParams<pristine[Storage, Names]> = AssumeType v1 provenType=URLSearchParams<pristine[Storage, Names]>
+# CHECK-NEXT: v3: string = ToString v2 calledBuiltin=String
+# CHECK-NEXT: v4: "https://a@b" = String string="https://a@b"
+# CHECK-NEXT: v5: URL = CallBuiltin -, v4 overload=URL/1 accessSite=75
+# CHECK-NEXT: v6: URL<pristine[Storage, Names]> = AssumeType v5 provenType=URL<pristine[Storage, Names]>
+# CHECK-NEXT: v7: string = CallBuiltin v6 overload=URLPrototypeUsername/0 accessSite=76
+# CHECK-NEXT: v8: "a=b" = String string="a=b"
+# CHECK-NEXT: v9: URLSearchParams = CallBuiltin -, v8 overload=URLSearchParams/1 accessSite=79
+# CHECK-NEXT: v10: URLSearchParams<pristine[Storage, Names]> = AssumeType v9 provenType=URLSearchParams<pristine[Storage, Names]>
+# CHECK-NEXT: v11: URLSearchParams = CallBuiltin -, v10 overload=URLSearchParams/2 accessSite=80
+# CHECK-NEXT: v12: "a" = String string="a"
+# CHECK-NEXT: v13: null|string = CallBuiltin v11, v12 overload=URLSearchParamsPrototypeGet/0 accessSite=82
+# CHECK-NEXT: v14: "https://\u{442}\u{435}\u{441}\u{442}" = String string="https://\u{442}\u{435}\u{441}\u{442}"
+# CHECK-NEXT: v15: URL = CallBuiltin -, v14 overload=URL/1 accessSite=84
+# CHECK-NEXT: v16: URL<pristine[Storage, Names]> = AssumeType v15 provenType=URL<pristine[Storage, Names]>
+# CHECK-NEXT: v17: string = CallBuiltin v16 overload=URLPrototypeHost/0 accessSite=85
+# CHECK-NEXT: v18: "https://a#\u{431}" = String string="https://a#\u{431}"
+# CHECK-NEXT: v19: URL = CallBuiltin -, v18 overload=URL/1 accessSite=87
+# CHECK-NEXT: v20: URL<pristine[Storage, Names]> = AssumeType v19 provenType=URL<pristine[Storage, Names]>
+# CHECK-NEXT: v21: string = CallBuiltin v20 overload=URLPrototypeHash/0 accessSite=88
+# CHECK-NEXT: v22: "https://x" = String string="https://x"
+# CHECK-NEXT: v23: undefined = Undefined
+# CHECK-NEXT: v24: URL = CallBuiltin -, v22, v23 overload=URL/1 accessSite=90
+# CHECK-NEXT: v25: URL<pristine[Storage, Names]> = AssumeType v24 provenType=URL<pristine[Storage, Names]>
+# CHECK-NEXT: v26: string = CallBuiltin v25 overload=URLPrototypeHost/0 accessSite=91
+# CHECK-NEXT: v27: Array<null|string, Contiguous> = NewArray v3, v7, v13, v17, v21, v26 contents=null|string allocationSite=15 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v28: Array<null|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<null|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v29: string = CallBuiltin v28 overload=ArrayPrototypeJoin/0 accessSite=93 @0 tail
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function f9 module=
+# CHECK: m0 position=2203 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "https://a/b?c#d" = String string="https://a/b?c#d"
+# CHECK-NEXT: v1: URL = CallBuiltin -, v0 overload=URL/1 accessSite=98
+# CHECK-NEXT: v2: URL<pristine[Storage, Names]> = AssumeType v1 provenType=URL<pristine[Storage, Names]>
+# CHECK-NEXT: v3: string = CallBuiltin v2 overload=URLPrototypeToJSON/0 accessSite=100 @0 tail
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function f10 module=
+# CHECK: m0 position=597 kind=Arrow length=2 captures=[{type=env L0 flags=[IsFromCompiler]}, {type=undefined|null|URLSearchParams flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|string}, {type=undefined|string}] results=[{type=undefined}] functionTypes=[f11] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L0, v1: anything ~ undefined|null|URLSearchParams, v2: undefined|string, v3: undefined|string):
+# CHECK-NEXT: v4: undefined = CallDirect v1, v2, v3 function=f24
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: }

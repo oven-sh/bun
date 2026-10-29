@@ -1,0 +1,189 @@
+# Object.getOwnPropertyDescriptor and Reflect.getOwnPropertyDescriptor describe a property and call nothing. What they hand out under `get` and `set` runs when the program calls it.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="description-runs-no-getter-function.js" displayPath="description-runs-no-getter-function.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=214 fields=[{key="first" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="plain" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="second" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[0, 2, 1] ownFieldCount=3
+data d0 root=Array{contents=anything} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    DefineSetter v0, v1 key="second"
+    v3 = FinishObject v0
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="globalThis" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v8 = PropGet v7 key="neverSet"
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectKeys
+    v11 = Call v10, v9, v4 calleeName="Object.keys"
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v14 = Data data=d0
+    v15 = Convert v14 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v16 = Convert v15 declared={type=undefined|null|Array flags=[IsExpected]}
+    v17 = IteratorOpen v13
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v19 = IteratorResume v17
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Branch v20 -> taken b2(), notTaken b6()
+  b2():
+    v22 = Convert v16 declared={type=undefined|null|Array<undefined|null|number|string|symbol|bigint|object> flags=[IsExpected]}
+    v23 = IteratorOpen v22
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v25 = IteratorResume v23
+    v26 = ResultAt v25 index=1
+    Jump -> next b4()
+  b4() handler=b5():
+    v27 = Convert v26 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v28 = PropGet v27 key="get"
+    v29 = Convert v28 declared={type=undefined|null|function flags=[IsExpected]}
+    v30 = PropGet v27 key="set"
+    v31 = Convert v30 declared={type=undefined|null|function flags=[IsExpected]}
+    Jump -> next b3()
+  b5() role=IterationCleanup subject=v23:
+    v32 = CatchException
+    Rethrow v32
+  b6():
+    Jump -> next b7()
+  b7() handler=b8():
+    v33 = Convert v21 declared={type=undefined|null|string flags=[IsExpected]}
+    v34 = PropGet v16 key="push"
+    v35 = Convert v34 declared={type=undefined|null|function flags=[IsExpected]}
+    v36 = Builtin builtin=Object
+    v37 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v38 = Call v37, v36, v4, v33 calleeName="Object.getOwnPropertyDescriptor"
+    v39 = Convert v38 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v40 = Call v35, v16, v39 calleeKey="push" calleeName="descriptors.push"
+    v41 = PropGet v16 key="push"
+    v42 = Convert v41 declared={type=undefined|null|function flags=[IsExpected]}
+    v43 = Builtin builtin=Reflect
+    v44 = Builtin builtin=ReflectGetOwnPropertyDescriptor
+    v45 = Call v44, v43, v4, v33 calleeName="Reflect.getOwnPropertyDescriptor"
+    v46 = Convert v45 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v47 = Call v42, v16, v46 calleeKey="push" calleeName="descriptors.push"
+    Jump -> next b1()
+  b8() role=IterationCleanup subject=v17:
+    v48 = CatchException
+    Rethrow v48
+}
+function f1 name="second" module=m0 position=346 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationSite=0 allocationClass=0
+# CHECK-NEXT: v1: f1 = NewClosure function=f1 allocationSite=1
+# CHECK-NEXT: DefineSetter v0, v1 key="second"
+# CHECK-NEXT: v3: L0 = FinishObject v0
+# CHECK-NEXT: v4: Array<string> = CallBuiltin -, v3 overload=ObjectKeys/0 accessSite=2
+# CHECK-NEXT: v5: Array<"first"|"plain"|"second", proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<"first"|"plain"|"second", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v6: Array<undefined|object, Contiguous> = NewArray contents=undefined|object allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v7: Array<undefined|object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<undefined|object, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v8)
+# CHECK-NEXT: b1(v9: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v9)
+# CHECK-NEXT: b2(v10: int[0, 4294967295]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v12: int[0, 4294967295] = CallBuiltin v5 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v13: boolean = Less v10, v12
+# CHECK-NEXT: Branch v13 -> taken b3(| 0), notTaken b16()
+# CHECK-NEXT: b3(v14: int[0, 4294967294]):
+# CHECK-NEXT: v15: boolean = HasArrayStorage v5 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b12()
+# CHECK-NEXT: b4(v16: guard):
+# CHECK-NEXT: v17: boolean = IsInBounds v5, v14
+# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b12()
+# CHECK-NEXT: b5(v18: guard):
+# CHECK-NEXT: v19: guard = AllGuards v16, v18
+# CHECK-NEXT: v20: "first"|"plain"|"second" = GetArrayElement v5, v14, v19 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: int[1, 4294967295] = Add v14, v21
+# CHECK-NEXT: v23: undefined|object = CallBuiltin -, v3, v20 overload=ObjectGetOwnPropertyDescriptor/0 accessSite=6
+# CHECK-NEXT: v24: boolean = HasSpareArrayCapacity v7
+# CHECK-NEXT: Branch v24 -> taken b6(), notTaken b7()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v25: int[0, 4294967295] = CallBuiltin v7, v23 overload=ArrayPrototypePush/0 accessSite=7
+# CHECK-NEXT: Jump -> next b8(v25)
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v26: int[-4294967295, 4294967295] = Sub v12, v10
+# CHECK-NEXT: v27: 2 = Integer integer=2
+# CHECK-NEXT: v28: int[-8589934590, 8589934590] = Mul v26, v27
+# CHECK-NEXT: ReserveArrayCapacity v7, v28
+# CHECK-NEXT: v30: int[0, 4294967295] = CallBuiltin v7, v23 overload=ArrayPrototypePush/0 accessSite=7
+# CHECK-NEXT: Jump -> next b8(v30)
+# CHECK-NEXT: b8(v31: int[0, 4294967295]):
+# CHECK-NEXT: v32: undefined|object = CallBuiltin -, v3, v20 overload=ReflectGetOwnPropertyDescriptor/0 accessSite=9
+# CHECK-NEXT: v33: boolean = HasSpareArrayCapacity v7
+# CHECK-NEXT: Branch v33 -> taken b9(), notTaken b10()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v34: int[0, 4294967295] = CallBuiltin v7, v32 overload=ArrayPrototypePush/0 accessSite=10
+# CHECK-NEXT: Jump -> next b11(v34)
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: v35: int[-4294967295, 4294967295] = Sub v12, v10
+# CHECK-NEXT: v36: 2 = Integer integer=2
+# CHECK-NEXT: v37: int[-8589934590, 8589934590] = Mul v35, v36
+# CHECK-NEXT: ReserveArrayCapacity v7, v37
+# CHECK-NEXT: v39: int[0, 4294967295] = CallBuiltin v7, v32 overload=ArrayPrototypePush/0 accessSite=10
+# CHECK-NEXT: Jump -> next b11(v39)
+# CHECK-NEXT: b11(v40: int[0, 4294967295]):
+# CHECK-NEXT: Jump -> next b2(v22)
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: v41: undefined|"first"|"plain"|"second" = ElemGet v5, v14 [keyIsIntegral]
+# CHECK-NEXT: v42: 1 = Integer integer=1
+# CHECK-NEXT: v43: int[1, 4294967295] = Add v14, v42
+# CHECK-NEXT: v44: string|symbol = ToPropertyKey v41 calledBuiltin=ObjectGetOwnPropertyDescriptor
+# CHECK-NEXT: v45: undefined|object = CallBuiltin -, v3, v44 overload=ObjectGetOwnPropertyDescriptor/0 accessSite=6
+# CHECK-NEXT: v46: boolean = TypeTest v41 testedType="first"|"plain"|"second"
+# CHECK-NEXT: Branch v46 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v47: "first"|"plain"|"second") frequency=Rare:
+# CHECK-NEXT: v48: int[0, 4294967295] = CallBuiltin v7, v45 overload=ArrayPrototypePush/0 accessSite=7
+# CHECK-NEXT: v49: undefined|object = CallBuiltin -, v3, v47 overload=ReflectGetOwnPropertyDescriptor/0 accessSite=9
+# CHECK-NEXT: Jump -> next b15(v49)
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v50: int[0, 4294967295] = CallBuiltin v7, v45 overload=ArrayPrototypePush/0 accessSite=7
+# CHECK-NEXT: v51: string|symbol = ToPropertyKey v41 calledBuiltin=ReflectGetOwnPropertyDescriptor
+# CHECK-NEXT: v52: undefined|object = CallBuiltin -, v3, v51 overload=ReflectGetOwnPropertyDescriptor/0 accessSite=9
+# CHECK-NEXT: Jump -> next b15(v52)
+# CHECK-NEXT: b15(v53: undefined|object) frequency=Unlikely:
+# CHECK-NEXT: v54: int[0, 4294967295] = CallBuiltin v7, v53 overload=ArrayPrototypePush/0 accessSite=10
+# CHECK-NEXT: Jump -> next b1(v43)
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v55: false = Boolean
+# CHECK-NEXT: v56: 0 = Integer
+# CHECK-NEXT: Jump -> next b17(v55, v56)
+# CHECK-NEXT: b17(v57: boolean, v58: int[0, 4294967295]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Branch v57 -> taken b18(), notTaken b19()
+# CHECK-NEXT: b18():
+# CHECK-NEXT: v60: true = Boolean boolean=true
+# CHECK-NEXT: v61: undefined = Undefined
+# CHECK-NEXT: Jump -> next b22(v60, v61, v58)
+# CHECK-NEXT: b19():
+# CHECK-NEXT: v62: int[0, 4294967295] = CallBuiltin v7 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v63: boolean = Less v58, v62
+# CHECK-NEXT: Branch v63 -> taken b20(| 0), notTaken b21()
+# CHECK-NEXT: b20(v64: int[0, 4294967294]):
+# CHECK-NEXT: v65: undefined|object = GetArrayElement v7, v64 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v66: 1 = Integer integer=1
+# CHECK-NEXT: v67: int[1, 4294967295] = Add v64, v66
+# CHECK-NEXT: v68: false = Boolean
+# CHECK-NEXT: Jump -> next b22(v68, v65, v67)
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v69: true = Boolean boolean=true
+# CHECK-NEXT: v70: undefined = Undefined
+# CHECK-NEXT: Jump -> next b22(v69, v70, v58)
+# CHECK-NEXT: b22(v71: boolean, v72: undefined|object, v73: int[0, 4294967295]):
+# CHECK-NEXT: v74: anything = PropGet v72 key="get" accessSite=3
+# CHECK-NEXT: v75: anything = PropGet v72 key="set" accessSite=4
+# CHECK-NEXT: Jump -> next b17(v71, v73)
+# CHECK-NEXT: }

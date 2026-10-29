@@ -45,10 +45,11 @@ impl BorderRadius {
     }
 
     pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
-        let widths = Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?;
+        let widths =
+            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse_non_negative)?;
         let heights = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             // errdefer-style cleanup of `widths` is implicit via Drop on the `?` path.
-            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?
+            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse_non_negative)?
         } else {
             // `LengthPercentage` is
             // `Clone`-via-derive (no arena indirection), so per-field `.clone()` is exact.
@@ -198,7 +199,8 @@ macro_rules! property_helper {
 
         // Otherwise, update the value and add the prefix.
         if let Some(existing) = &mut $self.$prop {
-            *existing = ($val.deep_clone($bump), $vp);
+            existing.0 = $val.deep_clone($bump);
+            existing.1.insert($vp);
         } else {
             $self.$prop = Some(($val.deep_clone($bump), $vp));
             $self.has_any = true;

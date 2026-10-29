@@ -1732,10 +1732,9 @@ impl<'a> Resolver<'a> {
             return Ok(());
         }
 
-        let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
         let mut is_primary = true;
-        while let Some(path) = iter.next() {
+        for path in result.path_pair.iter() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {

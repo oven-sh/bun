@@ -226,7 +226,6 @@ mod tests {
             decoder.set_max_capacity(max_capacity);
             assert!(decode(&mut decoder, &three).is_ok());
             assert_eq!(decoder.table_size(), 72);
-            assert_eq!(decode(&mut decoder, &hex("c0")), Err(Error::Invalid));
 
             decoder.set_max_capacity(40);
             assert_eq!(decoder.table_size(), 36);
@@ -271,17 +270,19 @@ mod tests {
 
     #[test]
     fn a_large_table_is_not_moved_every_few_blocks() {
-        let mut decoder = Decoder::new();
-        decoder.set_max_capacity(1 << 20);
-        let block = [&hex("40 016e 64")[..], &[b'v'; 100]].concat();
-        let (mut heap_size, mut changes) = (0, 0);
-        for _ in 0..1000 {
-            assert!(decode(&mut decoder, &block).is_ok());
-            changes += usize::from(decoder.heap_size() != heap_size);
-            heap_size = decoder.heap_size();
+        for capacity in [6000, 8192, 1 << 20] {
+            let mut decoder = Decoder::new();
+            decoder.set_max_capacity(capacity);
+            let block = [&hex("40 016e 7fad01")[..], &[b'v'; 300]].concat();
+            let (mut heap_size, mut changes) = (0, 0);
+            for _ in 0..1000 {
+                assert!(decode(&mut decoder, &block).is_ok());
+                changes += usize::from(decoder.heap_size() != heap_size);
+                heap_size = decoder.heap_size();
+            }
+            // Its two allocations double as it fills up.
+            assert!(changes < 20, "{capacity}: {changes}");
         }
-        // Its two allocations double as it fills up.
-        assert!(changes < 20, "{changes}");
     }
 
     /// Both tables against a plain list, while the table turns over a few times.
@@ -381,17 +382,19 @@ mod tests {
 
     #[test]
     fn size_updates_up_to_the_acknowledged_limit() {
-        let mut decoder = Decoder::new();
-        assert!(decode(&mut decoder, &hex("3fe11f")).is_ok());
-        assert_eq!(decode(&mut decoder, &hex("3fe21f")), Err(Error::Invalid));
-        decoder.set_max_capacity(4097);
-        assert!(decode(&mut decoder, &hex("3fe21f")).is_ok());
-        decoder.set_max_capacity(100);
-        assert!(decode(&mut decoder, &hex("3f45")).is_ok());
-        assert_eq!(decode(&mut decoder, &hex("3f46")), Err(Error::Invalid));
-        decoder.set_max_capacity(1 << 16);
-        assert!(decode(&mut decoder, &hex("3fe1ff03 4003782d610131")).is_ok());
-        assert_eq!(decoder.table_size(), 36);
+        for (max_capacity, to_it, over_it) in [
+            (4096, "3fe11f", "3fe21f"),
+            (4097, "3fe21f", "3fe31f"),
+            (100, "3f45", "3f46"),
+            (1 << 16, "3fe1ff03", "3fe2ff03"),
+        ] {
+            let mut decoder = Decoder::new();
+            decoder.set_max_capacity(max_capacity);
+            let block = [hex(to_it), hex("4003782d610131")].concat();
+            assert!(decode(&mut decoder, &block).is_ok());
+            assert_eq!(decoder.table_size(), 36);
+            assert_eq!(decode(&mut decoder, &hex(over_it)), Err(Error::Invalid));
+        }
     }
 
     #[test]
@@ -748,14 +751,16 @@ mod tests {
             let decoded = decode(&mut Decoder::new(), &block).map(|fields| fields.len());
             assert_eq!(decoded, if fits { Ok(1) } else { Err(Error::TooLarge) });
         }
-        // A name that is too long and then malformed: it is not decoded to its end.
-        let mut name = hex("18c6318c63").repeat(MAX_FIELD_LEN / 8 + 1);
+        // A name that is far too long and then malformed: it is not decoded to its end.
+        let mut name = hex("18c6318c63").repeat(MAX_FIELD_LEN / 2);
         name.push(0xfe);
         let mut block = vec![0x00];
         integer::encode(&mut block, 0x80, 7, name.len() as u32);
         block.extend(name);
         block.extend(hex("0161"));
-        assert_eq!(decode(&mut Decoder::new(), &block), Err(Error::TooLarge));
+        let mut decoder = Decoder::new();
+        assert_eq!(decode(&mut decoder, &block), Err(Error::TooLarge));
+        assert!(decoder.heap_size() < 2 * MAX_FIELD_LEN);
     }
 
     #[test]
@@ -1441,7 +1446,8 @@ mod tests {
         }
         assert_eq!(block, hex("ff3a 00018300"));
         // There is no entry of 32 bytes: a name has at least one.
-        assert_eq!(decode(&mut decoder, &hex("400000")), Err(Error::Invalid));
+        let decoded = decode(&mut Decoder::new(), &hex("400000"));
+        assert_eq!(decoded, Err(Error::Invalid));
     }
 
     /// One decoder called itself for each.

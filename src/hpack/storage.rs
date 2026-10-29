@@ -25,7 +25,7 @@ impl Storage {
     /// Drops the scratch space, so a `Span` of it is void, and reclaims what left the front.
     pub(crate) fn clear_scratch(&mut self) {
         self.bytes.truncate(self.end);
-        // Moves fewer bytes than it frees, so this is O(1) per byte kept.
+        // Moves no more bytes than it frees, so this is O(1) per byte kept.
         if self.start > 0 && self.start >= self.end - self.start {
             self.bytes.drain(..self.start);
             self.origin += self.start as u64;
@@ -41,8 +41,10 @@ impl Storage {
     pub(crate) fn shrink(&mut self) {
         // Not for a large table: it would be moved here, and again to grow, every few fields.
         let spare = self.bytes.capacity() - self.end;
-        if self.end <= 2 * SPARE_CAPACITY && spare > 2 * SPARE_CAPACITY {
-            self.bytes.shrink_to(self.end + SPARE_CAPACITY);
+        // The entries come to twice their bytes before `clear_scratch` reclaims the front.
+        let keep = SPARE_CAPACITY.max(self.entries_len());
+        if self.end <= 2 * SPARE_CAPACITY && spare > 2 * keep {
+            self.bytes.shrink_to(self.end + keep);
         }
     }
 
@@ -84,7 +86,7 @@ impl Storage {
         self.start = (self.start + oldest.name_len + oldest.value_len).min(self.end);
     }
 
-    /// `None` for what was released and cleared, which no caller has a `Span` of.
+    /// `None` once the bytes have been reclaimed, which no caller has a `Span` of.
     pub(crate) fn name_and_value(&self, span: Span) -> Option<(&[u8], &[u8])> {
         let start = span.position.checked_sub(self.origin)? as usize;
         let len = span.name_len + span.value_len;

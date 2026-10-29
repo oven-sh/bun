@@ -20,9 +20,7 @@ void GlobalScope::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    // JSGlobalObject seeds Math.random from WTF's process-wide ARC4 stream, which a restored VM
-    // snapshot duplicates. Seed from BoringSSL instead: it reseeds when Bun.reseedRandom() moves
-    // the fork generation, so a global created after the call is fresh in every clone.
+    // Not WTF's ARC4 stream (JSGlobalObject's default): a restored VM snapshot duplicates it too.
     if (!JSC::Options::forceWeakRandomSeed())
         weakRandom().setSeed(freshWeakRandomSeed());
 

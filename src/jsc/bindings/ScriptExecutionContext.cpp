@@ -305,9 +305,8 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
 
 void ScriptExecutionContext::postToEveryOtherVM(const BunVmHandleRef* caller, void (*task)(ScriptExecutionContext&))
 {
-    // Same contract as postTaskTo: the lock covers the lookup, the retained VM handles carry
-    // the posts. The map holds one context per global and per module graph, so the handles
-    // are deduplicated to one post per VM.
+    // As postTaskTo: the lock covers the lookup, the retained handles carry the posts.
+    // The map holds several contexts per VM (one per global and per module graph).
     Vector<const BunVmHandleRef*, 8> retained;
     {
         Locker locker { allScriptExecutionContextsMapLock };

@@ -102,8 +102,7 @@ pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask)
     this.event_loop_mut().enqueue_task(Task::init(task));
 }
 
-/// The per-VM part of `Bun.reseedRandom()`, posted by BunReseedRandom.cpp to
-/// every other live VM and run on that VM's thread.
+/// BunReseedRandom.cpp posts this to every other live VM.
 // HOST_EXPORT(Bun__VM__rederiveLocalRandomState, c)
 pub fn vm_rederive_local_random_state(this: &VirtualMachine) {
     crate::mark_binding!();

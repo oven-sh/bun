@@ -1088,9 +1088,7 @@ unsafe extern "C" {
     /// In the event that sufficient random data can not be obtained, `abort`
     /// is called. See `rand_bytes` for the safe wrapper.
     pub(crate) fn RAND_bytes(buf: *mut u8, len: usize) -> c_int;
-    /// Advances the fork generation so every thread's CTR-DRBG reseeds from the
-    /// OS before its next `RAND_bytes` output. Thread-safe. See
-    /// `bump_fork_generation` for the safe wrapper.
+    /// Thread-safe. See `bump_fork_generation` for the safe wrapper.
     pub(crate) fn CRYPTO_fork_detect_bump_generation();
 
     // ── ERR ──────────────────────────────────────────────────────────────

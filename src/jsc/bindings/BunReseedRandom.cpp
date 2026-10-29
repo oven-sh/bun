@@ -1,6 +1,4 @@
-// The C++ half of `Bun.reseedRandom()` (VirtualMachine::reseed_random_state):
-// a new `Math.random` seed for every live global of a VM, and the post of the
-// per-VM part to every other live VM in the process.
+// The C++ half of `Bun.reseedRandom()` (VirtualMachine::reseed_random_state).
 
 #include "root.h"
 #include "ZigGlobalObject.h"
@@ -17,10 +15,8 @@
 
 namespace Bun {
 
-// Seeded from BoringSSL, not from WTF's `cryptographicallyRandomNumber`: WTF
-// keeps a process-wide ARC4 keystream that a restored VM snapshot duplicates
-// too, and it only re-stirs from the OS after 1.6 MB of output. BoringSSL's
-// DRBG reseeds as soon as the fork generation moves.
+// Not WTF's `cryptographicallyRandomNumber`: its ARC4 stream is duplicated by a
+// snapshot too, and it re-stirs only after 1.6 MB. BoringSSL reseeds on the bump.
 unsigned freshWeakRandomSeed()
 {
     unsigned seed;
@@ -39,10 +35,7 @@ static void reseedLiveGlobals(JSC::IsoSubspace* subspace)
 
 } // namespace Bun
 
-// Every global Bun creates derives from Bun::GlobalScope and lives in one of
-// three subspaces: Zig::GlobalObject (the main global, Workers, ShadowRealms,
-// eval and standalone globals), NodeVMGlobalObject (vm.createContext), and the
-// Bake global.
+// Every global Bun creates lives in one of these three subspaces.
 extern "C" void Bun__reseedMathRandomForAllGlobals(JSC::VM* vm)
 {
     // BUN_JSC_forceWeakRandomSeed pins Math.random for reproduction; keep it pinned.

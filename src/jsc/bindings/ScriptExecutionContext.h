@@ -131,9 +131,8 @@ public:
     // target's thread when the work whose completion this is was initiated, or Regular for work no
     // script there initiated.
     WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
-    // Posts `task` once to the regular loop of every live VM in the process except `caller`'s
-    // (the calling VM does its own part inline). A VM that is terminating, or terminates before
-    // the task runs, drops it unrun.
+    // Posts `task` once to every other live VM's regular loop. A VM that is terminating, or
+    // terminates before the task runs, drops it unrun.
     WEBCORE_EXPORT static void postToEveryOtherVM(const ::BunVmHandleRef* caller, void (*task)(ScriptExecutionContext&));
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
 

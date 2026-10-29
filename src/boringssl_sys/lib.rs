@@ -20,16 +20,11 @@ pub fn rand_bytes(buf: &mut [u8]) {
     }
 }
 
-/// Tell BoringSSL that the address space was duplicated by something it cannot
-/// observe (a restored VM snapshot). Every thread's CTR-DRBG then reseeds from
-/// the OS before its next `rand_bytes` output. The reseed is lazy: BoringSSL
-/// already compares the generation on every `RAND_bytes` call, so this adds
-/// nothing to that path. The reseed draws from the OS, so it is only as fresh
-/// as the kernel's generator, which a VM snapshot duplicates too.
+/// After an address-space duplication BoringSSL cannot see (a restored VM snapshot):
+/// every thread's CTR-DRBG reseeds from the OS before its next `rand_bytes` output.
 #[inline]
 pub fn bump_fork_generation() {
-    // SAFETY: no arguments, no preconditions. BoringSSL synchronizes the bump
-    // against concurrent `RAND_bytes` callers on every platform.
+    // SAFETY: no arguments, no preconditions; thread-safe on every platform.
     unsafe { boringssl::CRYPTO_fork_detect_bump_generation() }
 }
 

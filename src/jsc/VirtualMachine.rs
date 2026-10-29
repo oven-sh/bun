@@ -1907,19 +1907,15 @@ impl VirtualMachine {
         size
     }
 
-    /// `Bun.reseedRandom()`: re-derive every random state an address-space
-    /// duplication (a restored VM snapshot) copied into this process. The
-    /// BoringSSL bump reaches every thread's CTR-DRBG lazily. The per-VM part
-    /// runs here now and on every other live VM when its event loop next runs.
+    /// `Bun.reseedRandom()`: the BoringSSL bump reaches every thread lazily; the per-VM
+    /// part runs here now and on every other live VM when its event loop next runs.
     pub fn reseed_random_state(&mut self) {
         bun_boringssl::bump_fork_generation();
         self.rederive_local_random_state();
         Bun__postReseedRandomToOtherVMs(self.jsc_vm());
     }
 
-    /// The per-VM part of [`Self::reseed_random_state`]: drop the pre-drawn
-    /// random bytes and give every live global a fresh `Math.random` seed.
-    /// Runs on this VM's thread, after the BoringSSL bump.
+    /// The per-VM part of [`Self::reseed_random_state`], on this VM's thread after the bump.
     pub fn rederive_local_random_state(&mut self) {
         if let Some(rare_data) = self.rare_data.as_mut() {
             rare_data.forget_random_state();

@@ -317,15 +317,17 @@ other threads use BoringSSL:
 +BSSL_NAMESPACE_END
 --- a/include/openssl/rand.h
 +++ b/include/openssl/rand.h
-@@ -59,6 +59,21 @@ OPENSSL_EXPORT void RAND_enable_fork_unsafe_buffering(int fd);
+@@ -59,6 +59,23 @@ OPENSSL_EXPORT void RAND_enable_fork_unsafe_buffering(int fd);
  OPENSSL_EXPORT void RAND_disable_fork_unsafe_buffering(void);
  #endif
  
 +// CRYPTO_fork_detect_bump_generation tells BoringSSL that the address space
 +// was duplicated by a mechanism it cannot observe, for example a VM snapshot
 +// that was restored into several clones. It advances the fork generation, so
-+// every thread reseeds its PRNG state from the operating system before its next
-+// `RAND_bytes` output. It is safe to call while other threads use BoringSSL.
++// every thread reseeds its PRNG state from the operating system before the
++// output of its next `RAND_bytes` call that begins after this function returns.
++// A call already in progress on another thread completes with its old state.
++// It is safe to call while other threads use BoringSSL.
 +//
 +// On platforms where fork detection is unavailable (the generation is zero),
 +// BoringSSL already draws OS entropy on every call and this function does

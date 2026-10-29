@@ -80,9 +80,11 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    pub fn mi_heap_new() -> *mut Heap;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_heap_new() -> *mut Heap;
     pub fn mi_heap_destroy(heap: *mut Heap);
-    pub fn mi_heap_main() -> *mut Heap;
+    /// No preconditions; returns the process's main heap, which is always live.
+    pub safe fn mi_heap_main() -> *mut Heap;
     pub fn mi_heap_malloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_zalloc(heap: *mut Heap, size: usize) -> *mut c_void;
     pub fn mi_heap_realloc(heap: *mut Heap, p: *mut c_void, newsize: usize) -> *mut c_void;

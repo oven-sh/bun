@@ -2625,13 +2625,10 @@ impl FetchTasklet {
         let prev_can_stream = task_ref.result.can_stream;
         // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
         // callbacks; the terminal callback carries the bytes in `body_owned`
-        // instead. Capture both before `detach_lifetime` clears them in the
-        // stored copy.
+        // instead. Capture both; the stored copy keeps neither.
         let body: &[u8] = result.body;
         let body_owned: Vec<u8> = core::mem::take(&mut result.body_owned);
-        // SAFETY: lifetime erasure for non-body fields; `body` is stored as
-        // `&'static []` so no borrow escapes.
-        task_ref.result = unsafe { result.detach_lifetime() };
+        task_ref.result = result.without_borrowed_body();
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;

@@ -380,10 +380,11 @@ impl DevServer {
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
+        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
         // SAFETY: `heap` is `Box`-allocated above and moved into
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
-        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
+        let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
         let server_transpiler: *mut Transpiler<'static> = &raw mut *self.server_transpiler;
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
@@ -394,14 +395,13 @@ impl DevServer {
                 ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
                 plugins: self.bundler_options.plugin,
             }),
-            &heap,
+            heap_ref,
             event_loop,
             false, // watching is handled separately
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
-            // SAFETY: see `heap_ptr` note above.
-            unsafe { &*heap_ptr },
+            heap_ref,
         )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;

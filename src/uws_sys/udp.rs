@@ -309,6 +309,7 @@ impl PacketBuffer {
         unsafe { &*us_udp_packet_buffer_peer(self, index) }
     }
 
+    /// The next receive on this loop overwrites it: read it before any call that can run JS.
     pub fn get_payload(&self, index: c_int) -> &[u8] {
         // SAFETY: for `index < packet_count`, uSockets returns a non-null pointer to `len`
         // initialized bytes inside the loop's receive buffer, which C writes again at the

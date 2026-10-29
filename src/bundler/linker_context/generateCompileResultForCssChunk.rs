@@ -4,7 +4,7 @@ use core::sync::atomic::Ordering;
 use bun_collections::VecExt;
 use bun_threading::thread_pool as ThreadPoolLib;
 
-use crate::bun_css::{BundlerStyleSheet, ImportInfo, LocalsResultsMap, PrinterOptions, Targets};
+use crate::bun_css::{BundlerStyleSheet, ImportInfo, LocalsResultsMap, PrinterOptions};
 
 use crate::chunk::{Content, CssImportOrderKind};
 use crate::linker_context_mod::LinkerContext;
@@ -97,7 +97,6 @@ fn generate_compile_result_for_css_chunk_impl(
             let printer_options = PrinterOptions {
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace,
-                targets: Targets::for_bundler_target(c.options.target),
                 ..Default::default()
             };
             match css.to_css_with_writer(
@@ -130,7 +129,6 @@ fn generate_compile_result_for_css_chunk_impl(
         }
         CssImportOrderKind::SourceIndex(idx) => {
             let printer_options = PrinterOptions {
-                targets: Targets::for_bundler_target(c.options.target),
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace
                     || c.options.minify_syntax

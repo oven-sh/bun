@@ -811,6 +811,52 @@ devTest("css import before create project relative", {
   },
 });
 
+devTest("css linked from html is printed for the browser targets it was minified for", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `<div class="a"><div class="b">hello</div></div>`,
+    }),
+    "styles.css": `
+      .a {
+        color: red;
+        .b {
+          color: blue;
+        }
+      }
+    `,
+  },
+  async test(dev) {
+    const servedStylesheet = async () => {
+      const html = await dev.fetch("/").text();
+      const href = html.match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)?.[1];
+      if (!href) throw new Error("no stylesheet is linked from the served html: " + html);
+      return await dev.fetch(href).text();
+    };
+    // Printing for browsers compiles the nesting. Printing for the runtime keeps "& .b {".
+    const expectPrintedForBrowsers = (css: string, leaf: string) => {
+      expect(css).toContain(`.a .b {\n  color: ${leaf};`);
+      expect(css).not.toContain("& .b");
+    };
+
+    expectPrintedForBrowsers(await servedStylesheet(), "#00f");
+
+    // A hot update prints the stylesheet again.
+    await dev.write(
+      "styles.css",
+      `
+        .a {
+          color: red;
+          .b {
+            color: tan;
+          }
+        }
+      `,
+    );
+    expectPrintedForBrowsers(await servedStylesheet(), "tan");
+  },
+});
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

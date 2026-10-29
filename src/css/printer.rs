@@ -20,8 +20,6 @@ pub struct PrinterOptions<'a> {
     pub minify: bool,
     /// An optional project root path, used to generate relative paths for sources used in CSS module hashes.
     pub project_root: Option<&'a [u8]>,
-    /// Targets to output the CSS for.
-    pub targets: Targets,
     /// Whether to analyze dependencies (i.e. `@import` and `url()`).
     /// If true, the dependencies are returned as part of the
     /// [ToCssResult](super::stylesheet::ToCssResult).
@@ -44,10 +42,6 @@ impl<'a> PrinterOptions<'a> {
         PrinterOptions {
             minify,
             project_root: None,
-            targets: Targets {
-                browsers: None,
-                ..Targets::default()
-            },
             analyze_dependencies: None,
             pseudo_classes: None,
         }
@@ -262,6 +256,7 @@ impl<'a> Printer<'a> {
         scratchbuf: BumpVec<'a, u8>,
         dest: &'a mut dyn Write,
         options: &PrinterOptions<'a>,
+        targets: &Targets,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a css::LocalsResultsMap>,
         symbols: &'a SymbolMap,
@@ -270,7 +265,7 @@ impl<'a> Printer<'a> {
             sources: None,
             dest,
             minify: options.minify,
-            targets: options.targets,
+            targets: *targets,
             dependencies: if options.analyze_dependencies.is_some() {
                 Some(BumpVec::new_in(arena))
             } else {

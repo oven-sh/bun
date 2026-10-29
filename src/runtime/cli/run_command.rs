@@ -1177,6 +1177,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         Self::set_time_zone_from_env(vm);
+        Self::seed_thread_count_from_env(vm.env_loader());
 
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
         // `DotEnv::Loader` allocated/retained for the VM (never null after
@@ -1238,6 +1239,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     .global()
                     .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
             }
+        }
+    }
+
+    /// Sizes the thread pools from a `UV_THREADPOOL_SIZE` of an env file, as Node does for `--env-file`.
+    pub(crate) fn seed_thread_count_from_env(env: &DotEnv::Loader) {
+        // With no env file `env` holds the process environment, which `get_thread_count` reads by itself.
+        if env.loaded_count() == 0 {
+            return;
+        }
+        if let Some(size) = env.get(b"UV_THREADPOOL_SIZE") {
+            bun_core::set_thread_count_from_env(size);
         }
     }
 
@@ -1343,6 +1355,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         if runs_compiled_code {
             Self::set_time_zone_from_env(vm);
+            Self::seed_thread_count_from_env(vm.env_loader());
         }
 
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived

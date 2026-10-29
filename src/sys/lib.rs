@@ -1560,6 +1560,7 @@ mod safe_libc {
         pub(crate) safe fn fchown(fd: c_int, uid: libc::uid_t, gid: libc::gid_t) -> c_int;
         pub(crate) safe fn ftruncate(fd: c_int, len: libc::off_t) -> c_int;
         pub(crate) safe fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t;
+        pub(crate) safe fn flock(fd: c_int, op: c_int) -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(crate) safe fn fallocate(
             fd: c_int,
@@ -1613,6 +1614,8 @@ mod safe_libc {
         ) -> c_int;
         pub(crate) safe fn getrlimit(resource: c_int, rlim: &mut libc::rlimit) -> c_int;
         pub(crate) safe fn setrlimit(resource: c_int, rlim: &libc::rlimit) -> c_int;
+        // Reads the two `timespec`s; a `tv_nsec` out of range is `EINVAL`.
+        pub(crate) safe fn futimens(fd: c_int, times: &[libc::timespec; 2]) -> c_int;
     }
 }
 
@@ -2692,8 +2695,7 @@ mod posix_impl {
             FileLockMode::Exclusive => libc::LOCK_EX,
         } | if nonblocking { libc::LOCK_NB } else { 0 };
         loop {
-            // SAFETY: `fd` is a live descriptor; `op` is a valid flock op.
-            if unsafe { libc::flock(fd.native(), op) } == 0 {
+            if safe_libc::flock(fd.native(), op) == 0 {
                 return Ok(true);
             }
             match last_errno() {
@@ -2971,12 +2973,7 @@ mod posix_impl {
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
-        check!(
-            // SAFETY: `fd` is a live descriptor; `ts` is a 2-element stack
-            // array and `futimens` reads exactly two `timespec`s.
-            unsafe { libc::futimens(fd.native(), ts.as_ptr()) },
-            Tag::futimens
-        );
+        check!(safe_libc::futimens(fd.native(), &ts), Tag::futimens);
         Ok(())
     }
     pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
@@ -3611,10 +3608,8 @@ mod posix_impl {
     pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
         let len = len.min(i32::MAX as usize - 1);
         loop {
-            // SAFETY: `src`/`dest` are live fds; null `offset` tells the
-            // kernel to use and update `src`'s file offset.
-            let rc =
-                unsafe { libc::sendfile(dest.native(), src.native(), core::ptr::null_mut(), len) };
+            // No `offset`: the kernel uses and updates `src`'s file offset.
+            let rc = super::linux_syscall::sendfile(dest.native(), src.native(), None, len);
             if rc < 0 {
                 let e = last_errno();
                 if e == libc::EINTR {

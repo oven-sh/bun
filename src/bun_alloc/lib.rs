@@ -886,22 +886,18 @@ pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]>
 }
 
 /// Zeros
-/// `len` bytes at `p` in a way the optimizer cannot elide. Uses bulk
+/// `bytes` in a way the optimizer cannot elide. `fill` on bytes is a bulk
 /// `write_bytes` (lowers to `memset`) instead of a per-byte volatile loop so
 /// debug builds don't pay O(len) iteration overhead — the SSLConfig leak test
 /// secure-zeros ~300 MiB of cert material across 1200 iterations and the
 /// per-byte loop alone took ~3 s in debug. `black_box` on the pointer after
 /// the memset forces the compiler to assume the zeroed region is observed,
 /// preventing dead-store elimination in release builds.
-///
-/// # Safety
-/// `p` must be valid for writes of `len` bytes.
 #[inline]
-pub unsafe fn secure_zero(p: *mut u8, len: usize) {
-    // SAFETY: caller contract.
-    unsafe { core::ptr::write_bytes(p, 0, len) };
-    // Treat `p` as escaped so the preceding stores cannot be eliminated.
-    core::hint::black_box(p);
+pub fn secure_zero(bytes: &mut [u8]) {
+    bytes.fill(0);
+    // Treat the pointer as escaped so the preceding stores cannot be eliminated.
+    core::hint::black_box(bytes.as_mut_ptr());
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
@@ -910,14 +906,8 @@ pub unsafe fn secure_zero(p: *mut u8, len: usize) {
 /// allocator reuses it. Zero it before dropping.
 ///
 /// Uses [`secure_zero`] so the zeroing cannot be elided by the optimizer.
-pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
-    // SAFETY: `slice` is exclusively owned; writing `size_of_val` zero bytes
-    // over its storage is sound for `T: Copy` (no drop glue, no invariants on
-    // the bit pattern we're discarding).
-    unsafe {
-        let len = core::mem::size_of_val::<[T]>(&slice);
-        secure_zero(slice.as_mut_ptr().cast::<u8>(), len);
-    }
+pub fn free_sensitive(mut slice: Box<[u8]>) {
+    secure_zero(&mut slice);
     drop(slice);
 }
 
@@ -935,10 +925,13 @@ pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
     // SAFETY: p is a NUL-terminated `default_alloc::malloc`'d buffer per
     // `dupe_z` contract. An interior NUL truncating `strlen` only shortens the
     // zero pass — the free is still exact (`mi_free`/`libc::free` are
-    // size-agnostic).
+    // size-agnostic). The caller gives the allocation up, so the `&mut [u8]` is exclusive.
     unsafe {
         let len = libc::strlen(p);
-        secure_zero(p.cast::<u8>().cast_mut(), len);
+        secure_zero(core::slice::from_raw_parts_mut(
+            p.cast::<u8>().cast_mut(),
+            len,
+        ));
         crate::default_alloc::free(p.cast::<core::ffi::c_void>().cast_mut());
     }
 }

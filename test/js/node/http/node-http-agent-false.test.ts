@@ -1,4 +1,4 @@
-// `agent: false` uses a fresh agent: http.Agent for http, https.Agent for https. Node makes one of the global agent's class
+// `agent: false` uses a fresh agent: http.Agent for http, https.Agent for https. Node makes one of the default agent's class
 // (`new defaultAgent.constructor()`). That read is not one the ahead-of-time compiler can pin, so Bun makes one of the module's own
 // class (see src/js/node/_http_client.ts, #47155).
 import { describe, expect, test } from "bun:test";
@@ -42,10 +42,23 @@ describe("agent: false", () => {
     }
   });
 
-  test("makes a fresh https.Agent for https whatever _defaultAgent holds", () => {
-    const duck = { protocol: "https:", addRequest() {}, destroy() {} };
-    const agent = agentOf(https.request, { _defaultAgent: duck });
-    expect(agent).toBeInstanceOf(https.Agent);
-    expect(agent).not.toBe(duck);
+  test("makes a fresh https.Agent for https, not of a replaced global agent's class", () => {
+    class KeepAliveAgent extends https.Agent {}
+    const saved = https.globalAgent;
+    https.globalAgent = new KeepAliveAgent();
+    try {
+      const agent = agentOf(https.request, {});
+      expect(agent).toBeInstanceOf(https.Agent);
+      expect(agent.constructor).toBe(https.Agent);
+      expect(agent).not.toBe(https.globalAgent);
+    } finally {
+      https.globalAgent = saved;
+    }
+  });
+
+  // Only `_defaultAgent` brings another default agent to ClientRequest. Node makes one of its class.
+  test("uses another default agent as it is", () => {
+    const duck = { protocol: "http:", addRequest() {}, destroy() {} };
+    expect(agentOf(http.request, { _defaultAgent: duck })).toBe(duck);
   });
 });

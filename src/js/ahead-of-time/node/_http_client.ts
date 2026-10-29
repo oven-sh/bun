@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_client.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ec0524364da3080f6d625b78f0b872f5c86f77198c715e04d47a197539942ffb.
+// Written against that file with the SHA-256 ac361d480bedc32b3e9ad538f9fa70b1815cc93b9bbe58161a1f8e74c8ab697b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_client"
@@ -309,9 +309,10 @@ function ClientRequest(
   let agent = options.agent;
   const defaultAgent = options._defaultAgent || Agent.globalAgent;
   if (agent === false) {
-    // A fresh agent of the module's own class. Node makes one of the global agent's class, `new defaultAgent.constructor()`: at that read the
-    // compiler cannot tell an agent from a function, so `new Function()` kept eval in every trimmed executable that uses the client (#47155).
-    agent = new Agent.Agent();
+    // A fresh agent of this module's class. Node makes one of the default agent's class, `new defaultAgent.constructor()`: at that read
+    // the compiler cannot tell an agent from a function, so `new Function()` kept eval in every trimmed executable that uses the client
+    // (#47155). https.request makes its own before this. Another default agent, which only `_defaultAgent` brings, is used as it is.
+    agent = defaultAgent === Agent.globalAgent ? new Agent.Agent() : defaultAgent;
   } else if (agent === null || agent === undefined) {
     if (typeof options.createConnection !== "function") {
       agent = defaultAgent;

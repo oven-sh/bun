@@ -3,7 +3,7 @@
 // class from `Function`: the report was blocked by eval for every program that reaches node:_http_client (#47155). Only that line
 // goes: the global object still counts as escaped for these programs, so the interpreter is still kept.
 import { expect } from "bun:test";
-import { completeness, globalObject, open } from "./runtime-use-expectations";
+import { closed, completeness } from "./runtime-use-expectations";
 import { runtimeUse } from "./runtime-use-harness";
 import { describe, test } from "./supported";
 
@@ -29,8 +29,10 @@ describe.concurrent("the client of node:http leaves the report closed", () => {
     "%s",
     async (_, text) => {
       const use = await runtimeUse({ "main.ts": text });
-      // Nothing blocks --trim. The global object counts as escaped, as with a server of node:http (runtime-use-of-built-in-code.test.ts).
-      expect({ ...completeness(use), exitCode: use.exitCode }).toEqual({ ...open(globalObject), exitCode: 0 });
+      // Nothing blocks --trim. Whether the global object escapes is not asked: today it does, as with a server of node:http
+      // (runtime-use-of-built-in-code.test.ts).
+      const { first, whyOpen } = completeness(use);
+      expect({ first, whyOpen, exitCode: use.exitCode }).toEqual({ first: closed.first, whyOpen: [], exitCode: 0 });
     },
     // A debug build takes minutes over the whole of node:http.
     900_000,

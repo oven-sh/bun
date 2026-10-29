@@ -379,7 +379,7 @@ function onSocketClose(agentKey, err) {
   if (err) this._evictSession(agentKey);
 }
 
-function Agent(options): void {
+function Agent(options?): void {
   if (!(this instanceof Agent)) return new Agent(options);
 
   options = { __proto__: null, ...options };

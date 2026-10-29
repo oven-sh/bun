@@ -57,9 +57,9 @@ const programs: Record<string, Program> = {
     runsTextAsCode: true,
     aheadOfTime: refused,
   },
-  "Function through the constructor of _defaultAgent": {
+  // Was a road to Function, through `new _defaultAgent.constructor()`: `agent: false` now takes another default agent as it is.
+  "a function as _defaultAgent": {
     source: `import http from "node:http"; try { http.request({ agent: false, _defaultAgent: function () {} }); } catch (error) { console.log(error.name); }`,
-    runsTextAsCode: true,
   },
   "Function through the keys of what assert.throws expects, seen by Error.prepareStackTrace": {
     source: `import assert from "node:assert"; let found; Error.prepareStackTrace = error => { found ??= Object.values(error.actual ?? {})[0]; return ""; }; try { assert.throws(() => { throw Object.create(function () {}); }, { constructor: 1 }); } catch {} ${attempt(`typeof found === "function" ? found("return 6 * 7")() : "not found"`)}`,

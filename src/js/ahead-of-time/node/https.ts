@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/https.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 bc160efe7a024dde84eb11916e7f5bb8682d48734277c52fcf68abc5a68d875e.
+// Written against that file with the SHA-256 79fda0a3fde221461651b16f8249afe096feb25a4852f26a9c2de63447b96dab.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:https"
@@ -383,7 +383,7 @@ function onSocketClose(agentKey, err) {
   if (err) this._evictSession(agentKey);
 }
 
-function Agent(options): void {
+function Agent(options?): void {
   if (!(this instanceof Agent)) return new Agent(options) as any;
 
   options = { __proto__: null, ...options };

@@ -152,7 +152,8 @@ impl BufferedIoClosed {
     /// Close the stdout/stderr side.
     ///
     /// `readable` is the subprocess's `stdout`/`stderr` `Readable`; if it was
-    /// a pipe, the shell-side IO is `.pipe` and the AST redirect didn't send this stream elsewhere, its buffered bytes are tee'd into the
+    /// a pipe, the shell-side IO is `.pipe` and the AST redirect didn't send
+    /// this stream elsewhere, its buffered bytes are tee'd into the
     /// command-substitution aggregate buffer.
     fn close_out(
         slot: &mut Option<BufferedIoState>,

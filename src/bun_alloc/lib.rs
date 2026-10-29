@@ -1538,8 +1538,8 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
 
     // Rust cannot define generic statics, so the per-monomorphization storage is
     // emitted at the *declare site* via `bss_list! { name: T, N }` (see macro
-    // below), which owns a `SyncUnsafeCell<MaybeUninit<Self>>` + `Once` and
-    // calls `init_at` on first access.
+    // above), which owns an `AtomicPtr<Self>` and, on first access, calls
+    // `init_at` on a fresh allocation.
 
     /// In-place field initialization into demand-zero storage.
     ///

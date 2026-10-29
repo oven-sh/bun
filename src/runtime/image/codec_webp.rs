@@ -330,9 +330,8 @@ pub(crate) fn encode(
     }
     let mut assembled = WebPData::default();
     if WebPMuxAssemble(&mut mux, &mut assembled) != WEBP_MUX_OK {
-        // `WebPMuxAssemble` writes a half-built buffer into `assembled` even
-        // on failure; its contract says `WebPDataClear` (i.e. `WebPFree`) is
-        // safe to call on any return.
+        // `WebPMuxAssemble` leaves `assembled` null on failure, and its contract
+        // says `WebPDataClear` (i.e. `WebPFree`) is safe to call on any return.
         // SAFETY: WebPFree accepts null; assembled.bytes is WebPMalloc-owned or null.
         unsafe { WebPFree(assembled.bytes as *mut c_void) };
         return Err(codecs::Error::EncodeFailed);

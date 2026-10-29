@@ -217,10 +217,10 @@ pub(crate) fn decode(
     // tj3Decompress8 re-runs `jpeg_read_header` and derives row count /
     // stride from a fresh parse. Bound the WRITE REGION to OUR alloc with
     //   • TJPARAM_MAXPIXELS — second-parse w'·h' > w·h fails before output
-    //     (turbojpeg-mp.c:183)
+    //     (turbojpeg-mp.c:195)
     //   • explicit pitch — stride can't grow with w'
     //   • croppingRegion {0,0,w,ht} — `croppedHeight = ht` regardless of h'
-    //     (turbojpeg-mp.c:222), so an aspect-swap (4096×1→1×4096) that
+    //     (turbojpeg-mp.c:235), so an aspect-swap (4096×1→1×4096) that
     //     passes the product check still can't write more rows than fit
     // and post-check the second-parse dims so a smaller swap (which would
     // leave rows unfilled with raw mimalloc bytes) is treated as corrupt.

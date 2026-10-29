@@ -24,7 +24,7 @@ extern "C" JSPromise* Bun__loadBuiltinEntryPoint(Zig::GlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto id = entryPoint == BuiltinEntryPoint::Bake ? InternalModuleRegistry::InternalBake : InternalModuleRegistry::InternalHtml;
-    JSValue module = globalObject->internalModuleRegistry()->requireId(globalObject, vm, id);
+    JSValue module = DeclaredModuleLoad::requireForCommandLine(globalObject, id);
     if (scope.exception()) [[unlikely]] {
         return JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }

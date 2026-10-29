@@ -123,7 +123,7 @@ pub(crate) fn folder_relative_to_top_level_dir<'a>(
     folder: &[u8],
     buf: &'a mut [u8],
 ) -> Option<&'a [u8]> {
-    let top_level_dir = FileSystem::instance().top_level_dir();
+    let top_level_dir = FileSystem::get().top_level_dir();
     let joined = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
         top_level_dir,
         buf,
@@ -3176,19 +3176,12 @@ impl Package<u64> {
                                         ),
                                     };
 
-                                    // `Location::init_or_null` borrows `file` from
-                                    // `note_src.path.text`, which itself borrows
-                                    // `note_abs_path`; both drop before the log is
-                                    // printed. `Location::clone` deep-copies `file`
-                                    // into a `Cow::Owned`.
                                     notes.push(bun_ast::Data {
                                         text: b"Package name is also declared here".to_vec().into(),
                                         location: bun_ast::Location::init_or_null(
                                             Some(&note_src),
                                             name_range_on_disk(&note_src),
-                                        )
-                                        .as_ref()
-                                        .cloned(),
+                                        ),
                                         ..Default::default()
                                     });
                                     i += 1;

@@ -274,11 +274,12 @@ impl From<bun_uws::ssl_wrapper::InitError> for Error {
     }
 }
 
-impl From<bun_libarchive::Error> for Error {
-    fn from(e: bun_libarchive::Error) -> Self {
+impl From<bun_archive::Error> for Error {
+    fn from(e: bun_archive::Error) -> Self {
         match e {
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
-            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::Sys(s) => Self::Sys(s),
+            bun_archive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::LeavesDestination(e) => Self::Sys(e.into()),
             _ => Self::Unexpected,
         }
     }

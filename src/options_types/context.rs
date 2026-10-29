@@ -44,6 +44,8 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+    /// Where the process started, if a relative `--cwd` changed its directory. Parsing the same arguments again gives the same result only from here.
+    pub original_cwd: Option<Box<[u8]>>,
 }
 
 impl Default for ContextData {
@@ -84,6 +86,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
+            original_cwd: None,
         }
     }
 }
@@ -196,6 +199,8 @@ pub struct BundlerOptions {
     pub react_fast_refresh: bool,
     /// `--check`: type check the entry points and what they import, and do not bundle if there are errors.
     pub check: bool,
+    pub dts: bool,
+    pub library: bool,
     pub react_compiler: bool,
     pub code_splitting: bool,
     pub split_require: bool,
@@ -241,6 +246,10 @@ pub struct BundlerOptions {
     /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
     pub compile_jit_policy: f32,
     pub compile_assets: Vec<Box<[u8]>>,
+    /// `bun compile`, `--compile --aot`. `None`: the program is bundled, not compiled ahead of time.
+    pub aot: Option<Box<crate::aot_options::AotOptions>>,
+    /// `--trim` of a build that is not compiled ahead of time. With `aot` the request is `AotOptions::trim`, and this one is the default.
+    pub trim: crate::trim::TrimRequest,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
@@ -261,6 +270,8 @@ impl Default for BundlerOptions {
             asset_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
             react_fast_refresh: false,
             check: false,
+            dts: false,
+            library: false,
             react_compiler: false,
             code_splitting: false,
             split_require: true,
@@ -300,6 +311,8 @@ impl Default for BundlerOptions {
             compile_executable_path: None,
             compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
+            aot: None,
+            trim: Default::default(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
         }
@@ -574,7 +587,7 @@ pub struct RuntimeOptions {
     pub redis_preconnect: bool,
     pub sql_preconnect: bool,
     pub eval: Eval,
-    pub preconnect: Vec<Box<[u8]>>,
+    pub preconnect: Vec<&'static [u8]>,
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
     pub dns_result_order: Box<[u8]>,
@@ -594,18 +607,20 @@ pub struct RuntimeOptions {
 
 #[derive(Default)]
 pub struct Eval {
-    pub script: Box<[u8]>,
+    pub script: &'static [u8],
     pub eval_and_print: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.
-    pub interactive_script: Option<Box<[u8]>>,
+    pub interactive_script: Option<&'static [u8]>,
+    /// `bun lint` or `bun fmt` started this process to read a configuration that its own tool reads in Node.js.
+    pub reads_configuration: bool,
 }
 
 pub struct CpuProf {
     pub enabled: bool,
-    pub name: Box<[u8]>,
-    pub dir: Box<[u8]>,
+    pub name: &'static [u8],
+    pub dir: &'static [u8],
     pub interval: u32,
     pub md_format: bool,
     pub json_format: bool,
@@ -617,8 +632,8 @@ impl Default for CpuProf {
     fn default() -> Self {
         Self {
             enabled: false,
-            name: Box::default(),
-            dir: Box::default(),
+            name: b"",
+            dir: b"",
             interval: 1000,
             md_format: false,
             json_format: false,
@@ -630,8 +645,8 @@ impl Default for CpuProf {
 pub struct HeapProf {
     pub enabled: bool,
     pub text_format: bool,
-    pub name: Box<[u8]>,
-    pub dir: Box<[u8]>,
+    pub name: &'static [u8],
+    pub dir: &'static [u8],
 }
 
 impl Default for RuntimeOptions {

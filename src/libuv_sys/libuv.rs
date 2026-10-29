@@ -338,7 +338,8 @@ union active_reqs_u {
 #[repr(C)]
 pub struct Loop {
     pub data: *mut c_void,
-    pub active_handles: c_uint,
+    /// A `Cell` because Bun counts its own keep-alive refs here, through a `&Loop`.
+    pub active_handles: Cell<c_uint>,
     pub handle_queue: uv__queue,
     active_reqs: active_reqs_u,
     pub internal_fields: *mut c_void,
@@ -508,24 +509,29 @@ impl Loop {
     /// (avoid underflow during teardown when Bun's virtual keep-alive refs and
     /// libuv's own accounting momentarily disagree).
     #[inline]
-    pub fn sub_active(&mut self, value: u32) {
-        log!("subActive({}) - {}", value, self.active_handles);
-        self.active_handles = self.active_handles.saturating_sub(value);
+    pub fn sub_active(&self, value: u32) {
+        let active_handles = self.active_handles.get();
+        log!("subActive({}) - {}", value, active_handles);
+        self.active_handles
+            .set(active_handles.saturating_sub(value));
     }
     #[inline]
-    pub fn add_active(&mut self, value: u32) {
+    pub fn add_active(&self, value: u32) {
         log!("addActive({})", value);
-        self.active_handles = self.active_handles.saturating_add(value);
+        self.active_handles
+            .set(self.active_handles.get().saturating_add(value));
     }
     #[inline]
-    pub fn inc(&mut self) {
-        log!("inc - {}", self.active_handles.saturating_add(1));
-        self.active_handles = self.active_handles.saturating_add(1);
+    pub fn inc(&self) {
+        let active_handles = self.active_handles.get().saturating_add(1);
+        log!("inc - {}", active_handles);
+        self.active_handles.set(active_handles);
     }
     #[inline]
-    pub fn dec(&mut self) {
+    pub fn dec(&self) {
         log!("dec");
-        self.active_handles = self.active_handles.saturating_sub(1);
+        self.active_handles
+            .set(self.active_handles.get().saturating_sub(1));
     }
     #[inline]
     pub fn stop(&mut self) {
@@ -2278,7 +2284,7 @@ unsafe impl bun_core::ffi::Zeroable for uv_fs_event_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_getaddrinfo_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_tty_t {}
 unsafe impl bun_core::ffi::Zeroable for fs_t {}
-unsafe impl bun_core::ffi::Zeroable for uv_stat_t {}
+bun_core::impl_zeroable!(uv_stat_t, uv_utsname_t);
 impl ReturnCode {
     pub const ZERO: ReturnCode = ReturnCode(0);
     #[inline]
@@ -2751,7 +2757,7 @@ unsafe extern "C" {
     /// Winsock is initialized on first use inside libuv; anything that calls
     /// ws2_32 directly (or through c-ares/uSockets) must call this first.
     /// Thread-safe and idempotent (uv_once).
-    pub fn uv__winsock_ensure();
+    pub safe fn uv__winsock_ensure();
 
     // dns
     pub fn uv_getaddrinfo(
@@ -2776,9 +2782,10 @@ unsafe extern "C" {
     pub fn uv_uptime(uptime: *mut f64) -> c_int;
     pub fn uv_getrusage(rusage: *mut uv_rusage_t) -> c_int;
     pub fn uv_os_homedir(buffer: *mut u8, size: *mut usize) -> ReturnCode;
+    /// Not `safe fn`: calls through a pointer that only `uv__winapi_init` fills.
     pub fn uv_os_getppid() -> uv_pid_t;
     pub fn uv_os_getpriority(pid: uv_pid_t, priority: *mut c_int) -> c_int;
-    pub fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
+    pub safe fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
     pub fn uv_cpu_info(cpu_infos: *mut *mut uv_cpu_info_t, count: *mut c_int) -> c_int;
     pub fn uv_free_cpu_info(cpu_infos: *mut uv_cpu_info_t, count: c_int);
     pub fn uv_interface_addresses(
@@ -2788,8 +2795,7 @@ unsafe extern "C" {
     pub fn uv_free_interface_addresses(addresses: *mut uv_interface_address_t, count: c_int);
     pub fn uv_os_uname(buffer: *mut uv_utsname_t) -> c_int;
     pub fn uv_cwd(buffer: *mut c_char, size: *mut usize) -> c_int;
-    pub fn uv_get_total_memory() -> u64;
-    pub fn uv_disable_stdio_inheritance();
+    pub safe fn uv_get_total_memory() -> u64;
 
     // fs
     pub fn uv_fs_req_cleanup(req: *mut fs_t);

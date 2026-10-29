@@ -1,0 +1,44 @@
+# builtin-use-guarded-location.ir for a member that the host makes when it is first looked for. The test makes nothing: it passes once the engine has reported what the host made and while the location holds that.
+# A data property whose value is an object is then read from the word of the instance. One whose value may be a primitive is not tested: the engine reports objects
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="objectThatTheHostMakes" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="env"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="objectThatTheHostMakes"
+# CHECK: [[isUnchanged0]]: boolean{{*}} = IsBuiltinLocationUnchanged member=ProcessEnv
+# CHECK-NEXT: Branch [[isUnchanged0]] -> taken
+# CHECK-NOT: PropGet
+# CHECK: = GetBuiltinValue builtin=ProcessEnv
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = PropGet v0 key="env"
+
+function f1 name="functionThatTheHostMakes" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="functionThatTheHostMakes"
+# CHECK: [[isUnchanged1]]: boolean{{*}} = IsBuiltinLocationUnchanged member=ProcessNextTick
+# CHECK-NEXT: Branch [[isUnchanged1]] -> taken
+# CHECK-NOT: PropGet
+# CHECK: = Builtin builtin=ProcessNextTick
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = PropGet v0 key="nextTick"
+
+function f2 name="primitiveThatTheHostMakes" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="pid"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="primitiveThatTheHostMakes"
+# CHECK-NOT: IsBuiltinLocationUnchanged
+# CHECK: anything = PropGet v0 key="pid"

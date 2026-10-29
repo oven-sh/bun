@@ -146,6 +146,10 @@ async function relay() {
       extension.destroy();
       enabled.reject(new Error("bun closed the inspector socket before it answered"));
     });
+    extension.on("close", () => {
+      bun.destroy();
+      enabled.reject(new Error("the extension closed the inspector socket before bun answered"));
+    });
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
 
@@ -159,7 +163,7 @@ async function relay() {
   };
 }
 
-/** Starts the fixture with its inspector on a relay to the extension, and waits until it has answered. */
+/** Starts the fixture with its inspector on a relay to the extension. */
 async function startFixture() {
   const connection = await relay();
   const serverUrl = Promise.withResolvers<string>();
@@ -177,23 +181,22 @@ async function startFixture() {
   });
   died.catch(() => {});
   const alive = <T>(step: Promise<T>) => Promise.race([step, died]);
-  await alive(connection.enabled);
-  return { connection, proc, stderr, alive, url: await alive(serverUrl.promise) };
+  return { connection, proc, stderr, alive, serverUrl: serverUrl.promise };
 }
 
-let fixture: Awaited<ReturnType<typeof startFixture>>;
-// Not in a test: the first start of a debug build can take longer than the 5 seconds that a test has.
-beforeAll(async () => void (fixture = await startFixture()), 60_000);
+const fixture = await startFixture();
 afterAll(() => {
-  fixture?.proc.kill();
-  fixture?.connection.close();
+  fixture.proc.kill();
+  fixture.connection.close();
 });
+// Not in a test: the first start of a debug build can take longer than the 5 seconds that a test has.
+beforeAll(() => fixture.alive(Promise.all([fixture.connection.enabled, fixture.serverUrl])), 60_000);
 
 test("a bun process gets one request, and sends the error but no console output", async () => {
-  const { connection, proc, stderr, alive, url } = fixture;
+  const { connection, proc, stderr, alive, serverUrl } = fixture;
   // The fixture prints three lines, then logs an error and throws it. bun sends events in order, so a
   // console event for one of those calls would come before the error that the extension shows.
-  await alive(fetch(url));
+  await alive(fetch(await serverUrl));
   await alive(until(() => diagnostics.length > 0));
   proc.kill();
 

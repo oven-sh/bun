@@ -137,7 +137,7 @@ class BunDiagnosticsManager {
     const ok = await inspector.start();
 
     if (!ok) {
-      await vscode.window.showErrorMessage("Failed to start debug adapter");
+      await vscode.window.showErrorMessage("Failed to start inspector");
       inspector.removeAllListeners();
 
       return;

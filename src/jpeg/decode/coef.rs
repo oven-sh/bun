@@ -379,13 +379,9 @@ impl CoefController {
         output_imcu_row: u32,
         planes: &mut [Plane],
     ) -> Result<()> {
-        let components = decoder
-            .components
-            .iter()
-            .zip(&self.whole_image)
-            .zip(&self.dct_tables)
-            .zip(planes.iter_mut());
-        for (ci, (((comp, array), table), plane)) in components.enumerate() {
+        for (ci, (comp, plane)) in decoder.components.iter().zip(planes).enumerate() {
+            let array = self.whole_image.get(ci).ok_or(Error::Internal)?;
+            let table = self.dct_tables.get(ci).ok_or(Error::Internal)?;
             let block_rows = decoder.rows_in_imcu_row(comp, output_imcu_row);
             let size = comp.dct_scaled_size as usize;
             let first_row = (output_imcu_row * comp.v_samp) as usize;

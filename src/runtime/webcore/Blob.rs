@@ -3951,7 +3951,7 @@ pub(crate) struct WriteFileOptions {
 /// This behavior matches what we do with the fast path.
 fn write_file_with_empty_source_to_destination(
     cx: &bun_jsc::JsThread<'_>,
-    destination_blob: &mut Blob,
+    destination_blob: &Blob,
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
     // SAFETY: null-checked by caller
@@ -3959,15 +3959,7 @@ fn write_file_with_empty_source_to_destination(
         .store()
         .expect("infallible: store present")
         .clone();
-    // `scopeguard::guard(&mut *destination_blob, …)` would hold an
-    // exclusive borrow for the entire function, blocking the immut reads below
-    // (`content_type_or_mime_type`). Capture a raw pointer instead — the
-    // `&mut Blob` parameter outlives this stack frame, and the closure runs
-    // strictly after every other use of `destination_blob` here.
-    let dest_ptr: *mut Blob = destination_blob;
-    // SAFETY: `dest_ptr` derives from the caller's `&mut Blob`; deref'd only on
-    // scope exit, after all other borrows in this function have ended.
-    let _detach = scopeguard::guard((), move |_| unsafe { (*dest_ptr).detach() });
+    let _detach = scopeguard::guard(destination_blob, |blob| blob.detach());
 
     match &destination_store.data {
         store::Data::File(file) => {

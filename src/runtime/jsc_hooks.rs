@@ -1367,18 +1367,11 @@ fn body_mixin_get_blob(
     global: &JSGlobalObject,
 ) -> bun_jsc::JsResult<Option<JSValue>> {
     use crate::webcore::body::BodyMixin as _;
-    if let Some(resp) = value.as_::<crate::webcore::Response>() {
-        // SAFETY: `as_` returned the live payload of a JS-heap
-        // `Response` cell pinned by `value` for the duration of this call.
-        return Ok(Some(
-            unsafe { &mut *resp }.get_blob_without_call_frame(global)?,
-        ));
+    if let Some(resp) = value.as_class_ref::<crate::webcore::Response>() {
+        return Ok(Some(resp.get_blob_without_call_frame(global)?));
     }
-    if let Some(req) = value.as_::<crate::webcore::Request>() {
-        // SAFETY: see above.
-        return Ok(Some(
-            unsafe { &mut *req }.get_blob_without_call_frame(global)?,
-        ));
+    if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
+        return Ok(Some(req.get_blob_without_call_frame(global)?));
     }
     Ok(None)
 }
@@ -1999,35 +1992,24 @@ fn console_print_runtime_object_inner<const C: bool>(
     }
     let global = formatter.global_this;
 
-    // SAFETY: `as_` returns a non-null `*mut T` only when `value` wraps a
-    // live `T` cell; conservative stack scan keeps `value` alive for the
-    // duration of each branch.
-    if let Some(response) = value.as_::<Response>() {
+    if let Some(response) = value.as_class_ref::<Response>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Response` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let result = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
+        let result = response.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(request) = value.as_::<Request>() {
+    if let Some(request) = value.as_class_ref::<Request>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Request` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let result = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
+        let result = request.write_format::<_, _, C>(value, formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(build) = value.as_::<BuildArtifact>() {
+    if let Some(build) = value.as_class_ref::<BuildArtifact>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
-        // native wrapper backing `value`; GC keeps it alive (see above).
-        let result = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
+        let result = build.write_format::<_, _, C>(value, formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(blob) = value.as_::<Blob>() {
+    if let Some(blob) = value.as_class_ref::<Blob>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Blob` to the live native
-        // wrapper backing `value`; GC keeps it alive (see above).
-        let result = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
+        let result = blob.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
     if let Some(s3client) = value.as_class_ref::<S3Client>() {
@@ -4016,7 +3998,7 @@ struct LoaderResult<'a> {
 ///
 /// # Safety
 /// `jsc_vm` is the live per-thread VM; the returned borrows live as long as
-/// the input `specifier_str` / the VM's resolver caches.
+/// the input `specifier_str` / the VM's resolver caches / its `module_loader.eval_source`.
 unsafe fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: *mut VirtualMachine,
@@ -4048,9 +4030,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
             && specifier.ends_with(STDIN)
             && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
         if is_eval || is_stdin {
-            // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
-            // outlives the synchronous transpile this borrow feeds into.
-            virtual_source = Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(eval_source) });
+            virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
     }

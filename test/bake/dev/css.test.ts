@@ -188,14 +188,16 @@ devTest("css imported on the server is minified for browser targets", {
       return await (await dev.fetch(styles[0])).text();
     };
     // A stylesheet is served to the browser, also when a server file imports it.
-    // Minify adds the vendor prefix only for browser targets.
-    expect(await servedStylesheet()).toContain(".b:-webkit-full-screen {\n  color: red;");
+    // Minify adds the `:-webkit-full-screen` copy only for browser targets.
+    const withPrefixedCopy = (color: string) =>
+      `/* styles.css */\n.b:-webkit-full-screen {\n  color: ${color};\n}\n\n.b:fullscreen {\n  color: ${color};\n}\n`;
+    expect(await servedStylesheet()).toBe(withPrefixedCopy("red"));
 
-    // The prefix stays after a save of the stylesheet and after a save of the route.
+    // The copy stays after a save of the stylesheet and after a save of the route.
     await dev.write("styles.css", `.b:fullscreen { color: tan; }`);
-    expect(await servedStylesheet()).toContain(".b:-webkit-full-screen {\n  color: tan;");
+    expect(await servedStylesheet()).toBe(withPrefixedCopy("tan"));
     await dev.patch("routes/index.ts", { find: "export default", replace: "/* edited */ export default" });
-    expect(await servedStylesheet()).toContain(".b:-webkit-full-screen {\n  color: tan;");
+    expect(await servedStylesheet()).toBe(withPrefixedCopy("tan"));
   },
 });
 devTest("asset referenced in css", {

@@ -904,11 +904,12 @@ export default function IndexPage() {
     "client.ts": `console.log("client");`,
   };
 
-  // Minify adds `:-webkit-full-screen` to this rule for browser targets only.
+  // Minify adds the `:-webkit-full-screen` copy of this rule for browser targets only.
   const prefixedStylesheet = `
 .box:fullscreen {
   color: red;
 }`;
+  const prefixedStylesheetOutput = ".box:-webkit-full-screen{color:red}.box:fullscreen{color:red}\n";
 
   // Builds the app in `dir`. `stylesheets` is every stylesheet the build
   // wrote, by href. `links(page)` is what a built page links.
@@ -930,7 +931,7 @@ export default function IndexPage() {
     return { exitCode: built.exitCode, stylesheets, links };
   }
 
-  test("css imported on the server is minified for browser targets", async () => {
+  test.concurrent("css imported on the server is minified for browser targets", async () => {
     // A page is a server file, but the browser loads its stylesheet.
     const dir = await tempDirWithBakeDeps("bake-production-server-css", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
@@ -945,14 +946,15 @@ export default function IndexPage() {
 
     const app = await buildBakeApp(dir, "./src/index.tsx");
     expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
-    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(Object.values(app.stylesheets)).toEqual([prefixedStylesheetOutput]);
     expect(app.exitCode).toBe(0);
   });
 
-  test("css imported through a 'use client' component is written once", async () => {
+  test.concurrent("css imported through a 'use client' component is written once", async () => {
     // The boundary file is in the client graph and in the SSR graph, and each
     // graph has its own copy of the stylesheet. Equal copies are one file.
-    // The page does not link a stylesheet that only a client component imports.
+    // No page links a stylesheet that only a client component imports. That is
+    // a gap, not a contract, so this test does not assert the links.
     const dir = await tempDirWithBakeDeps("bake-production-client-css", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
       "pages/index.tsx": `
@@ -971,12 +973,11 @@ export default function Client() {
     });
 
     const app = await buildBakeApp(dir, "./src/index.tsx");
-    expect(await app.links("index.html")).toEqual([]);
-    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(Object.values(app.stylesheets)).toEqual([prefixedStylesheetOutput]);
     expect(app.exitCode).toBe(0);
   });
 
-  test("css imported from both a page and a 'use client' component is written once", async () => {
+  test.concurrent("css imported from both a page and a 'use client' component is written once", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-shared-css", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
       "pages/index.tsx": `
@@ -997,11 +998,11 @@ export default function Client() {
 
     const app = await buildBakeApp(dir, "./src/index.tsx");
     expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
-    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(Object.values(app.stylesheets)).toEqual([prefixedStylesheetOutput]);
     expect(app.exitCode).toBe(0);
   });
 
-  test("css resolved through an onResolve plugin is written once", async () => {
+  test.concurrent("css resolved through an onResolve plugin is written once", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-plugin-css", {
       "src/index.tsx": `
 import path from "node:path";
@@ -1033,11 +1034,11 @@ export default function Client() {
 
     const app = await buildBakeApp(dir, "./src/index.tsx");
     expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
-    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(Object.values(app.stylesheets)).toEqual([prefixedStylesheetOutput]);
     expect(app.exitCode).toBe(0);
   });
 
-  test("css imported by a client entry point and a route is written once without server components", async () => {
+  test.concurrent("css in a client entry point and a route is written once without server components", async () => {
     // Without server components there is no SSR graph, but the client entry
     // point and the route still import the stylesheet from two graphs.
     using dir = tempDir("bake-production-custom-framework-css", {
@@ -1052,11 +1053,11 @@ export default function Client() {
 
     const app = await buildBakeApp(String(dir), "./app.ts");
     expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
-    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(Object.values(app.stylesheets)).toEqual([prefixedStylesheetOutput]);
     expect(app.exitCode).toBe(0);
   });
 
-  test("css that an onLoad plugin loads for two graphs is written once", async () => {
+  test.concurrent("css that an onLoad plugin loads for two graphs is written once", async () => {
     using dir = tempDir("bake-production-plugin-loaded-css", {
       ...clientEntryFramework,
       "app.ts": `
@@ -1082,11 +1083,11 @@ export default function Client() {
 
     const app = await buildBakeApp(String(dir), "./app.ts");
     expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
-    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(Object.values(app.stylesheets)).toEqual([prefixedStylesheetOutput]);
     expect(app.exitCode).toBe(0);
   });
 
-  test("two routes with equal stylesheets link one file", async () => {
+  test.concurrent("two routes with equal stylesheets link one file", async () => {
     // The file name of a stylesheet is the hash of its bytes.
     using dir = tempDir("bake-production-equal-stylesheets", {
       ...clientEntryFramework,
@@ -1108,7 +1109,7 @@ export default function Client() {
       home: hrefs,
       about: hrefs,
     });
-    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(Object.values(app.stylesheets)).toEqual([prefixedStylesheetOutput]);
     expect(app.exitCode).toBe(0);
   });
 });

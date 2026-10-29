@@ -1,0 +1,5 @@
+{
+  "env": {
+    "JSC_collectContinuously": "1"
+  }
+}

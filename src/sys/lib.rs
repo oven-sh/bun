@@ -908,6 +908,8 @@ pub(crate) mod libuv_error_map;
 #[path = "SignalCode.rs"]
 pub mod signal_code;
 pub use signal_code::SignalCode;
+#[cfg(unix)]
+pub mod beneath;
 pub mod tmp;
 pub use tmp::Tmpfile;
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
@@ -1272,7 +1274,7 @@ impl Tag {
     pub const access: Tag = Tag(2);
     pub const connect: Tag = Tag(3);
     pub const chmod: Tag = Tag(4);
-    pub(crate) const chown: Tag = Tag(5);
+    pub const chown: Tag = Tag(5);
     pub const clonefile: Tag = Tag(6);
     pub const close: Tag = Tag(8);
     pub const copy_file_range: Tag = Tag(9);
@@ -1291,7 +1293,7 @@ impl Tag {
     pub const getdents64: Tag = Tag(21);
     pub const getdirentries64: Tag = Tag(22);
     pub const lchmod: Tag = Tag(23);
-    pub(crate) const lchown: Tag = Tag(24);
+    pub const lchown: Tag = Tag(24);
     pub const link: Tag = Tag(25);
     pub(crate) const lseek: Tag = Tag(26);
     pub const lstat: Tag = Tag(27);
@@ -1910,51 +1912,61 @@ mod posix_impl {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        use super::linux_syscall::ResolveFlags;
         let dir = dir.as_fd();
         let flags = flags | O::CLOEXEC;
-        super::linux_syscall::openat2_beneath(dir, path, flags, mode)
+        super::linux_syscall::openat2(dir, path, flags, mode, ResolveFlags::BENEATH)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
-    /// `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)`: resolves `path` as
-    /// if `dir` were `/`. Falls back to plain `openat` on kernels without
-    /// `openat2` (or when seccomp blocks it), caching the unavailability.
+    /// `None` on kernels without `openat2` and when seccomp blocks it, which is remembered.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn openat2_in_root(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+    pub(crate) fn openat2_if_available(
+        dir: Fd,
+        path: &ZStr,
+        flags: i32,
+        mode: Mode,
+        resolve: super::linux_syscall::ResolveFlags,
+    ) -> Option<core::result::Result<Fd, i32>> {
         use core::sync::atomic::{AtomicBool, Ordering};
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
-        let dir = dir.as_fd();
+        if UNAVAILABLE.load(Ordering::Relaxed) {
+            return None;
+        }
         let flags = flags | O::CLOEXEC;
-        if !UNAVAILABLE.load(Ordering::Relaxed) {
-            match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
-                Ok(fd) => return Ok(fd),
-                Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
-                    let probe = super::linux_syscall::openat2_in_root(
-                        dir,
-                        bun_core::zstr!("."),
-                        O::PATH | O::DIRECTORY | O::CLOEXEC,
-                        0,
-                    );
-                    match probe {
-                        Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
-                            UNAVAILABLE.store(true, Ordering::Relaxed);
-                        }
-                        other => {
-                            if let Ok(fd) = other {
-                                let _ = close(fd);
-                            }
-                            return Err(
-                                Error::from_code_int(e, Tag::open).with_path(path.as_bytes())
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(Error::from_code_int(e, Tag::open).with_path(path.as_bytes()));
-                }
+        // A rename or mount anywhere on the system while a symlink's `..` resolves is `EAGAIN`.
+        const EAGAIN_ATTEMPTS: u32 = 4;
+        let mut result = Err(libc::EAGAIN);
+        for _ in 0..EAGAIN_ATTEMPTS {
+            result = super::linux_syscall::openat2(dir, path, flags, mode, resolve);
+            if !matches!(result, Err(libc::EAGAIN)) {
+                break;
             }
         }
-        openat(dir, path, flags, mode)
+        match result {
+            Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
+                let probe = super::linux_syscall::openat2(
+                    dir,
+                    bun_core::zstr!("."),
+                    O::PATH | O::DIRECTORY | O::CLOEXEC,
+                    0,
+                    resolve,
+                );
+                match probe {
+                    Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
+                        UNAVAILABLE.store(true, Ordering::Relaxed);
+                        None
+                    }
+                    other => {
+                        if let Ok(fd) = other {
+                            let _ = close(fd);
+                        }
+                        Some(Err(e))
+                    }
+                }
+            }
+            result => Some(result),
+        }
     }
     pub fn close(fd: Fd) -> Maybe<()> {
         // Call close ONCE; never retry on EINTR (Linux may have already
@@ -2422,11 +2434,8 @@ mod posix_impl {
     /// `mkdir_recursive_at` with an explicit `mode` for created directories
     /// (matches `bun.api.node.fs.NodeFS.mkdirRecursive`'s `mode` arg).
     pub fn mkdir_recursive_at_mode(dir: Fd, sub_path: &[u8], mode: Mode) -> Maybe<()> {
-        use bun_paths::{ComponentIterator, MakePathStep, PathFormat};
-        // POSIX `init` is infallible.
-        let it = ComponentIterator::init(sub_path, PathFormat::Posix).unwrap();
         let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
-        bun_paths::make_path_with(it, |p| {
+        mkdir_recursive_with(sub_path, |p| {
             if p.len() >= buf.len() {
                 // Tag as `.mkdir`; keep consistent with `mkdirat`.
                 return Err(
@@ -2435,12 +2444,21 @@ mod posix_impl {
             }
             buf[..p.len()].copy_from_slice(p);
             buf[p.len()] = 0;
-            match mkdirat(dir, ZStr::from_buf(&buf[..], p.len()), mode) {
-                Ok(()) => Ok(MakePathStep::Created),
-                Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
-                Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
-                Err(e) => Err(e),
-            }
+            mkdirat(dir, ZStr::from_buf(&buf[..], p.len()), mode)
+        })
+    }
+    pub(crate) fn mkdir_recursive_with(
+        sub_path: &[u8],
+        mut mkdir: impl FnMut(&[u8]) -> Maybe<()>,
+    ) -> Maybe<()> {
+        use bun_paths::{ComponentIterator, MakePathStep, PathFormat};
+        // POSIX `init` is infallible.
+        let it = ComponentIterator::init(sub_path, PathFormat::Posix).unwrap();
+        bun_paths::make_path_with(it, |p| match mkdir(p) {
+            Ok(()) => Ok(MakePathStep::Created),
+            Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
+            Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
+            Err(e) => Err(e),
         })
     }
     pub fn unlink(path: &ZStr) -> Maybe<()> {
@@ -3093,6 +3111,88 @@ mod posix_impl {
         // NUL-terminated absolute path written into it.
         let len = unsafe { libc::strlen(p) };
         Ok(&buf.0[..len])
+    }
+    /// The canonical path of `path`, as `open` followed by `get_fd_path` reports it, but normally in one system call that opens nothing.
+    #[cfg(target_os = "macos")]
+    pub fn get_full_path<'a>(
+        path: &ZStr,
+        out: &'a mut bun_core::PathBuffer,
+    ) -> Maybe<&'a mut [u8]> {
+        // The kernel repeats the first two, which only tell it how to resolve the rest. `/dev/fd/3` stands for an open file.
+        const PREFIXES_THAT_NEED_OPEN: [&[u8]; 3] = [b"/.nofollow/", b"/.resolve/", b"/dev/fd/"];
+        match get_full_path_attribute(path, out) {
+            Ok(len)
+                if !PREFIXES_THAT_NEED_OPEN
+                    .iter()
+                    .any(|prefix| out.0[..len].starts_with(prefix)) =>
+            {
+                return Ok(&mut out.0[..len]);
+            }
+            // `open` does not find these either, and it needs a free descriptor to say so.
+            Err(err) if matches!(err.get_errno(), E::ENOENT | E::ENOTDIR | E::ELOOP) => {
+                return Err(err);
+            }
+            // `getattrlist` can fail where `open` succeeds: `EPERM` on a resource fork, `EACCES` under an ACL that denies only `readattr`, `ENOSPC` after a prefix, `ENOTSUP` on a volume without it.
+            _ => {}
+        }
+        let fd = open(path, O::RDONLY | O::NONBLOCK | O::NOCTTY, 0)?;
+        let _close = CloseOnDrop::new(fd);
+        get_fd_path(fd, out).map_err(|err| err.with_path(path.as_bytes()))
+    }
+    /// Copies `ATTR_CMN_FULLPATH` and its NUL into `out`, and returns the length without the NUL.
+    #[cfg(target_os = "macos")]
+    fn get_full_path_attribute(path: &ZStr, out: &mut bun_core::PathBuffer) -> Maybe<usize> {
+        #[repr(C)]
+        struct Reply {
+            length: u32,
+            full_path: libc::attrreference_t,
+            bytes: [u8; bun_core::MAX_PATH_BYTES],
+        }
+        let mut request = libc::attrlist {
+            bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+            reserved: 0,
+            commonattr: libc::ATTR_CMN_FULLPATH,
+            volattr: 0,
+            dirattr: 0,
+            fileattr: 0,
+            forkattr: 0,
+        };
+        let mut reply = Reply {
+            length: 0,
+            full_path: libc::attrreference_t {
+                attr_dataoffset: 0,
+                attr_length: 0,
+            },
+            bytes: [0; bun_core::MAX_PATH_BYTES],
+        };
+        // SAFETY: `path` is NUL-terminated, and `request` and `reply` are valid for the sizes passed.
+        check_p!(
+            unsafe {
+                libc::getattrlist(
+                    path.as_ptr(),
+                    (&raw mut request).cast(),
+                    (&raw mut reply).cast(),
+                    size_of::<Reply>(),
+                    0,
+                )
+            },
+            Tag::realpath,
+            path
+        );
+        // The offset counts from the reference itself, and the length includes the NUL.
+        let with_nul = (reply.full_path.attr_dataoffset as usize)
+            .checked_sub(size_of::<libc::attrreference_t>())
+            .and_then(|start| {
+                reply
+                    .bytes
+                    .get(start..start + reply.full_path.attr_length as usize)
+            })
+            .filter(|with_nul| !with_nul.is_empty())
+            .ok_or_else(|| {
+                Error::from_code(E::ENAMETOOLONG, Tag::realpath).with_path(path.as_bytes())
+            })?;
+        out.0[..with_nul.len()].copy_from_slice(with_nul);
+        Ok(with_nul.len() - 1)
     }
 
     // ── fcntl/dup/pipe/io group ──
@@ -4107,18 +4207,21 @@ mod windows_impl {
         let dir = dir.as_fd();
         // Open with `op = OnlyCreate`, then close the resulting handle on
         // success.
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
-        let made = super::open_dir_at_windows_nt_path(
-            dir,
-            wpath,
-            super::WindowsOpenDirOptions {
-                iterable: false,
-                can_rename_or_delete: true,
-                op: super::WindowsOpenDirOp::OnlyCreate,
-                ..Default::default()
-            },
-        )?;
+        let options = super::WindowsOpenDirOptions {
+            iterable: false,
+            can_rename_or_delete: true,
+            op: super::WindowsOpenDirOp::OnlyCreate,
+            ..Default::default()
+        };
+        let facts = bun_paths::classify_rel_t(path.as_bytes(), bun_paths::PathFormat::Windows);
+        // `NtCreateFile` does not resolve `..` in a name relative to a directory handle.
+        let made = if facts.climbs_above_start {
+            super::open_dir_at_windows_a(dir, path.as_bytes(), options)?
+        } else {
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
+            let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+            super::open_dir_at_windows_nt_path(dir, wpath, options)?
+        };
         made.close();
         Ok(())
     }
@@ -4935,9 +5038,7 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
     #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
     use libc::statfs as _statfs;
     loop {
-        // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
-        // field on success); `path` is NUL-terminated by `ZStr`.
-        let mut st: StatFS = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut st: StatFS = bun_core::ffi::zeroed();
         // SAFETY: `path` is NUL-terminated (`ZStr`); `st` is a valid
         // out-pointer to stack storage that `_statfs` fully initializes.
         let rc = unsafe { _statfs(path.as_ptr(), &raw mut st) };
@@ -8326,8 +8427,7 @@ pub mod net {
         /// Construct from a borrowed `*const sockaddr`.
         /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
         pub unsafe fn init_posix(addr: *const sockaddr) -> Self {
-            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
-            let mut storage: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
             // SAFETY: caller contract — `addr` points to a valid `sockaddr`
             // header, so `sa_family` is readable.
             let len = match unsafe { (*addr).sa_family } as i32 {
@@ -8358,8 +8458,7 @@ pub mod net {
 
         /// Lay out `ip`:`port` as a sockaddr — the one place an in/in6 struct is written over the storage, so callers never cast.
         pub fn from_ip(ip: core::net::IpAddr, port: u16) -> Self {
-            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
-            let mut any: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut any: sockaddr_storage = bun_core::ffi::zeroed();
             match ip {
                 core::net::IpAddr::V4(v4) => {
                     let inner = sockaddr_in {
@@ -8513,6 +8612,10 @@ pub mod elf {
         pub name: Box<[u8]>,
         /// End address (exclusive) of the `PT_LOAD` segment that contains the lookup address.
         pub segment_end: usize,
+        /// `dlpi_phdr` — `program_header_count` headers, mapped until the object is unloaded.
+        pub program_headers: *const libc::Elf64_Phdr,
+        /// `dlpi_phnum`.
+        pub program_header_count: usize,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8574,6 +8677,8 @@ pub mod elf {
                         base_address: info.dlpi_addr as usize,
                         name,
                         segment_end: seg_end,
+                        program_headers: info.dlpi_phdr,
+                        program_header_count: info.dlpi_phnum as usize,
                     });
                     return 1; // error.Found → stop iteration
                 }
@@ -9390,7 +9495,6 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<()
 
 #[cfg(unix)]
 fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
-    // SAFETY: POD, zero-valid — libc::winsize is all-integer; ioctl writes it.
     let mut ws: libc::winsize = bun_core::ffi::zeroed();
     // SAFETY: TIOCGWINSZ writes exactly `sizeof(winsize)` into the stack-local
     // `ws`; `fd` is a plain int (bad fd → ENOTTY/EBADF, never UB).
@@ -9407,7 +9511,6 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
 }
 #[cfg(windows)]
 fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
-    // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
     // SAFETY: `info` is a valid out-pointer for the duration of the call; a
     // handle that is not a console makes the call fail rather than misbehave.

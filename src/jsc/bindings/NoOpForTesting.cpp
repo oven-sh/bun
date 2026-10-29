@@ -34,7 +34,7 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
     return true;
 }
 
-JSC::JSObject* createNoOpForTesting(JSC::JSGlobalObject* globalObject)
+JSC::JSValue createNoOpForTesting(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());

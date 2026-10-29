@@ -1,0 +1,46 @@
+// eval, Function and require reach a parameter through ten calls, long after a value that the compiler cannot follow, and are called there. ../../flow-schedules.test.ts builds it under four schedules.
+const hide = value => new CustomEvent("x", { detail: value }).detail;
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+function call(callee, operand) {
+  hide(callee);
+  return callee(operand);
+}
+call(hide(x => x), 1);
+const e0 = { get: () => eval };
+const e1 = { get: () => e0.get() };
+const e2 = { get: () => e1.get() };
+const e3 = { get: () => e2.get() };
+const e4 = { get: () => e3.get() };
+const e5 = { get: () => e4.get() };
+const e6 = { get: () => e5.get() };
+const e7 = { get: () => e6.get() };
+const e8 = { get: () => e7.get() };
+const e9 = { get: () => e8.get() };
+const e = () => e9.get();
+const f0 = { get: () => Function };
+const f1 = { get: () => f0.get() };
+const f2 = { get: () => f1.get() };
+const f3 = { get: () => f2.get() };
+const f4 = { get: () => f3.get() };
+const f5 = { get: () => f4.get() };
+const f6 = { get: () => f5.get() };
+const f7 = { get: () => f6.get() };
+const f8 = { get: () => f7.get() };
+const f9 = { get: () => f8.get() };
+const f = () => f9.get();
+const r0 = { get: () => require };
+const r1 = { get: () => r0.get() };
+const r2 = { get: () => r1.get() };
+const r3 = { get: () => r2.get() };
+const r4 = { get: () => r3.get() };
+const r5 = { get: () => r4.get() };
+const r6 = { get: () => r5.get() };
+const r7 = { get: () => r6.get() };
+const r8 = { get: () => r7.get() };
+const r9 = { get: () => r8.get() };
+const r = () => r9.get();
+const attempt = (label, run) => { try { console.log(label, run()); } catch (error) { console.log(label, "THROWS", error.name, String(error.message).slice(0, 50)); } };
+attempt("eval", () => call(e(), "1 + 1"));
+attempt("Function", () => call(f(), "return 2 + 2")());
+attempt("require", () => typeof call(r(), "node:path").join);

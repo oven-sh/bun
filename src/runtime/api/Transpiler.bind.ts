@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 const flag = b.bool.loose.optional;
 /** `b.any`: a `String` object's `toString()` has to run after the code is copied. */
@@ -53,6 +54,8 @@ export const TranspilerOptions = b.dictionary(
 const code = b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" });
 const method = { returns: b.any, capability: "js", throws: true, length: 2 } as const;
 const expected = (name: string) => ({ code: `Expected code to be a string or Uint8Array for '${name}'.` });
+const listOfNames = b.any.returning(table.plainData.fresh.spec);
+const promiseOfText = table.instance("Promise").holding({ value: table.string, reason: table.any }).fresh;
 
 export const Transpiler = b.class({
   rustPath: "crate::api::js_transpiler::JSTranspiler",
@@ -63,11 +66,23 @@ export const Transpiler = b.class({
     capability: "js",
     throws: true,
     length: 0,
+    uses: { options: table.handedOver },
   },
   proto: {
-    scan: { ...method, args: { code, loader }, expected: expected("scan") },
-    scanImports: { ...method, args: { code, loader }, expected: expected("scanImports") },
-    transform: { ...method, args: { code, loader }, expected: expected("transform"), passThis: true },
+    scan: { ...method, args: { code, loader }, expected: expected("scan"), returns: listOfNames },
+    scanImports: {
+      ...method,
+      args: { code, loader },
+      expected: expected("scanImports"),
+      returns: listOfNames,
+    },
+    transform: {
+      ...method,
+      args: { code, loader },
+      expected: expected("transform"),
+      returns: b.any.returning(promiseOfText.spec),
+      passThis: true,
+    },
     transformSync: {
       ...method,
       args: { code, loaderOrContext: b.any, context: b.any },

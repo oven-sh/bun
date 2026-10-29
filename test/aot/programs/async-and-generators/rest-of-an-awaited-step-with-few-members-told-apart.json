@@ -1,0 +1,3 @@
+{
+  "build": ["--aot-limit=MaxValueFlowMembersToldApart:1"]
+}

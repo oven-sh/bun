@@ -3,13 +3,16 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const js = { capability: "js", throws: true } as const;
 
 /** `expect(received).toBeTrue()` */
-const matcher = { returns: b.any, passThis: true, ...js } as const;
+const matcher = { returns: b.any.returning("undefined"), passThis: true, ...js } as const;
 /** `expect(received).toBe(expected)` */
 const matcherWithExpected = { ...matcher, args: { expected: b.any } } as const;
 /** `expect(mock).toHaveBeenCalledWith(...expected)` */
 const matcherWithCallArguments = { ...matcher, args: { expected: b.any.variadic } } as const;
 const matcherWithNthCallArguments = { ...matcher, args: { nth: b.any, expected: b.any.variadic }, length: 0 } as const;
 const matcherWithNthExpected = { ...matcher, args: { nth: b.any, expected: b.any }, length: 1 } as const;
+/** These return `this`. */
+const chainable = { ...matcher, returns: b.any.returning("this") } as const;
+const chainableWithExpected = { ...chainable, args: { expected: b.any } } as const;
 
 export const ExpectAnything = b.class({ rustPath: "crate::test_runner::ExpectAnything" });
 
@@ -77,13 +80,13 @@ export const Expect = b.class({
   call: { args: { value: b.any, message: b.any }, returns: b.self, ...js },
   internalFields: ["capturedValue"],
   proto: {
-    fail: { args: { message: b.any }, returns: b.any, ...js },
+    fail: { args: { message: b.any }, returns: b.any.returning("undefined"), ...js },
     lastCalledWith: { ...matcherWithCallArguments, rustName: "to_have_been_last_called_with" },
     lastReturnedWith: { ...matcherWithExpected, rustName: "to_have_last_returned_with" },
     not: { getter: b.self, passThis: true },
     nthCalledWith: { ...matcherWithNthCallArguments, rustName: "to_have_been_nth_called_with" },
     nthReturnedWith: { ...matcherWithNthExpected, rustName: "to_have_nth_returned_with" },
-    pass: { args: { message: b.any }, returns: b.any, ...js },
+    pass: { args: { message: b.any }, returns: b.any.returning("undefined"), ...js },
     rejects: { getter: b.self, capability: "heap", throws: true, passThis: true },
     resolves: { getter: b.self, capability: "heap", throws: true, passThis: true },
     toBe: matcherWithExpected,
@@ -97,7 +100,7 @@ export const Expect = b.class({
     toBeDate: matcher,
     toBeDefined: matcher,
     toBeEmpty: matcher,
-    toBeEmptyObject: matcher,
+    toBeEmptyObject: chainable,
     toBeEven: matcher,
     toBeFalse: matcher,
     toBeFalsy: matcher,
@@ -114,7 +117,7 @@ export const Expect = b.class({
     toBeNil: matcher,
     toBeNull: matcher,
     toBeNumber: matcher,
-    toBeObject: matcher,
+    toBeObject: chainable,
     toBeOdd: matcher,
     toBeOneOf: matcherWithExpected,
     toBePositive: matcher,
@@ -124,18 +127,18 @@ export const Expect = b.class({
     toBeTruthy: matcher,
     toBeTypeOf: matcherWithExpected,
     toBeUndefined: matcher,
-    toBeValidDate: matcher,
+    toBeValidDate: chainable,
     toBeWithin: { ...matcher, args: { start: b.any, end: b.any } },
     toContain: matcherWithExpected,
-    toContainAllKeys: matcherWithExpected,
-    toContainAllValues: matcherWithExpected,
-    toContainAnyKeys: matcherWithExpected,
-    toContainAnyValues: matcherWithExpected,
-    toContainEqual: matcherWithExpected,
-    toContainKey: matcherWithExpected,
-    toContainKeys: matcherWithExpected,
-    toContainValue: matcherWithExpected,
-    toContainValues: matcherWithExpected,
+    toContainAllKeys: chainableWithExpected,
+    toContainAllValues: chainableWithExpected,
+    toContainAnyKeys: chainableWithExpected,
+    toContainAnyValues: chainableWithExpected,
+    toContainEqual: chainableWithExpected,
+    toContainKey: chainableWithExpected,
+    toContainKeys: chainableWithExpected,
+    toContainValue: chainableWithExpected,
+    toContainValues: chainableWithExpected,
     toEndWith: matcherWithExpected,
     toEqual: matcherWithExpected,
     toEqualIgnoringWhitespace: matcherWithExpected,
@@ -215,14 +218,14 @@ export const ExpectMatcherContext = b.class({
   rustPath: "crate::test_runner::ExpectMatcherContext",
   proto: {
     equals: { args: { a: b.any, b: b.any }, returns: b.bool, ...js, length: 3 },
-    expand: { getter: b.bool },
-    isNot: { getter: b.bool },
+    expand: { getter: b.bool, pure: true },
+    isNot: { getter: b.bool, pure: true },
     promise: { getter: b.string },
-    utils: { getter: b.any, capability: "js" },
+    utils: { getter: b.any.returning("ExpectMatcherUtils"), capability: "js" },
   },
 });
 
-const printer = { args: { value: b.any }, returns: b.any, ...js } as const;
+const printer = { args: { value: b.any }, returns: b.any.returning("string"), ...js } as const;
 
 /** `this.utils` in a matcher of `expect.extend()`. */
 export const ExpectMatcherUtils = b.class({
@@ -230,7 +233,7 @@ export const ExpectMatcherUtils = b.class({
   proto: {
     EXPECTED_COLOR: { ...printer, rustName: "print_expected" },
     /** `matcherHint("toBe", undefined)` prints no "received", `matcherHint("toBe")` does. */
-    matcherHint: { args: { matcherName: b.any, rest: b.any.variadic }, returns: b.any, ...js },
+    matcherHint: { args: { matcherName: b.any, rest: b.any.variadic }, returns: b.any.returning("string"), ...js },
     printExpected: printer,
     printReceived: printer,
     RECEIVED_COLOR: { ...printer, rustName: "print_received" },

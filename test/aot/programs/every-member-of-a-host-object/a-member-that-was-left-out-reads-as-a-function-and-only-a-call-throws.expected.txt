@@ -1,0 +1,4 @@
+function Console true true
+true true object
+console.Console was not compiled into this executable
+console.Console was not compiled into this executable

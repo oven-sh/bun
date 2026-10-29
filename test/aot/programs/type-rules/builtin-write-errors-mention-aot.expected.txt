@@ -1,0 +1,22 @@
+assign over a method of a prototype: TypeError
+define over a method of a prototype: TypeError
+delete a method of a prototype: TypeError
+define a new property of a prototype that is closed: TypeError
+define an index of a prototype that takes new names: TypeError
+allowed: define a new property of a prototype that takes new names: no error
+define over a static method: TypeError
+define over an inherited static method: TypeError
+define over a function of a namespace: TypeError
+define over an accessor of a constructor: TypeError
+define a property that hides an inherited one: TypeError
+define a property that hides an inherited read-only one: TypeError
+define a property of a prototype that hides an inherited accessor: TypeError
+define over a global variable: TypeError
+delete a static method: TypeError
+delete an accessor of a prototype: TypeError
+delete an accessor of a prototype by a computed key: TypeError
+JavaScript rejects: assign to a read-only number: TypeError
+JavaScript rejects: define over a read-only number: TypeError
+JavaScript rejects: delete a read-only number: TypeError
+JavaScript rejects: define over the prototype of a constructor: TypeError
+allowed: define a new property of a namespace: no error

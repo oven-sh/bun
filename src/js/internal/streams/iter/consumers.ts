@@ -14,10 +14,12 @@ const { from, fromSync, isAsyncIterable, isSyncIterable } = require("internal/st
 const { concatBytes } = require("internal/streams/iter/utils");
 
 const { drainableProtocol, toAsyncStreamable, toStreamable } = require("internal/streams/iter/types");
+// A symbol that a pattern takes out of `require(..)` is a plain `symbol` for the type checker: `x[key as Keys["key"]]` says which.
+type Keys = typeof import("internal/streams/iter/types").default;
 
 const { isAnyArrayBuffer, isSharedArrayBuffer } = require("node:util/types");
 
-const SymbolAsyncIterator = Symbol.asyncIterator;
+const SymbolAsyncIterator: typeof Symbol.asyncIterator = Symbol.asyncIterator;
 
 // =============================================================================
 // Type Guards
@@ -75,7 +77,7 @@ function collectSync(source, limit) {
  * @param {number} [limit]
  * @returns {Promise<Uint8Array[]>}
  */
-async function collectAsync(source, signal, limit) {
+async function collectAsync(source, signal: AbortSignal | undefined, limit: number | undefined) {
   signal?.throwIfAborted();
 
   // Normalize source via from() - accepts strings, ArrayBuffers, protocols, etc.
@@ -118,7 +120,7 @@ async function collectAsync(source, signal, limit) {
  * @param {Uint8Array} data
  * @returns {ArrayBuffer|SharedArrayBuffer}
  */
-function toArrayBuffer(data) {
+function toArrayBuffer(data: Uint8Array) {
   const byteOffset = data.byteOffset;
   const byteLength = data.byteLength;
   const buffer = data.buffer;
@@ -296,9 +298,9 @@ async function array(source, options = kNullPrototype) {
  * @param {Function} callback
  * @returns {Function}
  */
-function tap(callback) {
+function tap(callback: (chunks: Uint8Array[] | null, options: { signal: AbortSignal }) => unknown) {
   validateFunction(callback, "callback");
-  return async (chunks, options) => {
+  return async (chunks: Uint8Array[] | null, options: { signal: AbortSignal }) => {
     await callback(chunks, options);
     return chunks;
   };
@@ -309,9 +311,9 @@ function tap(callback) {
  * @param {Function} callback
  * @returns {Function}
  */
-function tapSync(callback) {
+function tapSync(callback: (chunks: Uint8Array[] | null) => unknown) {
   validateFunction(callback, "callback");
-  return chunks => {
+  return (chunks: Uint8Array[] | null) => {
     callback(chunks);
     return chunks;
   };
@@ -326,7 +328,7 @@ function tapSync(callback) {
  * @param {object} drainable
  * @returns {Promise<boolean>|null}
  */
-function ondrain(drainable) {
+function ondrain(drainable: import("internal/streams/iter/types").Writer | null | undefined) {
   if (drainable === null || drainable === undefined || typeof drainable !== "object") {
     return null;
   }
@@ -335,7 +337,7 @@ function ondrain(drainable) {
     return null;
   }
 
-  return drainable[drainableProtocol]();
+  return drainable[drainableProtocol as Keys["drainableProtocol"]]!();
 }
 
 // =============================================================================
@@ -354,13 +356,13 @@ interface MergeFailure {
 
 type MergeReadyItem = (Uint8Array[] & { error?: undefined }) | MergeFailure;
 
-function merge(...args) {
-  let sources;
-  let options;
+function merge(...args: unknown[]) {
+  let sources: unknown[];
+  let options: { signal?: AbortSignal } | undefined;
 
   const argc = args.length;
   if (argc > 0 && isMergeOptions(args[argc - 1])) {
-    options = args[argc - 1];
+    options = args[argc - 1] as { signal?: AbortSignal };
     sources = args.slice(0, -1);
   } else {
     sources = args;
@@ -400,7 +402,7 @@ function merge(...args) {
 
       // Called when a source's .next() settles. Pushes the result into
       // the ready queue and wakes the consumer if it's waiting.
-      const onSettled = (iterator, result) => {
+      const onSettled = (iterator: AsyncIterator<Uint8Array[]>, result: IteratorResult<Uint8Array[]>) => {
         if (result.done) {
           activeCount--;
         } else {

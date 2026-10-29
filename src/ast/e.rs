@@ -1292,43 +1292,24 @@ impl Default for Object {
 
 /// Dotted-key path used by the INI parser (`get_or_put_object`).
 ///
-/// Node types are lifetime-free, so `next` is a raw `*mut Rope`
-/// into the bump arena. Segments are bulk-freed at arena reset.
-pub struct Rope {
+/// Segments live in the bump arena and are bulk-freed at arena reset.
+pub struct Rope<'a> {
     pub head: Expr,
-    pub next: *mut Rope,
+    pub next: Option<&'a mut Rope<'a>>,
 }
-impl Rope {
-    pub fn append(&mut self, expr: Expr, bump: &Bump) -> Result<*mut Rope, AllocError> {
+impl<'a> Rope<'a> {
+    pub fn append(&mut self, expr: Expr, bump: &'a Bump) {
         // Walk to the tail iteratively: recursing once per node overflows the
         // native stack on adversarially deep ropes (e.g. an `.npmrc` section
         // header with thousands of dot-separated segments).
-        //
-        // Arena-allocated Rope nodes are uniquely owned by the chain at this
-        // point; route through `StoreRef::DerefMut` (the arena-backed handle
-        // whose deref is centralised in `nodes.rs`).
-        let mut tail = StoreRef::from_bump(self);
-        while let Some(next) = core::ptr::NonNull::new(tail.next).map(StoreRef::from_non_null) {
-            tail = next;
+        let mut tail = &mut self.next;
+        while let Some(next) = tail {
+            tail = &mut next.next;
         }
-        let rope: *mut Rope = bump.alloc(Rope {
+        *tail = Some(bump.alloc(Rope {
             head: expr,
-            next: core::ptr::null_mut(),
-        });
-        tail.next = rope;
-        Ok(rope)
-    }
-
-    /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
-    /// the pointee is a bump allocation valid until arena reset. Centralises
-    /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
-    /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
-    #[inline]
-    pub(crate) fn next_ref<'a>(&self) -> Option<&'a Rope> {
-        // SAFETY: `next` is either null or a bump-arena allocation valid until
-        // arena reset. Read-only borrow; no `&mut` alias is
-        // outstanding at any caller (the chain is fully built before walking).
-        unsafe { self.next.cast_const().as_ref() }
+            next: None,
+        }));
     }
 }
 
@@ -1417,7 +1398,7 @@ impl Object {
 
     /// Walks `rope` segments, creating nested objects as needed, and returns
     /// the leaf `E.Object` expression.
-    pub fn get_or_put_object(&mut self, rope: &Rope, _bump: &Bump) -> Result<Expr, SetError> {
+    pub fn get_or_put_object(&mut self, rope: &Rope<'_>, _bump: &Bump) -> Result<Expr, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -1425,7 +1406,7 @@ impl Object {
         if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 crate::expr::Data::EArray(array) => {
-                    let Some(next) = rope.next_ref() else {
+                    let Some(next) = rope.next.as_deref() else {
                         return Err(SetError::Clobber);
                     };
                     if let Some(last) = array.items.last() {
@@ -1437,7 +1418,7 @@ impl Object {
                     return Err(SetError::Clobber);
                 }
                 crate::expr::Data::EObject(mut object) => {
-                    if let Some(next) = rope.next_ref() {
+                    if let Some(next) = rope.next.as_deref() {
                         return object.get_or_put_object(next, _bump);
                     }
                     return Ok(existing);
@@ -1446,7 +1427,7 @@ impl Object {
             }
         }
 
-        if let Some(next) = rope.next_ref() {
+        if let Some(next) = rope.next.as_deref() {
             let obj = Expr::init(Object::default(), rope.head.loc);
             let out = match obj.data {
                 crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, _bump)?,

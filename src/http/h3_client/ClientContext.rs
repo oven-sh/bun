@@ -4,7 +4,7 @@
 
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_uws::Loop as UwsLoop;
 use bun_uws::quic;
@@ -32,12 +32,7 @@ pub(crate) struct ClientContext {
 /// `quic.Context.createClient` (it lives on `loop->data.quic_head` and is
 /// driven by that loop's pre/post hooks), so a second loop would get its
 /// own engine; this var would just need to become per-loop storage.
-// PORTING.md §Global mutable state: HTTP-thread-only singleton. AtomicCell
-// over RacyCell because the payload is a pointer-sized `Copy` value
-// (`Option<NonNull<_>>` has an `Atom` impl) so load/store are safe; the
-// uncontended atomic op is free on the single HTTP client thread.
-static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
-    bun_core::AtomicCell::new(None);
+static INSTANCE: AtomicPtr<ClientContext> = AtomicPtr::new(core::ptr::null_mut());
 static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
@@ -55,7 +50,7 @@ impl ClientContext {
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
     /// Callers reborrow per-access — PORTING.md §Global mutable state.
     pub(crate) fn get() -> Option<NonNull<ClientContext>> {
-        INSTANCE.load()
+        NonNull::new(INSTANCE.load(Ordering::Acquire))
     }
 
     /// Upgrade the [`get`]/[`get_or_create`] handle to `&mut Self`.
@@ -72,7 +67,7 @@ impl ClientContext {
     }
 
     pub(crate) fn get_or_create() -> Option<NonNull<ClientContext>> {
-        if let Some(i) = INSTANCE.load() {
+        if let Some(i) = NonNull::new(INSTANCE.load(Ordering::Acquire)) {
             return Some(i);
         }
         LSQUIC_INIT_ONCE.call_once(quic::global_init);
@@ -101,7 +96,7 @@ impl ClientContext {
         // `self_` is the freshly-boxed sole owner; callbacks don't fire until
         // the loop runs, so registering after construction is order-neutral.
         callbacks::register(Self::as_mut(self_).qctx_mut());
-        INSTANCE.store(Some(self_));
+        INSTANCE.store(self_.as_ptr(), Ordering::Release);
         Some(self_)
     }
 

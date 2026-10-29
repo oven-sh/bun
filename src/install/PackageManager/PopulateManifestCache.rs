@@ -126,8 +126,7 @@ pub fn populate_manifest_cache(
     // heavy borrowck overlap — slices into
     // `manager.lockfile` are held while the loop body calls `&mut`-taking methods on
     // `manager`. The lockfile lives in `Box<Lockfile>` (stable address) and is
-    // not resized by anything below, so derive the slices through a raw
-    // provenance root and reborrow `manager` per-call.
+    // not resized by anything below, so reborrow `manager` per-call through a raw pointer.
     let cache_ctx = manager.manifest_disk_cache_ctx();
     let manager_ptr: *mut PackageManager = manager;
     // BACKREF wrapper over the same provenance root for the read-only
@@ -139,10 +138,7 @@ pub fn populate_manifest_cache(
     let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
         core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
     );
-    // SAFETY: `manager_ptr` is the live exclusive borrow's address; we only
-    // take *shared* projections of `lockfile` here, and the loop body never
-    // mutates `lockfile.buffers` / `lockfile.packages`.
-    let lockfile = unsafe { &*core::ptr::addr_of!((*manager_ptr).lockfile) };
+    let lockfile = &*manager.lockfile;
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let string_buf = lockfile.buffers.string_bytes.as_slice();

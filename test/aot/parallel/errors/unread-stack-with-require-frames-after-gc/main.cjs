@@ -9,6 +9,6 @@ for (const load of files) {
 Bun.gc(true);
 
 for (const error of errors) {
-  const frames = error.stack.split("\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/[^ (]*\//, ""));
+  const frames = error.stack.split("\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/[^ (]*[\\/]/, ""));
   console.log(frames.join(" < "));
 }

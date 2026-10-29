@@ -35,7 +35,8 @@ describe("compile/aot/rope-flattened-before-a-loop-runs-out-of-memory", () => {
     built(
       await spawned([bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", join(cwd, "main")], cwd, bunEnv),
     );
-    const ran = await spawned(["sh", "-c", "ulimit -v 2097152 && exec ./main"], cwd, bunEnv);
+    // The flat string takes 1.5 GiB. The limit is 1 GiB, so it fits with no libc, however little the process has mapped.
+    const ran = await spawned(["sh", "-c", "ulimit -v 1048576 && exec ./main"], cwd, bunEnv);
     expect(ran).toEqual({ stdout: "2 1\nRangeError\n1\n", stderr: "", exitCode: 0, signal: null });
   });
 });

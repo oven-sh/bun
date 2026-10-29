@@ -710,6 +710,11 @@ const stillErrors: [string, string, string[]][] = [
     ["TS2749"],
   ],
   [
+    "one mistake alone, beside the whole of Bun, however it is reached, where the program's own type is expected",
+    `import * as all from "bun";\nimport whole from "bun";\ninterface Wanted { main: string; plugin: unknown }\nconst wrong: number = "text";\nconst list: (Wanted | undefined)[] = [Bun, globalThis.Bun, Reflect.get(globalThis, "Bun"), all, whole, (await import("bun")).default];\nconsole.log(wrong, list.length);\n`,
+    ["TS2322"],
+  ],
+  [
     "a missing member whose name quotes ImportMeta",
     `type Own = { a: number };\ntype Missing = Own["'ImportMeta'"];\nconst value: Missing | undefined = undefined;\nconsole.log(value);\n`,
     ["TS2339"],
@@ -813,6 +818,19 @@ describe.concurrent("without Bun's type declarations", () => {
         const stopped = { errors, warnings: [], exitCode: 1, signal: null };
         expect(await check(String(dir), "--aot")).toEqual(stopped);
         expect(await build(String(dir))).toEqual(stopped);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "the whole of Bun goes where the program's own type is expected, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `interface Wanted { main: string; version: string }\nconst odd: number = Bun.version;\nconst found: Wanted | undefined = Reflect.get(globalThis, "Bun");\nconst direct: Wanted = Bun;\nconsole.log(typeof odd, typeof found?.main, direct.version === Bun.version);\n`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        expect(await run(String(dir), "compiled")).toEqual(await run(String(dir), "plain"));
       }),
     buildTimeout,
   );

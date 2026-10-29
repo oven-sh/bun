@@ -482,12 +482,17 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
 const describeEnd = ({ exitCode, signal, overLimit }: Output) =>
   `${signal ?? `exit code ${exitCode}`}${overLimit ? `: ${overLimit}` : ""}`;
 
+// A Bun built with assertions keeps the line breaks of the built-ins written in JavaScript, so plain Bun prints `map (native:17:41)` there.
+// An executable has the positions of a release build: `map (native:1:11)`.
+const withoutPositionsInBuiltins = (text: string) =>
+  isASAN ? text.replace(/\b(native|unknown):\d+:\d+/g, "$1") : text;
+
 /** What the two runs must agree on. Below an uncaught error stand frames with paths, which differ between an executable and its sources. */
 const compared = ({ exitCode, signal, stdout, stderr }: Output) => ({
   exitCode,
   signal,
   // A duration that a program measures is not part of its behavior.
-  stdout: stdout.replace(/ [0-9]+ms$/gm, ""),
+  stdout: withoutPositionsInBuiltins(stdout.replace(/ [0-9]+ms$/gm, "")),
   stderr:
     exitCode === 0
       ? stderr

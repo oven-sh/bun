@@ -4,7 +4,8 @@ const ask = (what, worker) =>
   new Promise(done => {
     const end = text => (console.log(what + ":", text), worker.terminate(), done());
     worker.onmessage = event => end(event.data);
-    worker.onerror = event => end("error " + event.message.split("\n")[0].slice(0, 28));
+    // Up to the path, which begins with another drive letter in an executable on Windows.
+    worker.onerror = event => end("error " + event.message.split("\n")[0].slice(0, 27));
   });
 const file = import.meta.dir + "/beside.js";
 const url = new URL("./beside.js", import.meta.url).href;

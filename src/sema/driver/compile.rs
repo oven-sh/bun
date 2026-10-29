@@ -29,7 +29,7 @@ use self::effects::ProgramOrigins;
 use crate::RoundReport;
 use crate::{CompilerOption, Diagnostic, Incomplete, Libs, Progress};
 use bun_sema::atom::Interner;
-use bun_sema::check::aot::{Effect, FileOrigin, LeftOutBodies};
+use bun_sema::check::aot::{DiagnosticClass, Effect, FileOrigin, LeftOutBodies};
 use bun_sema::check::{Checker, Program, Requested};
 use bun_sema::fold::FoldInputs;
 use bun_sema::program::{FileId, FileRole, Files, IN_CONFIGURATION, MainModule, Sym};
@@ -168,6 +168,15 @@ impl RoleDecision {
         demotions
             .take_while(|demotion| demotion.file == file)
             .any(|demotion| demotion.cause == DemotionCause::EarlyError)
+    }
+
+    /// True if `diagnostics` has an early error in `file`. The file keeps its role and is not checked for early errors
+    /// again, so lowering has to ask here.
+    pub fn reported_early_error(&self, file: FileId) -> bool {
+        self.diagnostics.iter().any(|reported| {
+            reported.diagnostic.file == Some(file)
+                && reported.diagnostic.class == DiagnosticClass::EarlyError
+        })
     }
 }
 

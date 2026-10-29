@@ -276,12 +276,16 @@ const oneOfFew: Record<string, Program> = {
     libraries(["-glibc", "-musl"]).map(library => `@my/my-grown-${process.platform}-${process.arch}${library}`),
     () => "my-grown.node",
   );
-  oneOfFew["a name that grows in one arm of a condition"] = inPackage(
-    "my-grown",
-    { "package.json": manifest("my-grown"), "index.js": loaderWithNameThatGrows("my-grown", "@my") },
-    ofGrown.addons,
-    ofGrown.manifests,
-  );
+  oneOfFew["a name that grows in one arm of a condition"] = {
+    ...inPackage(
+      "my-grown",
+      { "package.json": manifest("my-grown"), "index.js": loaderWithNameThatGrows("my-grown", "@my") },
+      ofGrown.addons,
+      ofGrown.manifests,
+    ),
+    // The arm is for Linux. Elsewhere it is dead code, and the name is one string.
+    isConstant: process.platform !== "linux",
+  };
 }
 
 describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named-by-the-platform", () => {
@@ -385,7 +389,8 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     title =>
       slot(async () => {
         const { plain, build, compiled } = await run(title, oneOfFew[title], { passesAddons: true });
-        expect(build.stderr).toContain("isn't a constant");
+        if (oneOfFew[title].isConstant) expect(build.stderr).not.toContain("isn't a constant");
+        else expect(build.stderr).toContain("isn't a constant");
         expect(compiled).toEqual(plain);
       }),
     600_000,

@@ -33,7 +33,7 @@ impl strings::Appender for FilenameStoreAppender<'_> {
 pub(crate) fn stored_string(bytes: &[u8]) -> strings::StringOrTinyString {
     strings::StringOrTinyString::init_append_if_needed(
         bytes,
-        &mut FilenameStoreAppender(FileSystem::instance().filename_store()),
+        &mut FilenameStoreAppender(FileSystem::get().filename_store()),
     )
     .expect("unreachable")
 }
@@ -325,7 +325,7 @@ impl NetworkTask {
         }
 
         // Stash this callback's body bytes into our own accumulation buffer
-        // before `detach_lifetime` clears `result.body` to `&[]`. Covers the
+        // before `without_borrowed_body` drops `result.body`. Covers the
         // non-streaming manifest path and the tarball fall-through above.
         if result.metadata.is_some() {
             // First callback of a fresh attempt on the non-streaming path —
@@ -361,14 +361,12 @@ impl NetworkTask {
         }
         // SAFETY: the HTTP thread is the sole writer for this call; nothing
         // exclusive to `*this` outlives this block, which ends before the
-        // cross-thread push below. `detach_lifetime` erases the callback-scoped
-        // `'_` to `'static` and clears `body` to `&[]`; the body bytes were
-        // stashed into `(*this).response_buffer` above.
+        // cross-thread push below.
         unsafe {
             // Preserve metadata captured on an earlier streaming callback; the
             // final `result` won't have it.
             let saved_metadata = (*this).response.metadata.take();
-            (*this).response = result.detach_lifetime();
+            (*this).response = result.without_borrowed_body();
             if (*this).response.metadata.is_none() {
                 (*this).response.metadata = saved_metadata;
             }

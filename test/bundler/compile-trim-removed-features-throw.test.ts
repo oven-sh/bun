@@ -32,7 +32,7 @@ const changesTheProcess =
 const waitsForInput = /^(alert|confirm|prompt|stdin|openStdin|sleepSync)$/;
 const isSafeToCall = (name: string) =>
   !startsOrEndsAProcess.test(name) && !changesTheProcess.test(name) && !waitsForInput.test(name);
-const takesANumberForAnAddress = /^Bun\.FFI\.(CString|closeCallback|toArrayBuffer|toBuffer)$/;
+const takesANumberForAnAddress = /^Bun\.FFI\.(CString|closeCallback|toArrayBuffer|toBuffer|read\.\w+)$/;
 
 const instanceOf: Record<string, string> = {
   String: `"a"`,

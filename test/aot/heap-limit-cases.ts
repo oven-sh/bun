@@ -1907,10 +1907,19 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
           ["sh", "-c", "ulimit -c 0 && ulimit -v 1048576 && exec ./program"],
           String(folder),
         );
+        // A collection needs memory for its mark stack. If malloc has none left, the process says so and ends.
+        if (stderr.startsWith("FATAL")) {
+          expect({ stdout, stderr, exitCode }).toEqual({
+            stdout: "",
+            stderr:
+              "FATAL: out of memory. The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit.\n",
+            exitCode: 1,
+          });
+          return;
+        }
         expect(stderr).toMatch(
           /^RangeError: Out of memory(: The limit on address space \(ulimit -v\) leaves no room for more JavaScript objects\. Raise the limit\.)?\n/,
         );
-        expect(stderr).not.toContain("FATAL");
         expect({ stdout, exitCode }).toEqual({ stdout: "finally\n", exitCode: 1 });
       },
       120_000,

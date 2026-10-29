@@ -236,18 +236,13 @@ impl JSSourceMap {
         };
         let name = self.mapping_name_to_js(global, &mapping)?;
         let source = self.source_name_to_js(global, &mapping)?;
-        // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
-        // `as_ptr()` derives `*mut` via the struct's `UnsafeCell` interior, so the
-        // C++ callee may mutate the global without laundering a read-only pointer.
-        Ok(unsafe {
-            Bun__createNodeModuleSourceMapOriginObject(
-                global.as_mut_ptr(),
-                name,
-                JSValue::js_number(mapping.original.lines.zero_based() as f64),
-                JSValue::js_number(mapping.original.columns.zero_based() as f64),
-                source,
-            )
-        })
+        Ok(Bun__createNodeModuleSourceMapOriginObject(
+            global,
+            name,
+            JSValue::js_number(mapping.original.lines.zero_based() as f64),
+            JSValue::js_number(mapping.original.columns.zero_based() as f64),
+            source,
+        ))
     }
 
     pub(crate) fn find_entry(
@@ -271,20 +266,15 @@ impl JSSourceMap {
 
         let name = self.mapping_name_to_js(global, &mapping)?;
         let source = self.source_name_to_js(global, &mapping)?;
-        // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
-        // `as_ptr()` derives `*mut` via the struct's `UnsafeCell` interior, so the
-        // C++ callee may mutate the global without laundering a read-only pointer.
-        Ok(unsafe {
-            Bun__createNodeModuleSourceMapEntryObject(
-                global.as_mut_ptr(),
-                JSValue::js_number(mapping.generated.lines.zero_based() as f64),
-                JSValue::js_number(mapping.generated.columns.zero_based() as f64),
-                JSValue::js_number(mapping.original.lines.zero_based() as f64),
-                JSValue::js_number(mapping.original.columns.zero_based() as f64),
-                source,
-                name,
-            )
-        })
+        Ok(Bun__createNodeModuleSourceMapEntryObject(
+            global,
+            JSValue::js_number(mapping.generated.lines.zero_based() as f64),
+            JSValue::js_number(mapping.generated.columns.zero_based() as f64),
+            JSValue::js_number(mapping.original.lines.zero_based() as f64),
+            JSValue::js_number(mapping.original.columns.zero_based() as f64),
+            source,
+            name,
+        ))
     }
 }
 
@@ -302,16 +292,16 @@ fn get_line_column(
 
 // Hand-written in `src/jsc/modules/NodeModuleModule.cpp`.
 unsafe extern "C" {
-    fn Bun__createNodeModuleSourceMapOriginObject(
-        globalObject: *mut JSGlobalObject,
+    safe fn Bun__createNodeModuleSourceMapOriginObject(
+        globalObject: &JSGlobalObject,
         name: JSValue,
         line: JSValue,
         column: JSValue,
         source: JSValue,
     ) -> JSValue;
 
-    fn Bun__createNodeModuleSourceMapEntryObject(
-        globalObject: *mut JSGlobalObject,
+    safe fn Bun__createNodeModuleSourceMapEntryObject(
+        globalObject: &JSGlobalObject,
         generatedLine: JSValue,
         generatedColumn: JSValue,
         originalLine: JSValue,

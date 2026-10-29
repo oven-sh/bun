@@ -3606,14 +3606,21 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
-    /// `isMatchingConstructorReference`
+    /// `isMatchingConstructorReference`. TypeScript 7.0 resolves the key of `a[k]` before it compares `a` with the
+    /// reference. Resolving a constant key's name resolves a type, so in a loop it reports a cycle (7022) through
+    /// a key of an unrelated object, which TypeScript 6 accepts. Here the object comes first.
     fn is_matching_constructor_reference(&mut self, reference: &Reference, e: ExprId) -> bool {
-        let (obj, name) = match self.hir(reference.file).checked_kind(e) {
-            ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
-            ExprKind::Index { obj, index, .. } => (obj, self.literal_key(reference.file, index)),
-            _ => return false,
-        };
-        name == Some(known::constructor) && self.matches(reference, obj)
+        let file = reference.file;
+        match self.hir(file).checked_kind(e) {
+            ExprKind::Dot { obj, name, .. } => {
+                name == known::constructor && self.matches(reference, obj)
+            }
+            ExprKind::Index { obj, index, .. } => {
+                self.matches(reference, obj)
+                    && self.literal_key(file, index) == Some(known::constructor)
+            }
+            _ => false,
+        }
     }
 
     /// `narrowTypeByConstructor`

@@ -1060,6 +1060,15 @@ export const linkerFlags: Flag[] = [
     desc: "LTO level: IR pipeline and code generation (lld)",
   },
   {
+    // By default the inliner still takes a callee of up to 45 cost units at a call site it knows is cold: behind
+    // [[unlikely]], or on the way to a crash. Across the whole program that copies out-of-line slow paths into every
+    // caller: VM::hasExceptionsAfterHandlingTraps() alone was 0.8 MB behind RETURN_IF_EXCEPTION. At 0 a cold call
+    // site takes only what is cheaper than the call. -0.9 MB on linux-x64, no instructions more.
+    flag: "-Wl,-mllvm,-inline-cold-callsite-threshold=0",
+    when: c => c.unix && linkRunsLto(c) && linksWithLld(c),
+    desc: "LTO: inline at a cold call site only what is cheaper than the call (lld)",
+  },
+  {
     flag: "-Os",
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
@@ -1084,6 +1093,11 @@ export const linkerFlags: Flag[] = [
     flag: c => [`/opt:lldlto=${ltoLevel(c)}`, `/opt:lldltocgo=${ltoLevel(c)}`],
     when: c => c.windows && linkRunsLto(c),
     desc: "LTO level: IR pipeline and code generation (lld-link)",
+  },
+  {
+    flag: "/mllvm:-inline-cold-callsite-threshold=0",
+    when: c => c.windows && linkRunsLto(c),
+    desc: "LTO: inline at a cold call site only what is cheaper than the call (lld-link)",
   },
 
   // ─── PGO (link-side) ───

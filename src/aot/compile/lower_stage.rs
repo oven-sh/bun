@@ -310,6 +310,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 assert!(!self.panics, "--aot-sabotage=LoweringPanics");
                 if !is_well_formed(self.loaded.loaded.files(), file)
                     || checker.found_early_error(file)
+                    || self.decided.roles.reported_early_error(file)
                 {
                     return Some(None);
                 }

@@ -52,5 +52,5 @@ Bun.gc(true);
 
 for (const error of errors) {
   const frames = error.stack!.split("\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/ ?\(.*\)$/, ""));
-  console.log(frames.filter(frame => !frame.includes("/")).join(" < "));
+  console.log(frames.filter(frame => !/[\\/]/.test(frame)).join(" < "));
 }

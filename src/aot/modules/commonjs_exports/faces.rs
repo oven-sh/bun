@@ -1,6 +1,7 @@
 //! What ES modules see of a CommonJS file.
 
 use super::{CommonJsExports, CommonJsImport, CommonJsInput, Target};
+use crate::ir::generated::ImportPhase;
 use crate::ir::parallel::for_each_mut;
 use crate::modules::bindings::{ExportBinding, ImportBinding, ModuleExport, SyntheticExportId};
 use crate::modules::compare_code_units;
@@ -54,6 +55,8 @@ pub(super) struct Faces {
     /// By the module that has the variable: the positions in `imported_variables`.
     imports_by_owner: FxHashMap<ModuleRef, Vec<u32>>,
     seen_namespaces: Vec<FileId>,
+    /// The CommonJS files that an import statement of an ES module loads.
+    imported_files: Vec<FileId>,
     /// By file, in the order of code units, where the text of the file says all of them.
     names_of_namespaces: FxHashMap<FileId, Vec<Atom>>,
     /// In the order of the importers, and in each in the order of its text.
@@ -87,6 +90,22 @@ pub(in crate::modules) fn collect_seen_namespaces(
     seen.sort_unstable();
     seen.dedup();
     seen
+}
+
+fn collect_imported_files(scans: &Scans, modules: &ModuleSet) -> Vec<FileId> {
+    let es_modules = modules.compiled_files.iter().filter_map(|&file| {
+        let scan = scans.find(file)?;
+        (scan.interop.kind == ModuleKind::SourceText).then_some(scan)
+    });
+    let requests = es_modules
+        .flat_map(|scan| scan.requests.iter())
+        .filter(|it| it.phase == ImportPhase::Evaluation);
+    let mut imported: Vec<FileId> = requests
+        .filter_map(|request| modules.find_commonjs_file(request.target))
+        .collect();
+    imported.sort_unstable();
+    imported.dedup();
+    imported
 }
 
 // `ns.name`, where `ns` is the namespace of a CommonJS file or of an ES module that hands its names on, and the names that JSX imports.
@@ -195,6 +214,7 @@ impl Faces {
             written_imports: tables.commonjs_imports.clone(),
             imported_variables: collect_members_of_namespaces(input, tables, imports),
             seen_namespaces: collect_seen_namespaces(modules, tables, imports),
+            imported_files: collect_imported_files(scans, modules),
             ..Faces::default()
         };
         if let Some(application) = input.bind.application {
@@ -258,6 +278,9 @@ impl Faces {
         let seen_namespaces = theirs.seen_namespaces.iter();
         self.seen_namespaces = seen_namespaces.filter_map(|&file| to_local(file)).collect();
         self.seen_namespaces.sort_unstable();
+        let imported_files = theirs.imported_files.iter();
+        self.imported_files = imported_files.filter_map(|&file| to_local(file)).collect();
+        self.imported_files.sort_unstable();
     }
 
     fn add_copy(&mut self, exporter: FileId, owner: ModuleRef, id: SyntheticExportId) {
@@ -334,6 +357,15 @@ impl Faces {
         self.faces.entry(file).or_default().exports = table;
     }
 
+    // `bun run` copies the exports of an imported CommonJS file into a namespace even if the importer names none of them, and the copy runs their getters.
+    // A file whose source only stores to its exports has no getter to run.
+    fn add_imported_file(&mut self, exports: &CommonJsExports, file: FileId) {
+        let text = exports.text_of(ModuleRef::File(file));
+        if text.is_none_or(|text| !text.has_names) {
+            self.faces.entry(file).or_default().captures = true;
+        }
+    }
+
     fn decide_checks(&mut self, exports: &CommonJsExports) {
         let id_of = |absent: &AbsentName| {
             let exporter = ModuleRef::File(absent.imported.exporter);
@@ -375,6 +407,9 @@ impl Faces {
         }
         for position in 0..self.seen_namespaces.len() {
             self.add_seen_namespace(exports, self.seen_namespaces[position]);
+        }
+        for position in 0..self.imported_files.len() {
+            self.add_imported_file(exports, self.imported_files[position]);
         }
         self.decide_checks(exports);
         self.is_decided = true;

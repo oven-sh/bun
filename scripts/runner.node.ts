@@ -289,8 +289,9 @@ const buildsManyExecutables = (testPath: string) =>
   /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.|bundler\/compile-(?:aot|trim)-|bundler\/trim-(?:by-use|runtime-icu)\/)/.test(
     testPath.replaceAll("\\", "/"),
   );
-// Every test of the ahead-of-time compiler runs on every push: on Debian, on x64 and on arm64. Debian is the fastest Linux lane:
-// the same test files take 1.45 times as long on Alpine.
+// Every test of the ahead-of-time compiler runs on every push, on x64 and on arm64. Two lanes share them, so that neither carries
+// all of it: Ubuntu runs what is built, run and compared with plain Bun (the programs under test/aot/parallel, the packages and the
+// frameworks from npm), Debian runs the other test files. Both have glibc: the same test files take 1.45 times as long on Alpine.
 // Nearly all that they cost is compiling, and the compiler is deterministic. A test whose verdict hangs on what it makes of a
 // program (listings, counts, pins, sizes, reports, the errors of a build, the builds of frameworks and packages, what a program
 // of the language alone prints) runs there alone. What asks the system runs on every lane: a test file or a folder of programs
@@ -418,6 +419,7 @@ const aotTestsThatAskTheSystem = [
 const aotTestsThatAskAlpine = [
   "aot/a-proxy-above-a-prototype",
   "aot/analysis-scaling/",
+  "aot/engine/instruction-bounds",
   "aot/fields-created-by-name-cost-the-same-after-a-collection",
   "aot/long-functions-",
   "aot/long-generated-functions",
@@ -504,22 +506,25 @@ const isOfAotCompiler =
 // unless it says "Runs alone", so they can run beside one another.
 const waitsForChildProcesses = (testPath: string) =>
   buildsManyExecutables(testPath) || isOfAotCompiler.test(testPath.replaceAll("\\", "/"));
-/** Which lane runs the rest of them, or nothing where this one runs them all. */
-function laneOfOtherAotTests(execPath: string) {
-  if (basename(execPath).includes("asan") || options.step?.includes("-asan-")) return "the lanes without a sanitizer";
-  return isLinux && getDistro() === "debian" ? undefined : "Debian";
-}
+const hasSanitizer = (execPath: string) => basename(execPath).includes("asan") || !!options.step?.includes("-asan-");
+const linuxDistro = isLinux ? getDistro() : undefined;
+// Asked once: with glibc getAbi() starts `ldd`.
+const isMusl = getAbi() === "musl";
+const distroOfAotTest = (path: string) =>
+  /^aot\/(?:parallel|backend-packages|frameworks)\//.test(path) ? "ubuntu" : "debian";
 // The second build of a program, with its types erased, asks the compiler, and is the same text again.
-const flagsOfAotDriver = (execPath: string) => (isCI && laneOfOtherAotTests(execPath) ? ["--no-erased"] : []);
-function runsOnThisLane(testPath: string, others: ReturnType<typeof laneOfOtherAotTests>) {
+const flagsOfAotDriver = (execPath: string) =>
+  isCI && (hasSanitizer(execPath) || linuxDistro !== distroOfAotTest("aot/parallel/")) ? ["--no-erased"] : [];
+function runsOnThisLane(testPath: string, execPath: string) {
   const path = testPath.replaceAll("\\", "/");
   const beginsWithOneOf = (beginnings: string[]) => beginnings.some(beginning => path.startsWith(beginning));
-  if (others === undefined || !isOfAotCompiler.test(path)) return true;
-  if (others !== "Debian") return !beginsWithOneOf(aotTestsThatFeedNothingNew);
+  if (!isOfAotCompiler.test(path)) return true;
+  if (hasSanitizer(execPath)) return !beginsWithOneOf(aotTestsThatFeedNothingNew);
   return (
+    linuxDistro === distroOfAotTest(path) ||
     beginsWithOneOf(aotTestsThatAskTheSystem) ||
     (isWindows && beginsWithOneOf(aotTestsThatAskWindows)) ||
-    (getAbi() === "musl" && beginsWithOneOf(aotTestsThatAskAlpine))
+    (isMusl && beginsWithOneOf(aotTestsThatAskAlpine))
   );
 }
 // A file says so where it judges by a clock, or by the memory that is held or left.
@@ -1775,23 +1780,25 @@ async function runTests(): Promise<TestResult[]> {
     const aotPrograms = tests.filter(t => isAotProgram(t));
     const serialTests = tests.filter(t => !isParallelSafeTest(t) && !isAotProgram(t));
     const parallelSafeTests = tests.filter(t => isParallelSafeTest(t));
-    const modifiedSerialTests = serialTests.filter(t => isModified(t));
+    const runsBesideBuildingFiles = (t: string) => buildingFilesWidth > 1 && waitsForChildProcesses(t) && !runsAlone(t);
+    // A modified test runs first and by itself, unless it is of the kind that runs beside others: there it goes to the front.
+    const modifiedSerialTests = serialTests.filter(t => isModified(t) && !runsBesideBuildingFiles(t));
     const bucketCandidates = serialTests.filter(t => !isModified(t) && isBucketCandidate(t));
     // The files that build many executables fill the disk and the memory for whatever runs beside them, so they run beside one another. One process runs a bucket, with one Bun.
     const buckets = [true, false]
       .map(builds => bucketCandidates.filter(t => buildsManyExecutables(t) === builds))
       .filter(files => files.length >= 8);
     const bucketable = new Set(buckets.flat());
-    const unbucketedTests = serialTests.filter(t => !isModified(t) && !bucketable.has(t));
+    const unbucketedTests = serialTests.filter(t => !modifiedSerialTests.includes(t) && !bucketable.has(t));
     // Those of them that take too long for a bucket run beside one another too, each in a process of its own. The longest first: what is left for the end is short.
     const expectedDurations = loadExpectedDurations(testsPath);
     const expectedDuration = (t: string) => expectedDurations[t.replaceAll("\\", "/")] ?? 0;
-    const buildingTests =
-      buildingFilesWidth > 1
-        ? unbucketedTests
-            .filter(t => waitsForChildProcesses(t) && !runsAlone(t))
-            .sort((one, other) => expectedDuration(other) - expectedDuration(one))
-        : [];
+    const buildingTests = unbucketedTests
+      .filter(runsBesideBuildingFiles)
+      .sort(
+        (one, other) =>
+          Number(isModified(other)) - Number(isModified(one)) || expectedDuration(other) - expectedDuration(one),
+      );
     const restSerialTests = unbucketedTests.filter(t => !buildingTests.includes(t));
 
     await Promise.all(modifiedSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
@@ -3240,10 +3247,11 @@ function getRelevantTests(
   // Whoever names tests gets them.
   if (isCI && !filters?.length && !options.include?.length) {
     const all = tests.length;
-    const others = laneOfOtherAotTests(execPath);
-    tests = tests.filter(testPath => runsOnThisLane(testPath, others));
+    tests = tests.filter(testPath => runsOnThisLane(testPath, execPath));
     if (tests.length < all && !isQuiet)
-      console.log(`Left to ${others}: ${all - tests.length} tests of the ahead-of-time compiler`);
+      console.log(
+        `Left to ${hasSanitizer(execPath) ? "the lanes without a sanitizer" : "Debian and Ubuntu"}: ${all - tests.length} tests of the ahead-of-time compiler`,
+      );
   }
 
   if (options["node-tests"]) {

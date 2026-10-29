@@ -93,5 +93,5 @@ Bun.gc(true);
 console.log(count === rows.length, errors.length);
 errors.forEach((error, row) => {
   const frames = error.stack!.split("\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/ ?\(.*\)$/, ""));
-  console.log((rows[row]?.[0] ?? "after an await") + ": " + frames.filter(frame => !frame.includes("/")).join(" < "));
+  console.log((rows[row]?.[0] ?? "after an await") + ": " + frames.filter(frame => !/[\\/]/.test(frame)).join(" < "));
 });

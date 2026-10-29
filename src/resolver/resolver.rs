@@ -1518,7 +1518,7 @@ impl<'a> Resolver<'a> {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
-                    let top_level_dir = Fs::FileSystem::instance().top_level_dir();
+                    let top_level_dir = Fs::FileSystem::get().top_level_dir();
                     let mut directories = graph
                         .directories_of_importer(source_dir, top_level_dir)
                         .into_iter();
@@ -1545,7 +1545,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::MissingResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir();
+                break 'brk Fs::FileSystem::get().top_level_dir();
             }
 
             // This can also be hit if you use plugins with non-file namespaces,
@@ -1557,7 +1557,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::InvalidResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir();
+                break 'brk Fs::FileSystem::get().top_level_dir();
             }
 
             break 'brk match source_dir_resolver.resolve_cwd(source_dir) {
@@ -1750,10 +1750,9 @@ impl<'a> Resolver<'a> {
             return Ok(());
         }
 
-        let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
         let mut is_primary = true;
-        while let Some(path) = iter.next() {
+        for path in result.path_pair.iter_mut() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {

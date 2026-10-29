@@ -3357,8 +3357,10 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
-    if (JSC::AOT::refusesToRun(getStdioWriteStream))
-        return constructLightStdioWriteStream(globalObject, processObject, fd);
+    if (JSC::AOT::refusesToRun(getStdioWriteStream)) {
+        JSValue stream = constructLightStdioWriteStream(globalObject, processObject, fd);
+        return scope.exception() ? JSValue() : stream;
+    }
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
     args.append(JSC::jsNumber(fd));

@@ -60,5 +60,5 @@ Bun.gc(true);
 
 rows.forEach(([name], row) => {
   const frames = errors[row].stack!.split("\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/ ?\(.*\)$/, ""));
-  console.log(name + ": " + frames.filter(frame => !frame.includes("/")).join(" < "));
+  console.log(name + ": " + frames.filter(frame => !/[\\/]/.test(frame)).join(" < "));
 });

@@ -102,8 +102,30 @@ const compilerFlags = [
   "-DBUN_HARDENED=1",
   "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1",
 ];
-const readsListedNamesOnly = (cfg: Config) =>
-  everyFlagOf(cfg).allocator.some(define => define.startsWith("MI_GETENV_ALLOWED=mimalloc_"));
+const namesAllocatorReads = (cfg: Config) =>
+  everyFlagOf(cfg)
+    .allocator.find(define => define.startsWith("MI_GETENV_ALLOWED="))
+    ?.slice("MI_GETENV_ALLOWED=".length)
+    .split(",");
+// Written out a second time on purpose: a name that prints, writes a file or changes what is checked does not get in by one edit.
+const namesOfSizesAndPace = [
+  "mimalloc_allow_thp",
+  "mimalloc_arena_eager_commit",
+  "mimalloc_arena_purge_mult",
+  "mimalloc_arena_reserve",
+  "mimalloc_generic_collect",
+  "mimalloc_minimal_purge_size",
+  "mimalloc_page_full_retain",
+  "mimalloc_purge_decommits",
+  "mimalloc_purge_delay",
+  "mimalloc_purge_holes",
+  "mimalloc_purge_holes_eager_zero",
+  "mimalloc_purge_holes_full_every",
+  "mimalloc_purge_holes_large_floor",
+  "mimalloc_purge_holes_large_floor_epochs",
+  "mimalloc_purge_holes_min_interval",
+  "mimalloc_scavenger",
+];
 
 const rustFlags = [
   "-Crelocation-model=pie",
@@ -127,7 +149,7 @@ test("--hardened=on gives every C and C++ source, every crate and the link its m
   expect(flags.rust).toEqual(expect.arrayContaining(rustFlags));
   expect(flags.link).toEqual(expect.arrayContaining(linkFlags));
   expect(flags.allocator).toContain("MI_SECURE=1");
-  expect(readsListedNamesOnly(cfg)).toBe(true);
+  expect(namesAllocatorReads(cfg)).toEqual(namesOfSizesAndPace);
 });
 
 test("a build without --hardened has none of them", () => {
@@ -138,7 +160,7 @@ test("a build without --hardened has none of them", () => {
   const all = Object.values(flags).flat();
   for (const flag of [...compilerFlags, ...rustFlags, ...linkFlags, "MI_SECURE=1"]) expect(all).not.toContain(flag);
   expect(flags.c).toContain("-fno-stack-protector");
-  expect(readsListedNamesOnly(cfg)).toBe(false);
+  expect(namesAllocatorReads(cfg)).toBeUndefined();
 });
 
 test("only --require-mdwe=off lets a hardened build's executables start on a kernel without PR_SET_MDWE", () => {
@@ -156,14 +178,14 @@ test("only --lock-environment=off lets tests steer a hardened build by the envir
   expect(everyFlagOf(locked).rust).toContain("--cfg=bun_locked_environment");
   expect(everyFlagOf(locked).cxx).toContain("-DBUN_LOCKED_ENVIRONMENT=1");
   // What the first compiles calls a function of each of the other two.
-  expect(readsListedNamesOnly(locked)).toBe(true);
+  expect(namesAllocatorReads(locked)).toEqual(namesOfSizesAndPace);
   for (const cfg of [
     linuxConfig({ hardened: true, lockEnvironment: false }, String(dir)),
     linuxConfig({}, String(dir)),
   ]) {
     expect(everyFlagOf(cfg).rust).not.toContain("--cfg=bun_locked_environment");
     expect(everyFlagOf(cfg).cxx).not.toContain("-DBUN_LOCKED_ENVIRONMENT=1");
-    expect(readsListedNamesOnly(cfg)).toBe(false);
+    expect(namesAllocatorReads(cfg)).toBeUndefined();
   }
   expect(() => linuxConfig({ lockEnvironment: true }, String(dir))).toThrow(
     "lockEnvironment=true requires hardened=true",

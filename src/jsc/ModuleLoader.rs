@@ -385,17 +385,16 @@ fn could_be_plugin(specifier: &[u8]) -> bool {
 
 /// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin serves it).
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__runVirtualModule(
+extern "C" fn Bun__runVirtualModule(
     global: &JSGlobalObject,
-    specifier_ptr: *const bun_core::String,
+    specifier: &bun_core::String,
 ) -> JSValue {
     jsc::mark_binding();
     if !global.has_plugins() {
         return JSValue::ZERO;
     }
 
-    // SAFETY: C++ passed a valid `bun.String*`.
-    let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
+    let specifier_slice = specifier.to_utf8();
     let Some((namespace, after_namespace)) = plugin_namespace_and_path(specifier_slice.slice())
     else {
         return JSValue::ZERO;

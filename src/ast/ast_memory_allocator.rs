@@ -3,6 +3,7 @@ use core::ptr;
 
 use bun_alloc::Arena;
 use bun_alloc::ast_alloc::{self, AstAllocState};
+use bun_ptr::{BackRef, Mut};
 
 use crate::expr;
 use crate::stmt;
@@ -64,7 +65,6 @@ pub struct ASTMemoryAllocator {
     ast_state: Option<Box<AstAllocState>>,
     /// `true` while `ast_state` is installed in the `AST_ALLOC` thread-local.
     ast_pushed: bool,
-    previous: *mut ASTMemoryAllocator,
     previous_logger: *const Arena,
     /// The `AST_ALLOC` occupant displaced by `push()`, restored by `pop()`.
     previous_ast_state: Option<Box<AstAllocState>>,
@@ -78,7 +78,6 @@ impl Default for ASTMemoryAllocator {
             arena_dirty: false,
             ast_state: None,
             ast_pushed: false,
-            previous: ptr::null_mut(),
             previous_logger: ptr::null(),
             previous_ast_state: None,
         }
@@ -138,7 +137,6 @@ impl ASTMemoryAllocator {
             arena_dirty: false,
             ast_state: None,
             ast_pushed: false,
-            previous: ptr::null_mut(),
             previous_logger: ptr::null(),
             previous_ast_state: None,
         }
@@ -221,10 +219,9 @@ impl ASTMemoryAllocator {
             }
         }
         self.arena_dirty = true;
-        self.previous = ptr::null_mut();
         let mut ast_scope = Scope {
             current: Some(self),
-            previous: Some(stmt::data::Store::memory_allocator()),
+            previous: None,
             previous_logger: ptr::null(),
             previous_ast_state: None,
             entered: false,
@@ -272,8 +269,9 @@ impl ASTMemoryAllocator {
         // directly into it across many modules with no intervening `reset()`).
         self.arena_dirty = true;
         let arena: *const Arena = self.arena_raw();
-        stmt::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
-        expr::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
+        let this = Some(BackRef::new_mut(self));
+        stmt::data::Store::set_memory_allocator(this);
+        expr::data::Store::set_memory_allocator(this);
         let spill = self.arena().heap_ptr();
         if !self.ast_pushed {
             // Capture the outer override only on the first (un-popped) push so
@@ -298,10 +296,8 @@ impl ASTMemoryAllocator {
     }
 
     pub fn pop(&mut self) {
-        let prev = self.previous;
-        debug_assert!(prev != std::ptr::from_mut::<Self>(self));
-        stmt::data::Store::set_memory_allocator(prev);
-        expr::data::Store::set_memory_allocator(prev);
+        stmt::data::Store::set_memory_allocator(None);
+        expr::data::Store::set_memory_allocator(None);
         crate::set_data_store_override(self.previous_logger);
         if self.ast_pushed {
             // Take the state back; its contents stay alive until the owner
@@ -313,7 +309,6 @@ impl ASTMemoryAllocator {
                 "ASTMemoryAllocator::pop: the pushed AstAllocState was uninstalled by someone else"
             );
         }
-        self.previous = ptr::null_mut();
         self.previous_logger = ptr::null();
     }
 
@@ -327,7 +322,7 @@ impl ASTMemoryAllocator {
 
 pub struct Scope<'a> {
     current: Option<&'a mut ASTMemoryAllocator>,
-    previous: Option<*mut ASTMemoryAllocator>,
+    previous: Option<BackRef<ASTMemoryAllocator, Mut>>,
     previous_logger: *const Arena,
     /// The `AST_ALLOC` occupant displaced by `enter()`, restored by `exit()`.
     previous_ast_state: Option<Box<AstAllocState>>,
@@ -351,15 +346,15 @@ impl<'a> Default for Scope<'a> {
 impl<'a> Scope<'a> {
     pub fn enter(&mut self) {
         debug_assert!(
-            expr::data::Store::memory_allocator() == stmt::data::Store::memory_allocator()
+            expr::data::Store::MEMORY_ALLOCATOR.get() == stmt::data::Store::MEMORY_ALLOCATOR.get()
         );
         debug_assert!(!self.entered);
 
-        self.previous = Some(expr::data::Store::memory_allocator());
+        self.previous = expr::data::Store::MEMORY_ALLOCATOR.get();
         self.previous_logger = crate::data_store_override();
         self.entered = true;
 
-        let (current, arena): (*mut ASTMemoryAllocator, *const Arena) = match &mut self.current {
+        let (current, arena) = match &mut self.current {
             Some(r) => {
                 debug_assert!(
                     !r.ast_pushed,
@@ -371,13 +366,13 @@ impl<'a> Scope<'a> {
                 state.set_spill_heap(r.arena().heap_ptr());
                 self.previous_ast_state = ast_alloc::swap_state(Some(state));
                 r.ast_pushed = true;
-                (std::ptr::from_mut::<ASTMemoryAllocator>(*r), arena)
+                (Some(BackRef::new_mut(*r)), arena)
             }
             None => {
                 // Block-store scope with no `ASTMemoryAllocator`: detach
                 // `AstAlloc` to the global-mimalloc fallback.
                 self.previous_ast_state = ast_alloc::swap_state(None);
-                (ptr::null_mut(), ptr::null())
+                (None, ptr::null())
             }
         };
 
@@ -385,7 +380,7 @@ impl<'a> Scope<'a> {
         stmt::data::Store::set_memory_allocator(current);
         crate::set_data_store_override(arena);
 
-        if current.is_null() {
+        if current.is_none() {
             stmt::data::Store::begin();
             expr::data::Store::begin();
         }
@@ -396,7 +391,7 @@ impl<'a> Scope<'a> {
             return;
         }
         self.entered = false;
-        let prev = self.previous.unwrap_or(ptr::null_mut());
+        let prev = self.previous;
         expr::data::Store::set_memory_allocator(prev);
         stmt::data::Store::set_memory_allocator(prev);
         crate::set_data_store_override(self.previous_logger);

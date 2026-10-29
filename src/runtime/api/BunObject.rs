@@ -218,9 +218,6 @@ pub(crate) fn braces(
     let brace_utf8 = brace_str.to_utf8();
     let brace_slice = brace_utf8.slice();
 
-    let mut arena = bun_alloc::Arena::new();
-    let _ = &mut arena;
-
     let mut lexer_output = 'lexer_output: {
         if strings::is_all_ascii(brace_slice) {
             break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
@@ -254,7 +251,7 @@ pub(crate) fn braces(
         return bun_str.to_js(global);
     }
     if opts.parse {
-        let mut parser = Braces::Parser::init(&lexer_output.tokens[..], &arena);
+        let mut parser = Braces::Parser::init(&lexer_output.tokens[..]);
         let ast_node = match parser.parse() {
             Ok(v) => v,
             Err(err) => {
@@ -281,7 +278,6 @@ pub(crate) fn braces(
         )));
     }
 
-    // Non-AST crate: result containers use plain Vec (arena is only for Braces::* internals).
     let expansion_count = expansion_count as usize;
     let mut expanded_strings: Vec<Vec<u8>> = Vec::with_capacity(expansion_count);
     for _ in 0..expansion_count {
@@ -289,7 +285,6 @@ pub(crate) fn braces(
     }
 
     match Braces::expand(
-        &arena,
         &mut lexer_output.tokens[..],
         &mut expanded_strings,
         lexer_output.contains_nested,

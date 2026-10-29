@@ -255,7 +255,7 @@ impl DevServer {
         content_hash: u64,
     ) -> crate::Result<()> {
         let _g = self.graph_safety_lock.guard();
-        let _ = self.assets.replace_path(
+        let _ = self.replace_asset_path(
             path.text,
             contents,
             &MimeType::by_extension(path.name().ext_without_leading_dot()),

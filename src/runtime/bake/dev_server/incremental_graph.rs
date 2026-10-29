@@ -1389,7 +1389,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         Content::CssRoot(id) => Some(id),
                         _ => None,
                     };
-                    // The rebuild replaces a css root's asset (`replace_path`) or drops it (`insert_failure`).
+                    // The rebuild replaces a css root's asset (`replace_asset_path`) or drops it (`insert_failure`).
                     let css_mode = if prior_css_root.is_some() {
                         FreeCssMode::IgnoreCss
                     } else {

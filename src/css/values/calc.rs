@@ -211,8 +211,7 @@ impl<V> Calc<V> {
         matches!(self, Calc::Value(_) | Calc::Sum { .. })
     }
 
-    /// Takes the operands of a `Sum`, and leaves a placeholder for the owner to drop.
-    // Not inlined: the callers recurse once for each term, and this node would be in each of their frames.
+    /// Takes the operands of a `Sum` and leaves a placeholder. Not inlined, to keep this node out of each frame of a search.
     #[inline(never)]
     pub(crate) fn take_sum(&mut self) -> (Box<Self>, Box<Self>) {
         let Calc::Sum { left, right } = core::mem::replace(self, Calc::Number(0.0)) else {

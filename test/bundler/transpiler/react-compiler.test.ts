@@ -4779,6 +4779,68 @@ test("react-compiler leaves a file as written that imports `c` from the compiler
   });
 });
 
+// A bundler turns the output of the compiler into CommonJS, and the file then gets the runtime with `require()`, which
+// the check does not look at. Upstream still compiles no function of this file: `react.useEffect()` is no call of a
+// hook to it, because `react` has no capital letter (`isHook` in Entrypoint/Program.ts). Here the call counts as one
+// when the output is an ES module, and the hook is compiled once more, with its cache in a block of the new one:
+// `let $0 = _c(4); ... if ($0[0] !== title) { let $ = compilerRuntime.c(5);`.
+test.todo(
+  "react-compiler leaves a CommonJS file as written whose hooks are members of a lowercase namespace",
+  async () => {
+    using dir = tempDir("react-compiler-compiled-commonjs", {
+      // What Rollup 4 writes with `format: "cjs"` for a hook that babel-plugin-react-compiler 1.0.0 has compiled.
+      "rollup-output.js": `
+        'use strict';
+
+        var compilerRuntime = require('react/compiler-runtime');
+        var react = require('react');
+
+        function useTitle(title) {
+          const $ = compilerRuntime.c(5);
+          let t0;
+          if ($[0] !== title) {
+            t0 = () => console.log(title);
+            $[0] = title;
+            $[1] = t0;
+          } else {
+            t0 = $[1];
+          }
+          const onClick = t0;
+          let t1;
+          let t2;
+          if ($[2] !== title) {
+            t1 = () => {
+              document.title = title;
+            };
+            t2 = [title];
+            $[2] = title;
+            $[3] = t1;
+            $[4] = t2;
+          } else {
+            t1 = $[3];
+            t2 = $[4];
+          }
+          react.useEffect(t1, t2);
+          return onClick;
+        }
+
+        exports.useTitle = useTitle;
+      `,
+    });
+    const build = async (reactCompiler: boolean) => {
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "rollup-output.js")],
+        target: "browser",
+        external: ["*"],
+        reactCompiler,
+      });
+      return await result.outputs[0].text();
+    };
+
+    expect(await build(true)).toBe(await build(false));
+  },
+);
+
 // The parser has a stack check. The lowering, which takes more of the stack for a
 // level of the source than the parser does, had none: `bun build --react-compiler`
 // died by SIGSEGV on 250 effects in each other, on 500 arrow functions, on 800

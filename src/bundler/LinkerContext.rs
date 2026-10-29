@@ -683,7 +683,7 @@ impl<'a> LinkerContext<'a> {
     fn process_html_import_files(&mut self) {
         // SAFETY: `parse_graph` points to `BundleV2.graph`, a sibling of `BundleV2.linker` (= `*self`), so these four
         // fields are disjoint from `*self` and from each other. The source map workers that may be running hold
-        // `&Graph` and `&BundleV2`; of the graph they read only `input_files` and `pool`.
+        // `&Graph` and `&BundleV2`; of the graph they read only `input_files`.
         let (html_source_indices, server_source_indices, input_files, build_graphs) = unsafe {
             let parse_graph: *mut Graph<'a> = self.parse_graph;
             (

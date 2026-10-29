@@ -718,9 +718,7 @@ pub(crate) fn run_task(
         // ── process / signals ────────────────────────────────────────────
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
-            feature_arm!([ChildProcess], |result: ProcessWaiterThreadTask<
-                Process,
-            >| {
+            feature_arm!([ChildProcess], |result: ProcessWaiterThreadTask| {
                 // SAFETY: tag identifies pointee; heap-allocated in WaiterThread.
                 unsafe { bun_core::heap::take(result) }.run_from_js_thread();
             });
@@ -1759,7 +1757,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
-            release_in!([ChildProcess], ProcessWaiterThreadTask<Process>);
+            release_in!([ChildProcess], ProcessWaiterThreadTask);
             #[cfg(windows)]
             unreachable!("posix-only tag");
         }

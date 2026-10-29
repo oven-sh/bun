@@ -384,6 +384,7 @@ impl<C: JobContext> Job<C> {
         // ticket leaves the job here, for good.
         let (off, ticket) = unsafe { (&mut (*this).off, (*this).ticket.take().expect("job")) };
         let done = Completion {
+            unfinished: MustFinish,
             job: NonNull::new(this).expect("job"),
             ticket,
         };
@@ -433,6 +434,7 @@ impl<C: JobContext> Job<C> {
 /// [`finish`](Self::finish)ed later from any thread.
 #[must_use = "a job must be finished exactly once"]
 pub struct Completion<C: JobContext> {
+    unfinished: MustFinish,
     job: NonNull<Job<C>>,
     ticket: Ticket,
 }
@@ -442,12 +444,15 @@ impl<C: JobContext> Completion<C> {
     /// Post the job back to its VM. The ticket outlives the post (the JS
     /// thread may free the job the moment it is queued) and is dropped here.
     pub fn finish(self) {
+        let Completion {
+            unfinished,
+            job,
+            ticket,
+        } = self;
         // Consumed: the obligation is met here, so its Drop check must not run.
-        let me = ManuallyDrop::new(self);
-        // SAFETY: moving the field out of a value that is never dropped.
-        let ticket = unsafe { core::ptr::read(&raw const me.ticket) };
+        let _ = ManuallyDrop::new(unfinished);
         ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
-            me.job.as_ptr(),
+            job.as_ptr(),
         ));
     }
     /// The job's ticket: its VM is alive while this is held.
@@ -456,7 +461,8 @@ impl<C: JobContext> Completion<C> {
         &self.ticket
     }
 }
-impl<C: JobContext> Drop for Completion<C> {
+struct MustFinish;
+impl Drop for MustFinish {
     fn drop(&mut self) {
         debug_assert!(false, "job dropped without being finished");
     }

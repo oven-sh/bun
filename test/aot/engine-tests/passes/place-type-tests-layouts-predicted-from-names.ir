@@ -1,0 +1,215 @@
+# Of an object that nobody could follow, the names it is asked for are all there is to go by: where few allocated layouts have them, the object is expected to be one of those, and a test for those layouts guards the slots
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# LOSS: MaxDeclarationsPredictedFromNames x1 f1 v1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Fiber" constructor=f18 fields=[{key="tag" declared={type=number} flags=[IsRequired]}, {key="lanes" declared={type=number} flags=[IsRequired]}, {key="alternate" declared={type=anything} flags=[IsRequired]}, {key="length" declared={type=number} flags=[IsRequired]}, {key="constructor" declared={type=anything} flags=[IsRequired]}, {key=@@iterator declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Update" constructor=f19 fields=[{key="tag" declared={type=number} flags=[IsRequired]}, {key="lanes" declared={type=number} flags=[IsRequired]}, {key="updateQueue" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L2 kind=Instance name="Token" constructor=f20 fields=[{key="tag" declared={type=number} flags=[IsRequired]}, {key="tokenText" declared={type=string} flags=[IsRequired]}] flow={baseState=None}
+layout L3 kind=Instance name="Mark" constructor=f21 fields=[{key="tag" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L4 kind=Instance name="Note" constructor=f22 fields=[{key="tag" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L5 kind=Instance name="NeverMade" constructor=f23 fields=[{key="alternate" declared={type=anything} flags=[IsRequired]}, {key="ghost" declared={type=number} flags=[IsRequired]}] flow={allocation=NeverAllocated baseState=None}
+layout L6 kind=Instance name="Scanner" constructor=f12 fields=[{key="pos" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L7 kind=Instance name="DeepScanner" base=L6 constructor=f13 flags=[HasHeritage] flow={baseState=Layout base=L6}
+layout L8 kind=Instance name="WideScanner" base=L6 constructor=f14 flags=[HasHeritage] flow={baseState=Layout base=L6}
+layout L9 kind=Instance name="Link" constructor=f24 fields=[{key="href" declared={type=string} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="oneLayoutHasTheName" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="updateQueue"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="oneLayoutHasTheName"
+# CHECK-NEXT: b0(v0: anything ~ L1):
+# CHECK-NEXT: = TypeTest v0 testedType=L1
+# CHECK: = GetSlot {{*}} key="updateQueue" receivers=[L1] level=Expected
+# CHECK: = PropGet v0 key="updateQueue"
+
+function f1 name="manyLayoutsHaveTheName" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="tag"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="manyLayoutsHaveTheName"
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
+# CHECK-NOT: L4
+# CHECK: = GetSlot {{*}} key="tag" receivers=[L0, L1, L2, L3] level=Expected
+# CHECK-NOT: L4
+# CHECK: = PropGet v0 key="tag"
+
+function f2 name="twoNamesLeaveOneLayout" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="tag"
+    v2 = PropGet v0 key="tokenText"
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="twoNamesLeaveOneLayout"
+# CHECK-NEXT: b0(v0: anything ~ L2):
+# CHECK-NEXT: = TypeTest v0 testedType=L2
+# CHECK-NOT: testedType=L2
+# CHECK: = GetSlot {{*}} key="tag" receivers=[L2] level=Expected
+# CHECK-NOT: testedType=L2
+# CHECK: = GetSlot {{*}} key="tokenText" receivers=[L2] level=Expected
+# CHECK-NOT: testedType=L2
+
+function f3 name="neverAllocatedLayoutDoesNotCount" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="alternate"
+    v2 = PropGet v0 key="ghost"
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="neverAllocatedLayoutDoesNotCount"
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot {{*}} key="alternate" receivers=[L0] level=Expected
+
+function f4 name="expectationThatFindsTheNameStays" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="lanes"
+    v2 = PropGet v0 key="updateQueue"
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f4 name="expectationThatFindsTheNameStays"
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK-NOT: testedType=L1
+
+function f5 name="expectedLayoutIsNeverAllocated" parameters=[{type=L5 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L5):
+    v1 = PropGet v0 key="alternate"
+    Return v1
+}
+# CHECK-LABEL: function f5 name="expectedLayoutIsNeverAllocated"
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot {{*}} key="alternate" receivers=[L0] level=Expected
+
+function f6 name="namesOfOtherObjectsSayNothing" parameters=[{type=object flags=[IsExpected]}, {type=object flags=[IsExpected]}, {type=object flags=[IsExpected]}, {type=object flags=[IsExpected]}, {type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: anything ~ object, v2: anything ~ object, v3: anything ~ object, v4: anything ~ object):
+    v5 = PropGet v0 key="length"
+    v6 = PropGet v1 key="constructor"
+    v7 = PropGet v2 key="0"
+    v8 = PropGet v3 key=@@iterator
+    v9 = PropGet v4 key="__proto__"
+    v10 = NewArray v5, v6, v7, v8, v9 contents=anything holes=[]
+    Return v10
+}
+# CHECK-LABEL: function f6 name="namesOfOtherObjectsSayNothing"
+# CHECK-NEXT: b0(v0: anything ~ object, v1: anything ~ object, v2: anything ~ object, v3: anything ~ object, v4: anything ~ object):
+# CHECK-NOT: testedType=L
+
+function f7 name="nameThatNoLayoutHasSaysNothing" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="updateQueue"
+    v2 = PropGet v0 key="nowhere"
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f7 name="nameThatNoLayoutHasSaysNothing"
+# CHECK-NEXT: b0(v0: anything ~ L1):
+# CHECK-NEXT: = TypeTest v0 testedType=L1
+# CHECK: = GetSlot {{*}} key="updateQueue" receivers=[L1] level=Expected
+
+function f8 name="noLayoutHasBothNames" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="updateQueue"
+    Return v2
+  b2():
+    v3 = PropGet v0 key="tokenText"
+    Return v3
+}
+# CHECK-LABEL: function f8 name="noLayoutHasBothNames"
+# CHECK-NEXT: b0(v0: anything ~ L1|L2, v1: boolean):
+# CHECK: = TypeTest v0 testedType=L1
+# CHECK: = TypeTest v0 testedType=L2
+# CHECK: = GetSlot {{*}} key="updateQueue" receivers=[L1] level=Expected
+# CHECK: = GetSlot {{*}} key="tokenText" receivers=[L2] level=Expected
+
+function f9 name="readAgainForEachUse" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1: anything ~ object = PropGet v0 key="current"
+    v2 = PropGet v1 key="tag"
+    v3: anything ~ object = PropGet v0 key="current"
+    v4 = PropGet v3 key="tokenText"
+    v5 = Add v2, v4
+    Return v5
+}
+# CHECK-LABEL: function f9 name="readAgainForEachUse"
+# CHECK: v1: anything ~ L2 = PropGet v0 key="current"
+# CHECK: = GetSlot {{*}} key="tag" receivers=[L2] level=Expected
+# CHECK: v3: anything ~ L2 = PropGet v0 key="current"
+# CHECK: = GetSlot {{*}} key="tokenText" receivers=[L2] level=Expected
+
+function f10 name="storeNarrowsWhereSomeLayoutIsLeft" parameters=[{type=object flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: number):
+    v2 = PropGet v0 key="lanes"
+    PropSet v0, v1 key="alternate"
+    Return v2
+}
+# CHECK-LABEL: function f10 name="storeNarrowsWhereSomeLayoutIsLeft"
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: number):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot {{*}} key="lanes" receivers=[L0] level=Expected
+# CHECK: PutSlotOrAdd {{*}} key="alternate" receivers=[L0] level=Expected
+
+function f11 name="storeMayCreateItsProperty" parameters=[{type=object flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: string):
+    v2 = PropGet v0 key="updateQueue"
+    PropSet v0, v1 key="tokenText"
+    Return v2
+}
+# CHECK-LABEL: function f11 name="storeMayCreateItsProperty"
+# CHECK-NEXT: b0(v0: anything ~ L1, v1: string):
+# CHECK-NEXT: = TypeTest v0 testedType=L1
+# CHECK: = GetSlot {{*}} key="updateQueue" receivers=[L1] level=Expected
+# CHECK: PropSet {{*}}, v1 key="tokenText"
+
+function f12 name="Scanner" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f13 name="DeepScanner" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
+function f14 name="WideScanner" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L8
+function f15 name="classAndWhatIsBelowItCountOnce" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK-LABEL: function f15 name="classAndWhatIsBelowItCountOnce"
+# CHECK-NEXT: b0(v0: anything ~ L6|L7|L8):
+# CHECK-NEXT: = TypeTest v0 testedType=L6|L7|L8
+# CHECK: = GetSlot {{*}} key="pos" receivers=[L6, L7, L8] level=Expected
+
+function f16 name="nameThatTheHostKnowsSaysNothing" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="href"
+    Return v1
+}
+# CHECK-LABEL: function f16 name="nameThatTheHostKnowsSaysNothing"
+# CHECK-NEXT: b0(v0: anything ~ object):
+# CHECK-NEXT: = PropGet v0 key="href"
+# CHECK-NEXT: Return v1
+
+function f17 name="allocationIsKnown" results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L9
+    v1 = PropGet v0 key="updateQueue"
+    Return v1
+}
+# CHECK-LABEL: function f17 name="allocationIsKnown"
+# CHECK-NOT: L1
+# CHECK: = NewObject layout=L9
+# CHECK-NOT: L1
+# CHECK-LABEL: function f18 name="Fiber"
+
+function f18 name="Fiber" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f19 name="Update" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f20 name="Token" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f21 name="Mark" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f22 name="Note" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f23 name="NeverMade" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f24 name="Link" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L9

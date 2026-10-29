@@ -73,7 +73,7 @@ pub enum BaselinePosition {
 impl BaselinePosition {
     fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"baseline" => Ok(BaselinePosition::First),
@@ -163,7 +163,7 @@ impl JustifyContent {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"left" => Ok(JustifyContent::Left { overflow }),
@@ -330,7 +330,7 @@ impl JustifySelf {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"left" => Ok(JustifySelf::Left { overflow }),
             b"right" => Ok(JustifySelf::Right { overflow }),
@@ -493,7 +493,7 @@ impl JustifyItems {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"left" => Ok(JustifyItems::Left { overflow }),
@@ -551,12 +551,12 @@ pub enum LegacyJustify {
 impl LegacyJustify {
     fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"legacy" => {
                 let inner_location = input.current_source_location();
-                let inner_ident = input.expect_ident_cloned()?;
+                let inner_ident = input.expect_ident()?;
                 crate::match_ignore_ascii_case! { inner_ident, {
                     b"left" => Ok(LegacyJustify::Left),
                     b"right" => Ok(LegacyJustify::Right),
@@ -1176,15 +1176,20 @@ impl AlignHandler {
     ) -> bool {
         match property {
             Property::AlignContent((val, vp)) => {
-                self.flex_line_pack = None;
+                // Only targets can tell that a legacy property the author wrote is not needed.
+                if context.targets.browsers.is_some() {
+                    self.flex_line_pack = None;
+                }
                 handle_property_helper!(self, dest, context, align_content, val, *vp);
             }
             Property::FlexLinePack((val, vp)) => {
                 handle_property_helper!(self, dest, context, flex_line_pack, val, *vp);
             }
             Property::JustifyContent((val, vp)) => {
-                self.box_pack = None;
-                self.flex_pack = None;
+                if context.targets.browsers.is_some() {
+                    self.box_pack = None;
+                    self.flex_pack = None;
+                }
                 handle_property_helper!(self, dest, context, justify_content, val, *vp);
             }
             Property::BoxPack((val, vp)) => {
@@ -1194,9 +1199,11 @@ impl AlignHandler {
                 handle_property_helper!(self, dest, context, flex_pack, val, *vp);
             }
             Property::PlaceContent(val) => {
-                self.flex_line_pack = None;
-                self.box_pack = None;
-                self.flex_pack = None;
+                if context.targets.browsers.is_some() {
+                    self.flex_line_pack = None;
+                    self.box_pack = None;
+                    self.flex_pack = None;
+                }
                 handle_property_maybe_flush!(
                     self,
                     dest,
@@ -1231,7 +1238,9 @@ impl AlignHandler {
                 );
             }
             Property::AlignSelf((val, vp)) => {
-                self.flex_item_align = None;
+                if context.targets.browsers.is_some() {
+                    self.flex_item_align = None;
+                }
                 handle_property_helper!(self, dest, context, align_self, val, *vp);
             }
             Property::FlexItemAlign((val, vp)) => {
@@ -1242,7 +1251,9 @@ impl AlignHandler {
                 self.has_any = true;
             }
             Property::PlaceSelf(val) => {
-                self.flex_item_align = None;
+                if context.targets.browsers.is_some() {
+                    self.flex_item_align = None;
+                }
                 handle_property_helper!(
                     self,
                     dest,
@@ -1254,8 +1265,10 @@ impl AlignHandler {
                 self.justify_self = Some(val.justify.clone());
             }
             Property::AlignItems((val, vp)) => {
-                self.box_align = None;
-                self.flex_align = None;
+                if context.targets.browsers.is_some() {
+                    self.box_align = None;
+                    self.flex_align = None;
+                }
                 handle_property_helper!(self, dest, context, align_items, val, *vp);
             }
             Property::BoxAlign((val, vp)) => {
@@ -1269,8 +1282,10 @@ impl AlignHandler {
                 self.has_any = true;
             }
             Property::PlaceItems(val) => {
-                self.box_align = None;
-                self.flex_align = None;
+                if context.targets.browsers.is_some() {
+                    self.box_align = None;
+                    self.flex_align = None;
+                }
                 handle_property_helper!(
                     self,
                     dest,

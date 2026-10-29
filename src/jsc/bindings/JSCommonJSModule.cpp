@@ -39,6 +39,7 @@
 #include "root.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "headers-handwritten.h"
+#include "Path.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
@@ -50,6 +51,7 @@
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include "BunClientData.h"
+#include "ObjectBindings.h"
 #include "IsolatedModuleCache.h"
 #include <JavaScriptCore/Identifier.h>
 #include "ImportMetaObject.h"
@@ -71,7 +73,6 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
-#include "CodeGenerationFromStrings.h"
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSLexicalEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -83,15 +84,17 @@
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
 #include "JSCommonJSExtensions.h"
+#include "BunCompiledModules.h"
 
 #include "ErrorCode.h"
+#include "GeneratedJest.h"
 #include "WebCoreJSBuiltins.h"
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 
 namespace Bun {
 using namespace JSC;
-
-JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireCommonJS);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireNativeModule);
 
 static bool canPerformFastEnumeration(Structure* s)
 {
@@ -107,6 +110,37 @@ static bool canPerformFastEnumeration(Structure* s)
         return false;
     if (s->hasUnderscoreProtoPropertyExcludingOriginalProto())
         return false;
+    return true;
+}
+
+static bool tryFastEnumeration(VM& vm, JSObject* object, const Invocable<void(UniquedStringImpl*, JSValue)> auto& function)
+{
+#if ENABLE(AOT)
+    // A compiled object stands in the place of an ordinary one and is listed as the Structure of that one lists it.
+    if (AOT::PropertyWalk::isCompiledObject(object)) {
+        Vector<Identifier, 16> keys;
+        MarkedArgumentBuffer values;
+        bool hasUnderscoreProto = false;
+        auto walked = AOT::PropertyWalk::forEachOwnPropertyAsCreated(vm, object, [&](const AOT::PropertyWalk::OwnProperty& own) -> IterationStatus {
+            hasUnderscoreProto |= own.name == vm.propertyNames->underscoreProto.impl();
+            keys.append(Identifier::fromUid(vm, own.name));
+            values.appendWithCrashOnOverflow(own.value);
+            return IterationStatus::Continue;
+        });
+        if (walked != AOT::PropertyWalk::Result::Completed || hasUnderscoreProto)
+            return false;
+        for (size_t i = 0; i < keys.size(); i++)
+            function(keys[i].impl(), values.at(i));
+        return true;
+    }
+#endif
+    Structure* structure = object->structure();
+    if (!canPerformFastEnumeration(structure))
+        return false;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        function(entry.key(), object->getDirect(entry.offset()));
+        return true;
+    });
     return true;
 }
 
@@ -159,7 +193,7 @@ public:
 
 private:
     GraphCommonJSSourceProvider(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
-        : JSC::SourceProvider(source->sourceOrigin(), String(source->sourceURL()), String(source->preRedirectURL()), source->sourceTaintedOrigin(), source->startPosition(), source->sourceType())
+        : JSC::SourceProvider(source->sourceOrigin(), String(source->sourceURL()), String(source->preRedirectURL()), source->taintedness(), source->startPosition(), source->sourceType(), source->provenance())
         , m_source(WTF::move(source))
         , m_overlayShape(overlayShape)
     {
@@ -295,7 +329,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     args.append(filename); // filename
     args.append(dirname); // dirname
 
-    if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn)) {
+    if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn); jsFunction && !jsFunction->isHostFunction()) {
         if (jsFunction->jsExecutable()->parameterCount() > 5) {
             // it expects ImportMetaObject
             auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename);
@@ -364,7 +398,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     }
 
     JSValue returnValue = jsNull();
-    if (referrer) [[likely]] {
+    // See requireCompiledModule().
+    if (referrer && moduleObject->compiledModule == JSCommonJSModule::noCompiledModule) [[likely]] {
         if (referrer->m_childrenValue) [[unlikely]] {
             // It's too hard to append from native code:
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
@@ -427,17 +462,21 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    // The FTL passes the inlined code's realm, which can be a node:vm context. Contexts don't have a require cache.
+    Zig::GlobalObject* thisObject = defaultGlobalObject(globalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* requirer = requirerOf(JSValue::decode(thisValue));
     JSModuleGraph* graph = requirer ? requirer->moduleGraph() : nullptr;
-    if (!graph)
-        return JSValue::encode(thisObject->lazyRequireCacheObject());
+    if (!graph) {
+        JSObject* cache = thisObject->lazyRequireCacheObject();
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(cache);
+    }
     // A require() that belongs to a Bun.ModuleGraph: a view of that graph's cache.
     if (JSValue existing = graph->requireCache())
         return JSValue::encode(existing);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue cache = createRequireCacheObject(globalObject, graph->requireMap(), requirer);
+    JSValue cache = createRequireCacheObject(thisObject, graph->requireMap(), requirer);
     RETURN_IF_EXCEPTION(scope, {});
     graph->setRequireCache(vm, cache);
     return JSValue::encode(cache);
@@ -461,13 +500,14 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
     if (!thisObject)
         return false;
 
-    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
-    return true;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(value), 0));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireExtensionsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    // `globalObject` can be a node:vm context. See jsRequireCacheGetter.
+    Zig::GlobalObject* thisObject = defaultGlobalObject(globalObject);
     return JSValue::encode(thisObject->lazyRequireExtensionsObject());
 }
 
@@ -479,8 +519,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
     if (!thisObject)
         return false;
 
-    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
-    return true;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(value), 0));
 }
 
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
@@ -534,6 +574,12 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
     return prototype;
 }
 
+// No file of an ahead-of-time executable is in the require map.
+JSC_DEFINE_CUSTOM_GETTER(jsRequireMainOfExecutableGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return JSValue::encode(Bun::mainModuleOfExecutable(uncheckedDowncast<Zig::GlobalObject>(globalObject)));
+}
+
 void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -541,6 +587,10 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
     auto* globalObject = this->globalObject();
 
     Bun::reifyStaticPropertyTable(vm, info(), RequireFunctionPrototypeValues, *this);
+    if (Bun::hasCompiledModules()) {
+        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
+        return;
+    }
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
         globalObject,
@@ -597,6 +647,13 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     if (thisObject->m_parent) {
         auto* parent = thisObject->m_parent.get();
         return JSValue::encode(parent);
+    }
+
+    auto* parentOfCompiledModule = Bun::parentOfCompiledModule(thisObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (parentOfCompiledModule) {
+        thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
+        return JSValue::encode(parentOfCompiledModule);
     }
 
     // initialize parent by checking if it is the main module. we do this lazily because most people
@@ -676,8 +733,15 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         return JSValue::encode(jsUndefined());
     }
 
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (mod->compiledModule != JSCommonJSModule::noCompiledModule) [[unlikely]] {
+        bool areShown = Bun::appendNewChildrenOfCompiledModule(globalObject, mod);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!areShown)
+            return JSValue::encode(jsUndefined());
+    }
+
     if (!mod->m_childrenValue) {
-        auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
         MarkedArgumentBuffer children;
         children.ensureCapacity(mod->m_children.size());
 
@@ -834,8 +898,6 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, throwScope);
-    RETURN_IF_EXCEPTION(throwScope, {});
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -863,12 +925,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
         WTF::TextPosition(),
         JSC::SourceProviderSourceType::Program);
 
-    EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
-#if OS(WINDOWS)
-    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
-#else
-    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
-#endif
+    JSValue dirnameValue = Bun::pathDirname(globalObject, filenameValue);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);
@@ -902,11 +959,10 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSCommonJSModulePrototype* create(
         JSC::VM& vm,
-        JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure)
     {
         JSCommonJSModulePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCommonJSModulePrototype))) JSCommonJSModulePrototype(vm, structure);
-        prototype->finishCreation(vm, globalObject);
+        prototype->finishCreation(vm);
         return prototype;
     }
 
@@ -936,24 +992,11 @@ public:
         return &vm.plainObjectSpace();
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
-
-        this->putDirectNativeFunction(
-            vm,
-            globalObject,
-            clientData(vm)->builtinNames().requirePrivateName(),
-            2,
-            jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
-        this->putDirectNativeFunction(
-            vm,
-            globalObject,
-            clientData(vm)->builtinNames().requireNativeModulePrivateName(),
-            0,
-            jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
     }
 };
 
@@ -971,7 +1014,7 @@ JSC::Structure* JSCommonJSModule::createStructure(
 {
     auto& vm = JSC::getVM(globalObject);
 
-    auto* prototype = JSCommonJSModulePrototype::create(vm, globalObject, JSCommonJSModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+    auto* prototype = JSCommonJSModulePrototype::create(vm, JSCommonJSModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
     // Do not set the number of inline properties on this structure
     // there may be an off-by-one error in the Structure which causes `require.id` to become the require
@@ -1003,9 +1046,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
     JSValue object = callframe->uncheckedArgument(1);
     JSValue hasEvaluated = callframe->uncheckedArgument(2);
     ASSERT(hasEvaluated.isBoolean());
-    JSValue parent = callframe->uncheckedArgument(3);
+    JSValue requirer = callframe->uncheckedArgument(3);
+    JSValue parent = Bun::parentSeenBy(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, requirer);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent)));
+    auto* module = JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent);
+    RETURN_IF_EXCEPTION(scope, {});
+    // The require cache holds a module that requires another. What stands in for a file of the executable is in no cache, so the module that has it for a parent holds it.
+    if (parent != requirer)
+        module->m_overriddenParent.set(JSC::getVM(globalObject), module, parent);
+    return JSValue::encode(module);
 }
 
 JSCommonJSModule* JSCommonJSModule::create(
@@ -1034,11 +1084,13 @@ JSCommonJSModule* JSCommonJSModule::create(
         globalObject->CommonJSModuleObjectStructure(),
         requireMapKey, requireMapKey, dirname, SourceCode());
 
-    out->putDirect(
-        vm,
-        WebCore::clientData(vm)->builtinNames().exportsPublicName(),
-        exportsObject,
-        0);
+    if (exportsObject) {
+        out->putDirect(
+            vm,
+            WebCore::clientData(vm)->builtinNames().exportsPublicName(),
+            exportsObject,
+            0);
+    }
     out->hasEvaluated = hasEvaluated;
     if (parent && parent.isCell()) {
         if (auto* parentModule = dynamicDowncast<JSCommonJSModule>(parent)) {
@@ -1135,7 +1187,7 @@ void populateESMExports(
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
             auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
             RETURN_IF_EXCEPTION(scope, );
-            if (has) {
+            if (has && !slot.isAccessor()) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
                 CLEAR_IF_EXCEPTION(scope);
                 if (!value.isUndefinedOrNull()) {
@@ -1152,22 +1204,19 @@ void populateESMExports(
         exportNames.reserveCapacity(size + 2);
         exportValues.ensureCapacity(size + 2);
 
+        const Identifier& skippedKey = hasESModuleMarker ? esModuleMarker : vm.propertyNames->defaultKeyword;
+        bool didFastEnumeration = tryFastEnumeration(vm, exports, [&](UniquedStringImpl* key, JSValue value) {
+            if (key->isSymbol() || key == skippedKey)
+                return;
+
+            needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
+
+            exportNames.append(Identifier::fromUid(vm, key));
+            exportValues.append(value);
+        });
+
         if (hasESModuleMarker) {
-            if (canPerformFastEnumeration(structure)) {
-                exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                    auto key = entry.key();
-                    if (key->isSymbol() || key == esModuleMarker)
-                        return true;
-
-                    needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
-
-                    JSValue value = exports->getDirect(entry.offset());
-
-                    exportNames.append(Identifier::fromUid(vm, key));
-                    exportValues.append(value);
-                    return true;
-                });
-            } else {
+            if (!didFastEnumeration) {
                 JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                 exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, );
@@ -1210,19 +1259,7 @@ void populateESMExports(
                 }
             }
 
-        } else if (canPerformFastEnumeration(structure)) {
-            exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                auto key = entry.key();
-                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
-                    return true;
-
-                JSValue value = exports->getDirect(entry.offset());
-
-                exportNames.append(Identifier::fromUid(vm, key));
-                exportValues.append(value);
-                return true;
-            });
-        } else {
+        } else if (!didFastEnumeration) {
             JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             RETURN_IF_EXCEPTION(scope, );
@@ -1390,7 +1427,7 @@ const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nul
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };
 
-ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObject, JSCommonJSModule* referrerModule, JSC::ThrowScope& throwScope, JSC::JSValue specifierValue)
+ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObject, JSCommonJSModule* child, JSC::ThrowScope& throwScope, JSC::JSValue specifierValue)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue exception = throwScope.exception();
@@ -1404,7 +1441,7 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     // On error, remove the module from the require map
     // so that it can be re-evaluated on the next require.
     // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-    requireMapOf(globalObject, referrerModule->moduleGraph())->remove(globalObject, specifierValue);
+    requireMapOf(globalObject, child->moduleGraph())->remove(globalObject, specifierValue);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, exception);
@@ -1412,29 +1449,24 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
 }
 #define REQUIRE_CJS_RETURN_IF_EXCEPTION      \
     if (throwScope.exception()) [[unlikely]] \
-    return finishRequireWithError(globalObject, referrerModule, throwScope, specifierValue)
+    return finishRequireWithError(globalObject, child, throwScope, specifierValue)
 
-// JSCommonJSModule.$require(resolvedId, newModule, userArgumentCount, userOptions)
+// $requireCommonJS(resolvedId, newModule, parentFilename, userArgumentCount, userOptions)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callframe->argumentCount() == 4);
-    // If overriddenRequire is called with invalid this, execution could potentially reach here.
-    JSCommonJSModule* referrerModule = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
-    if (!referrerModule)
-        return throwVMTypeError(globalObject, throwScope);
+    ASSERT(callframe->argumentCount() == 5);
+    // This is always a new JSCommonJSModule in its parent's Bun.ModuleGraph, so the cast cannot fail.
+    JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(callframe->uncheckedArgument(1));
     JSValue specifierValue = callframe->uncheckedArgument(0);
     // If Module._resolveFilename is overridden, this could cause this to be a non-string
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     REQUIRE_CJS_RETURN_IF_EXCEPTION;
     // If this.filename is overridden, this could cause this to be a non-string
-    WTF::String referrer = referrerModule->filename().toWTFString(globalObject);
+    WTF::String referrer = callframe->uncheckedArgument(2).toWTFString(globalObject);
     REQUIRE_CJS_RETURN_IF_EXCEPTION;
-
-    // This is always a new JSCommonJSModule object; cast cannot fail.
-    JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(callframe->uncheckedArgument(1));
 
     BunString referrerStr = Bun::toString(referrer);
     BunString typeAttributeStr = { BunStringTag::Dead };
@@ -1443,10 +1475,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     // We need to be able to wire in the "type" import attribute from bundled code..
     // So we do it via CommonJS require().
     // $argumentCount() always returns a Int32 JSValue
-    int32_t userArgumentCount = callframe->argument(2).asInt32();
+    int32_t userArgumentCount = callframe->argument(3).asInt32();
     // If they called require(id), skip the check for the type attribute
     if (userArgumentCount >= 2) [[unlikely]] {
-        JSValue options = callframe->uncheckedArgument(3);
+        JSValue options = callframe->uncheckedArgument(4);
         if (options.isObject()) {
             JSObject* obj = options.getObject();
             // This getter is expensive and rare.
@@ -1460,6 +1492,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
                 }
             }
         }
+    }
+
+    // An ES module of an executable runs here. A stack that is taken meanwhile lists the function that loads an ES module from disk.
+    if (Bun::hasCompiledModules() && !child->moduleGraph()) [[unlikely]] {
+        JSObject* loader = Bun::loaderOfCompiledESModule(globalObject, specifier, !typeAttribute.isEmpty());
+        REQUIRE_CJS_RETURN_IF_EXCEPTION;
+        if (loader)
+            callframe->setCallee(loader);
     }
 
     // Load the module
@@ -1483,10 +1523,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
-    if (!thisObject)
-        return throwVMTypeError(globalObject, throwScope);
-
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -1499,6 +1535,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     }
     throwScope.assertNoExceptionExceptTermination();
     return throwVMError(globalObject, throwScope, "Failed to fetch builtin module"_s);
+}
+
+// require("bun:test") when the name is known only at run time: what Bun.jest(filename) answers.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireTestModule, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    static constexpr auto specifier = "bun:test"_s;
+    if (Bun__throwIfModuleIsRemoved(globalObject, static_cast<uint16_t>(Bun::Feature::Test), specifier.characters(), specifier.length(), ErrorCode::MODULE_NOT_FOUND)) [[unlikely]]
+        return {};
+    // `Bun` lists a member from when it is first read, and this call stands for `Bun.jest(filename)`.
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    defaultGlobalObject(globalObject)->bunObject()->get(globalObject, Identifier::fromString(vm, "jest"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, (JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::Abort, Bun::Bindgen::Generated::Jest::jsJest>(globalObject, callFrame)));
 }
 
 void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
@@ -1528,12 +1578,14 @@ void JSCommonJSModule::evaluate(
                 globalObject->m_moduleWrapperEnd);
         }
         source.source_code = Bun::toStringRef(string);
+        // The wrapper is a JavaScript value.
+        source.is_static = false;
     }
 
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
-        Bun::IsolatedModuleCache::insert(vm, key, sourceProvider.get());
+        Bun::IsolatedModuleCache::insertIfAbsent(vm, key, sourceProvider.get());
     }
     if (this->hasEvaluated)
         return;
@@ -1565,13 +1617,9 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!compileFunction) {
-            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
-            return;
-        }
-        JSC::CallData callData = JSC::getCallData(compileFunction.asCell());
+        JSC::CallData callData = JSC::getCallData(compileFunction);
         if (callData.type == JSC::CallData::Type::None) {
-            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
+            throwTypeError(globalObject, scope, "module._compile is not a function"_s);
             return;
         }
         WTF::String sourceString = source.source_code.transferToWTFString();
@@ -1643,11 +1691,13 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                 source.source_code.transferToWTFString(),
                 globalObject->m_moduleWrapperEnd);
             source.source_code = Bun::toStringRef(concat);
+            // The wrapper is a JavaScript value.
+            source.is_static = false;
         }
 
         auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
         if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
-            Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
+            Bun::IsolatedModuleCache::insertIfAbsent(vm, sourceURL, sourceProvider.get());
         }
         sourceOrigin = sourceProvider->sourceOrigin();
         moduleObject = JSCommonJSModule::create(
@@ -1785,7 +1835,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }
 
-JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph)
+JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph, JSCommonJSModule* requestingModule)
 {
     ASSERT(!pathString.startsWith("file://"_s));
 
@@ -1802,10 +1852,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         dirname = jsEmptyString(vm);
     }
 
-    auto moduleObject = Bun::JSCommonJSModule::create(
-        vm,
-        globalObject->CommonJSModuleObjectStructure(),
-        filename, filename, dirname, SourceCode(), graph);
+    auto moduleObject = requestingModule ? requestingModule : Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), filename, filename, dirname, SourceCode(), graph);
 
     SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 

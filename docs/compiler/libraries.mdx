@@ -1,0 +1,115 @@
+---
+title: "Libraries"
+description: "Which npm packages don't work with bun compile and what to use instead, the flags that frameworks need, and how to publish a package that keeps its types"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+Nearly every npm package works with [`bun compile`](/compiler/aot) as it is. This page has the exceptions. If you maintain a package, it also shows how to [publish it with its types](#publish-a-package-with-its-types), so that it compiles to faster code.
+
+## Packages that don't work
+
+Most of these [change a built-in object](/compiler/compatibility#built-in-objects-are-read-only) when you import them, and stop with `TypeError: Cannot assign to ...`.
+
+| Package               | Use instead                                   |
+| --------------------- | --------------------------------------------- |
+| `core-js` 2           | `core-js` 3                                   |
+| `sass`                | Compile your stylesheets before the build     |
+| `asciidoctor` 2 and 3 | `asciidoctor` 4                               |
+| `zone.js`             | Zoneless change detection in Angular          |
+| `chai.should()`       | `expect` or `assert`                          |
+| `should`, `must`      | `should/as-function`, `must/must`             |
+| `timezone-mock`       | Set `process.env.TZ`                          |
+| `sugar`               | `Sugar.Array.sum(list)`, not `Sugar.extend()` |
+| `ses`                 | Freeze the prototypes with `Object.freeze()`  |
+| `private`             | `recast` 0.20.4 or Babel 7, which dropped it  |
+| `async-listener`      | `AsyncLocalStorage` from `node:async_hooks`   |
+
+- The `/auto` and `shim()` entry points of `array.prototype.map`, `set.prototype.union`, `string.prototype.matchall` and similar packages replace a method. Call what the package exports instead, as in `map(list, f)`.
+- Remove `es5-shim`, `es6-shim`, `url-polyfill`, `harmony-reflect` and `promise/polyfill`. Bun has what they add.
+- `collections` and `prototype` replace functions of `Object`, and have no replacement.
+- `@js-temporal/polyfill` works if you leave out the `Date.prototype.toTemporalInstant = ...` line from its README.
+- `next` works. It logs a line that begins with `Failed to install` when it starts.
+
+These [hook the module loader](/compiler/compatibility#loader-hooks-and-the-module-cache):
+
+| Package                          | Use instead                                    |
+| -------------------------------- | ---------------------------------------------- |
+| `module-alias`, `tsconfig-paths` | `paths` in `tsconfig.json`                     |
+| `pirates`, `@babel/register`     | Nothing. The build compiles TypeScript and JSX |
+| `require-in-the-middle`          | Build with `--no-aot`                          |
+| `clear-module`                   | Nothing. A module runs once                    |
+
+Plenty of packages change built-in objects in ways that are allowed. `core-js` 3, `reflect-metadata`, `regenerator-runtime`, `colors`, `mockdate` and `sinon` with its fake timers all work.
+
+## Frameworks
+
+Next.js and Angular put the paths of your pages together while the server runs, so the build doesn't find them. Pass the pages as entry points, and what the server reads from disk with [`--asset`](/compiler/executables#embed-directories). The other frameworks only need the assets.
+
+```bash terminal icon="terminal"
+# Next.js with output: "standalone", in .next/standalone
+bun compile ./server.js ".next/server/**/*.js" --asset .next --asset public
+# Nuxt
+bun compile ./.output/server/index.mjs --asset .output/public
+# Astro
+bun compile ./dist/server/entry.mjs --asset dist/client
+# SvelteKit
+bun compile ./build/index.js --asset build/client --asset build/prerendered
+```
+
+For Angular, the pages are the `.mjs` files beside `server.mjs`. If you use `next/image`, add `--asset node_modules/@img`. That folder holds `sharp`, which resizes the images.
+
+## Publish a package with its types
+
+Most packages ship JavaScript and `.d.ts` files, so the types inside their functions are gone. Add the `"aot"` condition to your `exports`, and `bun compile` compiles that TypeScript file instead.
+
+```json title="package.json" icon="file-json"
+{
+  "name": "greeter",
+  "exports": {
+    ".": {
+      "aot": "./dist/index.aot.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  }
+}
+```
+
+`bun compile` loads `index.aot.ts`, and so do `bun run`, `bun test` and `bun check` with `--aot`. Everything else loads `index.js`: plain `bun run`, Node.js, `tsc`, editors and other bundlers.
+
+- Put `"aot"` first. The first condition that matches wins.
+- Nothing compares the two files, so generate both from the same sources. The file can also be your source, as in `"aot": "./src/index.ts"`.
+- Bun checks and compiles the file under the `"compilerOptions"` in your `package.json`, or as `strict` if there are none. The `tsconfig.json` of the program that installs your package doesn't apply.
+- If the file has a type error in that program, the build warns and compiles your package without its types. A syntax error or a missing file stops the build.
+
+`bun compile --library` writes all of it into `dist`, with a `package.json` that has the condition.
+
+```ts src/index.ts icon="/icons/typescript.svg"
+export function greet(name: string): string {
+  return "hello " + name;
+}
+```
+
+```json package.json icon="file-json"
+{ "name": "greeter", "version": "1.0.0" }
+```
+
+```bash terminal icon="terminal"
+bun compile --library
+```
+
+```txt
+  index.js      87 bytes   (entry point)
+  index.d.ts    53 bytes   (declaration)
+  index.aot.ts  103 bytes  (aot source)
+  package.json  430 bytes  (asset)
+```
+
+To keep your own `package.json`, run [`bun build --dts`](/bundler#dts) and add the condition yourself. Try the package in an app before you publish it.
+
+```bash terminal icon="terminal"
+cd dist && bun pm pack            # greeter-1.0.0.tgz
+cd ../../app && bun add ../greeter/dist/greeter-1.0.0.tgz
+bun compile ./main.ts --explain   # shows where types are missing
+```

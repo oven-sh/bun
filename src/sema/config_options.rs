@@ -22,15 +22,15 @@ pub(crate) enum Kind {
     Number,
     Object,
     List(Element),
-    /// A string or a list of them. Not `null` (`DisallowNullOrUndefined`).
+    /// A string or a list of strings. Not `null` (`DisallowNullOrUndefined`).
     ListOrElement,
     /// The allowed values, and the formerly allowed values. Case-insensitive.
     OneOf(&'static [&'static [u8]], &'static [&'static [u8]]),
 }
 
 bun_core::comptime_string_map! {
-    /// `CommandLineCompilerOptionsMap`, without the command-line-only options: maps the lowercased
-    /// name to the name and the kind of value it accepts.
+    /// `CommandLineCompilerOptionsMap`, without the command-line-only options. Maps the lowercased name to the name and
+    /// the kind of value it accepts.
     static OPTIONS: (&'static [u8], Kind) = {
         b"all" => (b"all", Kind::Boolean),
         b"allowarbitraryextensions" => (b"allowArbitraryExtensions", Kind::Boolean),
@@ -173,18 +173,19 @@ bun_core::comptime_string_set! {
 pub struct Problem {
     /// `propertyAssignment`
     pub property: PropId,
-    /// Which element of the list it is about. `None`: the whole value.
+    /// The list element the error is about. `None`: the whole value.
     pub index: Option<usize>,
-    /// The code of TypeScript's message, and the message arguments.
+    /// TypeScript's message code, and the message arguments.
     pub code: u32,
     pub args: Vec<Vec<u8>>,
     /// Its span in the file: start, end.
     pub span: Option<(u32, u32)>,
 }
 
-/// Parses `--name text` from a command line: the canonical spelling of the option, which `name`
-/// matches case-insensitively, and its value. `None`: there is no such option, its value cannot be
-/// expressed as a single word, or `text` is not a valid value for it.
+/// Parses `--name text` from a command line. Returns the canonical spelling of the option, which `name` matches
+/// case-insensitively, and its value. Returns `None` if there's no such option, its value can't be expressed as a
+/// single word, or `text` isn't a valid value for it. Text that isn't a key of the option's `EnumMap` is kept as
+/// written, for `invalid_enum_type`.
 pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
     let &(name, kind) = OPTIONS.get_ascii_case_insensitive(name)?;
     let value = match kind {
@@ -193,10 +194,13 @@ pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
         Kind::Boolean | Kind::Object | Kind::List(Element::Object) | Kind::ListOrElement => {
             return None;
         }
-        Kind::String | Kind::FilePath | Kind::OneOf(..) => Json::String(text.to_vec()),
+        Kind::String | Kind::FilePath => Json::String(text.to_vec()),
+        Kind::OneOf(..) => Json::String(
+            convert_json_option_of_enum_type(kind, text.trim_ascii())
+                .unwrap_or_else(|| text.to_vec()),
+        ),
         Kind::Number => Json::Number(std::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()?),
-        // `ParseListTypeOption`: a flag is no list. Only the items of an enum-valued list are
-        // trimmed.
+        // `ParseListTypeOption`: a flag isn't a list. Only the items of an enum-valued list are trimmed.
         Kind::List(Element::String | Element::FilePath | Element::Lib)
             if text.trim_ascii().starts_with(b"-") =>
         {
@@ -212,14 +216,17 @@ pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
                     }
                 })
                 .filter(|item| !item.is_empty())
-                .map(|item| Json::String(item.to_vec()))
+                .map(|item| {
+                    let key = convert_json_option_of_enum_type(kind, item);
+                    Json::String(key.unwrap_or_else(|| item.to_vec()))
+                })
                 .collect(),
         ),
     };
     Some((name, value))
 }
 
-/// If the option `name`, matched case-insensitively, is enum-valued or boolean: its allowed values.
+/// Returns the allowed values of the option `name`, matched case-insensitively, if it's enum-valued or boolean.
 pub fn choices(name: &[u8]) -> Option<&'static [&'static [u8]]> {
     match OPTIONS.get_ascii_case_insensitive(name)?.1 {
         Kind::Boolean => Some(&[b"true", b"false"]),
@@ -228,23 +235,39 @@ pub fn choices(name: &[u8]) -> Option<&'static [&'static [u8]]> {
     }
 }
 
-/// The items of `value`, which `from_text` has made of the option `name`, that are not among the
-/// allowed ones, if the option is a list of those: all that are allowed.
-pub fn choices_of_list(name: &[u8], value: &Json) -> Option<Vec<&'static [u8]>> {
-    let Kind::List(Element::Lib) = OPTIONS.get_ascii_case_insensitive(name)?.1 else {
-        return None;
+/// `createDiagnosticForInvalidEnumType` for `value`, which `from_text` produced for the option `name`. Returns the
+/// allowed values if `value`, or one of its items, isn't a key of `EnumMap`.
+pub fn invalid_enum_type(name: &[u8], value: &Json) -> Option<Vec<&'static [u8]>> {
+    let kind = OPTIONS.get_ascii_case_insensitive(name)?.1;
+    let is_key = |item: &Json| {
+        (item.as_str()).is_some_and(|it| convert_json_option_of_enum_type(kind, it).is_some())
     };
-    let is_allowed = |item: &Json| item.as_str().is_some_and(is_lib);
-    (!value.as_array()?.iter().all(is_allowed)).then(|| crate::resolve::LIBS.iter().collect())
+    match kind {
+        Kind::OneOf(now, _) => (!is_key(value)).then(|| now.to_vec()),
+        Kind::List(Element::Lib) => {
+            let has_only_keys = value.as_array()?.iter().all(is_key);
+            (!has_only_keys).then(|| crate::resolve::LIBS.iter().collect())
+        }
+        _ => None,
+    }
 }
 
-fn is_lib(name: &[u8]) -> bool {
-    crate::resolve::LIBS.contains(&name.to_ascii_lowercase())
+/// `convertJsonOptionOfEnumType`: returns the key of `EnumMap` that `value` matches case-insensitively. `kind` is the
+/// option's kind, or the kind of the list whose `Elements` the option is.
+fn convert_json_option_of_enum_type(kind: Kind, value: &[u8]) -> Option<Vec<u8>> {
+    let key = crate::config::strings_to_lower(value);
+    let is_key = match kind {
+        Kind::OneOf(now, once) => now.iter().chain(once).any(|&one| one == key),
+        Kind::List(Element::Lib) => crate::resolve::LIBS.contains(&key),
+        _ => false,
+    };
+    is_key.then_some(key)
 }
 
-/// The rest of `convertJsonOption`, for a value of the right type. `convertJsonOptionOfListType`
-/// converts the elements first, those for which `is_invalid` holds to nil. Unless
-/// `listPreserveFalsyValues`, what is falsy then is left out: not `""` as a path.
+/// The rest of `convertJsonOption`, for a value of the right type. `convertJsonOptionOfListType` converts the elements
+/// first, and turns those for which `is_invalid` returns true into nil. It then drops falsy elements unless
+/// `listPreserveFalsyValues` is set. A `""` path is no longer falsy at that point, because it was resolved against
+/// `base_path`.
 pub fn converted(
     name: &[u8],
     value: &Json,
@@ -257,21 +280,30 @@ pub fn converted(
         Json::String(text) => text.is_empty() && name != b"moduleSuffixes",
         _ => false,
     };
-    let normalized = |is_file_path: bool, value: &Json| match value {
-        Json::String(path) if is_file_path => Json::String(
-            crate::config::normalize_non_list_option_value(path, base_path),
-        ),
-        _ => value.clone(),
-    };
-    match (kind_of(name), value) {
-        (Some(Kind::List(element)), Json::Array(items)) => Json::Array(
+    let kind = kind_of(name);
+    match (kind, value) {
+        (Some(Kind::List(_)), Json::Array(items)) => Json::Array(
             (items.iter().enumerate())
                 .filter(|(index, _)| !is_invalid(*index))
-                .map(|(_, item)| normalized(element == Element::FilePath, item))
+                .map(|(_, item)| converted_non_list(kind, item, base_path))
                 .filter(|item| !is_falsy(item))
                 .collect(),
         ),
-        (kind, _) => normalized(kind == Some(Kind::FilePath), value),
+        _ => converted_non_list(kind, value, base_path),
+    }
+}
+
+/// `converted` for a value that isn't a list. `kind` is the option's kind, or the kind of the list whose `Elements` the
+/// option is.
+fn converted_non_list(kind: Option<Kind>, value: &Json, base_path: &[u8]) -> Json {
+    match (kind, value) {
+        (Some(Kind::FilePath | Kind::List(Element::FilePath)), Json::String(path)) => Json::String(
+            crate::config::normalize_non_list_option_value(path, base_path),
+        ),
+        (Some(kind @ (Kind::OneOf(..) | Kind::List(Element::Lib))), Json::String(text)) => {
+            convert_json_option_of_enum_type(kind, text).map_or_else(|| value.clone(), Json::String)
+        }
+        _ => value.clone(),
     }
 }
 
@@ -288,18 +320,18 @@ pub fn is_file_path(name: &[u8]) -> bool {
     )
 }
 
-/// `CommandLineOptionTypeList` is the kind of the option `name`.
+/// True if the option `name` has the kind `CommandLineOptionTypeList`.
 pub(crate) fn is_list(name: &[u8]) -> bool {
     matches!(kind_of(name), Some(Kind::List(_)))
 }
 
-/// `CommandLineOptionTypeEnum` is the kind of the option `name`.
+/// True if the option `name` has the kind `CommandLineOptionTypeEnum`.
 pub(crate) fn is_enum(name: &[u8]) -> bool {
     matches!(kind_of(name), Some(Kind::OneOf(..)))
 }
 
-/// `CommandLineCompilerOptionsMap.Get(name)`, its name: `name` in whatever letter case. The map has
-/// the command-line-only options too.
+/// The name of `CommandLineCompilerOptionsMap.Get(name)`, which matches `name` case-insensitively. The map has the
+/// command-line-only options too.
 pub fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
     let is_name = |option: &&'static [u8]| option.eq_ignore_ascii_case(name);
     match OPTIONS.get_ascii_case_insensitive(name) {
@@ -308,11 +340,11 @@ pub fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
-/// Which object of a configuration file the options are in.
+/// The object of a configuration file that the options are in.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum In {
     CompilerOptions,
-    /// `tsconfigRootOptionsMap`. What it does not have is not an error, but for `excludes`.
+    /// `tsconfigRootOptionsMap`. A property that isn't in it isn't an error, except for `excludes`.
     Root,
     TypeAcquisition,
 }
@@ -334,7 +366,7 @@ pub(crate) enum Declaration {
 }
 
 impl Declaration {
-    /// `ElementOptions.Get(key)`, if that is its name.
+    /// `ElementOptions.Get(key)`, if `key` is spelled exactly like its name.
     pub(crate) fn element(self, key: &[u8]) -> Option<Declaration> {
         let named = |names: &[&'static [u8]]| names.iter().copied().find(|name| *name == key);
         match self {
@@ -373,7 +405,7 @@ impl Declaration {
     }
 
     /// `getCompilerOptionValueTypeString`
-    pub(crate) fn takes(self) -> &'static [u8] {
+    pub(crate) fn value_type_name(self) -> &'static [u8] {
         match self {
             Declaration::Root | Declaration::Of(_, Kind::Object) => b"object",
             Declaration::Of(_, Kind::Boolean) => b"boolean",
@@ -398,11 +430,11 @@ fn kind_of_root(name: &[u8]) -> Option<Kind> {
     })
 }
 
-/// The errors of `onPropertySet`, which runs `convertJsonOption`, for each property of the object
-/// `written` of `file`.
-pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<Problem> {
+/// Returns the errors of `onPropertySet`, which runs `convertJsonOption`, for each property of the object `object` in
+/// `file`.
+pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Problem> {
     let mut out = Vec::new();
-    for (property, name) in file.properties(written) {
+    for (property, name) in file.properties(object) {
         let name = &name.to_vec();
         let value = &file.convert_property_value_to_json(file.initializer(property));
         let name_span = Some(file.name_span(property));
@@ -427,8 +459,8 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
             });
             continue;
         }
-        // `null` unsets the value from a configuration that this one extends. `onPropertySet` looks
-        // no further, so an unknown option that is `null` is not reported.
+        // `null` unsets the value from a configuration that this one extends. `onPropertySet` stops there, so an
+        // unknown option that is `null` isn't reported.
         if matches!(value, Json::Null) && !(within == In::Root && name == b"extends") {
             continue;
         }
@@ -462,12 +494,12 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
             });
             continue;
         };
-        let mut wrong = |takes: &[u8]| {
+        let mut wrong = |value_type_name: &[u8]| {
             out.push(Problem {
                 property,
                 index: None,
                 code: 5024,
-                args: vec![name.clone(), takes.to_vec()],
+                args: vec![name.clone(), value_type_name.to_vec()],
                 span: value_span,
             });
         };
@@ -491,38 +523,43 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
             Kind::Object if value.as_object().is_none() => wrong(b"object"),
             Kind::List(element) => match value.as_array() {
                 None => wrong(b"Array"),
-                // `convertJsonOptionOfListType`: each element is converted by itself.
+                // `convertJsonOptionOfListType`: each element is converted on its own.
                 Some(items) => {
                     let elements: Vec<ExprId> = file.elements(file.initializer(property)).collect();
                     // `commandLineOptionElements`
-                    let of_element = match &name[..] {
+                    let element_name = match &name[..] {
                         b"customConditions" => b"condition".to_vec(),
                         b"plugins" => b"plugin".to_vec(),
                         _ => name.clone(),
                     };
-                    // `convertArrayLiteralExpressionToJson` leaves out what is `null`, so an element
-                    // has its index among the others. Its node is looked up by it all the same.
-                    let mut among_others = 0;
+                    // `convertArrayLiteralExpressionToJson` drops `null`s, so an element's index only counts the other
+                    // elements. TypeScript still looks up its node with it.
+                    let mut non_null_index = 0;
                     for (index, item) in items.iter().enumerate() {
-                        let at = among_others;
-                        among_others += usize::from(*item != Json::Null);
+                        let at = non_null_index;
+                        non_null_index += usize::from(*item != Json::Null);
                         let (code, args) = match (element, item) {
                             (_, Json::Null)
                             | (Element::String | Element::FilePath, Json::String(_))
                             | (Element::Object, Json::Object(_)) => continue,
-                            (Element::Lib, Json::String(lib)) if lib.is_empty() || is_lib(lib) => {
+                            (Element::Lib, Json::String(lib))
+                                if lib.is_empty()
+                                    || convert_json_option_of_enum_type(kind, lib).is_some() =>
+                            {
                                 continue;
                             }
                             (Element::Lib, Json::String(_)) => {
                                 (6046, not_one_of(&mut crate::resolve::LIBS.iter()))
                             }
                             (Element::String | Element::FilePath, _) => {
-                                (5024, vec![of_element.clone(), b"string".to_vec()])
+                                (5024, vec![element_name.clone(), b"string".to_vec()])
                             }
                             (Element::Object, _) => {
-                                (5024, vec![of_element.clone(), b"object".to_vec()])
+                                (5024, vec![element_name.clone(), b"object".to_vec()])
                             }
-                            (Element::Lib, _) => (5024, vec![of_element.clone(), b"enum".to_vec()]),
+                            (Element::Lib, _) => {
+                                (5024, vec![element_name.clone(), b"enum".to_vec()])
+                            }
                         };
                         out.push(Problem {
                             property,
@@ -535,12 +572,11 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
                 }
             },
             // `getCompilerOptionValueTypeString` is the name of the kind.
-            Kind::OneOf(now, once) => match value.as_str() {
+            Kind::OneOf(now, _) => match value.as_str() {
                 None => wrong(b"enum"),
                 Some(b"") => {}
                 Some(specified) => {
-                    let specified = specified.to_ascii_lowercase();
-                    if !now.iter().chain(once).any(|&one| one == specified) {
+                    if convert_json_option_of_enum_type(kind, specified).is_none() {
                         out.push(Problem {
                             property,
                             index: None,

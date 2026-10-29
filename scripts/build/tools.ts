@@ -140,16 +140,21 @@ export function findBun(os: OS): string {
 /**
  * On a CI machine the tools come from its image, and the image installs what
  * ci-images/spec.ts pins. A tool that reports another version means the
- * machine is not the image the spec describes. clang and lld are compared with
- * the same spec where they are found (findLlvmTool).
+ * machine is not the image the spec describes. Elsewhere clang only has to be
+ * of the pin's release series (findLlvmTool).
  */
-export function checkImageTools(toolchain: { bun: string; cmake: string }): void {
+export function checkImageTools(toolchain: { bun: string; cmake: string; clangVersion: string | undefined }): void {
   const tools: [name: string, expected: string, actual: { version: string } | { reason: string }][] = [
     ["bun", pins.bun.version, getToolVersion(toolchain.bun, "--version")],
     ["cmake", pins.cmake.version, getToolVersion(toolchain.cmake, "--version")],
     // CI runs the build with the image's node.
     ["node", pins.nodejs.version, { version: process.versions.node }],
   ];
+  // An explicit LLVM directory is its own pin (see toolchainOverride).
+  if (toolchainOverride.llvm === undefined) {
+    const version = toolchain.clangVersion;
+    tools.push(["clang", pins.llvm.version, version === undefined ? { reason: "of no known version" } : { version }]);
+  }
   for (const [name, expected, actual] of tools) {
     if (!("version" in actual) || actual.version !== expected) {
       throw new BuildError(
@@ -369,8 +374,8 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 
 /**
  * LLVM version constraint: the release CI's images install. Any version in
- * the same major.minor range is accepted (e.g. apt.llvm.org serves 23.1.2
- * snapshots while we target 23.1.1).
+ * the same major.minor range is accepted: a package manager can often only be
+ * asked for a major (apt.llvm.org serves snapshots of the release branch).
  */
 export const LLVM_VERSION = pins.llvm.version;
 const [LLVM_MAJOR, LLVM_MINOR] = LLVM_VERSION.split(".");
@@ -512,7 +517,6 @@ export function resolveLlvmToolchain(
   | "hostCc"
   | "hostCxx"
   | "ar"
-  | "ranlib"
   | "ld"
   | "ld64Lld"
   | "rustLlvmVersion"
@@ -527,7 +531,6 @@ export function resolveLlvmToolchain(
   | "dsymutil"
   | "ccache"
   | "rc"
-  | "mt"
   | "nasm"
   | "clangVersion"
   | "clangResourceDir"
@@ -594,17 +597,6 @@ export function resolveLlvmToolchain(
     required: true,
   })?.path;
 
-  // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
-  // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
-  // same thing for our direct archives, but deps may call ranlib explicitly.
-  let ranlib: string | undefined;
-  if (os !== "windows") {
-    ranlib = findLlvmTool("llvm-ranlib", paths, os, {
-      checkVersion: false,
-      required: true,
-    })?.path;
-  }
-
   // ld: lld-link for windows targets, ld.lld on Linux (passed as --ld-path=).
   // On Darwin clang drives the system linker directly.
   let ld: string;
@@ -658,18 +650,10 @@ export function resolveLlvmToolchain(
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // rc/mt: windows targets only. Passed to nested cmake — when
-  // CMAKE_C_COMPILER is an explicit path, cmake's find_program for these
-  // may not search the compiler's directory, so we resolve them here and
-  // pass explicitly. rc is required (cmake's try_compile on windows uses
-  // it, and the final link embeds windows-app-info.res); mt is optional
-  // (not all LLVM distros ship it — source.ts sets
-  // CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY as fallback).
+  // rc: windows targets only (the final link embeds windows-app-info.res).
   let rc: string | undefined;
-  let mt: string | undefined;
   if (msvcTarget) {
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
-    mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
   // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
@@ -704,7 +688,6 @@ export function resolveLlvmToolchain(
     hostCc,
     hostCxx,
     ar,
-    ranlib,
     ld,
     ld64Lld,
     rustLlvmVersion,
@@ -719,7 +702,6 @@ export function resolveLlvmToolchain(
     dsymutil,
     ccache,
     rc,
-    mt,
     nasm,
   };
 }
@@ -777,10 +759,12 @@ export function probeRustToolchain(os: OS): {
   // it evidently did more than that check: every build job of CI build 91391
   // spent 34-36s in here without a line of output. Skip when there's no
   // pinned channel or no rustup — the `rustc` queries below will just use
-  // whatever's there.
+  // whatever's there — and when the pinned toolchain is already complete: the
+  // check of the manifest goes to the network, and on a bad day that alone
+  // took 22 to 63s of every build on a machine that had everything.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
-  if (rustup !== undefined && channel !== undefined) {
+  if (rustup !== undefined && channel !== undefined && !pinnedToolchainIsInstalled(channel)) {
     const started = performance.now();
     spawnSync(
       rustup,
@@ -831,6 +815,23 @@ export function probeRustToolchain(os: OS): {
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
   return { rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+}
+
+/**
+ * The toolchain of a dated channel never changes, so once rustup has recorded
+ * what the pre-flight asks for (`lib/rustlib/components`, written when a
+ * component is in place) there is nothing left to ask.
+ */
+function pinnedToolchainIsInstalled(channel: string): boolean {
+  if (!/-\d{4}-\d{2}-\d{2}$/.test(channel)) return false;
+  const toolchains = join(process.env.RUSTUP_HOME ?? join(homedir(), ".rustup"), "toolchains");
+  if (!existsSync(toolchains)) return false;
+  return readdirSync(toolchains).some(name => {
+    const list = join(toolchains, name, "lib", "rustlib", "components");
+    if (!name.startsWith(`${channel}-`) || !existsSync(list)) return false;
+    const components = readFileSync(list, "utf8").split("\n");
+    return ["rustc-", "cargo-", "rust-std-", "rust-src"].every(prefix => components.some(c => c.startsWith(prefix)));
+  });
 }
 
 /**
@@ -887,24 +888,26 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
  */
 export function findMsvcLinker(arch: Arch): string | undefined {
   // VS2022 standard layout:
-  //   C:/Program Files/Microsoft Visual Studio/2022/<edition>/VC/Tools/MSVC/<ver>/bin/<host>/<target>/link.exe
-  // Edition is Community|Professional|Enterprise|BuildTools.
-  const vsBase = "C:/Program Files/Microsoft Visual Studio/2022";
-  if (!existsSync(vsBase)) return undefined;
+  //   <base>/Microsoft Visual Studio/2022/<edition>/VC/Tools/MSVC/<ver>/bin/<host>/<target>/link.exe
+  // Community, Professional and Enterprise are 64-bit programs. BuildTools,
+  // which is what CI's images have, goes under Program Files (x86).
+  const vsBases = ["C:/Program Files", "C:/Program Files (x86)"].map(base => `${base}/Microsoft Visual Studio/2022`);
 
   // Pick the latest MSVC toolset version across all editions. Usually
-  // there's only one edition installed, but BuildTools + Community can
-  // coexist on CI.
+  // there's only one edition installed, but BuildTools can be beside another.
   let latestVer: string | undefined;
   let latestToolset: string | undefined;
-  for (const edition of readdirSync(vsBase)) {
-    const msvcDir = join(vsBase, edition, "VC/Tools/MSVC");
-    if (!existsSync(msvcDir)) continue;
-    for (const ver of readdirSync(msvcDir)) {
-      // Lexicographic comparison works for MSVC versions (14.xx.yyyyy).
-      if (latestVer === undefined || ver > latestVer) {
-        latestVer = ver;
-        latestToolset = join(msvcDir, ver);
+  for (const vsBase of vsBases) {
+    if (!existsSync(vsBase)) continue;
+    for (const edition of readdirSync(vsBase)) {
+      const msvcDir = join(vsBase, edition, "VC/Tools/MSVC");
+      if (!existsSync(msvcDir)) continue;
+      for (const ver of readdirSync(msvcDir)) {
+        // Lexicographic comparison works for MSVC versions (14.xx.yyyyy).
+        if (latestVer === undefined || ver > latestVer) {
+          latestVer = ver;
+          latestToolset = join(msvcDir, ver);
+        }
       }
     }
   }

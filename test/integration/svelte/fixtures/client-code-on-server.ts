@@ -1,7 +1,5 @@
-/// <reference lib="dom" />
-
 import { SveltePlugin } from "bun-plugin-svelte";
-import { Window } from "happy-dom";
+import { Window, type Document, type HTMLElement } from "happy-dom";
 import { expect } from "bun:test";
 
 Bun.plugin(SveltePlugin({ forceSide: "client", development: true }));
@@ -19,7 +17,7 @@ const window = globalThis.window = new Window({
 const document = globalThis.document = window.document as unknown as Document;
 const body = document.body;
 
-const root = document.body.appendChild(document.createElement("div"));
+const root = document.body.appendChild(document.createElement("div")) as HTMLElement;
 
 const { default: TodoApp } = await import("./todo-list.svelte");
 

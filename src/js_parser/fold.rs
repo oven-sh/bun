@@ -48,9 +48,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
 
 // File-split mixin pattern: a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn maybe_relocate_vars_to_top_level(
         &mut self,
         decls: &[G::Decl],
@@ -634,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL
-                            let bunstr = bun_core::String::from_bytes(p.source.path.text);
+                            let bunstr = bun_core::StringView::from_bytes(p.source.path.text);
                             let url = p.arena.alloc_slice_copy(
                                 format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
                             );

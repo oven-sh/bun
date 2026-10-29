@@ -145,7 +145,11 @@ pub struct Loader {
     /// only populated with files specified explicitly (e.g. --env-file arg)
     pub(crate) custom_files_loaded: StringSet,
 
+    /// Hides the `[Nms] ".env"` line and the `error loading .env file` lines.
     pub quiet: bool,
+
+    /// Hides the `[Nms] ".env"` line only.
+    pub quiet_loaded_files: bool,
 
     pub(crate) did_load_process: bool,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
@@ -161,6 +165,18 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
+
+/// Compares like [`HashTable`] keys, which are ASCII case-insensitive on Windows.
+fn is_ipc_channel_key(key: &[u8]) -> bool {
+    const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
+    KEYS.iter().any(|&k| {
+        if cfg!(windows) {
+            strings::eql_case_insensitive_ascii(key, k, true)
+        } else {
+            strings::eql(key, k)
+        }
+    })
+}
 
 impl Loader {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
@@ -217,20 +233,16 @@ impl Loader {
         buf: &'b mut PathBuffer,
     ) -> Option<&'b ZStr> {
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists.
-        // NLL workaround: compute the length in an inner scope so the borrow of `buf` for the
-        // executable check ends before we either return a fresh borrow or fall through to `which`.
-        let env_len = self
+        if let Some(node) = self
             .get(b"NODE")
             .or_else(|| self.get(b"npm_node_execpath"))
             .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
-            .map(|node| {
-                buf[..node.len()].copy_from_slice(node);
-                buf[node.len()] = 0;
-                node.len()
-            });
-        if let Some(len) = env_len {
-            if bun_sys::is_executable_file_path(ZStr::from_buf(&buf[..], len)) {
-                return Some(ZStr::from_buf(&buf[..], len));
+        {
+            buf[..node.len()].copy_from_slice(node);
+            buf[node.len()] = 0;
+            let node = ZStr::from_buf(&buf[..], node.len());
+            if bun_sys::is_executable_file_path(node) {
+                return Some(node);
             }
         }
 
@@ -536,6 +548,7 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: StringSet::new(),
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -549,7 +562,23 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
+    /// Clones the loader for a macro VM. The clone remembers which files `self` loaded, so it only
+    /// reads the ones `self` skipped.
+    pub fn clone_loaded(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: self.default_files_loaded,
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: self.quiet,
+            quiet_loaded_files: self.quiet_loaded_files,
+            did_load_process: self.did_load_process,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         })
@@ -569,6 +598,11 @@ impl Loader {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
+                    // Child processes don't inherit the IPC fd. `bun run` passes the fd on and
+                    // adds these variables back.
+                    if is_ipc_channel_key(key) {
+                        continue;
+                    }
                     self.map.put(key, value)?;
                 }
             } else {
@@ -619,7 +653,7 @@ impl Loader {
             }
         }
 
-        if !self.quiet && self.loaded_count() > loaded_before {
+        if !self.quiet && !self.quiet_loaded_files && self.loaded_count() > loaded_before {
             self.print_loaded(start);
         }
         Ok(())
@@ -1453,6 +1487,31 @@ impl Map {
         Ok(Map {
             map: self.map.clone()?,
         })
+    }
+
+    /// The process's own (no `.env`), minus `git rev-parse --local-env-vars` except `GIT_CONFIG*`.
+    pub fn for_git_child() -> Result<Map, AllocError> {
+        const REPOSITORY_VARS: &[&[u8]] = &[
+            b"GIT_DIR",
+            b"GIT_WORK_TREE",
+            b"GIT_IMPLICIT_WORK_TREE",
+            b"GIT_INDEX_FILE",
+            b"GIT_NAMESPACE",
+            b"GIT_OBJECT_DIRECTORY",
+            b"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            b"GIT_COMMON_DIR",
+            b"GIT_PREFIX",
+            b"GIT_GRAFT_FILE",
+            b"GIT_SHALLOW_FILE",
+            b"GIT_NO_REPLACE_OBJECTS",
+            b"GIT_REPLACE_REF_BASE",
+        ];
+        let mut loader = Loader::init();
+        loader.load_process()?;
+        for key in REPOSITORY_VARS {
+            loader.map.remove(key);
+        }
+        Ok(loader.map)
     }
 }
 

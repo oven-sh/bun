@@ -2153,7 +2153,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/ImportReExportES6ESBuildIssue149", {
-    todo: true,
     files: {
       "/app.jsx": /* jsx */ `
         import { p as Part, h, render } from './import';
@@ -2184,7 +2183,7 @@ describe.concurrent("bundler", () => {
     },
     jsx: {
       factory: "h",
-      automaticRuntime: false,
+      runtime: "classic",
     },
     external: ["preact"],
     run: true,

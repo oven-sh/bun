@@ -1,0 +1,69 @@
+# Measurements of the fix (a chunk's own require through a hoisted function)
+
+Release builds, linux-x64: /tmp/measure/bin/bun-main = origin/main 11c367163a, /tmp/measure/bin/bun-acc = the fix
+(891bf84f67). node v26.3.0. User-mode instructions are counted with /tmp/measure/count-insn (perf_event_open).
+
+## 1. Programs that run on main's split build and fail or differ with the fix
+- early-call matrix (/tmp/gate/matrix.sh): 0 of 9 rows
+- repro scripts (/tmp/gate/repro-*.sh): 0 of 4
+- differential fuzz (/tmp/gate/fuzz/drivex.ts): 0 of 5,000 builds differ at run time (bun 3,000, node 1,400,
+  no generator options 600). The fix changed the output of 4,320 of them.
+- store fixtures (15 store forms, store in the runtime chunk, bun and node): 0 of 4
+
+## 2. Instructions per use
+- use that depends on the file (`__requireHere()`), 5e6 uses, min of 7:
+  bun +23 (JIT on, BUN_JSC_useConcurrentJIT=0, A/A 3,658 in total), +235 in the interpreter (BUN_JSC_useJIT=0)
+  node +5.8 (`--single-threaded --no-opt`), +5.4 (`--single-threaded`)
+- `require()` of a builtin module: +0, the chunk has the same bytes as on main
+
+## 3. Load, per chunk that declares its own require (/tmp/measure/loadk, N = 10, 50, 200 directories, 7 runs, medians)
+- bun: +36k to +54k instructions and +1 require function per loaded declaring chunk. One entry of a
+  200-directory bundle: +36k (+0.84%). A/A floor: 61k in total.
+- node: nothing until the first use (inside the A/A floor of 6.5M in total), then one `createRequire` call:
+  +135k to +235k.
+- require functions: bun main 1, fix 1 + 1 per loaded declaring chunk (N=50: 51, one entry: 2).
+  node main 1, fix 1 + 1 per declaring chunk at its first use.
+
+## 4. Output bytes
+- per declaring chunk: +108 B (bun), +135 B (node). With --minify +55 B / +52 B.
+- per use that depends on the file: +6 B, with --minify +2 B.
+- the chunk of the runtime module: -11 B (bun), +4 B (node). With --minify -2 B / 0 B.
+
+## 5. Output identity (sha256)
+- corpus (/tmp/measure/corpus.sh): 40 of 40 un-split, cjs, browser and one-directory variants (100 files), and the
+  4 builtin-only variants with chunks in chunks/.
+- two-directory builds with builtin requires only, and with `require.main` only: 4 of 4
+- flat 2,000-entry builds (split bun, node, browser, --minify, --define, un-split, cjs): 7 of 7
+
+## 6. Binary
+- .text 108,646,665 -> 108,654,089 (+7,424 B). File 138,193,048 -> 138,201,240 (+8,192 B).
+
+## 7. Parser and printer for builds that do not use the fix
+- `bun build --no-bundle` of 10,000 lines with 14,000 require forms: +218,320 instructions (+0.171%, A/A +1).
+- un-split bundle of the same file: -0.45% bun, -0.13% node (A/A -0.25%, -0.17%). Output identical.
+- size_of: js_printer::Options 216 -> 224 B, JavaScriptChunk 312 -> 320 B, Ast 1,168 -> 1,176 B, ImportRecord 96 -> 96 B.
+
+## 8. Link
+- flat 2,000 entries, split, bun (2,000 chunks take the directory test): -0.26% (A/A -0.18%). node -0.23% (A/A -0.09%).
+- 3,000 modules, 4 entries, split: 0.00% (A/A +0.35%). With chunks/ (the entry chunks declare): +0.65% (A/A +0.25%).
+- un-split: -0.01% and -0.04% (A/A -0.18%, -0.20%).
+- heap blocks: valgrind is not installed. By the code, the directory test makes about 6 per chunk that takes it.
+
+## 9. Placement matrix (/tmp/measure/matrix.ts)
+- cells equal to the build without code splitting: main 40 of 256, fix 208 of 256.
+- 124 load cells fail on main and load with the fix. 20 load on main and fail with the fix: all 20 fail without
+  code splitting too. 20 fail on both (a file in a shared chunk, request text as written).
+- with two `[hash]`-directory layouts added: main 120 of 512, fix 436 of 512.
+
+## 10. Heap
+- +13 live cells and +1,783 B per loaded declaring chunk on bun (heapStats after a full GC, N=200).
+
+## 11. Function text
+- test/bundler/transpiler/function-tostring-require.test.ts passes. New two-directory case: 2 of 2 parse.
+
+## 12. Existing test expectations changed: 0 (test diff is +936/-0).
+
+## Tests
+- test/bundler/bundler_splitting.test.ts: 54 new cases. On main 37 fail (35 run-time or shape cases and the 2
+  standalone-executable cases), 17 pass: 4 builds without code splitting and 13 guards.
+- debug build: 263 pass, 0 fail in the file.

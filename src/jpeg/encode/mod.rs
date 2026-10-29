@@ -17,6 +17,9 @@ use marker::{Output, TableClass};
 use phuff::{AcEncoder, Sink};
 use sample::{MCU_SIZE, McuRowSamples};
 
+/// The side of a block.
+const DCTSIZE: usize = 8;
+
 /// The quantized coefficients of a block.
 #[derive(Clone, Copy)]
 struct Block {
@@ -185,18 +188,33 @@ fn scaled_quant_table(base: &[u16; 64], quality: u8) -> [u16; 64] {
 struct BlockRows {
     blocks: Vec<Block>,
     blocks_per_row: usize,
+    /// Rows of blocks in a row of MCUs.
+    sampling: usize,
 }
 
 impl BlockRows {
-    fn new(blocks_per_row: usize, rows: usize) -> Result<Self> {
+    fn new(component: Component, mcus_per_row: usize, mcu_rows: usize) -> Result<Self> {
+        let sampling = usize::from(component.sampling());
+        let blocks_per_row = mcus_per_row * sampling;
         Ok(BlockRows {
-            blocks: try_vec(Block::flat(0), blocks_per_row * rows)?,
+            blocks: try_vec(Block::flat(0), blocks_per_row * mcu_rows * sampling)?,
             blocks_per_row,
+            sampling,
         })
     }
 
     fn rows(&self) -> impl Iterator<Item = &[Block]> {
         self.blocks.chunks_exact(self.blocks_per_row)
+    }
+
+    fn mcu_rows(&self) -> impl Iterator<Item = &[Block]> {
+        self.blocks
+            .chunks_exact(self.blocks_per_row * self.sampling)
+    }
+
+    fn mcu_rows_mut(&mut self) -> impl Iterator<Item = &mut [Block]> {
+        self.blocks
+            .chunks_exact_mut(self.blocks_per_row * self.sampling)
     }
 }
 
@@ -207,22 +225,19 @@ struct Extent {
     height_in_blocks: usize,
 }
 
-/// Transforms the rows of blocks that a row of MCUs holds of one component.
-///
-/// `first_row` is the number of the first of them in the image. A block outside of the image has no AC coefficients, and
-/// the DC coefficient of the block that precedes it in its MCU, to take the fewest bits.
+/// Transforms the `samp` rows of blocks that row `mcu_row` of MCUs holds of one component.
 fn transform_rows(
     samples: &[u8],
     divisors: &Divisors,
     extent: Extent,
     samp: usize,
-    first_row: usize,
+    mcu_row: usize,
     out: &mut [Block],
 ) -> Result<()> {
     let blocks_per_row = out.len() / samp;
     let mut above: Option<&[Block]> = None;
-    for ((row, samples), out) in (first_row..)
-        .zip(samples.chunks_exact(blocks_per_row * 64))
+    for ((row, samples), out) in (mcu_row * samp..)
+        .zip(samples.chunks_exact(blocks_per_row * DCTSIZE * DCTSIZE))
         .zip(out.chunks_exact_mut(blocks_per_row))
     {
         if row < extent.height_in_blocks {
@@ -237,6 +252,7 @@ fn transform_rows(
                 }
                 *block = fdct::forward(&samples, divisors);
             }
+            // Outside of the image a block is the DC coefficient of the one before it in its MCU, which takes the fewest bits.
             dummy.fill(Block::flat(image.last().ok_or(Error::Internal)?.dc()));
         } else {
             let above = above.ok_or(Error::Internal)?;
@@ -261,10 +277,9 @@ fn mcus<'a>(
     cb: &'a BlockRows,
     cr: &'a BlockRows,
 ) -> impl Iterator<Item = Mcu<'a>> {
-    y.blocks
-        .chunks_exact(y.blocks_per_row * 2)
-        .zip(cb.rows())
-        .zip(cr.rows())
+    y.mcu_rows()
+        .zip(cb.mcu_rows())
+        .zip(cr.mcu_rows())
         .flat_map(|((y, cb), cr)| {
             let (top, bottom) = y.split_at(y.len() / 2);
             top.as_chunks::<2>()
@@ -287,14 +302,20 @@ struct Encoder<'a> {
     height: u16,
     mcus_per_row: usize,
     mcu_rows: usize,
-    luma_extent: Extent,
-    chroma_extent: Extent,
     quant: PerTable<[u16; 64]>,
     divisors: PerTable<Divisors>,
     samples: McuRowSamples,
 }
 
 impl Encoder<'_> {
+    fn extent(&self, component: Component) -> Extent {
+        let pixels_per_block = MCU_SIZE / usize::from(component.sampling());
+        Extent {
+            width_in_blocks: usize::from(self.width).div_ceil(pixels_per_block),
+            height_in_blocks: usize::from(self.height).div_ceil(pixels_per_block),
+        }
+    }
+
     /// Fills in rows of MCUs from `first_mcu_row` on.
     fn transform(
         &mut self,
@@ -303,43 +324,27 @@ impl Encoder<'_> {
         cb: &mut BlockRows,
         cr: &mut BlockRows,
     ) -> Result<()> {
-        let (luma_divisors, chroma_divisors) = (&self.divisors.luma, &self.divisors.chroma);
         let width = usize::from(self.width);
-        for (((mcu_row, y), cb), cr) in (first_mcu_row..)
-            .zip(y.blocks.chunks_exact_mut(self.mcus_per_row * 4))
-            .zip(cb.blocks.chunks_exact_mut(self.mcus_per_row))
-            .zip(cr.blocks.chunks_exact_mut(self.mcus_per_row))
-        {
+        let mcu_rows = y
+            .mcu_rows_mut()
+            .zip(cb.mcu_rows_mut())
+            .zip(cr.mcu_rows_mut());
+        for (mcu_row, ((y, cb), cr)) in (first_mcu_row..).zip(mcu_rows) {
             let rows = self
                 .rgba
                 .get(mcu_row * MCU_SIZE * width * 4..)
                 .ok_or(Error::Internal)?;
             self.samples.fill(rows, width)?;
             let samples = &self.samples;
-            transform_rows(
-                &samples.y,
-                luma_divisors,
-                self.luma_extent,
-                2,
-                mcu_row * 2,
-                y,
-            )?;
-            transform_rows(
-                &samples.cb,
-                chroma_divisors,
-                self.chroma_extent,
-                1,
-                mcu_row,
-                cb,
-            )?;
-            transform_rows(
-                &samples.cr,
-                chroma_divisors,
-                self.chroma_extent,
-                1,
-                mcu_row,
-                cr,
-            )?;
+            for (component, samples, out) in [
+                (Component::Y, &samples.y, y),
+                (Component::Cb, &samples.cb, cb),
+                (Component::Cr, &samples.cr, cr),
+            ] {
+                let divisors = self.divisors.get(component.table());
+                let (extent, samp) = (self.extent(component), component.sampling());
+                transform_rows(samples, divisors, extent, usize::from(samp), mcu_row, out)?;
+            }
         }
         Ok(())
     }
@@ -357,9 +362,9 @@ impl Encoder<'_> {
         let chroma_dc = SequentialTable::new(&tables::STD_DC_CHROMINANCE);
         let chroma_ac = SequentialTable::new(&tables::STD_AC_CHROMINANCE);
 
-        let mut y = BlockRows::new(self.mcus_per_row * 2, 2)?;
-        let mut cb = BlockRows::new(self.mcus_per_row, 1)?;
-        let mut cr = BlockRows::new(self.mcus_per_row, 1)?;
+        let mut y = BlockRows::new(Component::Y, self.mcus_per_row, 1)?;
+        let mut cb = BlockRows::new(Component::Cb, self.mcus_per_row, 1)?;
+        let mut cr = BlockRows::new(Component::Cr, self.mcus_per_row, 1)?;
         let mut bits = BitWriter::new(out);
         let [mut last_y, mut last_cb, mut last_cr] = [0i16; 3];
         for mcu_row in 0..self.mcu_rows {
@@ -380,9 +385,9 @@ impl Encoder<'_> {
     }
 
     fn encode_progressive(&mut self, out: &mut Output) -> Result<()> {
-        let mut y = BlockRows::new(self.mcus_per_row * 2, self.mcu_rows * 2)?;
-        let mut cb = BlockRows::new(self.mcus_per_row, self.mcu_rows)?;
-        let mut cr = BlockRows::new(self.mcus_per_row, self.mcu_rows)?;
+        let mut y = BlockRows::new(Component::Y, self.mcus_per_row, self.mcu_rows)?;
+        let mut cb = BlockRows::new(Component::Cb, self.mcus_per_row, self.mcu_rows)?;
+        let mut cr = BlockRows::new(Component::Cr, self.mcus_per_row, self.mcu_rows)?;
         self.transform(0, &mut y, &mut cb, &mut cr)?;
 
         out.frame_header(self.width, self.height, true, &self.quant);
@@ -397,11 +402,12 @@ impl Encoder<'_> {
                 match *scan.components {
                     // Only a scan of one component leaves out the blocks that are not image.
                     [component] => {
-                        let (blocks, extent) = match component {
-                            Component::Y => (&y, self.luma_extent),
-                            Component::Cb => (&cb, self.chroma_extent),
-                            Component::Cr => (&cr, self.chroma_extent),
+                        let blocks = match component {
+                            Component::Y => &y,
+                            Component::Cb => &cb,
+                            Component::Cr => &cr,
                         };
+                        let extent = self.extent(component);
                         let mut encoder = AcEncoder::new(component.table(), scan)?;
                         for row in blocks.rows().take(extent.height_in_blocks) {
                             for block in row.iter().take(extent.width_in_blocks) {
@@ -501,14 +507,6 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, options: &EncodeOptions) -> 
         height: height as u16,
         mcus_per_row,
         mcu_rows: h.div_ceil(MCU_SIZE),
-        luma_extent: Extent {
-            width_in_blocks: w.div_ceil(8),
-            height_in_blocks: h.div_ceil(8),
-        },
-        chroma_extent: Extent {
-            width_in_blocks: w.div_ceil(16),
-            height_in_blocks: h.div_ceil(16),
-        },
         divisors: PerTable {
             luma: Divisors::new(&quant.luma),
             chroma: Divisors::new(&quant.chroma),

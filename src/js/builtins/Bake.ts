@@ -60,8 +60,7 @@ export async function renderRoutesForProdStatic(
 
   let loadedModules = new Array(allServerFiles.length);
 
-  // Each output file of this build, by the path handed to `Bun.write`, with the page that generates it.
-  // A page is one call of `doGenerateRoute`: its route index and its params.
+  // The page of each output file, by the path handed to `Bun.write`. A page is a route index and its params.
   const outputFiles = new Map<string, number>();
   const pageRoutes: number[] = [];
   const pageParams: (RouteParams | null)[] = [];

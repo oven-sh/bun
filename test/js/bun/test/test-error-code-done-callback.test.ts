@@ -2,6 +2,25 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
+test("done(error) ends a test that returns a promise that never settles", async () => {
+  using dir = tempDir("done-error", {
+    "a.test.ts": `
+      import { test } from "bun:test";
+      test("ends", done => {
+        done(new Error("reported"));
+        return new Promise(() => {});
+      });
+      test("next", () => {});
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "test"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: reported");
+  expect(stderr).not.toContain("timed out");
+  expect(stderr.match(/^\((pass|fail)\) \w+/gm)).toEqual(["(fail) ends", "(pass) next"]);
+  expect(exitCode).toBe(1);
+});
+
 test("verify we print error messages passed to done callbacks", () => {
   const { stdout, stderr } = Bun.spawnSync({
     cmd: [bunExe(), "test", path.resolve(import.meta.dir, "test-error-done-callback-fixture.ts")],

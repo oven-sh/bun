@@ -1905,6 +1905,30 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test.each(
+      Object.entries({
+        "bun:test": `test("fails", done => { setInterval(() => {}, 1000); done(new Error("reported")); });`,
+        "node:test": `test("fails", () => { setInterval(() => {}, 1000); throw new Error("reported"); });`,
+      }),
+    )(
+      "%s: BUN_TEST_DRAIN_EVENT_LOOP doesn't wait for a timer that a failed test left running",
+      async (from, failing) => {
+        using dir = tempDir("bun-test-drain-failed", {
+          "drain.test.ts": `import { test } from "${from}";\n${failing}`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "drain.test.ts"],
+          env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("error: reported");
+        expect(stderr).toContain("1 fail");
+        expect(exitCode).toBe(1);
+      },
+    );
+
     test("are not run in --parallel workers for bun:test files", async () => {
       const { stdout, stderr, exitCode } = await runFiles(
         { "a.test.ts": bunTestFile(1), "b.test.ts": bunTestFile(2) },

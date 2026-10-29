@@ -1000,6 +1000,11 @@ impl BunTest {
             });
             if is_running_test {
                 this.on_uncaught_exception(global_this, Some(error), false, entry);
+                // As for any other uncaught exception: the test is over whatever its callback returns,
+                // and `on_before_exit()` doesn't drain the event loop of a file that failed.
+                this.add_result(*entry);
+                Self::run_next_tick(&Rc::downgrade(&strong), global_this, *entry);
+                global_this.bun_vm().as_mut().unhandled_error_counter += 1;
                 return;
             }
         }

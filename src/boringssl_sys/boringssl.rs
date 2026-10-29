@@ -951,10 +951,6 @@ pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut 
 // ═══════════════════════════════════════════════════════════════════════════
 
 unsafe extern "C" {
-    // ── ENGINE ───────────────────────────────────────────────────────────
-    pub safe fn ENGINE_new() -> *mut ENGINE;
-    pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;
-
     // ── SSL_CTX ──────────────────────────────────────────────────────────
     pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
     pub fn SSL_CTX_free(ctx: *mut SSL_CTX);

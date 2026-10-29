@@ -5369,6 +5369,7 @@ pub mod c {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux {
     use core::ffi::c_int;
+    use core::sync::atomic::AtomicU32;
     pub use libc::epoll_event;
     pub use libc::pollfd;
 
@@ -5491,10 +5492,10 @@ pub mod linux {
     // this, every EAGAIN/EINTR from FUTEX_WAIT mis-decodes as EPERM and the
     // ThreadPool worker panics inside its idle wait.
     #[inline]
-    pub unsafe fn futex_3arg(uaddr: *const u32, op: FutexOp, val: u32) -> isize {
-        // SAFETY: caller contract — `uaddr` is `u32`-aligned; a WAKE only uses it as
-        // a key, so it need not point to live memory.
-        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val) };
+    pub fn futex_3arg(uaddr: *const AtomicU32, op: FutexOp, val: u32) -> isize {
+        // SAFETY: `uaddr` is only handed to the kernel. For no `FutexCmd` does it write user memory;
+        // a read that faults is EFAULT and a misaligned `uaddr` is EINVAL.
+        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr.cast::<u32>(), op.raw(), val) };
         if rc == -1 {
             -(errno() as isize)
         } else {
@@ -5503,18 +5504,20 @@ pub mod linux {
     }
     /// `syscall(SYS_futex, uaddr, op, val, timeout)` — 4-arg form (WAIT).
     #[inline]
-    pub unsafe fn futex_4arg(
-        uaddr: *const u32,
+    pub fn futex_4arg(
+        uaddr: &AtomicU32,
         op: FutexOp,
         val: u32,
-        timeout: *const timespec,
+        timeout: Option<&timespec>,
     ) -> isize {
         // `syscall` is variadic, and Miri checks the pointee type of each argument
         // against the one the kernel interface declares: `libc::timespec` here.
-        let timeout = timeout.cast::<libc::timespec>();
-        // SAFETY: caller contract — `uaddr` points to a live `u32`; `timeout`
-        // is null or points to a valid `timespec` for the syscall's duration.
-        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) };
+        let timeout = timeout
+            .map_or(core::ptr::null(), core::ptr::from_ref)
+            .cast::<libc::timespec>();
+        // SAFETY: `uaddr` is live, `timeout` is null or live, and the kernel writes user memory
+        // for no `FutexCmd`.
+        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr.as_ptr(), op.raw(), val, timeout) };
         if rc == -1 {
             -(errno() as isize)
         } else {

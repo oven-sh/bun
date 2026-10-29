@@ -2377,14 +2377,9 @@ impl TestCommand {
             }
         }
 
-        let write_snapshots_success = jest::Jest::runner()
-            .unwrap()
-            .snapshots
-            .write_inline_snapshots()?;
-        jest::Jest::runner()
-            .unwrap()
-            .snapshots
-            .write_snapshot_file()?;
+        let runner = &mut reporter.jest;
+        let write_snapshots_success = runner.snapshots.write_inline_snapshots(&runner.files)?;
+        runner.snapshots.write_snapshot_file()?;
         let mut write_coverage_success = true;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()

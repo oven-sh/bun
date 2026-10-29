@@ -1,0 +1,186 @@
+# Texts that would pass the longest text there can be are made in many ways, and nobody reads them.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f2 f6
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="texts-long-never-reads-made-in-many-ways.js" displayPath="texts-long-never-reads-made-in-many-ways.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=2049
+data d0 root=Object{layout=L0} module=m0
+variable g0 name="half" module=m0 declared={type=undefined|null|string|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="x"
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
+    PutModuleVariable v1 variable=g0
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = NewClosure function=f1
+    v6 = Convert v5 declared={type=undefined|null|function|f1 flags=[IsExpected]}
+    v7 = String string="padStart"
+    v8 = NewClosure function=f2
+    v9 = Call v6, -, v7, v8 calleeName="say"
+    v10 = String string="join with comma"
+    v11 = NewClosure function=f3
+    v12 = Call v6, -, v10, v11 calleeName="say"
+    v13 = String string="held in an object nobody reads"
+    v14 = NewClosure function=f4
+    v15 = Call v6, -, v13, v14 calleeName="say"
+    v16 = String string="held in an array nobody reads"
+    v17 = NewClosure function=f5
+    v18 = Call v6, -, v16, v17 calleeName="say"
+    v19 = String string="in"
+    v20 = NewClosure function=f6
+    v21 = Call v6, -, v19, v20 calleeName="say"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="say" module=m0 position=202 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    Jump -> next b2()
+  b2() handler=b5(v6):
+    v9 = GetModuleVariable variable=g0
+    v10 = CheckInitialized v9 name="half"
+    v11 = GetModuleVariable variable=g0
+    v12 = CheckInitialized v11 name="half"
+    v13 = Call v1, -, v10, v12 calleeName="make"
+    v14 = String string=" no error"
+    v15 = Add v6, v14
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b3()
+  b3() handler=b5(v16):
+    Jump -> next b4()
+  b4():
+    Jump -> next b6(v16)
+  b5(v17) role=CatchHandler:
+    v18 = CatchValue
+    v19 = String string=" "
+    v20 = PropGet v18 key="constructor"
+    v21 = PropGet v20 key="name"
+    v22 = Add v19, v21
+    v23 = Add v17, v22
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b6(v24)
+  b6(v25):
+    v26 = Increment v7
+    v27 = Convert v26 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v25, v27)
+}
+function f2 module=m0 position=869 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="x"
+    v3 = PropGet v2 key="padStart"
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]}
+    v5 = Integer integer=2147483648
+    v6 = Call v4, v2, v5 calleeKey="padStart" calleeName="padStart"
+    v7 = Undefined
+    Return v7
+}
+function f3 module=m0 position=980 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Convert v2 declared={type=undefined|null|Array flags=[IsExpected]}
+    v4 = PropGet v3 key="join"
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
+    v6 = Call v5, v3 calleeKey="join" calleeName="join"
+    v7 = Undefined
+    Return v7
+}
+function f4 module=m0 position=1641 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=1728 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    v3 = NewArray v2 contents=anything
+    v4 = Undefined
+    Return v4
+}
+function f6 module=m0 position=2026 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    v3 = Data data=d0
+    v4 = ElemHas v3, v2
+    v5 = Undefined
+    Return v5
+}
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f2 f6
+# CHECK-LABEL: function f2 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@23 = Load(b@10, offset = 88, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
+# CHECK-NEXT: Int64 b@28 = Load(b@23, offset = 960, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v2:String)
+# CHECK-NEXT: Int64 b@31 = Load(b@28, offset = 8, ControlDependent|Reads:JSRopeString_fiber0)
+# CHECK-NEXT: Int64 b@32 = Const64(1)
+# CHECK-NEXT: Int64 b@33 = BitAnd(b@31, $1(b@32))
+# CHECK-NEXT: Void b@35 = Branch(b@33, Terminal)
+# CHECK-NEXT: Successors: Then:Unlikely:#3, Else:#1
+# CHECK-NEXT: BB#1: ; frequency = 0.984615
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@37 = Patchpoint(b@28:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top)
+# CHECK-NEXT: Void b@39 = Jump(Terminal)
+# CHECK-NEXT: Successors: #3
+# CHECK-NEXT: BB#3: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #0, #1
+# CHECK-NEXT: Int64 b@66 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x30000001a, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v6:CallBuiltin)
+# CHECK-NEXT: Int64 b@65 = Const64(4747356957201924096, v6:CallBuiltin)
+# CHECK-NEXT: Int64 b@68 = Patchpoint(b@66:Register(%r8), b@28:Register(%rax), $4747356957201924096(b@65):Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v6:CallBuiltin)
+# CHECK-NEXT: Void b@71 = Return(Terminal)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 409600
+# CHECK-NEXT: b@28: dereferenceableBytes = 16
+# CHECK-NEXT: end of function f2
+# CHECK-LABEL: function f6 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@21 = Load(b@10, offset = -8, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:Strcat)
+# CHECK-NEXT: Int64 b@19 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int32 b@22 = Equal(b@19, b@21, v2:Strcat)
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Void b@23 = Branch(b@22, Terminal, v2:Strcat)
+# CHECK-NEXT: Successors: Then:#2, Else:#3
+# CHECK-NEXT: BB#2: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@24 = Upsilon(b@18, ^33, WritesLocalState, v2:Strcat)
+# CHECK-NEXT: Void b@25 = Jump(Terminal, v2:Strcat)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#4: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #3, #2
+# CHECK-NEXT: Int64 b@33 = Phi(ReadsLocalState, v2:Strcat)
+# CHECK-NEXT: Int64 b@34 = Const64(1, v3:NewObject)
+# CHECK-NEXT: Int64 b@35 = Patchpoint($1(b@34):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v3:NewObject)
+# CHECK-NEXT: Void b@36 = Fence(Fence|Reads:jscRoot, v3:NewObject)
+# CHECK-NEXT: Int64 b@37 = Patchpoint(b@35:Register(%rax), b@33:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v4:ElemHas)
+# CHECK-NEXT: Void b@40 = Return(Terminal)
+# CHECK-NEXT: BB#3: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@27 = SlotBase(stack0, v2:Strcat)
+# CHECK-NEXT: Void b@28 = Store(b@18, b@27, ControlDependent|Writes:argumentBuffer, v2:Strcat)
+# CHECK-NEXT: Void b@29 = Store(b@19, b@27, offset = 8, ControlDependent|Writes:argumentBuffer, v2:Strcat)
+# CHECK-NEXT: Int32 b@26 = Const32(2, v2:Strcat)
+# CHECK-NEXT: Int64 b@30 = Patchpoint($2(b@26):Register(%rsi), b@27:Register(%rdx), $2(b@26):Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v2:Strcat)
+# CHECK-NEXT: Void b@31 = Upsilon(b@30, ^33, WritesLocalState, v2:Strcat)
+# CHECK-NEXT: Void b@32 = Jump(Terminal, v2:Strcat)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: Stack slots:
+# CHECK-NEXT: stack0: byteSize = 16, offsetFromFP = 0, kind = Locked, dead at suspensions
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 409600
+# CHECK-NEXT: b@18: dereferenceableBytes = 16
+# CHECK-NEXT: b@19: dereferenceableBytes = 16
+# CHECK-NEXT: b@33: dereferenceableBytes = 16
+# CHECK-NEXT: b@35: dereferenceableBytes = 16
+# CHECK-NEXT: end of function f6

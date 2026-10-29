@@ -626,11 +626,7 @@ impl PropertyIdTag {
 /// A known CSS property name + (for prefixable properties) the vendor
 /// prefix it was parsed with. Variants without payload are unprefixed.
 //
-// Do NOT `#[derive(PartialEq, Eq)]` here — the spec-correct
-// equality ignores the
-// `Custom(CustomPropertyName)` payload and is hand-written below. A derived
-// impl would (a) conflict (E0119) and (b) diverge by comparing custom-name
-// bytes.
+// `PartialEq` is hand-written below: `CustomPropertyName` has no `PartialEq`.
 #[derive(Debug, Clone, Copy)]
 pub enum PropertyId {
     BackgroundColor,
@@ -891,29 +887,25 @@ pub enum PropertyId {
     Custom(CustomPropertyName),
 }
 
-// `PropertyId` equality compares the tag, then *only* compares the payload
-// when its type is `VendorPrefix` — for `Custom` (whose payload is
-// `CustomPropertyName`) and all unit variants it returns `true` on tag match
-// alone. A derived `PartialEq` would compare the `CustomPropertyName` bytes,
-// diverging from the duplicate-detection semantics in `rules/style.rs`.
-// `prefix()` already returns the `VendorPrefix` payload for the 67 prefixed
-// variants and `VendorPrefix::empty()` for every other variant (including
-// `Custom`/`All`/`Unparsed`), so `tag` + `prefix` equality is exactly that.
 impl PartialEq for PropertyId {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.tag() == other.tag() && self.prefix() == other.prefix()
+        match (self, other) {
+            (PropertyId::Custom(a), PropertyId::Custom(b)) => css::generic::eql(a, b),
+            _ => self.tag() == other.tag() && self.prefix() == other.prefix(),
+        }
     }
 }
 
 impl Eq for PropertyId {}
 
-// Hash only the tag discriminant so PropertyId can key a hash map
-// consistent with `eq`.
 impl core::hash::Hash for PropertyId {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
         (self.tag() as u16).hash(h);
+        if let PropertyId::Custom(name) = self {
+            h.write(name.as_str());
+        }
     }
 }
 
@@ -1909,6 +1901,17 @@ fn parse_value<T: css::generic::ParseWithOptions>(
     input.expect_exhausted().is_ok().then_some(value)
 }
 
+/// `parse_value` for a property whose lengths and percentages have the range `[0,∞]`.
+fn parse_non_negative<T: css::generic::ParseWithOptions>(
+    input: &mut css::Parser,
+    options: &css::ParserOptions,
+) -> Option<T> {
+    let value = input
+        .parse_with_non_negative(true, |i| T::parse_with_options(i, options))
+        .ok()?;
+    input.expect_exhausted().is_ok().then_some(value)
+}
+
 impl Property {
     /// Returns the [`PropertyId`] for this declaration.
     pub(crate) fn property_id(&self) -> PropertyId {
@@ -2824,106 +2827,82 @@ impl Property {
                 }
             }
             PropertyId::BorderTopWidth => {
-                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderSideWidth>(input, options) {
                     return Ok(Property::BorderTopWidth(c));
                 }
             }
             PropertyId::BorderBottomWidth => {
-                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderSideWidth>(input, options) {
                     return Ok(Property::BorderBottomWidth(c));
                 }
             }
             PropertyId::BorderLeftWidth => {
-                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderSideWidth>(input, options) {
                     return Ok(Property::BorderLeftWidth(c));
                 }
             }
             PropertyId::BorderRightWidth => {
-                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderSideWidth>(input, options) {
                     return Ok(Property::BorderRightWidth(c));
                 }
             }
             PropertyId::BorderBlockStartWidth => {
-                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderSideWidth>(input, options) {
                     return Ok(Property::BorderBlockStartWidth(c));
                 }
             }
             PropertyId::BorderBlockEndWidth => {
-                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderSideWidth>(input, options) {
                     return Ok(Property::BorderBlockEndWidth(c));
                 }
             }
             PropertyId::BorderInlineStartWidth => {
-                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderSideWidth>(input, options) {
                     return Ok(Property::BorderInlineStartWidth(c));
                 }
             }
             PropertyId::BorderInlineEndWidth => {
-                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderSideWidth>(input, options) {
                     return Ok(Property::BorderInlineEndWidth(c));
                 }
             }
             PropertyId::BorderTopLeftRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::BorderTopLeftRadius((c, pre)));
                 }
             }
             PropertyId::BorderTopRightRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::BorderTopRightRadius((c, pre)));
                 }
             }
             PropertyId::BorderBottomLeftRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::BorderBottomLeftRadius((c, pre)));
                 }
             }
             PropertyId::BorderBottomRightRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::BorderBottomRightRadius((c, pre)));
                 }
             }
             PropertyId::BorderStartStartRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::BorderStartStartRadius(c));
                 }
             }
             PropertyId::BorderStartEndRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::BorderStartEndRadius(c));
                 }
             }
             PropertyId::BorderEndStartRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::BorderEndStartRadius(c));
                 }
             }
             PropertyId::BorderEndEndRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::BorderEndEndRadius(c));
                 }
             }
@@ -2979,7 +2958,7 @@ impl Property {
                 }
             }
             PropertyId::BorderWidth => {
-                if let Some(c) = parse_value::<border::BorderWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderWidth>(input, options) {
                     return Ok(Property::BorderWidth(c));
                 }
             }
@@ -2994,7 +2973,7 @@ impl Property {
                 }
             }
             PropertyId::BorderBlockWidth => {
-                if let Some(c) = parse_value::<border::BorderBlockWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderBlockWidth>(input, options) {
                     return Ok(Property::BorderBlockWidth(c));
                 }
             }
@@ -3009,7 +2988,7 @@ impl Property {
                 }
             }
             PropertyId::BorderInlineWidth => {
-                if let Some(c) = parse_value::<border::BorderInlineWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderInlineWidth>(input, options) {
                     return Ok(Property::BorderInlineWidth(c));
                 }
             }
@@ -3084,7 +3063,7 @@ impl Property {
                 }
             }
             PropertyId::OutlineWidth => {
-                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                if let Some(c) = parse_non_negative::<border::BorderSideWidth>(input, options) {
                     return Ok(Property::OutlineWidth(c));
                 }
             }
@@ -3114,14 +3093,12 @@ impl Property {
                 }
             }
             PropertyId::FlexBasis(pre) => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::FlexBasis((c, pre)));
                 }
             }
             PropertyId::Flex(pre) => {
-                if let Some(c) = parse_value::<flex::Flex>(input, options) {
+                if let Some(c) = parse_non_negative::<flex::Flex>(input, options) {
                     return Ok(Property::Flex((c, pre)));
                 }
             }
@@ -3177,17 +3154,17 @@ impl Property {
                 }
             }
             PropertyId::RowGap => {
-                if let Some(c) = parse_value::<align::GapValue>(input, options) {
+                if let Some(c) = parse_non_negative::<align::GapValue>(input, options) {
                     return Ok(Property::RowGap(c));
                 }
             }
             PropertyId::ColumnGap => {
-                if let Some(c) = parse_value::<align::GapValue>(input, options) {
+                if let Some(c) = parse_non_negative::<align::GapValue>(input, options) {
                     return Ok(Property::ColumnGap(c));
                 }
             }
             PropertyId::Gap => {
-                if let Some(c) = parse_value::<align::Gap>(input, options) {
+                if let Some(c) = parse_non_negative::<align::Gap>(input, options) {
                     return Ok(Property::Gap(c));
                 }
             }
@@ -3348,73 +3325,59 @@ impl Property {
                 }
             }
             PropertyId::PaddingTop => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::PaddingTop(c));
                 }
             }
             PropertyId::PaddingBottom => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::PaddingBottom(c));
                 }
             }
             PropertyId::PaddingLeft => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::PaddingLeft(c));
                 }
             }
             PropertyId::PaddingRight => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::PaddingRight(c));
                 }
             }
             PropertyId::PaddingBlockStart => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::PaddingBlockStart(c));
                 }
             }
             PropertyId::PaddingBlockEnd => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::PaddingBlockEnd(c));
                 }
             }
             PropertyId::PaddingInlineStart => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::PaddingInlineStart(c));
                 }
             }
             PropertyId::PaddingInlineEnd => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_non_negative(input, options) {
                     return Ok(Property::PaddingInlineEnd(c));
                 }
             }
             PropertyId::PaddingBlock => {
-                if let Some(c) = parse_value::<margin_padding::PaddingBlock>(input, options) {
+                if let Some(c) = parse_non_negative::<margin_padding::PaddingBlock>(input, options)
+                {
                     return Ok(Property::PaddingBlock(c));
                 }
             }
             PropertyId::PaddingInline => {
-                if let Some(c) = parse_value::<margin_padding::PaddingInline>(input, options) {
+                if let Some(c) = parse_non_negative::<margin_padding::PaddingInline>(input, options)
+                {
                     return Ok(Property::PaddingInline(c));
                 }
             }
             PropertyId::Padding => {
-                if let Some(c) = parse_value::<margin_padding::Padding>(input, options) {
+                if let Some(c) = parse_non_negative::<margin_padding::Padding>(input, options) {
                     return Ok(Property::Padding(c));
                 }
             }
@@ -3567,7 +3530,7 @@ impl Property {
                 }
             }
             PropertyId::FontSize => {
-                if let Some(c) = parse_value::<font::FontSize>(input, options) {
+                if let Some(c) = parse_non_negative::<font::FontSize>(input, options) {
                     return Ok(Property::FontSize(c));
                 }
             }
@@ -3637,6 +3600,8 @@ impl Property {
                 if let Some(c) = parse_value::<SmallList<animation::Animation, 1>>(input, options) {
                     return Ok(Property::Animation((c, pre)));
                 }
+                input.reset(&state);
+                return animation::parse_unparsed(property_id, input, options);
             }
             PropertyId::AnimationName(pre) => {
                 if let Some(c) =
@@ -3644,6 +3609,8 @@ impl Property {
                 {
                     return Ok(Property::AnimationName((c, pre)));
                 }
+                input.reset(&state);
+                return animation::parse_unparsed(property_id, input, options);
             }
             PropertyId::Transform(pre) => {
                 if let Some(c) = parse_value::<transform::TransformList>(input, options) {
@@ -3715,10 +3682,11 @@ impl Property {
                     return Ok(Property::Direction(c));
                 }
             }
-            PropertyId::Composes => {
+            PropertyId::Composes if input.flags.css_modules() => {
                 return css::generic::parse_with_options::<css_modules::Composes>(input, options)
                     .map(Property::Composes);
             }
+            PropertyId::Composes => {}
             PropertyId::MaskImage(pre) => {
                 if let Some(c) =
                     parse_value::<SmallList<css::css_values::image::Image, 1>>(input, options)
@@ -5057,15 +5025,5 @@ impl Property {
             (Property::Custom(a), Property::Custom(b)) => a.eql(b),
             _ => false,
         }
-    }
-}
-
-// `declaration::placeholder_property()` (the moved-out slot
-// sentinel in `DeclarationBlock::minify`) is
-// `Property::All(CSSWideKeyword::RevertLayer)`.
-impl Default for Property {
-    #[inline]
-    fn default() -> Self {
-        Property::All(CSSWideKeyword::RevertLayer)
     }
 }

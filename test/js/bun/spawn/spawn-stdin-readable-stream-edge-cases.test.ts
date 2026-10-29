@@ -453,7 +453,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       { stdout: "pipe", stderr: "ignore" },
       { stdout: "pipe", stderr: "pipe" },
       { stdout: "pipe", stderr: "inherit" },
-    ];
+    ] as const;
 
     for (const config of configs) {
       const stream = new ReadableStream({

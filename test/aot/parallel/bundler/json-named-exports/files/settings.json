@@ -1,0 +1,9 @@
+{
+  "name": "settings",
+  "level": 3,
+  "nested": { "deep": [1, 2, 3] },
+  "not-an-identifier": "dashed",
+  "application/json": { "source": "iana" },
+  "unused": "nobody imports this name",
+  "default": "a key named default"
+}

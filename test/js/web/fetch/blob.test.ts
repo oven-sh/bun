@@ -1,6 +1,7 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
-import type { BlobOptions } from "node:buffer";
+import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
 
@@ -58,11 +59,12 @@ for (const info of [
     expect(blob.slice(0, NaN).size).toBe(0);
     // @ts-expect-error
     expect(blob.slice(Symbol(), "-123").size).toBe(6);
+    // @ts-expect-error
     expect(blob.slice(Object.create(null), "-123").size).toBe(6);
     // @ts-expect-error
     expect(blob.slice(null, "-123").size).toBe(6);
     expect(blob.slice(0, 10).size).toBe(blob.size);
-    expect(blob.slice("text/plain;charset=utf-8").type).toBe("text/plain;charset=utf-8");
+    expect((blob as Bun.BunFile).slice("text/plain;charset=utf-8").type).toBe("text/plain;charset=utf-8");
 
     // test Blob.slice().slice(), issue#6252
     expect(await blob.slice(0, 4).slice(0, 3).text()).toBe("Bun");
@@ -105,10 +107,15 @@ test("new Blob", () => {
 
 test("new Blob stringifies non-Blob object parts in order", async () => {
   const url = new URL("https://example.com/path");
+  // @ts-expect-error
   expect(await new Blob([url]).text()).toBe("https://example.com/path");
+  // @ts-expect-error
   expect(await new Blob(["a", url, "b"]).text()).toBe("ahttps://example.com/pathb");
+  // @ts-expect-error
   expect(await new Blob(["a", {}, "b"]).text()).toBe("a[object Object]b");
+  // @ts-expect-error
   expect(await new Blob(["a", {}, "b", { toString: () => "X" }]).text()).toBe("a[object Object]bX");
+  // @ts-expect-error
   expect(await new Blob(["a", ["x", "y"], "b"]).text()).toBe("ax,yb");
 });
 
@@ -187,18 +194,38 @@ test("blob: can reliable get type from fetch #10072", async () => {
 
 // https://github.com/oven-sh/bun/issues/13049
 test("new Blob(new Uint8Array()) is supported", async () => {
-  const blob = new Blob(Buffer.from("1234"));
+  const blob = new Blob(Buffer.from("1234") as any);
   expect(await blob.text()).toBe("1234");
+});
+
+test("estimateShallowMemoryUsageOf(new File()) is at least that of a Blob", () => {
+  expect(estimateShallowMemoryUsageOf(new File(["1234"], "file.txt"))).toBeGreaterThanOrEqual(
+    estimateShallowMemoryUsageOf(new Blob(["1234"])),
+  );
+});
+
+test("new File reads new.target.prototype before it looks for the realm of new.target", () => {
+  const { proxy, revoke } = Proxy.revocable(function () {}, {});
+  revoke();
+  const keys: PropertyKey[] = [];
+  const newTarget = new Proxy(proxy, {
+    get(target, key) {
+      keys.push(key);
+    },
+  });
+  expect(() => Reflect.construct(File, [[], "file.txt"], newTarget)).toThrow(TypeError);
+  expect(keys).toEqual(["prototype"]);
 });
 
 // https://github.com/oven-sh/bun/issues/13049
 test("new File(new Uint8Array()) is supported", async () => {
-  const blob = new File(Buffer.from("1234"), "file.txt");
+  const blob = new File(Buffer.from("1234") as any, "file.txt");
   expect(await blob.text()).toBe("1234");
   expect(blob.name).toBe("file.txt");
 });
 
 test("new File('123', '123') is NOT supported", async () => {
+  // @ts-expect-error
   expect(() => new File("123", "123")).toThrow();
 });
 
@@ -245,6 +272,7 @@ describe("new File() lastModified option", () => {
 });
 
 test("new Blob('123') is NOT supported", async () => {
+  // @ts-expect-error
   expect(() => new Blob("123")).toThrow();
 });
 
@@ -268,7 +296,7 @@ test("blob: can set name property #10178", () => {
   expect(blob.name).toBe(42);
 
   class MyBlob extends Blob {
-    constructor(sources: Array<BinaryLike | Blob>, options?: BlobOptions) {
+    constructor(sources: Array<BinaryLike | Blob>, options?: BlobPropertyBag) {
       super(sources, options);
       // @ts-expect-error
       this.name = "logo.svg";
@@ -291,7 +319,7 @@ test("blob: can set name property #10178", () => {
 
   class MyOtherBlob extends Blob {
     name: string | number;
-    constructor(sources: Array<BinaryLike | Blob>, options?: BlobOptions) {
+    constructor(sources: Array<BinaryLike | Blob>, options?: BlobPropertyBag) {
       super(sources, options);
       this.name = "logo.svg";
     }
@@ -636,6 +664,9 @@ describe("consuming a slice's stream after the Blobs were collected", () => {
       return blob;
     });
     while (collected < tracked) await gcTick();
+    // Bun: `bun run` keeps every local variable of a function that waits alive. Compiled ahead of time, a registry that
+    // nothing names behind the loop is collected while the loop waits, and its callback never runs. So it is named here.
+    registry.unregister(registry);
     return result;
   }
 

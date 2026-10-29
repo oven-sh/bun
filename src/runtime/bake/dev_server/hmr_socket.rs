@@ -8,12 +8,13 @@ use crate::timer::EventLoopTimerState;
 
 use super::source_map_store::{self, RemoveOrUpgradeMode};
 use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
-use crate::bake::dev_server_body::HmrTopicBits;
+use crate::bake::dev_server::HmrTopicBits;
 
 // Struct definition lives in `dev_server/mod.rs` so the public
 // `crate::bake::dev_server::HmrSocket` path and these impl blocks name a
 // single type (no cross-type pointer casts).
 pub(crate) use super::HmrSocket;
+use super::*;
 
 impl HmrSocket {
     pub(crate) fn new(dev: &mut DevServer) -> Box<HmrSocket> {
@@ -163,7 +164,7 @@ impl HmrSocket {
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
                 if let Some(agent) = dev.inspector() {
                     if self.inspector_connection_id > -1 {
-                        let pattern_str = bun_core::String::from_bytes(pattern);
+                        let pattern_str = bun_core::StringView::from_bytes(pattern);
                         agent.notify_client_navigated(
                             dev.inspector_server_id,
                             self.inspector_connection_id,
@@ -250,7 +251,7 @@ impl HmrSocket {
                 let dev = unsafe { self.dev() };
 
                 if let Some(agent) = dev.inspector() {
-                    let log_str = bun_core::String::from_bytes(data);
+                    let log_str = bun_core::StringView::from_bytes(data);
                     agent.notify_console_log(dev.inspector_server_id, kind as u8, &log_str);
                 }
 
@@ -354,5 +355,129 @@ impl HmrSocket {
         // SAFETY: `s` was heap-allocated in `new()`'s caller; this is the sole
         // owner reclaiming it. Matches `s.dev.arena().destroy(s)`.
         drop(unsafe { bun_core::heap::take(s) });
+    }
+}
+
+/// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
+pub(super) fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
+    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(&Default::default())
+}
+
+// `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)
+// to be a `WebSocketHandler` and `ServerType` (= `DevServer`) to be a
+// `WebSocketUpgradeServer<SSL>`. The trait is wired explicitly and forward to the inherent method bodies in
+// `dev_server::hmr_socket`.
+impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
+    // `Wrap.apply` leaves the drain/ping/pong C callbacks `null` when
+    // `HAS_ON_* == false`.
+    const HAS_ON_DRAIN: bool = false;
+    const HAS_ON_PING: bool = false;
+    const HAS_ON_PONG: bool = false;
+
+    // Note (noalias re-entrancy): the trait now hands the handler a raw
+    // `*mut Self` (see `WebSocketHandler` doc). `HmrSocket::on_close` already
+    // takes `*mut Self`; `on_open`/`on_message` still take `&mut self` so
+    // re-derive a fresh `&mut *this` here (not carried in from a `noalias`
+    // dispatch-frame borrow).
+    #[inline]
+    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
+        // SAFETY: `this` is the live user-data pointer (per trait contract).
+        HmrSocket::on_open(unsafe { &mut *this }, ws)
+    }
+    #[inline]
+    unsafe fn on_message(
+        this: *mut Self,
+        ws: bun_uws_sys::AnyWebSocket,
+        message: &[u8],
+        opcode: bun_uws_sys::Opcode,
+    ) {
+        // SAFETY: see `on_open`.
+        HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode)
+    }
+    #[inline]
+    unsafe fn on_close(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
+        // SAFETY: see `on_open`.
+        HmrSocket::on_close(this, ws, code, message)
+    }
+    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
+    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+}
+
+impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
+    unsafe fn on_websocket_upgrade(
+        this: *mut Self,
+        res: *mut bun_uws_sys::NewAppResponse<SSL>,
+        req: &mut Request,
+        upgrade_ctx: &mut WebSocketUpgradeContext,
+        id: usize,
+    ) {
+        debug_assert_eq!(id, 0);
+        // Note: DevServer always registers `*mut Self` with `id == 0`
+        // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
+        // callback's duration. `res.upgrade(..)` synchronously runs `on_open`
+        // → `HmrSocket::dev()`, which materializes a second `&mut DevServer`
+        // from the socket's backref, so no `&mut DevServer` may span it — the
+        // pre-upgrade borrows below are scoped to their statements. uWS
+        // guarantees `res` is non-null and live for the upgrade callback
+        // (`Response<SSL>` is an opaque handle); every `&mut *res` below is
+        // likewise statement-scoped.
+        //
+        // SAFETY: `this` is the live DevServer registered for the upgrade callback.
+        if !is_allowed_dev_host(unsafe { &*this }, req) {
+            // SAFETY: `res` is live for this callback (see Note above).
+            host_forbidden(unsafe { &mut *res }.as_any_response());
+            return;
+        }
+        if !is_allowed_dev_origin(req) {
+            // SAFETY: `res` is live for this callback (see Note above).
+            origin_forbidden(unsafe { &mut *res }.as_any_response());
+            return;
+        }
+        // SAFETY: as above; the borrow is statement-scoped, ending before `upgrade`.
+        let dw = bun_core::heap::into_raw(HmrSocket::new(unsafe { &mut *this }));
+        // SAFETY: `this` is live (see above).
+        let _ = unsafe { (*this).active_websocket_connections.insert(dw, ()) };
+        // SAFETY: `res` is live for this callback (see Note above); `on_open`
+        // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
+        let socket = unsafe {
+            (&mut *res).upgrade(
+                dw,
+                req.header(b"sec-websocket-key").unwrap_or(b""),
+                req.header(b"sec-websocket-protocol").unwrap_or(b""),
+                req.header(b"sec-websocket-extension").unwrap_or(b""),
+                Some(upgrade_ctx),
+            )
+        };
+        if socket.is_null() {
+            // The connection was already closed, so uWS never stored `dw` and `on_close` won't run.
+            // SAFETY: `this` is live (see above).
+            let _ = unsafe { (*this).active_websocket_connections.remove(&dw) };
+            // SAFETY: `dw` was allocated above and nothing else owns it.
+            drop(unsafe { bun_core::heap::take(dw) });
+        }
+    }
+}
+
+impl DevServer {
+    pub(crate) fn publish(&self, topic: HmrTopic, message: &[u8], opcode: Opcode) {
+        if let Some(s) = &self.server {
+            let _ = s.publish(&topic.uws_topic(), message, opcode, false);
+        }
+    }
+
+    pub(crate) fn num_subscribers(&self, topic: HmrTopic) -> u32 {
+        if let Some(s) = &self.server {
+            s.num_subscribers(&topic.uws_topic())
+        } else {
+            0
+        }
+    }
+
+    /// Either of two conditions make this true:
+    /// - The inspector is enabled
+    /// - The user passed "console": true in serve options
+    pub(super) fn should_receive_console_log_from_browser(&self) -> bool {
+        self.inspector().is_some() || self.broadcast_console_log_from_browser_to_server
     }
 }

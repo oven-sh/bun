@@ -1,3 +1,4 @@
+// @ts-expect-error no default export
 import testHelpers from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 const { escapeRegExp, escapeRegExpForPackageNameMatching } = testHelpers;

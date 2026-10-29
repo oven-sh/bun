@@ -1,0 +1,1 @@
+function run(x) { const r = Array.from({ length: 3 }, x); let n = 0; for (let i = 0; i < r.length; i++) { const v = r[i]; if (v === undefined) n += 1; else n += 100; if (i in r) n += 10; } return n; } console.log(run());

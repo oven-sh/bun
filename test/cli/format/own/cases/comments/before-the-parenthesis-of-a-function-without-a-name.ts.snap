@@ -1,0 +1,27 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = async  /* 1 */(b) => b;
+const c = async  /* 2 */(d) => d;
+const e = <T> /* 3 */(f: T) => f;
+const g = async function* /* 4 */() {};
+h(function* /* 5 */() {});
+const i = <T> (
+// 6
+  j: T,
+) => j;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = async  /* 1 */(b) => b;
+const c = async  /* 2 */(d) => d;
+const e = <T> /* 3 */(f: T) => f;
+const g = async function* /* 4 */() {};
+h(function* /* 5 */() {});
+const i = <T> (
+// 6
+  j: T,
+) => j;
+
+===================== End =====================

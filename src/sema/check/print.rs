@@ -1,18 +1,18 @@
 //! Prints types, symbols and signatures as TypeScript does in messages.
 //!
-//! A port of the behavior of `typeToString`, `symbolToString` and `signatureToString` in
-//! `nodebuilderimpl.go` and the printer. There the node builder creates syntax from a type and the
-//! printer emits the syntax. Here a [`Node`] is the text of a type node, with the precedence the
-//! printer uses to parenthesize it.
+//! A port of `typeToString`, `symbolToString` and `signatureToString` in `nodebuilderimpl.go`, and of
+//! the printer. There the node builder creates syntax from a type and the printer emits the syntax.
+//! Here a [`Node`] is the text of a type node, with the precedence the printer uses to parenthesize it.
 
 use super::enclosing_declaration::Enclosing;
 use super::errors_declaration_emit::{EndOfChain, Meaning};
+use crate::util::SharedSort;
 
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId};
-use crate::resolve::remove_file_extension;
+use crate::resolve::{displayed_path, remove_file_extension};
+use crate::verify::is_identifier_text;
 use bun_core::fmt::{ItoaBuf, VecWriter, digit_count, itoa};
-use bun_core::lexer::is_identifier;
 use bun_core::strings::{CodepointIterator, Cursor};
 use core::fmt::Write;
 use std::ops::ControlFlow;
@@ -20,10 +20,10 @@ use std::ops::ControlFlow;
 #[path = "print_node_reuse.rs"]
 mod node_reuse;
 
-/// `nodebuilder.Flags`, those that change what is printed or reported.
-const NO_TRUNCATION: u32 = 1 << 0;
+/// The `nodebuilder.Flags` that change what's printed or reported.
+pub(super) const NO_TRUNCATION: u32 = 1 << 0;
 pub(super) const USE_FULLY_QUALIFIED_TYPE: u32 = 1 << 1;
-const ALLOW_UNIQUE_ES_SYMBOL_TYPE: u32 = 1 << 2;
+pub(super) const ALLOW_UNIQUE_ES_SYMBOL_TYPE: u32 = 1 << 2;
 pub(super) const USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE: u32 = 1 << 3;
 pub(super) const NO_TYPE_REDUCTION: u32 = 1 << 4;
 const GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS: u32 = 1 << 5;
@@ -32,12 +32,13 @@ const ALLOW_ANONYMOUS_IDENTIFIER: u32 = 1 << 7;
 const ALLOW_NODE_MODULES_RELATIVE_PATHS: u32 = 1 << 8;
 const ALLOW_THIS_IN_OBJECT_LITERAL: u32 = 1 << 9;
 pub(super) const WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL: u32 = 1 << 10;
-const USE_TYPE_OF_FUNCTION: u32 = 1 << 11;
-const USE_STRUCTURAL_FALLBACK: u32 = 1 << 12;
-const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
+pub(super) const USE_TYPE_OF_FUNCTION: u32 = 1 << 11;
+pub(super) const USE_STRUCTURAL_FALLBACK: u32 = 1 << 12;
+pub(super) const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
 const FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES: u32 = 1 << 14;
 pub(super) const WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME: u32 = 1 << 15;
-/// What `typeToString` hands `typeToStringEx`.
+pub(super) const WRITE_ARRAY_AS_GENERIC_TYPE: u32 = 1 << 16;
+/// The flags that `typeToString` passes to `typeToStringEx`.
 pub(super) const TYPE_TO_STRING: u32 =
     ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
 /// `declarationEmitNodeBuilderFlags`
@@ -54,9 +55,6 @@ const DEFAULT_MAXIMUM_TRUNCATION_LENGTH: usize = 160;
 const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
 /// `any` with the synthetic leading comment of `createElidedInformationPlaceholder`.
 const ELIDED: &[u8] = b"/*elided*/ any";
-
-/// Maximum nesting depth for printing types of any kind. TypeScript has no such limit.
-const MAXIMUM_DEPTH: u32 = 150;
 
 /// `ast.TypePrecedence`
 const CONDITIONAL: u8 = 0;
@@ -75,6 +73,16 @@ impl Checker<'_, '_> {
         file: FileId,
         e: ExprId,
     ) -> Option<Vec<u8>> {
+        let (_, start, end) = self.span_of_assignment_declaration_name(file, e)?;
+        Some(self.source_text(file, start, end))
+    }
+
+    /// `GetNonAssignedNameOfDeclaration(e)` for an assignment or a call that declares a property.
+    pub(super) fn span_of_assignment_declaration_name(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> Option<(FileId, u32, u32)> {
         let hir = self.hir(file);
         let name = match hir[e].kind {
             // `module.exports = value` has no name.
@@ -85,45 +93,35 @@ impl Checker<'_, '_> {
                 return None;
             }
             // `GetElementOrPropertyAccessName`, or else the whole left-hand side.
-            ExprKind::Assign { target, .. } => match hir[target].kind {
-                ExprKind::Dot { name, name_pos, .. } if !is_private_name_at(hir, name_pos) => {
-                    return Some(self.atom_text(name));
+            ExprKind::Assign { target, .. } => match hir.checked_kind(target) {
+                ExprKind::Dot { .. } if !is_private_name_at(hir, hir.name_pos(target)) => {
+                    return Some(self.span_of_token(file, hir.name_pos(target)));
                 }
-                ExprKind::Index { index, .. } if is_string_or_numeric_literal_like(hir, index) => {
+                ExprKind::Index { index, .. }
+                    if is_string_or_numeric_literal_like_in_parentheses(hir, index) =>
+                {
                     index
                 }
                 _ => target,
             },
             _ => crate::bind::define_property_call(hir, e)?.1,
         };
-        Some(self.source_text(
+        Some((
             file,
             self.start_inside_parentheses(file, name),
             self.end_inside_parentheses(file, name),
         ))
     }
 
-    /// `typeToStringEx(t, nil, flags)`
-    pub(super) fn write_type(&mut self, out: &mut Vec<u8>, ty: TypeId, flags: u32) {
-        out.append(&mut type_to_string_with(self, ty, None, flags));
-    }
-
-    /// What `write` writes.
-    fn printed(&mut self, write: impl FnOnce(&mut Self, &mut Vec<u8>)) -> Vec<u8> {
-        let mut out = Vec::new();
-        write(self, &mut out);
-        out
-    }
-
-    /// `typeToStringEx` when and where tsgo prints `ty` for a message, for its resolution side
-    /// effects: it counts as a level, and cycles are detected through it.
+    /// Runs `typeToStringEx` when and where tsgo prints `ty` for a message, only for its resolution
+    /// side effects: it counts as a level, and cycles are detected through it.
     pub(super) fn resolve_by_printing(&mut self, ty: TypeId) {
         self.type_to_string(ty);
     }
 
     /// `typeToString`
     pub fn type_to_string(&mut self, ty: TypeId) -> Vec<u8> {
-        self.printed(|c, out| c.write_type(out, ty, TYPE_TO_STRING))
+        type_to_string_with(self, ty, None, TYPE_TO_STRING)
     }
 
     /// `TypeToTypeNode` with the flags of `typeWriterWalker.writeTypeOrSymbol`.
@@ -133,7 +131,7 @@ impl Checker<'_, '_> {
         ty: TypeId,
         enclosing_declaration: Option<Enclosing>,
     ) -> Vec<u8> {
-        // `writeTypeOrSymbol` does not query the node builder about it in a test without errors.
+        // `writeTypeOrSymbol` doesn't query the node builder about it in a test without errors.
         if ty == TypeId::ERROR {
             return super::type_writer::ERROR_TYPE_TEXT.as_bytes().to_vec();
         }
@@ -146,16 +144,21 @@ impl Checker<'_, '_> {
 
     /// `getTypeNameForErrorDisplay`
     pub fn type_to_string_fully_qualified(&mut self, ty: TypeId) -> Vec<u8> {
-        self.printed(|c, out| c.write_type(out, ty, USE_FULLY_QUALIFIED_TYPE))
+        type_to_string_with(self, ty, None, USE_FULLY_QUALIFIED_TYPE)
     }
 
     /// `typeToStringEx(t, nil, TypeFormatFlagsNoTypeReduction)`: an intersection that reduces to
     /// `never` is printed in full, not as `never`.
     pub fn type_to_string_without_reduction(&mut self, ty: TypeId) -> Vec<u8> {
-        self.printed(|c, out| c.write_type(out, ty, NO_TYPE_REDUCTION))
+        type_to_string_with(self, ty, None, NO_TYPE_REDUCTION)
     }
 
-    /// `t.symbol.ValueDeclaration`, if that is an expression (`ast.IsExpression`), and the scope
+    /// `typeToStringEx(t, nil, TypeFormatFlagsWriteArrayAsGenericType)`: `Array<T>`, not `T[]`.
+    pub(super) fn type_to_string_with_generic_arrays(&mut self, ty: TypeId) -> Vec<u8> {
+        type_to_string_with(self, ty, None, WRITE_ARRAY_AS_GENERIC_TYPE)
+    }
+
+    /// `t.symbol.ValueDeclaration`, if that's an expression (`ast.IsExpression`), and the scope
     /// from which names are resolved there.
     fn value_declaration_expression_of_type(
         &self,
@@ -233,23 +236,17 @@ impl Checker<'_, '_> {
     }
 
     /// `symbolToString`
-    pub(super) fn write_symbol(&mut self, out: &mut Vec<u8>, symbol: Sym) {
-        out.append(&mut with_printer(self, None, None, IGNORE_ERRORS, |p| {
-            p.symbol_to_text(symbol)
-        }));
-    }
-
-    /// `symbolToString`
     pub fn symbol_to_string(&mut self, symbol: Sym) -> Vec<u8> {
-        self.printed(|c, out| c.write_symbol(out, symbol))
+        self.symbol_to_string_at(symbol, None)
     }
 
     /// `getSpecifierForModuleSymbol` without an enclosing file: the name of the symbol without its quotes.
     pub(super) fn specifier_of_module(&self, symbol: Sym) -> Vec<u8> {
         let files = self.files();
-        let decls = files.decls(symbol);
+        let decls = files.decls_of(symbol);
         if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
-            return remove_file_extension(files.module(file).file_name()).to_owned();
+            let file_name = displayed_path(files.module(file).file_name());
+            return remove_file_extension(&file_name).to_owned();
         }
         let ambient_name = |&(file, decl): &(FileId, Decl)| match decl {
             Decl::Module(m) => match self.hir(file)[m].name {
@@ -261,7 +258,7 @@ impl Checker<'_, '_> {
         // `GetSourceFileOfModule(symbol).FileName()`: what `export =` names, with what
         // `declare module "m"` adds to the module (`getCommonJSExportEquals`), has its own name.
         if let Some(&(file, _)) = decls.iter().find(|it| ambient_name(it).is_none()) {
-            return files.module(file).file_name().to_owned();
+            return displayed_path(files.module(file).file_name()).into_owned();
         }
         match decls.iter().find_map(ambient_name) {
             Some(name) => self.atom_text(name),
@@ -270,7 +267,6 @@ impl Checker<'_, '_> {
     }
 
     /// `symbol.Parent` of the member `m`, if a class or an interface declares it.
-    #[cfg(feature = "baselines")]
     pub(super) fn symbol_of_member_owner(&self, file: FileId, m: MemberId) -> Option<Sym> {
         let bound = self.bound(file);
         let container = match bound.member_owner[m.idx()] {
@@ -299,9 +295,10 @@ impl Checker<'_, '_> {
         }))
     }
 
-    /// `getNameOfSymbolAsWritten` for the `__object` symbol of an object literal: the name of the variable it initializes, else `__object`.
+    /// `getNameOfSymbolAsWritten` for the `__object` symbol of an object literal: the name of the
+    /// variable it initializes, else `__object`.
     pub(super) fn name_of_object_literal(&self, file: FileId, e: ExprId) -> Vec<u8> {
-        match self.bound(file).expr_parent[e.idx()] {
+        match self.bound(file).parent_of_expr(e) {
             Parent::VarInit(declaration) if !is_parenthesized(self.hir(file), e) => {
                 self.declaration_name_of_variable(file, self.hir(file)[declaration].pat)
             }
@@ -309,7 +306,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getNameOfSymbolAsWritten` for the `__type` symbol of a type literal: the name of the variable it annotates, else `__type`.
+    /// `getNameOfSymbolAsWritten` for the `__type` symbol of a type literal: the name of the
+    /// variable it annotates, else `__type`.
     pub(super) fn name_of_type_literal(&self, file: FileId, node: TypeNodeId) -> Vec<u8> {
         let mut declarations = self.hir(file).var_decls.iter();
         match declarations.find(|declaration| declaration.ty == node) {
@@ -318,7 +316,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `DeclarationNameToString` of a variable's name. An identifier is read from the atom table: default library files do not retain their text.
+    /// `DeclarationNameToString` of a variable's name. An identifier is read from the atom table,
+    /// because default library files don't retain their text.
     fn declaration_name_of_variable(&self, file: FileId, pat: PatId) -> Vec<u8> {
         let hir = self.hir(file);
         match hir[pat].kind {
@@ -328,19 +327,13 @@ impl Checker<'_, '_> {
     }
 
     /// `symbolToString` for a property.
-    pub(super) fn write_prop(&mut self, out: &mut Vec<u8>, prop: &Prop) {
-        let mut text = with_printer(self, None, None, IGNORE_ERRORS, |printer| {
-            printer.name_of_property_as_written(prop)
-        });
-        out.append(&mut text);
-    }
-
-    /// `symbolToString` for a property.
     pub fn prop_to_string(&mut self, prop: &Prop) -> Vec<u8> {
-        self.printed(|c, out| c.write_prop(out, prop))
+        with_printer(self, None, None, IGNORE_ERRORS, |printer| {
+            printer.name_of_property_as_written(prop)
+        })
     }
 
-    /// `signatureToString`. It is truncated regardless of `noErrorTruncation`.
+    /// `signatureToString`. It's truncated regardless of `noErrorTruncation`.
     pub(super) fn write_signature(&mut self, out: &mut Vec<u8>, signature: SigId) {
         let kind = match *self.types().sig(self.types().sig_origin(signature)) {
             SigData::Construct { .. } | SigData::DefaultConstruct { .. } => {
@@ -359,15 +352,9 @@ impl Checker<'_, '_> {
         let flags = IGNORE_ERRORS | WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME;
         let mut text = with_printer(self, None, None, flags, |printer| {
             printer.never_ascii_escape = true;
-            printer.signature_to_text(signature, kind, b"", false)
+            printer.signature_to_text(signature, kind, b"", false, None)
         });
         out.append(&mut text);
-    }
-
-    /// `t.alias`, as far as it can be determined: the type alias `type_to_string` prints `ty` as.
-    /// `None`: it expands `ty`.
-    pub fn alias_for_display(&mut self, ty: TypeId) -> Option<Sym> {
-        self.alias_symbol_of_type(ty)
     }
 
     /// `c.varianceTypeParameter = parameter`: the type parameter that `sub-T` and `super-T` are
@@ -381,8 +368,17 @@ impl Checker<'_, '_> {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `NodeBuilder.SerializeTypeForDeclaration` for a declaration of `file`. `ty`:
-    /// `getTypeOfSymbol(symbol)`. `declaration`: none if nothing is reused from its syntax.
+    /// `GetTextOfNode`. Returns an empty slice if the node is missing, the HIR doesn't record its
+    /// start, or the file's text isn't retained (the default library).
+    pub(super) fn get_text_of_node(&self, file: FileId, node: hir::Node) -> &'p [u8] {
+        let hir = self.hir(file);
+        let (start, end) = (hir.start(node), self.end_of_node(file, node));
+        let text = hir.text.get(start as usize..end as usize);
+        text.filter(|_| start != 0).unwrap_or_default()
+    }
+
+    /// `NodeBuilder.SerializeTypeForDeclaration` for a declaration of `file`. `ty` is
+    /// `getTypeOfSymbol(symbol)`. `declaration` is `None` if nothing is reused from its syntax.
     pub(super) fn serialize_type_for_declaration(
         &mut self,
         file: FileId,
@@ -392,10 +388,9 @@ impl<'p, 's> Checker<'p, 's> {
         flags: u32,
         tracker: &mut dyn SymbolTracker<'p>,
     ) -> Vec<u8> {
-        let enclosing_declaration = Some(enclosing_declaration);
         with_printer(
             self,
-            enclosing_declaration,
+            Some(enclosing_declaration),
             Some(tracker),
             flags,
             |printer| {
@@ -427,10 +422,9 @@ impl<'p, 's> Checker<'p, 's> {
         tracker: &mut dyn SymbolTracker<'p>,
     ) -> Vec<u8> {
         let signature = self.sig_of_declaration(file, signature_declaration);
-        let enclosing_declaration = Some(enclosing_declaration);
         with_printer(
             self,
-            enclosing_declaration,
+            Some(enclosing_declaration),
             Some(tracker),
             flags,
             |printer| printer.serialize_return_type_for_signature(signature).text,
@@ -444,7 +438,6 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         signature_declaration: FnId,
         enclosing_declaration: Enclosing,
-        flags: u32,
         tracker: &mut dyn SymbolTracker<'p>,
     ) -> Vec<u8> {
         // `getTypeParametersFromDeclaration`
@@ -455,12 +448,11 @@ impl<'p, 's> Checker<'p, 's> {
         if type_parameters.is_empty() {
             return Vec::new();
         }
-        let enclosing_declaration = Some(enclosing_declaration);
         with_printer(
             self,
-            enclosing_declaration,
+            Some(enclosing_declaration),
             Some(tracker),
-            flags,
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS,
             |printer| {
                 let mut declarations = Vec::with_capacity(type_parameters.len());
                 for parameter in type_parameters {
@@ -496,6 +488,28 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
+    /// `createExpressionFromSymbolChain(chain, len(chain)-1)`, as `symbolToStringEx` prints it under
+    /// `SymbolFormatFlagsAllowAnyNodeKind`.
+    pub(super) fn create_expression_from_symbol_chain(
+        &mut self,
+        chain: &[Sym],
+        enclosing_declaration: Enclosing,
+        never_ascii_escape: bool,
+    ) -> Vec<u8> {
+        let enclosing_declaration =
+            (!enclosing_declaration.is_none()).then_some(enclosing_declaration);
+        with_printer(
+            self,
+            enclosing_declaration,
+            None,
+            IGNORE_ERRORS,
+            |printer| {
+                printer.never_ascii_escape = never_ascii_escape;
+                printer.create_expression_from_symbol_chain(chain, chain.len() - 1)
+            },
+        )
+    }
+
     /// `NodeBuilder.TryJSTypeNodeToTypeNode`
     pub(super) fn try_js_type_node_to_type_node(
         &mut self,
@@ -505,50 +519,47 @@ impl<'p, 's> Checker<'p, 's> {
         flags: u32,
         tracker: &mut dyn SymbolTracker<'p>,
     ) -> Option<Vec<u8>> {
-        let enclosing_declaration = Some(enclosing_declaration);
         with_printer(
             self,
-            enclosing_declaration,
+            Some(enclosing_declaration),
             Some(tracker),
             flags,
             |printer| {
                 printer
-                    .try_reuse_type_node(file, node)
+                    .try_reuse_type_node(file, node, 0)
                     .map(|node| node.text)
             },
         )
     }
 
-    /// The printed text of `what`, a node of `file` that the declaration transformer reuses
-    /// verbatim. The transformer has already visited it for anything that prevents reuse, so
-    /// nothing is tracked.
+    /// Returns the printed text of `what`, a node of `file` that the declaration transformer reuses verbatim.
+    /// The transformer has already visited it for anything that prevents reuse, so nothing is tracked.
     pub(super) fn text_of_reused_node(
         &mut self,
         file: FileId,
-        what: Written,
+        what: ReusedNode,
         enclosing_declaration: Enclosing,
     ) -> Vec<u8> {
-        let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
         with_printer(
             self,
             Some(enclosing_declaration),
             None,
-            flags,
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS,
             |printer| match what {
-                Written::Type(node) => {
+                ReusedNode::Type(node) => {
                     printer.is_transformer = true;
                     printer.reuse_type_node(file, node).text
                 }
-                Written::TypeParameter(tp) => {
+                ReusedNode::TypeParameter(tp) => {
                     printer.is_transformer = true;
                     (printer.visit_type_parameter_declaration(file, tp)).unwrap_or_default()
                 }
-                Written::BindingName(pat) => {
+                ReusedNode::BindingName(pat) => {
                     printer.is_transformer = true;
                     printer.binding_name_text(file, pat)
                 }
-                Written::PropertyName(name) => printer.property_key_text(file, name),
-                Written::EntityName(e) => printer.entity_name_text(file, e).unwrap_or_default(),
+                ReusedNode::PropertyName(name) => printer.property_key_text(file, name),
+                ReusedNode::EntityName(e) => printer.entity_name_text(file, e).unwrap_or_default(),
             },
         )
     }
@@ -559,26 +570,19 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
         enclosing_declaration: Enclosing,
-        flags: u32,
         tracker: &mut dyn SymbolTracker<'p>,
     ) -> Vec<u8> {
         let ty = self.type_of_expr(file, e);
         let ty = self.regular(ty);
         let ty = self.widened(ty);
-        let enclosing_declaration = Some(enclosing_declaration);
-        with_printer(
-            self,
-            enclosing_declaration,
-            Some(tracker),
-            flags,
-            |printer| printer.type_to_node(ty).text,
-        )
+        let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
+        self.type_to_type_node(ty, Some(enclosing_declaration), flags, Some(tracker))
     }
 }
 
 /// See `Checker::text_of_reused_node`.
 #[derive(Copy, Clone)]
-pub(super) enum Written {
+pub(super) enum ReusedNode {
     Type(TypeNodeId),
     TypeParameter(TypeParamId),
     /// `cloneBindingName`
@@ -588,8 +592,8 @@ pub(super) enum Written {
     EntityName(ExprId),
 }
 
-/// `typeToStringEx`. `enclosing_declaration`: with the expression that it is.
-fn type_to_string_with(
+/// `typeToStringEx`. `enclosing_declaration` comes with the expression that it is.
+pub(super) fn type_to_string_with(
     checker: &mut Checker<'_, '_>,
     ty: TypeId,
     enclosing_declaration: Option<(Enclosing, ExprId)>,
@@ -599,7 +603,7 @@ fn type_to_string_with(
     if counts && checker.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
         return b"?".to_vec();
     }
-    let no_truncation = checker.files().options.no_error_truncation;
+    let no_truncation = checker.files().options.no_error_truncation || flags & NO_TRUNCATION != 0;
     let flags = if no_truncation {
         flags | NO_TRUNCATION
     } else {
@@ -628,14 +632,26 @@ fn type_to_string_with(
 
 /// `strings.ToValidUTF8(text, "\uFFFD")` for text that leaves the checker.
 pub(super) fn to_valid_utf8(text: Vec<u8>) -> Vec<u8> {
-    match bstr::ByteSlice::to_str_lossy(&text[..]) {
-        std::borrow::Cow::Borrowed(_) => text,
-        std::borrow::Cow::Owned(valid) => valid.into_bytes(),
+    if std::str::from_utf8(&text).is_ok() {
+        return text;
     }
+    let mut valid = Vec::with_capacity(text.len());
+    // True if the previous byte was invalid. A run of invalid bytes is replaced once.
+    let mut invalid = false;
+    for chunk in text.utf8_chunks() {
+        if !chunk.valid().is_empty() {
+            valid.extend_from_slice(chunk.valid().as_bytes());
+            invalid = false;
+        }
+        if !chunk.invalid().is_empty() && !std::mem::replace(&mut invalid, true) {
+            valid.extend_from_slice("\u{FFFD}".as_bytes());
+        }
+    }
+    valid
 }
 
-/// Printing resolves the types it encounters. A cycle through here is not an error, and the state
-/// of the check in progress is left unchanged.
+/// Printing resolves the types it encounters. A cycle through here isn't an error, and the state of
+/// the check in progress is left unchanged.
 fn with_printer<'p, T>(
     checker: &mut Checker<'p, '_>,
     enclosing_declaration: Option<Enclosing>,
@@ -665,7 +681,6 @@ fn with_printer<'p, T>(
             reverse_mapped_stack: Vec::new(),
             mapper: MapperId::IDENTITY,
             enclosing_symbol_types: Vec::new(),
-            depth: 0,
             enclosing_declaration,
             enclosing_expression: None,
             tracker: tracker.map(|tracker| tracker as &mut dyn SymbolTracker<'p>),
@@ -704,7 +719,7 @@ struct Node {
     reference: Option<Vec<u8>>,
     /// `UnionTypeNode.Types`, each as it is emitted.
     types: Vec<Vec<u8>>,
-    /// The text under `inExtends`, if that differs.
+    /// The text under `inExtends`, if it differs.
     in_extends: Option<Vec<u8>>,
 }
 
@@ -729,7 +744,7 @@ impl Node {
         self
     }
 
-    /// `DeepCloneNode`: `emitNode.copyFrom` does not copy the synthetic comments.
+    /// `DeepCloneNode`: `emitNode.copyFrom` doesn't copy the synthetic comments.
     fn deep_clone(mut self) -> Node {
         for text in self.texts() {
             if bun_core::strings::contains(text, ELIDED) {
@@ -749,7 +764,7 @@ impl Node {
         }
     }
 
-    /// A function type or a constructor type. `head`: all that precedes its return type.
+    /// A function type or a constructor type. `head` is everything before its return type.
     fn function(head: &[u8], returned: Node) -> Node {
         // `emitReturnType`, `emitTypeNode`: in the `extends` clause of a conditional type, a
         // conditional type and an `infer` type with a constraint are parenthesized.
@@ -772,12 +787,10 @@ impl Node {
             .into_iter()
             .map(|node| node.emit(TYPE_OPERATOR))
             .collect();
+        let text = types.join(&b" | "[..]);
         Node {
-            text: types.join(&b" | "[..]),
-            precedence: UNION,
-            reference: None,
             types,
-            in_extends: None,
+            ..Node::new(text, UNION)
         }
     }
 
@@ -817,6 +830,161 @@ fn type_arguments_text(nodes: Vec<Node>) -> Vec<u8> {
     }
 }
 
+/// `ast.OperatorPrecedence`. `Coalesce` is `LogicalOr`, `DisallowComma` is `Yield`.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum OperatorPrecedence {
+    Comma,
+    Spread,
+    Yield,
+    Assignment,
+    Conditional,
+    LogicalOr,
+    LogicalAnd,
+    BitwiseOr,
+    BitwiseXor,
+    BitwiseAnd,
+    Equality,
+    Relational,
+    Shift,
+    Additive,
+    Multiplicative,
+    Exponentiation,
+    Unary,
+    Update,
+    LeftHandSide,
+    OptionalChain,
+    Member,
+    Primary,
+    Parentheses,
+}
+
+impl OperatorPrecedence {
+    /// `GetBinaryOperatorPrecedence`, and that of the comma.
+    fn for_binary_operator(op: BinOp) -> OperatorPrecedence {
+        match op {
+            BinOp::Comma => OperatorPrecedence::Comma,
+            BinOp::Nullish | BinOp::Or => OperatorPrecedence::LogicalOr,
+            BinOp::And => OperatorPrecedence::LogicalAnd,
+            BinOp::BitOr => OperatorPrecedence::BitwiseOr,
+            BinOp::BitXor => OperatorPrecedence::BitwiseXor,
+            BinOp::BitAnd => OperatorPrecedence::BitwiseAnd,
+            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
+                OperatorPrecedence::Equality
+            }
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof => {
+                OperatorPrecedence::Relational
+            }
+            BinOp::Shl | BinOp::Shr | BinOp::UShr => OperatorPrecedence::Shift,
+            BinOp::Add | BinOp::Sub => OperatorPrecedence::Additive,
+            BinOp::Mul | BinOp::Div | BinOp::Rem => OperatorPrecedence::Multiplicative,
+            BinOp::Pow => OperatorPrecedence::Exponentiation,
+        }
+    }
+
+    /// The precedence of an access or a call, which is also the one its expression is emitted with.
+    fn for_chain(chain: Chain) -> OperatorPrecedence {
+        match chain {
+            Chain::No => OperatorPrecedence::Member,
+            Chain::Start | Chain::Continue => OperatorPrecedence::OptionalChain,
+        }
+    }
+
+    /// `GetExpressionPrecedence` of `e` without the parentheses around it.
+    fn for_expression(hir: &hir::File, e: ExprId) -> OperatorPrecedence {
+        match hir.checked_kind(e) {
+            ExprKind::Spread(_) => OperatorPrecedence::Spread,
+            ExprKind::Yield { .. } => OperatorPrecedence::Yield,
+            ExprKind::Assign { .. } => OperatorPrecedence::Assignment,
+            ExprKind::Cond { .. } => OperatorPrecedence::Conditional,
+            ExprKind::Binary { op, .. } => OperatorPrecedence::for_binary_operator(op),
+            ExprKind::AsConst(operand) if !hir.is_type_assertion(e, operand) => {
+                OperatorPrecedence::Relational
+            }
+            ExprKind::Unary {
+                op: UnOp::PostInc | UnOp::PostDec,
+                ..
+            } => OperatorPrecedence::Update,
+            ExprKind::Unary { .. }
+            | ExprKind::Await(_)
+            | ExprKind::NonNull(_)
+            | ExprKind::AsConst(_) => OperatorPrecedence::Unary,
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
+                OperatorPrecedence::for_chain(chain)
+            }
+            ExprKind::Call(call) => OperatorPrecedence::for_chain(hir[call].chain),
+            ExprKind::New(call) if hir[call].close_pos == u32::MAX => {
+                OperatorPrecedence::LeftHandSide
+            }
+            ExprKind::New(_)
+            | ExprKind::TaggedTemplate(_)
+            | ExprKind::ImportCall { .. }
+            | ExprKind::ImportMeta
+            | ExprKind::NewTarget(_) => OperatorPrecedence::Member,
+            _ => OperatorPrecedence::Primary,
+        }
+    }
+
+    /// `getBinaryExpressionPrecedence`: the precedences of the operands of `left op right`, plus
+    /// what `emitBinaryExpression` does for synthesized operands. The right operand of a `+` or `*`
+    /// that the parser creates is never a `+` or `*`, so the rules for that case are skipped.
+    fn for_operands(
+        hir: &hir::File,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+    ) -> (OperatorPrecedence, OperatorPrecedence) {
+        let precedence = OperatorPrecedence::for_binary_operator(op);
+        let right_precedence = match precedence {
+            OperatorPrecedence::LogicalOr => OperatorPrecedence::LogicalAnd,
+            OperatorPrecedence::LogicalAnd => OperatorPrecedence::BitwiseOr,
+            OperatorPrecedence::Equality => OperatorPrecedence::Relational,
+            OperatorPrecedence::Relational => OperatorPrecedence::Shift,
+            OperatorPrecedence::Shift => OperatorPrecedence::Additive,
+            OperatorPrecedence::Additive => OperatorPrecedence::Multiplicative,
+            OperatorPrecedence::Multiplicative => OperatorPrecedence::Exponentiation,
+            _ => precedence,
+        };
+        let left_precedence = match precedence {
+            OperatorPrecedence::Exponentiation => OperatorPrecedence::Update,
+            _ => precedence,
+        };
+        // `mixingBinaryOperatorsRequiresParentheses`
+        let is_mixed_with = |operand: ExprId| match hir[operand].kind {
+            ExprKind::Binary { op: inner, .. } if !is_parenthesized(hir, operand) => matches!(
+                (op, inner),
+                (BinOp::Nullish, BinOp::And | BinOp::Or) | (BinOp::And | BinOp::Or, BinOp::Nullish)
+            ),
+            _ => false,
+        };
+        let or_highest = |operand: ExprId, otherwise: OperatorPrecedence| {
+            if is_mixed_with(operand) {
+                OperatorPrecedence::Parentheses
+            } else {
+                otherwise
+            }
+        };
+        (
+            or_highest(left, left_precedence),
+            or_highest(right, right_precedence),
+        )
+    }
+}
+
+/// `TokenToString` of the operator of a unary expression.
+fn unary_operator_text(op: UnOp) -> &'static [u8] {
+    match op {
+        UnOp::Plus => b"+",
+        UnOp::Minus => b"-",
+        UnOp::BitNot => b"~",
+        UnOp::Not => b"!",
+        UnOp::Typeof => b"typeof",
+        UnOp::Void => b"void",
+        UnOp::Delete => b"delete",
+        UnOp::PreInc | UnOp::PostInc => b"++",
+        UnOp::PreDec | UnOp::PostDec => b"--",
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum SignatureKind {
     Call,
@@ -836,7 +1004,20 @@ enum Identity {
     Function(FileId, FnId),
     /// A conditional type, or a deferred type reference.
     Node(FileId, TypeNodeId),
+    /// The symbol whose first declaration starts there (`Shape::symbol_declared_at`).
+    Declaration(FileId, u32),
     Type(TypeId),
+}
+
+impl Identity {
+    /// An object literal is one symbol, no matter which type has it: fresh, regular, widened, or
+    /// created from one of those.
+    fn for_object_literal(file: FileId, literal: ExprId) -> Identity {
+        let created_by = ObjectLiteralCheck::ForParent;
+        Identity::Origin(Origin::WidenedLiteral(
+            file, literal, false, false, created_by, false,
+        ))
+    }
 }
 
 /// `yieldModuleSymbol` of `lookupSymbolChain`
@@ -846,11 +1027,11 @@ pub(super) enum YieldModuleSymbol {
     Yes,
 }
 
-/// The node `createAccessFromSymbolChain` creates, as it is printed.
+/// The node that `createAccessFromSymbolChain` creates, as printed.
 struct Access {
     text: Vec<u8>,
     /// For an `IndexedAccessTypeNode`: where in `text` the `ObjectType` of
-    /// `getTopmostIndexedAccessType(node)` ends, and where that node ends. `None`: an entity name.
+    /// `getTopmostIndexedAccessType(node)` ends, and where that node ends. `None` for an entity name.
     topmost_indexed_access: Option<(usize, usize)>,
 }
 
@@ -880,22 +1061,13 @@ struct ReverseMappedProperty {
 struct PropertyNameSyntax {
     is_string: bool,
     is_single_quoted: bool,
-    /// The property has a `nameType`.
+    /// True if the property has a `nameType`.
     is_computed: bool,
 }
 
-/// The position of the declaration of a property, as `compareSymbols` needs it.
-enum Place {
-    At((bool, u32, u32)),
-    /// It has no declaration.
-    Nowhere,
-}
-
-/// `NodeBuilderImpl` and its `NodeBuilderContext`.
-/// A call of `ReportCyclicStructureError`, `ReportInaccessibleThisError`,
-/// `ReportInaccessibleUniqueSymbolError`, `ReportLikelyUnsafeImportRequiredError`,
-/// `ReportNonSerializableProperty` or `ReportPrivateInBaseOfClassExpression`: those a
-/// `wrappingTracker` defers (`deferredReports`).
+/// A call of `ReportCyclicStructureError`, `ReportInaccessibleThisError`, `ReportInaccessibleUniqueSymbolError`,
+/// `ReportLikelyUnsafeImportRequiredError`, `ReportNonSerializableProperty` or
+/// `ReportPrivateInBaseOfClassExpression`. These are the reports that a `wrappingTracker` defers (`deferredReports`).
 #[derive(Clone)]
 pub(super) enum Report {
     CyclicStructure,
@@ -907,10 +1079,10 @@ pub(super) enum Report {
     PrivateInBaseOfClassExpression(Vec<u8>),
 }
 
-/// `nodebuilder.SymbolTracker`, the methods the node builder calls. It is passed the checker, which
-/// the printer holds while it runs.
+/// The methods of `nodebuilder.SymbolTracker` that the node builder calls. Each is passed the
+/// checker, which the printer borrows while it runs.
 pub(super) trait SymbolTracker<'p> {
-    /// `TrackSymbol`. Returns whether a diagnostic is reported.
+    /// `TrackSymbol`. Returns true if a diagnostic is reported.
     fn track_symbol(
         &mut self,
         c: &mut Checker<'p, '_>,
@@ -919,7 +1091,7 @@ pub(super) trait SymbolTracker<'p> {
         meaning: SymFlags,
     ) -> bool;
     fn report(&mut self, c: &mut Checker<'p, '_>, report: Report);
-    /// `ReportInferenceFallback`, of `node` of `file`.
+    /// `ReportInferenceFallback` for `node` of `file`.
     fn report_inference_fallback(&mut self, c: &mut Checker<'p, '_>, file: FileId, node: hir::Node);
     /// `ReportTruncationError`
     fn report_truncation_error(&mut self, c: &mut Checker<'p, '_>);
@@ -957,21 +1129,21 @@ struct SerializedTypeEntry {
     tracked_symbols: Vec<TrackedSymbolArgs>,
 }
 
-/// `CompositeTypeCacheIdentity`, after the node that has the links: the enclosing declaration, and
-/// `Printer::enclosing_expression`.
+/// `CompositeTypeCacheIdentity`, preceded by the node that has the links: the enclosing declaration
+/// and `Printer::enclosing_expression`.
 type SerializedTypeKey = (Enclosing, Option<ExprId>, TypeId, u32);
 
 /// `links.serializedTypes` of every node, in `c.typeToStringNodebuilder`.
 #[derive(Default)]
 pub(super) struct SerializedTypes(FxHashMap<SerializedTypeKey, SerializedTypeEntry>);
 
-/// The locals of `visitAndTransformType` that outlive the call of `transform`.
+/// The locals of `visitAndTransformType` that outlive the `transform` call.
 struct TypeVisit {
     ty: TypeId,
     identity: Option<Identity>,
     /// The key of the result among the `serializedTypes`.
     key: Option<SerializedTypeKey>,
-    /// What `Printer::symbol_depth` had for `identity`.
+    /// The previous value of `Printer::symbol_depth` for `identity`.
     depth: u32,
     previous_tracked_symbols: Vec<TrackedSymbolArgs>,
     start_length: usize,
@@ -990,19 +1162,20 @@ struct OuterScope {
     mapper: MapperId,
 }
 
+/// `NodeBuilderImpl` and its `NodeBuilderContext`.
 struct Printer<'c, 'p, 's> {
     c: &'c mut Checker<'p, 's>,
     flags: u32,
-    /// The output is what the declaration transformer produces for a node of the file
+    /// True if the output is what the declaration transformer produces for a node of the file
     /// (`visitDeclarationSubtree`), not what the node builder produces to print a type
-    /// (`getExistingNodeTreeVisitor`). They differ little.
+    /// (`getExistingNodeTreeVisitor`). The two differ only slightly.
     is_transformer: bool,
     /// `PrinterOptions.NeverAsciiEscape`
     never_ascii_escape: bool,
-    /// `writer.GetIndent()` for the current line. `None`: everything is printed on one line
+    /// `writer.GetIndent()` for the current line. `None` if everything is printed on one line
     /// (`SingleLineStringWriter`).
     indent: Option<usize>,
-    /// `containerPos`, among the type nodes the transformer reuses. `usize::MAX`: -1.
+    /// `containerPos`, among the type nodes the transformer reuses. `usize::MAX` is tsgo's -1.
     container_pos: usize,
     approximate_length: usize,
     truncating: bool,
@@ -1012,10 +1185,8 @@ struct Printer<'c, 'p, 's> {
     reverse_mapped_stack: Vec<ReverseMappedProperty>,
     /// The mapper of the innermost instantiated signature being printed.
     mapper: MapperId,
-    /// `enclosingSymbolTypes` for signature declarations: the return type of each, while it is
-    /// printed from its syntax.
+    /// `enclosingSymbolTypes` for signature declarations: the return type of each, while it's printed from its syntax.
     enclosing_symbol_types: Vec<((FileId, FnId), TypeId)>,
-    depth: u32,
     /// `enclosingDeclaration`: the scope from which names are resolved. `None` in error messages.
     enclosing_declaration: Option<Enclosing>,
     /// The expression that is the enclosing declaration of `typeToStringEx`.
@@ -1032,8 +1203,8 @@ struct Printer<'c, 'p, 's> {
     /// `links.serializedTypes` of the nodes, and in the node builders, that last as long as this
     /// printer. See `serialized_types_of`.
     serialized_types: FxHashMap<SerializedTypeKey, SerializedTypeEntry>,
-    /// Whether a block for the parameters, and one for the type parameters, is among the enclosing declarations
-    /// (`fakeScopeForSignatureDeclaration`).
+    /// True if a block for the parameters (first flag) or for the type parameters (second flag) is
+    /// among the enclosing declarations (`fakeScopeForSignatureDeclaration`).
     has_fake_scope: [bool; 2],
     /// Number of synthetic blocks created.
     fake_scope_count: u32,
@@ -1046,10 +1217,10 @@ struct Printer<'c, 'p, 's> {
     type_parameter_symbol_list: Vec<Sym>,
     /// The locals of the fake scopes that `enterNewScope` puts in front of `enclosing_declaration`
     /// and that a type lookup finds: type parameters, and parameters that share a symbol with a
-    /// type parameter. `None`: such a parameter after `instantiateSymbol`.
+    /// type parameter. `None` for such a parameter after `instantiateSymbol`.
     fake_scope_type_parameters: Vec<(Vec<u8>, Option<TypeId>)>,
-    /// The locals of the fake scope of the parameters, as a value lookup finds them. `None`: a
-    /// symbol that `instantiateSymbol` created.
+    /// The locals of the parameters' fake scope, as a value lookup finds them. `None` for a symbol
+    /// that `instantiateSymbol` created.
     fake_scope_parameters: Vec<(Atom, Option<Sym>)>,
 }
 
@@ -1058,14 +1229,13 @@ fn encode_utf16_escape_sequence(out: &mut Vec<u8>, unit: u32) {
     let _ = write!(VecWriter(out), "\\u{unit:04X}");
 }
 
-/// `escapeStringWorker`. `escapes_non_ascii`: without `getLiteralTextFlagsNeverAsciiEscape`.
+/// `escapeStringWorker`. `escapes_non_ascii` means without `getLiteralTextFlagsNeverAsciiEscape`.
 fn escape_string(text: &[u8], quote: u8, escapes_non_ascii: bool, out: &mut Vec<u8>) {
     let (iterator, mut cursor) = (CodepointIterator::init(text), Cursor::default());
     while iterator.next(&mut cursor) {
         let i = cursor.i as usize;
         let (byte, next) = (text[i], text.get(i + 1).copied());
-        // `DecodeJSStringRune`: half a surrogate pair is a code point, a byte that is not valid
-        // UTF-8 is U+FFFD.
+        // `DecodeJSStringRune`: half a surrogate pair is a code point, and a byte that isn't valid UTF-8 is U+FFFD.
         let (ch, is_malformed) = (cursor.c as u32, cursor.width == 1 && byte >= 0x80);
         match byte {
             b'\\' => out.extend_from_slice(b"\\\\"),
@@ -1102,7 +1272,7 @@ fn escape_string(text: &[u8], quote: u8, escapes_non_ascii: bool, out: &mut Vec<
     }
 }
 
-/// A string literal. `escapes_non_ascii`: it is printed without `EFNoAsciiEscaping`.
+/// A string literal. `escapes_non_ascii` means it's printed without `EFNoAsciiEscaping`.
 pub(super) fn quoted(text: &[u8], quote: u8, escapes_non_ascii: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() + 2);
     out.push(quote);
@@ -1111,9 +1281,8 @@ pub(super) fn quoted(text: &[u8], quote: u8, escapes_non_ascii: bool) -> Vec<u8>
     out
 }
 
-/// `createExpressionFromSymbolChain`, after the first symbol: `.name`, or `[name]` for a name that
-/// is not an identifier. The brackets of a computed name are not doubled. `escapes_non_ascii`: the
-/// printer has no `NeverAsciiEscape`.
+/// `createExpressionFromSymbolChain`, after the first symbol: `.name`, or `[name]` for a name that isn't an identifier.
+/// The brackets of a computed name aren't doubled. `escapes_non_ascii` means the printer has no `NeverAsciiEscape`.
 pub(super) fn push_access(
     expression: &mut Vec<u8>,
     name: &[u8],
@@ -1121,7 +1290,7 @@ pub(super) fn push_access(
     escapes_non_ascii: bool,
 ) {
     // `canUsePropertyAccess`
-    if is_identifier(name.strip_prefix(b"#").unwrap_or(name)) {
+    if is_identifier_text(name.strip_prefix(b"#").unwrap_or(name)) {
         expression.push(b'.');
         expression.extend_from_slice(name);
         return;
@@ -1153,7 +1322,7 @@ fn unquote_string(text: &[u8]) -> Vec<u8> {
     let mut unquoted = Vec::with_capacity(inner.len());
     let mut bytes = inner.iter().copied().peekable();
     while let Some(byte) = bytes.next() {
-        // `\\.` does not match a line break.
+        // `\\.` doesn't match a line break.
         match bytes.next_if(|&next| byte == b'\\' && next != b'\n') {
             Some(next) => unquoted.push(next),
             None => unquoted.push(byte),
@@ -1162,9 +1331,8 @@ fn unquote_string(text: &[u8]) -> Vec<u8> {
     unquoted
 }
 
-/// The properties whose `Declarations` make up those of `prop`, in order, until `visit` returns
-/// true: `prop` itself, if it is declared.
-/// `Checker::declared_properties` without the list.
+/// Visits the properties whose `Declarations` make up those of `prop`, in order, until `visit` returns true.
+/// That's `prop` itself if it's declared. Like `Checker::declared_properties`, but without building the list.
 pub(super) fn for_each_declared<'a>(
     prop: &'a Prop<'a>,
     visit: &mut dyn FnMut(&'a Prop<'a>) -> bool,
@@ -1184,7 +1352,7 @@ pub(super) fn for_each_declared<'a>(
     }
 }
 
-/// What has `symbol.Declarations[0]`.
+/// Returns the property that has `symbol.Declarations[0]`.
 pub(super) fn first_declared<'a>(prop: &'a Prop<'a>) -> Option<&'a Prop<'a>> {
     let mut first = None;
     for_each_declared(prop, &mut |declared| {
@@ -1222,8 +1390,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getVariableDeclarationOfObjectLiteral`. `first_declaration`: `symbol.Declarations[0]`, in
-    /// `file`.
+    /// `getVariableDeclarationOfObjectLiteral`. `first_declaration` is `symbol.Declarations[0]`, in `file`.
     pub(super) fn variable_declaration_of_object_literal(
         &self,
         file: FileId,
@@ -1231,7 +1398,7 @@ impl Checker<'_, '_> {
     ) -> Option<Sym> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let name = match first_declaration {
-            Decl::ObjectLiteral(e) => match bound.expr_parent[e.idx()] {
+            Decl::ObjectLiteral(e) => match bound.parent_of_expr(e) {
                 Parent::VarInit(declaration) if !is_parenthesized(hir, e) => hir[declaration].pat,
                 _ => return None,
             },
@@ -1291,7 +1458,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 }
             }
         }
-        // `trackedSymbols` holds no type parameters.
+        // `trackedSymbols` never contains type parameters.
         if !self
             .c
             .flags_of(tracked.symbol)
@@ -1301,7 +1468,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// How `wrappingTracker` and `SymbolTrackerImpl` handle the calls that `Report` represents.
+    /// Handles the calls that `Report` represents the way `wrappingTracker` and `SymbolTrackerImpl` do.
     fn report(&mut self, report: Report) {
         // `onDiagnosticReported`
         self.reported_diagnostic = true;
@@ -1330,7 +1497,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             .is_some_and(|boundary| boundary.had_error)
     }
 
-    /// `ReportInferenceFallback`, which is not deferred.
+    /// `ReportInferenceFallback`, which isn't deferred.
     fn report_inference_fallback(&mut self, file: FileId, node: hir::Node) {
         if let Some(tracker) = self.tracker.as_deref_mut() {
             tracker.report_inference_fallback(self.c, file, node);
@@ -1358,7 +1525,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         });
     }
 
-    /// `finalizeBoundary`. `had_error`: the visitor returned `None`.
+    /// `finalizeBoundary`. `had_error` means the visitor returned `None`.
     fn finalize_boundary(&mut self, had_error: bool) -> bool {
         let Some(boundary) = self.boundaries.pop() else {
             return !had_error;
@@ -1387,7 +1554,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         (self.tracked_symbols.len(), unreported_errors_top)
     }
 
-    /// `endRecoveryScope`. The symbols it drops are those of the context, not those of the boundary, which stay tracked.
+    /// `endRecoveryScope`. It drops the context's symbols, not the boundary's, which stay tracked.
     fn end_recovery_scope(&mut self, state: (usize, usize)) {
         self.tracked_symbols.truncate(state.0);
         if let Some(boundary) = self.boundaries.last_mut() {
@@ -1420,8 +1587,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.truncating
     }
 
-    /// `...`. Without truncation it is `any` with a comment, and comments are only emitted to a
-    /// declaration file.
+    /// `...`. Without truncation it's `any` with a comment, and comments are only emitted to a declaration file.
     fn elision(&self) -> Node {
         if self.flags & NO_TRUNCATION == 0 {
             return Node {
@@ -1455,13 +1621,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `typeToTypeNode`
     fn type_to_node(&mut self, ty: TypeId) -> Node {
-        if self.depth >= MAXIMUM_DEPTH || self.c.is_stack_low() {
+        if self.c.is_stack_low_for_printing() {
             return self.elided_information_placeholder();
         }
-        self.depth += 1;
-        let node = self.type_to_node_worker(ty);
-        self.depth -= 1;
-        node
+        self.type_to_node_worker(ty)
     }
 
     fn type_to_node_worker(&mut self, ty: TypeId) -> Node {
@@ -1646,7 +1809,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 if *constraint != TypeId::UNKNOWN {
                     return base;
                 }
-                self.intrinsic_alias_to_node(b"NoInfer", &base)
+                match self
+                    .c
+                    .get_global_type_alias_symbol(known::NoInfer, 1, false)
+                {
+                    Some(no_infer) => self.symbol_to_type_node(no_infer, false, vec![base]),
+                    None => base,
+                }
             }
             TypeData::IndexedAccess { obj, index, .. } => {
                 let object = self.type_to_node(*obj);
@@ -1661,7 +1830,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     printer.conditional_type_to_node(ty, file, node)
                 })
             }
-            // Written above.
+            // Handled above.
             _ => Node::simple(b"any"),
         }
     }
@@ -1702,7 +1871,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         symbol.is_some().then(|| self.c.files().sym(file, symbol))
     }
 
-    /// `symbolToTypeNode` of `Uppercase`, `NoInfer` and the like, with one type argument.
+    /// `symbolToTypeNode` of `Uppercase` and the like, with one type argument.
     fn intrinsic_alias_to_node(&mut self, name: &[u8], argument: &Node) -> Node {
         self.approximate_length += 2 * (name.len() + 1);
         Node {
@@ -1754,9 +1923,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `b.links.Get(b.ctx.enclosingDeclaration).serializedTypes`. `typeToStringEx` uses one node
-    /// builder for the life of the checker, every other caller a new one, and a synthetic block of
-    /// `enterNewScope` is a new node.
+    /// `b.links.Get(b.ctx.enclosingDeclaration).serializedTypes`. `typeToStringEx` uses one node builder for the life
+    /// of the checker, every other caller creates a new one, and a synthetic block of `enterNewScope` is a new node.
     fn serialized_types_of(
         &mut self,
         key: &SerializedTypeKey,
@@ -1768,8 +1936,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `visitAndTransformType`, up to the call of `transform`. `Break`: the result, without that
-    /// call.
+    /// `visitAndTransformType` up to the `transform` call. Returns `Break` with the result if that call isn't needed.
     fn begin_type_visit(
         &mut self,
         ty: TypeId,
@@ -1821,7 +1988,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         })
     }
 
-    /// `visitAndTransformType`, from where `transform` has returned `node`.
+    /// `visitAndTransformType` from where `transform` has returned `node`.
     fn end_type_visit(&mut self, visit: TypeVisit, node: Node) -> Node {
         let TypeVisit {
             ty,
@@ -1861,7 +2028,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     // ───────────────────────────── enums ─────────────────────────────
 
-    /// The enum whose declared type is the union `ty` of `members`.
+    /// Returns the enum whose declared type is the union `ty` of `members`.
     fn enum_of_members(&mut self, ty: TypeId, members: &[TypeId]) -> Option<Sym> {
         let member = match *self.c.data(*members.first()?) {
             TypeData::EnumLit { member, .. } => member,
@@ -1882,11 +2049,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             return parent_name;
         }
         let name = match self.c.files().symbol(member).name {
-            // `InternalSymbolNamePrefix` is not valid UTF-8.
+            // `InternalSymbolNamePrefix` isn't valid UTF-8.
             known::missing => b"\xEF\xBF\xBDmissing".to_vec(),
             name => self.text(name),
         };
-        if is_identifier(&name) {
+        if is_identifier_text(&name) {
             return Node::simple(cat!(parent_name.text, b".", name));
         }
         let literal = self.string_literal(&name, b'"');
@@ -1907,7 +2074,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `a`, `a.b.c`
     fn entity_name_text(&self, file: FileId, e: ExprId) -> Option<Vec<u8>> {
-        match self.c.hir(file)[e].kind {
+        match self.c.hir(file).checked_kind(e) {
             ExprKind::Ident(name) => Some(self.text(name)),
             ExprKind::Dot { obj, name, .. } => Some(cat! {
                 self.entity_name_text(file, obj)?, b".", self.text(name)
@@ -1916,48 +2083,48 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `GetTextOfNode`. Empty: it is missing, the HIR does not record its start, or the text is not
-    /// retained (the default library).
-    fn get_text_of_node(&self, file: FileId, node: hir::Node) -> &'p [u8] {
-        let hir = self.c.hir(file);
-        let (start, end) = (hir.start(node), self.c.end_of_node(file, node));
-        let text = hir.text.get(start as usize..end as usize);
-        text.filter(|_| start != 0).unwrap_or_default()
-    }
-
-    /// `DeclarationNameToString`. The source text is used only for what `node.Text()` lacks, the escapes of an identifier. A name is not
-    /// always at `start` (the name of an `@overload` is at the tag), and a missing name still has a token at that position.
+    /// `DeclarationNameToString`. The source text is used only for what `node.Text()` lacks, the
+    /// escapes of an identifier. A name isn't always at `start` (the name of an `@overload` is at
+    /// the tag), and a missing name still has a token at that position.
     fn declaration_name_to_string(&self, file: FileId, name: hir::Node) -> Vec<u8> {
-        match self.get_text_of_node(file, name) {
-            written if bun_core::strings::contains_char(written, b'\\') => written.to_vec(),
+        let text = match self.c.get_text_of_node(file, name) {
+            raw_text if bun_core::strings::contains_char(raw_text, b'\\') => raw_text.to_vec(),
             _ => self.property_key_text(file, name),
+        };
+        let hir = self.c.hir(file);
+        if hir.jsdoc_asterisks.is_empty() {
+            return text;
         }
+        // `GetTextOfNode` doesn't skip the `*` before the name.
+        let (start, end) = (hir.start(name), self.c.end_of_node(file, name));
+        let from = super::spans::start_of_error_range(hir, start, end);
+        [&hir.text[from as usize..start as usize], &text[..]].concat()
     }
 
-    /// The same for a clone of the name, which the printer emits as its `node.Text()`: an
+    /// The same for a clone of the name, which the printer emits as its `node.Text()`, so an
     /// identifier has its escapes decoded.
     fn property_key_text(&self, file: FileId, name: hir::Node) -> Vec<u8> {
         let hir = self.c.hir(file);
-        let (text, written) = (hir.text(name), self.get_text_of_node(file, name));
-        match (hir.kind(name), written.first()) {
-            (_, Some(b'[' | b'"' | b'\'' | b'0'..=b'9')) => written.to_vec(),
-            // `.5`. A name that is missing before a `.` is not written.
-            (_, Some(b'.')) if written.get(1).is_some_and(u8::is_ascii_digit) => written.to_vec(),
+        let (text, raw_text) = (hir.text(name), self.c.get_text_of_node(file, name));
+        match (hir.kind(name), raw_text.first()) {
+            (_, Some(b'[' | b'"' | b'\'' | b'0'..=b'9')) => raw_text.to_vec(),
+            // `.5`. A name that's missing before a `.` isn't written.
+            (_, Some(b'.')) if raw_text.get(1).is_some_and(u8::is_ascii_digit) => raw_text.to_vec(),
             (Kind::ComputedPropertyName, _) => match hir.data(hir.expression(name)) {
                 NodeData::Expr(e) => self.entity_name_text(file, e),
                 _ => None,
             }
             .map_or_else(|| b"(Missing)".to_vec(), |name| cat!(b"[", name, b"]")),
-            // The kind decides where there is no text, in the default library. A JSON file has
+            // Where there's no text, in the default library, the kind decides. A JSON file has
             // `StringLiteral` for every name, even a bare word.
             (Kind::StringLiteral, _) if hir.text.is_empty() => {
                 quoted(&self.text(text), b'"', false)
             }
             (Kind::PrivateIdentifier, _) if text.is_some() => self.c.written_name(text).to_vec(),
             _ if text.is_some() && text != known::empty => self.text(text),
-            // A name that declares nothing (`getDeclarationName`), as in the source: `#x` outside a
-            // class.
-            (_, Some(b'#')) => written.to_vec(),
+            // A name that doesn't declare anything (`getDeclarationName`) is printed as in the
+            // source: `#x` outside a class.
+            (_, Some(b'#')) => raw_text.to_vec(),
             _ => b"(Missing)".to_vec(),
         }
     }
@@ -1968,11 +2135,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         // `GetNonAssignedNameOfDeclaration`
         let name = match decl {
             Decl::ExportsProperty(e) | Decl::Expando(e) => {
-                let name = self.c.name_of_assignment_declaration(file, e);
-                return name;
+                return self.c.name_of_assignment_declaration(file, e);
             }
-            // It is the name itself. `hir.node(decl)` would go up to the declaration and `name`
-            // down again.
+            // This is the name itself. `hir.node(decl)` would go up to the declaration and `name` down again.
             Decl::Var(name) | Decl::Param(name) | Decl::Require(name) => hir.node(name),
             Decl::ExportExpr(s) => match hir[s].kind {
                 StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e)
@@ -1988,8 +2153,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             .then(|| self.declaration_name_to_string(file, name))
     }
 
-    /// `DeclarationNameToString(GetAssignedName(e))`: the name of the declaration `e` is assigned
-    /// to.
+    /// `DeclarationNameToString(GetAssignedName(e))`: the name of the declaration that `e` is assigned to.
     fn name_of_initialized_variable(&self, file: FileId, e: ExprId) -> Option<Vec<u8>> {
         let hir = self.c.hir(file);
         let start = self.c.bound(file).get_assigned_name(hir, e)?;
@@ -2015,8 +2179,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         (file, ScopeId(0))
     }
 
-    /// `getNameOfSymbolAsWritten` for the class expression, function expression or arrow function
-    /// `e`, from where its declarations have no name of their own. `anonymous`: `(Anonymous ..)`.
+    /// `getNameOfSymbolAsWritten` for the class expression, function expression or arrow function `e`, from
+    /// the point where its declarations turn out to have no name. `anonymous` is the `(Anonymous ..)` text.
     fn name_of_anonymous_expression(
         &mut self,
         file: FileId,
@@ -2032,10 +2196,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         anonymous.to_vec()
     }
 
-    /// `getNameOfSymbolAsWritten`. `is_initial`: `FlagsInInitialEntityName`.
+    /// `getNameOfSymbolAsWritten`. `is_initial` is `FlagsInInitialEntityName`.
     fn name_of_symbol_as_written(&mut self, symbol: Sym, is_initial: bool) -> Vec<u8> {
         let files = self.c.files();
-        let decls = files.decls(symbol);
+        let decls = files.decls_of(symbol);
         let name = files.symbol(symbol).name;
         let is_in_other_binding_context = |&(file, decl): &(FileId, Decl)| {
             self.enclosing_declaration.is_some_and(|at| {
@@ -2071,9 +2235,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 return self.c.name_of_type_literal(file, node);
             }
             Some(&(file, Decl::ObjectLiteral(e))) => return self.c.name_of_object_literal(file, e),
-            Some(&(file, Decl::File)) => {
-                return cat! { b"\"", remove_file_extension(files.module(file).file_name()), b"\"" };
-            }
+            Some(&(file, Decl::File)) => return self.name_of_file_symbol(file),
             _ => {}
         }
         if name.is_some() {
@@ -2110,11 +2272,19 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     }
 
     /// `symbol.Name`. Empty for an anonymous symbol.
-    fn symbol_name(&self, symbol: Sym) -> &'p [u8] {
-        match self.c.files().symbol(symbol).name {
-            name if name.is_some() => self.c.atoms().bytes(name),
-            _ => &b""[..],
+    fn symbol_name(&self, symbol: Sym) -> Vec<u8> {
+        let files = self.c.files();
+        match (files.symbol(symbol).name, files.decls_of(symbol).first()) {
+            (name, _) if name.is_some() => self.c.atoms().bytes(name).to_vec(),
+            (_, Some(&(file, Decl::File))) => self.name_of_file_symbol(file),
+            _ => Vec::new(),
         }
+    }
+
+    /// `bindSourceFileAsExternalModule`: a file's symbol is named after its path, in quotes and without the extension.
+    fn name_of_file_symbol(&self, file: FileId) -> Vec<u8> {
+        let file_name = displayed_path(self.c.files().module(file).file_name());
+        cat! { b"\"", remove_file_extension(&file_name), b"\"" }
     }
 
     /// `symbolToExpression` of a chain of one, as `symbolToString` has it.
@@ -2122,7 +2292,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.create_expression_from_symbol_chain(&[symbol], 0)
     }
 
-    /// `lookupSymbolChain`. `meaning`: `SymFlags::VALUE` or `SymFlags::TYPE`.
+    /// `lookupSymbolChain`. `meaning` is `SymFlags::VALUE` or `SymFlags::TYPE`.
     fn lookup_symbol_chain(
         &mut self,
         symbol: Sym,
@@ -2142,7 +2312,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.with_global_this(chain)
     }
 
-    /// The chain `lookup_symbol_chain_at` returns, in one piece.
+    /// Turns the pair that `lookup_symbol_chain_at` returns into a single chain.
     fn with_global_this(&self, (starts_with_global_this, mut chain): (bool, Vec<Sym>)) -> Vec<Sym> {
         if starts_with_global_this {
             chain.insert(0, self.c.files().global_this_symbol);
@@ -2150,9 +2320,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         chain
     }
 
-    /// `getSymbolChain` from `at`, which may be a synthetic block created by `enterNewScope`.
-    /// Its locals only count if one of them has the name of `symbol`, or of the first symbol of the
-    /// chain computed without them: `trySymbolTable` and `needsQualification` look up nothing else.
+    /// `getSymbolChain` from `at`, which may be a synthetic block created by `enterNewScope`. Its locals
+    /// only matter if one of them has the name of `symbol`, or of the first symbol of the chain computed
+    /// without them, because `trySymbolTable` and `needsQualification` don't look up anything else.
     fn get_symbol_chain(
         &mut self,
         symbol: Sym,
@@ -2172,8 +2342,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             return found;
         }
         let mut locals: Vec<(Atom, SymFlags, Option<Sym>)> = Vec::new();
-        // The block of the type parameters is nested in that of the parameters. In each a later
-        // entry shadows an earlier one.
+        // The type parameters' block is nested in the parameters' block. In each, a later entry shadows an earlier one.
         for (name, parameter) in self.fake_scope_type_parameters.iter().rev() {
             let Some(name) = self.c.atoms().lookup(name) else {
                 continue;
@@ -2213,7 +2382,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         parameters.any(|local| local.0 == name) || type_parameters.any(|local| local.0 == text)
     }
 
-    /// `typeParametersToTypeParameterDeclarations`, as it is printed: `<T, U>`, or nothing.
+    /// `typeParametersToTypeParameterDeclarations`, as printed: `<T, U>`, or nothing.
     fn type_parameters_to_type_parameter_declarations(&mut self, symbol: Sym) -> Vec<u8> {
         let files = self.c.files();
         let flags = files.flags(symbol);
@@ -2244,7 +2413,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.flags & WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME != 0 && index < chain.len() - 1
     }
 
-    /// `lookupTypeParameterNodes`, as they are printed. No symbol of a chain is instantiated
+    /// `lookupTypeParameterNodes`, as printed. No symbol of a chain is instantiated
     /// (`lookupInstantiatedTypeArgumentNodes`).
     fn lookup_type_parameter_nodes(&mut self, chain: &[Sym], index: usize) -> Vec<u8> {
         if self.type_parameter_symbol_list.contains(&chain[index]) {
@@ -2316,7 +2485,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `symbolToTypeNode`. `is_type_of`: the meaning is `SymbolFlagsValue`.
+    /// `symbolToTypeNode`. `is_type_of` means the meaning is `SymbolFlagsValue`.
     fn symbol_to_type_node(
         &mut self,
         symbol: Sym,
@@ -2333,7 +2502,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.symbol_chain_to_type_node(symbol, &chain, is_type_of, type_arguments)
     }
 
-    /// `symbolToTypeNode`, with the meaning `SymbolFlagsValue`, for the symbol
+    /// `symbolToTypeNode` with the meaning `SymbolFlagsValue`, for the symbol that
     /// `cloneTypeAsModuleType` created from `module` for `originating_import`.
     fn module_clone_to_type_node(&mut self, module: Sym, originating_import: Sym) -> Node {
         let Some(at) = self.enclosing_declaration else {
@@ -2342,11 +2511,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let clone = self.c.module_clone(originating_import);
         self.track_symbol(clone, SymFlags::VALUE);
         let yield_module_symbol = self.yield_module_symbol();
-        let chain = self.c.lookup_symbol_chain_of_module_clone_at(
-            originating_import,
-            yield_module_symbol,
-            at,
-        );
+        let chain =
+            (self.c).lookup_symbol_chain_at(clone, true, yield_module_symbol, at, Vec::new());
         let chain = self.with_global_this(chain);
         self.symbol_chain_to_type_node(module, &chain, true, Vec::new())
     }
@@ -2370,7 +2536,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 && bun_core::strings::contains(&specifier, b"/node_modules/")
             {
                 self.encountered_error = true;
-                let name = self.symbol_name(symbol).to_vec();
+                let name = self.symbol_name(symbol);
                 self.report(Report::LikelyUnsafeImportRequired(specifier.clone(), name));
             }
             self.approximate_length += specifier.len() + 10;
@@ -2403,19 +2569,16 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         if is_type_of {
             return Node::new(cat!(b"typeof ", entity_name.text), TYPE_OPERATOR);
         }
+        let text = cat!(entity_name.text, type_arguments);
         Node {
-            text: cat!(entity_name.text, type_arguments),
-            precedence: NON_ARRAY,
             reference: (last == 0).then_some(entity_name.text),
-            types: Vec::new(),
-            in_extends: None,
+            ..Node::simple(text)
         }
     }
 
-    /// `GetSymbolNameForPrivateIdentifier(containingClass.Symbol(), description)` for `declaration`
-    /// of `file`. Nothing asks for a symbol id before the binder does, so the classes it asks
-    /// about are numbered from 1 in the order they are bound. `BindSourceFiles`: a
-    /// `singleThreadedWorkGroup` runs what was queued last first.
+    /// `GetSymbolNameForPrivateIdentifier(containingClass.Symbol(), description)` for `declaration` of `file`.
+    /// Nothing requests a symbol id before the binder does, so the classes it requests ids for are numbered from 1 in
+    /// the order they're bound. In `BindSourceFiles`, a `singleThreadedWorkGroup` runs what was queued last first.
     fn symbol_name_for_private_identifier(
         &self,
         file: FileId,
@@ -2438,8 +2601,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         )
     }
 
-    /// The text of `name`, under which a symbol table has `symbol`. Here the name of an `#x` lacks
-    /// the id of the class.
+    /// Returns the text of `name`, the key of `symbol` in a symbol table. Here the name of an `#x`
+    /// lacks the class's id.
     fn text_of_symbol_table_key(&self, name: Atom, symbol: Sym) -> Vec<u8> {
         let text = self.c.atoms().bytes(name);
         let declarations = self.c.files().decls_of(symbol);
@@ -2451,17 +2614,18 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// The name under which `symbol` is among `getExportsOfSymbol(parent)`. Empty: it is not.
+    /// Returns the name of `symbol` among `getExportsOfSymbol(parent)`, or an empty name if it isn't there.
     fn name_among_exports(&mut self, parent: Sym, symbol: Sym) -> Vec<u8> {
-        let (atoms, exports) = (self.c.atoms(), self.c.exports_of_symbol(parent));
+        let atoms = self.c.atoms();
         let can_name = |name: Atom| name != known::export_equals && !atoms.is_symbol_name(name);
         let own = self.c.files().symbol(symbol).name;
         if can_name(own)
-            && let Some(&(_, exported)) = exports.iter().find(|export| export.0 == own)
+            && let Some(exported) = self.c.export_of_symbol(parent, own)
             && self.c.is_same_reference(exported, symbol)
         {
             return self.text_of_symbol_table_key(own, symbol);
         }
+        let exports = self.c.exports_of_symbol(parent);
         let mut results = Vec::new();
         for &(name, exported) in exports.iter() {
             if can_name(name) && self.c.is_same_reference(exported, symbol) {
@@ -2474,7 +2638,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         })
     }
 
-    /// `k`, if the name in the first declaration of `symbol` is `[k]`.
+    /// Returns `k` if the name in the first declaration of `symbol` is `[k]`.
     fn computed_entity_name(&self, symbol: Sym) -> Option<Vec<u8>> {
         let declarations = self.c.files().decls_of(symbol);
         let &(file, first) = declarations.first()?;
@@ -2493,8 +2657,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `createAccessFromSymbolChain`. The last symbol of a chain has type arguments only if it is a
-    /// class, an interface or a type alias, which is no member: the caller appends those.
+    /// `createAccessFromSymbolChain`. The last symbol of a chain has type arguments only if it's a
+    /// class, an interface or a type alias, which is never a member, so the caller appends those.
     fn create_access_from_symbol_chain(
         &mut self,
         chain: &[Sym],
@@ -2576,7 +2740,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 at,
                 allows_node_modules_relative_paths,
             );
-            // Empty: `paths` or `rootDirs` may affect it, which is not computed.
+            // It's empty if `paths` or `rootDirs` may affect it, which isn't computed.
             if !specifier.is_empty() {
                 let attributes = match mode {
                     Some(mode) => {
@@ -2592,9 +2756,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     // ───────────────────────────── lists of types ─────────────────────────────
 
-    /// `mapToTypeNodes` for a list of `length` types, up to where it compares the names.
-    /// `to_node`: `typeToTypeNode` of the type at an index. Also returns how many of the nodes,
-    /// from the first, are not created where the list is cut.
+    /// `mapToTypeNodes` for a list of `length` types, up to where it compares the names. `to_node`
+    /// is `typeToTypeNode` of the type at an index. Also returns how many nodes, counted from the
+    /// first, were created before the list was cut.
     fn map_to_nodes(
         &mut self,
         length: usize,
@@ -2628,7 +2792,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         (result, length)
     }
 
-    /// `mapToTypeNodes`. Nothing for an empty list.
+    /// `mapToTypeNodes`. Returns nothing for an empty list.
     fn map_to_type_nodes(&mut self, list: &[TypeId], is_bare_list: bool) -> Vec<Node> {
         let (mut result, count) = self.map_to_nodes(list.len(), is_bare_list, |printer, index| {
             printer.type_to_node(list[index])
@@ -2667,17 +2831,17 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         result
     }
 
-    /// `t.symbol` of a type that is printed as a name, as something to compare: a symbol, or the
-    /// node that declares one.
+    /// `t.symbol` of a type that's printed as a name, in a form that can be compared: a symbol, or
+    /// the node that declares one.
     fn symbol_of_reference(&mut self, ty: TypeId) -> Option<(FileId, u32, u8)> {
-        let of_symbol = |symbol: Sym| (symbol.file, symbol.id.0, 0);
+        let symbol_key = |symbol: Sym| (symbol.file, symbol.id.0, 0);
         match self.c.data(ty) {
-            TypeData::Ref { target, .. } => Some(of_symbol(*target)),
-            TypeData::Union(members) => self.enum_of_members(ty, members).map(of_symbol),
+            TypeData::Ref { target, .. } => Some(symbol_key(*target)),
+            TypeData::Union(members) => self.enum_of_members(ty, members).map(symbol_key),
             TypeData::EnumLit { member, .. } => {
-                self.c.files().parent_of_symbol(*member).map(of_symbol)
+                self.c.files().parent_of_symbol(*member).map(symbol_key)
             }
-            TypeData::Enum { symbol, .. } => Some(of_symbol(*symbol)),
+            TypeData::Enum { symbol, .. } => Some(symbol_key(*symbol)),
             TypeData::StringMapping { kind, .. } => Some((FileId(0), *kind as u32, 6)),
             TypeData::TypeParam(file, parameter, _) => Some((*file, parameter.0, 1)),
             TypeData::Fns { decls, .. } => decls.first().map(|it| (it.0, it.1.0, 2)),
@@ -2692,18 +2856,18 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 Origin::ClassStatic(symbol)
                 | Origin::Function(symbol)
                 | Origin::EnumObject(symbol)
-                | Origin::Module(symbol) => Some(of_symbol(symbol)),
+                | Origin::Module(symbol) => Some(symbol_key(symbol)),
                 Origin::Namespace {
                     originating_import, ..
-                } => Some(of_symbol(originating_import)),
+                } => Some(symbol_key(originating_import)),
                 Origin::GlobalThis => None,
             },
             _ => None,
         }
     }
 
-    /// `typesAreSameReference`. `a.alias == b.alias` compares two pointers: an alias includes its
-    /// type arguments. So two instantiations of an alias for a union are not the same reference.
+    /// `typesAreSameReference`. `a.alias == b.alias` compares two pointers, and an alias includes
+    /// its type arguments. So two instantiations of an alias for a union aren't the same reference.
     fn are_same_reference(&mut self, a: TypeId, b: TypeId) -> bool {
         if a == b {
             return true;
@@ -2718,7 +2882,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     // ───────────────────────────── references ─────────────────────────────
 
-    /// `getParentSymbolOfTypeParameter`: the scope that declares it represents the symbol.
+    /// `getParentSymbolOfTypeParameter`. The scope that declares the type parameter represents the symbol.
     fn container_of_type_parameter(&self, parameter: TypeId) -> Option<(FileId, ScopeId)> {
         match *self.c.data(parameter) {
             TypeData::TypeParam(file, tp, _) => {
@@ -2739,7 +2903,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     let method = self.c.symbol_of_member(file, member);
                     return Some(self.symbol_to_type_node(method, false, Vec::new()));
                 }
-                FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+                FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                     Parent::Prop(p) if hir[p].kind == PropKind::Method => {
                         match bound.property_symbol.get(&Decl::Property(p)) {
                             Some(&method) => method,
@@ -2764,10 +2928,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         Some(self.symbol_to_type_node(symbol, false, Vec::new()))
     }
 
-    /// `symbolToTypeNode(symbol, SymbolFlagsType, nil)` under `ForbidIndexedAccessSymbolReferences`
-    /// for the member `p` of an object literal for which the binder has created no symbol. It is
-    /// in no table, and `getContainersOfSymbol` finds the literal, which is not written, and
-    /// `getVariableDeclarationOfObjectLiteral`.
+    /// `symbolToTypeNode(symbol, SymbolFlagsType, nil)` under `ForbidIndexedAccessSymbolReferences` for the member
+    /// `p` of an object literal for which the binder hasn't created a symbol. It isn't in any table, and
+    /// `getContainersOfSymbol` finds the literal, which isn't written, and `getVariableDeclarationOfObjectLiteral`.
     fn literal_member_to_type_node(&mut self, file: FileId, p: PropId) -> Node {
         let name = self.c.hir(file).node(p).with(Part::Name);
         let name = self.declaration_name_to_string(file, name);
@@ -2800,6 +2963,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         if let Some(element) = self.c.array_element(ty) {
             let is_readonly = self.c.global_type_symbol(known::ReadonlyArray) == Some(target);
             let element = self.type_to_node(element);
+            if self.flags & WRITE_ARRAY_AS_GENERIC_TYPE != 0 {
+                let name: &[u8] = if is_readonly {
+                    b"ReadonlyArray"
+                } else {
+                    b"Array"
+                };
+                return Node::simple(cat!(name, type_arguments_text(vec![element])));
+            }
             let array = cat!(element.emit(POSTFIX), b"[]");
             return if is_readonly {
                 Node::new(cat!(b"readonly ", array), TYPE_OPERATOR)
@@ -2853,13 +3024,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             .into_iter()
             .any(|name| self.c.global_type_of_arity(name, 3) == Some(target));
             // `len(t.AsTypeReference().node.TypeArguments())`
-            let written = self.c.types().deferred(ty).map_or(0, |reference| {
+            let explicit_count = self.c.types().deferred(ty).map_or(0, |reference| {
                 match self.c.hir(reference.file)[reference.node].kind {
                     TypeNodeKind::Ref { args, .. } => args.len(),
                     _ => 0,
                 }
             });
-            let elides = is_iterable && written < count;
+            let elides = is_iterable && explicit_count < count;
             while elides && count > 0 {
                 let Some(default) = self.c.default_of_type_param(all[count - 1]) else {
                     break;
@@ -2951,9 +3122,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `typeParameter.symbol`, to compare. The type parameters of the declarations of one class or
-    /// interface share one symbol per name. One that `getUniqueTypeParameters` renamed has its own
-    /// symbol.
+    /// `typeParameter.symbol`, in a form that can be compared. The type parameters of the declarations of one class
+    /// or interface share one symbol per name. One that `getUniqueTypeParameters` renamed has its own symbol.
     fn symbol_of_type_parameter(&self, parameter: TypeId) -> Option<(Sym, Atom)> {
         let TypeData::TypeParam(file, tp, _) = *self.c.data(parameter) else {
             return None;
@@ -3018,8 +3188,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.symbol_of_type_parameter(found) != self.symbol_of_type_parameter(parameter)
     }
 
-    /// `newTypeParameter(newSymbol(SymbolFlagsTypeParameter, "T"))`: a new one each time, as long
-    /// as each is named before the next is created.
+    /// `newTypeParameter(newSymbol(SymbolFlagsTypeParameter, "T"))`. Each call returns a new one,
+    /// as long as each is named before the next is created.
     fn new_type_parameter(&self, like: TypeId) -> Option<TypeId> {
         let name = self.c.atoms().intern(b"T");
         self.c
@@ -3080,8 +3250,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             has_fake_scope: self.has_fake_scope,
             mapper: self.mapper,
         };
-        // `pushFakeScope("params", ..)`, which encloses that of the type parameters.
-        if expanded_parameters.iter().any(Option::is_some) {
+        // `pushFakeScope("params", ..)`, which encloses the type parameters' scope. A signature
+        // without a declaration doesn't get one.
+        let declared = original_parameters.unwrap_or(expanded_parameters);
+        if !expanded_parameters.is_empty() && declared.iter().any(Option::is_some) {
             self.push_fake_scope(0);
         }
         if self.enclosing_declaration.is_some() {
@@ -3094,7 +3266,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 };
                 let (hir, bound) = (self.c.hir(file), self.c.bound(file));
                 let mut pat = hir[declaration].pat;
-                // `bindPattern` goes no further than the first element.
+                // `bindPattern` stops after the first element.
                 while !is_expanded
                     && let Some(first) = match hir[pat].kind {
                         PatKind::Object(props) if !props.is_empty() => Some(hir[props.at(0)].value),
@@ -3108,7 +3280,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     && bound.pat_symbol[pat.idx()].is_some()
                 {
                     let symbol = self.c.files().sym(file, bound.pat_symbol[pat.idx()]);
-                    // `instantiateSymbol` returns the symbol itself if its type cannot contain type
+                    // `instantiateSymbol` returns the symbol itself if its type can't contain type
                     // variables. `bindPattern` adds the symbols of the declarations.
                     let is_declared_symbol = !is_instantiated || pat != hir[declaration].pat || {
                         let declared = self.c.type_of_pat(file, pat);
@@ -3127,11 +3299,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 };
                 let bound = self.c.bound(file);
                 let symbol = bound.type_param_symbol[tp.idx()];
-                if symbol.is_some()
-                    && bound.symbols[symbol.idx()]
-                        .flags
-                        .contains(SymFlags::PARAMETER)
-                {
+                if symbol.is_some() && bound.symbol(symbol).flags.contains(SymFlags::PARAMETER) {
                     let name = self.text(self.c.hir(file)[tp].name);
                     self.fake_scope_type_parameters
                         .push((name, (!is_instantiated).then_some(type_parameter)));
@@ -3153,8 +3321,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         outer
     }
 
-    /// `pushFakeScope`, where it creates a block. An existing block of the same kind is reused by
-    /// whatever is printed inside it.
+    /// `pushFakeScope`, for the case where it creates a block. Whatever is printed inside an
+    /// existing block of the same kind reuses that block.
     fn push_fake_scope(&mut self, kind: usize) {
         if let Some(enclosing_declaration) = &mut self.enclosing_declaration
             && !self.has_fake_scope[kind]
@@ -3181,7 +3349,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.mapper = outer.mapper;
     }
 
-    /// A type parameter where it is used: its name, or `infer T` in the `extends` type that declares it.
+    /// A type parameter at a use site: its name, or `infer T` in the `extends` type that declares it.
     fn type_parameter_to_node(&mut self, ty: TypeId) -> Node {
         let name = self.type_parameter_to_name(ty);
         if !self.infer_type_parameters.contains(&ty) {
@@ -3191,11 +3359,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 _ => name.len(),
             };
             return Node {
-                text: name.clone(),
-                precedence: NON_ARRAY,
-                reference: Some(name),
-                types: Vec::new(),
-                in_extends: None,
+                reference: Some(name.clone()),
+                ..Node::simple(name)
             };
         }
         self.approximate_length += name.len() + 6;
@@ -3221,10 +3386,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         Node::new(cat!(b"infer ", name), TYPE_OPERATOR)
     }
 
-    /// The constraint of `parameter` in its declaration.
-    /// `typeToTypeNodeHelperWithPossibleReusableTypeNode`: the declared syntax is reused if it
-    /// still resolves to the same type.
-    /// `clones`: type parameters that map to clones of themselves (`has_inference_context`).
+    /// The constraint of `parameter` in its declaration. `typeToTypeNodeHelperWithPossibleReusableTypeNode`
+    /// reuses the declared syntax if it still resolves to the same type. `clones` are type parameters that
+    /// map to clones of themselves (`has_inference_context`).
     fn constraint_to_node(
         &mut self,
         parameter: TypeId,
@@ -3232,15 +3396,15 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         clones: &[TypeId],
     ) -> Node {
         if let TypeData::TypeParam(file, tp, _) = *self.c.data(parameter) {
-            let written = self.c.hir(file)[tp].constraint;
-            if written.is_some()
+            let constraint_node = self.c.hir(file)[tp].constraint;
+            if constraint_node.is_some()
                 && !clones
                     .iter()
                     .any(|&clone| self.c.mentions(constraint, clone))
             {
-                let declared = self.c.type_from_node(file, written);
+                let declared = self.c.type_from_node(file, constraint_node);
                 if self.c.instantiate(declared, self.mapper) == constraint {
-                    return self.reuse_type_node(file, written);
+                    return self.reuse_type_node(file, constraint_node);
                 }
             }
         }
@@ -3376,14 +3540,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let files = self.c.files();
         files.symbol(function).parent.is_some()
             || files
-                .decls(function)
+                .decls_of(function)
                 .into_iter()
                 .any(|(file, decl)| match decl {
                     Decl::Fn(f) => {
                         let bound = self.c.bound(file);
                         match bound.fns[f.idx()].owner {
                             FnOwner::Stmt(statement) => matches!(
-                                bound.stmt_parent[statement.idx()],
+                                bound.parent_of_stmt(statement),
                                 Parent::File | Parent::Module(_)
                             ),
                             _ => false,
@@ -3393,7 +3557,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 })
     }
 
-    /// `shouldEmitTypeOfSymbol`: the symbol by which `typeof` names the type `ty` of `origin`.
+    /// `shouldEmitTypeOfSymbol`. Returns the symbol that `typeof` uses to name the type `ty` of `origin`.
     fn symbol_to_query(&mut self, ty: TypeId, origin: Origin) -> Option<Sym> {
         let symbol = match origin {
             Origin::ClassStatic(symbol)
@@ -3415,8 +3579,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         .then_some(symbol)
     }
 
-    /// `shouldEmitTypeOfSymbol`, up to its call of `shouldWriteTypeOfFunctionSymbol`. `meaning`:
-    /// `isInstanceType`.
+    /// `shouldEmitTypeOfSymbol` up to its `shouldWriteTypeOfFunctionSymbol` call. `meaning` is `isInstanceType`.
     fn should_emit_type_of_symbol(&mut self, symbol: Sym, meaning: SymFlags) -> bool {
         let flags = self.c.files().flags(symbol);
         if flags.intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE) {
@@ -3430,7 +3593,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             return true;
         }
         // `ast.IsClassDeclaration(symbol.ValueDeclaration)`
-        let is_class_declaration = self.c.files().decls(symbol).iter().any(|&(file, decl)| {
+        let is_class_declaration = self.c.files().decls_of(symbol).iter().any(|&(file, decl)| {
             matches!(decl, Decl::Class(c)
                 if matches!(self.c.bound(file).class_owner[c.idx()], ClassOwner::Stmt(_)))
         });
@@ -3438,9 +3601,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     }
 
     /// The same for a function expression that initializes a variable at the top level of a file or
-    /// a namespace: the variable. If that is the enclosing declaration, the function expression
-    /// itself. Also returns whether it is unnamed, so nothing can refer to it: then the symbol is
-    /// that of the variable anyway.
+    /// a namespace. Returns the variable, or the function expression itself if the variable is the
+    /// enclosing declaration. The flag is true if the function expression is unnamed, so nothing
+    /// can refer to it. The symbol is then the variable's anyway.
     fn variable_of_function_expression(&self, ty: TypeId) -> Option<(Sym, bool)> {
         let TypeData::Fns { decls, .. } = self.c.data(ty) else {
             return None;
@@ -3450,14 +3613,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
             return None;
         };
-        let Parent::VarInit(declaration) = bound.expr_parent[e.idx()] else {
+        let Parent::VarInit(declaration) = bound.parent_of_expr(e) else {
             return None;
         };
         let statement = bound.var_stmt[declaration.idx()];
         if is_parenthesized(hir, e)
             || statement.is_none()
             || !matches!(
-                bound.stmt_parent[statement.idx()],
+                bound.parent_of_stmt(statement),
                 Parent::File | Parent::Module(_)
             )
         {
@@ -3493,7 +3656,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.c.is_assignable(ty, string_number_symbol)
     }
 
-    /// `isStaticMethodSymbol`: the symbol of the method `ty` is the type of, if that is static.
+    /// `isStaticMethodSymbol`. Returns the symbol of the method that `ty` is the type of, if it's static.
     fn static_method_symbol(&mut self, ty: TypeId) -> Option<Sym> {
         let TypeData::Fns { decls, .. } = self.c.data(ty) else {
             return None;
@@ -3515,8 +3678,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         None
     }
 
-    /// `shouldWriteTypeOfFunctionSymbol` for the symbol of the method or the function expression
-    /// `ty` is the type of: the symbol to write.
+    /// `shouldWriteTypeOfFunctionSymbol` for the symbol of the method or function expression that
+    /// `ty` is the type of. Returns the symbol to write.
     fn should_write_type_of_function_symbol(&mut self, ty: TypeId) -> Option<Sym> {
         if self.flags & USE_TYPE_OF_FUNCTION == 0 && !self.visited_types.contains(&ty) {
             return None;
@@ -3536,8 +3699,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         if matches!(self.c.data(ty), TypeData::ReverseMapped { .. }) {
             return self.object_type_to_node(ty);
         }
-        // An `InstantiationExpressionType` that is the type of its type query is printed as that
-        // query.
+        // An `InstantiationExpressionType` that's the type of its type query is printed as that query.
         if let TypeData::Synth(shape) = self.c.data(ty)
             && let Some(InstantiationExpression::TypeNode(file, node)) =
                 shape.instantiation_expression
@@ -3545,16 +3707,16 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         {
             let declared = self.c.type_from_node(file, node);
             if self.c.instantiate(declared, self.mapper) == ty {
-                // A query whose name cannot be used here is printed from its type, which re-enters
-                // here.
+                // A query whose name can't be used here is printed from its type, which re-enters here.
                 if self.visited_types.contains(&ty) {
                     return self.elided_information_placeholder();
                 }
                 self.visited_types.push(ty);
                 // `tryReuseExistingNonParameterTypeNode`: `getTypeFromTypeNode(existing, true)` is
-                // nil if the mapper changes the type.
+                // nil if the mapper changes the type. `existing` is the query, inside any
+                // parentheses.
                 let reused = match declared == ty {
-                    true => self.try_reuse_type_node(file, node),
+                    true => self.try_reuse_type_node(file, node, self.c.hir(file)[node].pos),
                     false => None,
                 };
                 self.visited_types.retain(|&visited| visited != ty);
@@ -3579,14 +3741,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     }
                     return self.symbol_to_type_node(symbol, true, Vec::new());
                 }
-                // An object literal is one symbol, fresh, regular or widened.
-                Identity::Origin(match origin {
+                match origin {
                     Origin::ObjectLiteral(file, literal, ..)
                     | Origin::WidenedLiteral(file, literal, ..) => {
-                        Origin::WidenedLiteral(file, literal, false, false, false)
+                        Identity::for_object_literal(file, literal)
                     }
-                    _ => origin,
-                })
+                    _ => Identity::Origin(origin),
+                }
             }
             TypeData::Fns { decls, .. } => match decls.first() {
                 Some(&(file, func)) => Identity::Function(file, func),
@@ -3599,6 +3760,25 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     return self.symbol_to_type_node(target, false, Vec::new());
                 }
                 Identity::Instance(target)
+            }
+            TypeData::Synth(shape) => {
+                if let Some(symbol) = shape.symbol
+                    && self.should_emit_type_of_symbol(symbol, SymFlags::VALUE)
+                {
+                    return self.symbol_to_type_node(symbol, true, Vec::new());
+                }
+                match shape.symbol_declared_at {
+                    Some((file, _, e)) if e.is_some() => match self.c.hir(file)[e].kind {
+                        ExprKind::Class(class) => {
+                            let symbol = self.c.bound(file).class_symbol[class.idx()];
+                            Identity::Origin(Origin::ClassStatic(self.c.files().sym(file, symbol)))
+                        }
+                        _ => Identity::for_object_literal(file, e),
+                    },
+                    Some((file, pos, _)) => Identity::Declaration(file, pos),
+                    // `getInstantiatedTypePart` creates a symbol.
+                    None => Identity::Type(shape.instantiation_target.unwrap_or(ty)),
+                }
             }
             _ => Identity::Type(ty),
         };
@@ -3628,7 +3808,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             self.approximate_length += 2;
             return Node::simple(b"{}");
         };
-        let (shape, mapper) = (members.shape(), members.mapper);
+        let (shape, mapper) = (members.whole_shape(), members.mapper);
         let mut call = Vec::with_capacity(shape.call.len());
         for &signature in &shape.call {
             call.push(self.c.instantiate_sig(signature, mapper));
@@ -3643,39 +3823,27 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     self.approximate_length += 2;
                     return Node::simple(b"{}");
                 }
-                ([only], []) => return self.signature_to_node(*only, SignatureKind::FunctionType),
+                ([only], []) => {
+                    return self.signature_to_node(*only, SignatureKind::FunctionType, ty);
+                }
                 ([], [only]) => {
-                    return self.signature_to_node(*only, SignatureKind::ConstructorType);
+                    return self.signature_to_node(*only, SignatureKind::ConstructorType, ty);
                 }
                 _ => {}
             }
         }
-        // `getNamedMembers`: what a class declares precedes what it inherits. Its shape has that
-        // order.
-        let properties: Vec<Prop<'s>> = match self.c.data(ty) {
+        // `getNamedMembers`: what a class declares precedes what it inherits. Its shape already has that order.
+        let properties: Vec<&Prop> = match self.c.data(ty) {
             TypeData::Ref { .. }
             | TypeData::Anon {
                 origin: Origin::ClassStatic(_),
                 ..
-            } => {
-                let arena = self.c.arena;
-                (shape.props.iter().map(|prop| prop.clone_in(arena))).collect()
-            }
+            } => shape.props.iter().collect(),
             _ => self.ordered_properties(&shape.props),
         };
         let (abstract_signatures, construct): (Vec<SigId>, Vec<SigId>) = construct
             .into_iter()
             .partition(|&signature| self.c.is_abstract_signature(signature));
-        if abstract_signatures.is_empty() {
-            return self.type_literal_to_node(
-                ty,
-                &call,
-                &construct,
-                &shape.index,
-                &properties,
-                mapper,
-            );
-        }
         let property_count = if self.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0 {
             properties
                 .iter()
@@ -3685,11 +3853,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             properties.len()
         };
         let type_element_count = call.len() + construct.len() + shape.index.len() + property_count;
-        // `typeToTypeNode(getIntersectionType(types))`: `abstract new () => T` cannot appear in a
+        // `typeToTypeNode(getIntersectionType(types))`: `abstract new () => T` can't appear in a
         // type literal. No type is created here for a signature, nor for the rest.
         let to_node = |printer: &mut Self, index: usize| match abstract_signatures.get(index) {
             Some(&signature) => {
-                printer.signature_to_node(signature, SignatureKind::ConstructorType)
+                printer.signature_to_node(signature, SignatureKind::ConstructorType, ty)
             }
             None => printer.type_literal_to_node(
                 ty,
@@ -3701,7 +3869,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             ),
         };
         let count = abstract_signatures.len() + usize::from(type_element_count != 0);
-        if count == 1 {
+        // Without an abstract signature it's the type literal, even an empty one.
+        if count <= 1 {
             return to_node(self, 0);
         }
         let nodes = self.map_to_nodes(count, true, to_node).0;
@@ -3710,8 +3879,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `propertySymbol.Flags&SymbolFlagsPrototype != 0` for a property of `owner`.
     fn is_prototype_property(&self, owner: TypeId, property: &Prop) -> bool {
-        property.name == known::prototype
-            && matches!(property.source, PropSource::Type(_))
+        self.c.is_prototype_of_class(property)
             && matches!(
                 self.c.data(owner),
                 TypeData::Anon {
@@ -3727,7 +3895,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         call: &[SigId],
         construct: &[SigId],
         index: &[IndexInfo],
-        properties: &[Prop],
+        properties: &[&Prop],
         mapper: MapperId,
     ) -> Node {
         let saved_flags = self.flags;
@@ -3744,7 +3912,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `setCommentRange(node, propertySymbol.ValueDeclaration)`. A property of a mapped type has `Declarations` and no `ValueDeclaration`.
+    /// `setCommentRange(node, propertySymbol.ValueDeclaration)`. A property of a mapped type has
+    /// `Declarations` and no `ValueDeclaration`.
     fn comments_of_value_declaration(&mut self, prop: &Prop) -> Vec<u8> {
         let has_value_declaration = match prop.source {
             PropSource::Symbol(_) | PropSource::Literal(..) => true,
@@ -3753,7 +3922,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         };
         match self.value_declaration_of_property(prop) {
             Some((file, declaration)) if has_value_declaration && self.indent.is_some() => {
-                // Among assignment declarations it is the first, annotated or not.
+                // Among assignment declarations it's the first, annotated or not.
                 let first = match first_declared(prop).map(|declared| &declared.source) {
                     Some(PropSource::Symbol(symbol)) => self.c.files().value_declaration(*symbol),
                     _ => None,
@@ -3849,8 +4018,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// Everything printed from now on is a member of a type literal. The result is restored to
-    /// `indent` once they are printed.
+    /// Indents for the members of a type literal, which is everything printed from now on. Restore
+    /// `indent` to the result once they're printed.
     fn indent_members(&mut self) -> Option<usize> {
         let outer = self.indent;
         self.indent = outer.map(|level| level + 1);
@@ -3880,7 +4049,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         call: &[SigId],
         construct: &[SigId],
         index: &[IndexInfo],
-        properties: &[Prop],
+        properties: &[&Prop],
         mapper: MapperId,
     ) -> Vec<Vec<u8>> {
         let no_truncation = self.flags & NO_TRUNCATION != 0;
@@ -3894,11 +4063,12 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
         let mut elements = Vec::new();
         for &signature in call {
-            let text = self.signature_to_text(signature, SignatureKind::Call, b"", false);
+            let text = self.signature_to_text(signature, SignatureKind::Call, b"", false, Some(ty));
             elements.push(cat!(text, b";"));
         }
         for &signature in construct {
-            let text = self.signature_to_text(signature, SignatureKind::Construct, b"", false);
+            let kind = SignatureKind::Construct;
+            let text = self.signature_to_text(signature, kind, b"", false, Some(ty));
             elements.push(cat!(text, b";"));
         }
         let is_reverse_mapped = matches!(self.c.data(ty), TypeData::ReverseMapped { .. });
@@ -3928,7 +4098,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             };
             elements.push(cat! { modifier, b"[", name, b": ", key.text, b"]: ", value.text, b";" });
         }
-        for (i, property) in properties.iter().enumerate() {
+        for (i, &property) in properties.iter().enumerate() {
             if self.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0 {
                 if self.is_prototype_property(ty, property) {
                     continue;
@@ -3940,7 +4110,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     let name = self.text(property.name);
                     self.report(Report::PrivateInBaseOfClassExpression(name));
                 }
-                if self.c.is_private_identifier_symbol(property.name) {
+                if self.c.atoms().is_private_symbol_name(property.name) {
                     let name = self.c.written_name(property.name);
                     self.report(Report::PrivateInBaseOfClassExpression(name.to_vec()));
                 }
@@ -3952,11 +4122,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                         b" more ...;"
                     });
                 }
-                let last = &properties[properties.len() - 1];
-                self.add_property_to_element_list(ty, last, mapper, &mut elements);
+                let last = properties[properties.len() - 1];
+                self.add_property_to_element_list(last, mapper, &mut elements);
                 break;
             }
-            self.add_property_to_element_list(ty, property, mapper, &mut elements);
+            self.add_property_to_element_list(property, mapper, &mut elements);
         }
         elements
     }
@@ -3974,10 +4144,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `indexInfoToObjectComputedNamesOrSignatureDeclaration`: the property signatures printed for
-    /// `info.components`. `None`: the index signature is printed instead
-    /// (`indexInfoToIndexSignatureDeclarationHelper`). `type_node`: the node printed for the type
-    /// of each, if not its own type.
+    /// `indexInfoToObjectComputedNamesOrSignatureDeclaration`. Returns the property signatures
+    /// printed for `info.components`, or `None` if the index signature is printed instead
+    /// (`indexInfoToIndexSignatureDeclarationHelper`). `type_node` is the node to print for the
+    /// type of each, if not its own type.
     fn index_info_to_object_computed_names(
         &mut self,
         info: &IndexInfo,
@@ -4050,8 +4220,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     // ───────────────────────────── properties ─────────────────────────────
 
-    /// The property `name` of `ty`, for its declarations. `resolveReverseMappedTypeMembers`: a property of a reverse mapped type has those
-    /// of the property of the source it is inferred from.
+    /// Returns the property `name` of `ty`, for its declarations. `resolveReverseMappedTypeMembers` gives
+    /// a property of a reverse mapped type the declarations of the source property it's inferred from.
     fn property_with_declarations(&mut self, ty: TypeId, name: Atom) -> Option<Prop<'s>> {
         let mut of = ty;
         while let TypeData::ReverseMapped { source, .. } = *self.c.data(of) {
@@ -4061,79 +4231,63 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         (self.c.prop_ref(of, name)).map(|found| found.0.clone_in(arena))
     }
 
-    fn place_of_symbol(&self, symbol: Sym) -> Place {
+    fn position_of_symbol(&self, symbol: Sym) -> Option<(bool, u32, u32)> {
         let files = self.c.files();
-        let Some((file, decl)) = files.decls(symbol).first().copied() else {
-            return Place::Nowhere;
-        };
-        let pos = self.c.files().start_of_declaration(file, decl);
-        Place::At(self.c.place_in_program_order(file, pos))
+        let (file, decl) = files.decls_of(symbol).first().copied()?;
+        let pos = files.start_of_declaration(file, decl);
+        Some(self.c.position_in_program_order(file, pos))
     }
 
-    /// The position of the first declaration of `prop`.
-    fn place_of_property(&mut self, prop: &Prop) -> Place {
-        let at = |c: &Checker<'p, '_>, file: FileId, pos: u32| {
-            Place::At(c.place_in_program_order(file, pos))
-        };
-        let Some(prop) = first_declared(prop) else {
-            return Place::Nowhere;
-        };
-        match &prop.source {
-            PropSource::Literal(file, written) => {
+    /// Returns the position of the first declaration of `prop`, as `compareSymbols` needs it.
+    /// `None` if the property has no declaration.
+    fn position_of_property(&mut self, prop: &Prop) -> Option<(bool, u32, u32)> {
+        match &first_declared(prop)?.source {
+            PropSource::Literal(file, literal_prop) => {
                 let pos = self
                     .c
-                    .first_declaration_pos_of_literal_property(*file, *written);
-                at(&*self.c, *file, pos)
+                    .first_declaration_pos_of_literal_property(*file, *literal_prop);
+                Some(self.c.position_in_program_order(*file, pos))
             }
             PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol) {
                 Some((file, Decl::Expando(first) | Decl::ThisProperty(first))) => {
-                    at(&*self.c, file, self.c.hir(file)[first].pos)
+                    let pos = self.c.hir(file)[first].pos;
+                    Some(self.c.position_in_program_order(file, pos))
                 }
-                _ => self.place_of_symbol(*symbol),
+                _ => self.position_of_symbol(*symbol),
             },
-            _ => Place::Nowhere,
+            _ => None,
         }
     }
 
-    /// `getNamedMembers` sorts with `compareSymbols`: by the position of the first declaration, and
-    /// those without one last, by name.
-    fn ordered_properties(&mut self, props: &[Prop]) -> Vec<Prop<'s>> {
-        let mut keyed: Vec<((u8, (bool, u32, u32), &'p [u8]), &Prop)> =
+    /// `getNamedMembers` sorts with `compareSymbols`: by the position of the first declaration,
+    /// then the ones without a declaration, by name.
+    fn ordered_properties<'a>(&mut self, props: &'a [Prop<'a>]) -> Vec<&'a Prop<'a>> {
+        let mut keyed: Vec<((u8, (bool, u32, u32), &'p [u8]), &'a Prop<'a>)> =
             Vec::with_capacity(props.len());
         for prop in props {
             let name = self.c.atoms().bytes(prop.name);
-            let place = match &prop.source {
-                PropSource::Literal(file, written) => {
-                    let pos = self
-                        .c
-                        .first_declaration_pos_of_literal_property(*file, *written);
-                    Place::At(self.c.place_in_program_order(*file, pos))
-                }
-                _ => self.place_of_property(prop),
-            };
-            keyed.push(match place {
-                Place::At(place) => ((0, place, name), prop),
-                Place::Nowhere => ((1, (false, 0, 0), name), prop),
+            keyed.push(match self.position_of_property(prop) {
+                Some(sort_position) => ((0, sort_position, name), prop),
+                None => ((1, (false, 0, 0), name), prop),
             });
         }
-        keyed.sort_by(|a, b| a.0.cmp(&b.0));
-        let arena = self.c.arena;
-        (keyed.into_iter().map(|entry| entry.1.clone_in(arena))).collect()
+        keyed.shared_sort_by(|a, b| a.0.cmp(&b.0));
+        keyed.into_iter().map(|entry| entry.1).collect()
     }
 
-    /// The syntax of the name in the declaration `written` of an object literal property.
+    /// Returns the syntax of the name in the declaration `literal_prop` of an object literal property.
     fn name_syntax_of_literal_property(
         &mut self,
         file: FileId,
-        written: PropId,
+        literal_prop: PropId,
     ) -> PropertyNameSyntax {
         let hir = self.c.hir(file);
-        let written = &hir[written];
-        let at = written.pos as usize;
+        let literal_prop = &hir[literal_prop];
+        let at = literal_prop.pos as usize;
         let first = hir.text.get(at).copied();
-        // In an object literal every name in brackets gives the property a `nameType`.
+        // In an object literal, every name in brackets gives the property a `nameType`.
         let in_brackets = first == Some(b'[');
-        let is_string = match written.key {
+        let is_string = match literal_prop.key {
             PropKey::Computed(e) => {
                 let key = self.c.type_of_expr(file, e);
                 self.c.is_string_like(key)
@@ -4149,14 +4303,18 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         PropertyNameSyntax {
             is_string,
             is_single_quoted: first == Some(b'\''),
-            is_computed: in_brackets || matches!(written.key, PropKey::Computed(_)),
+            is_computed: in_brackets || matches!(literal_prop.key, PropKey::Computed(_)),
         }
     }
 
-    /// `getSymbolOfDeclaration(memberDecl).Declarations` for the member `written` of an object
+    /// `getSymbolOfDeclaration(memberDecl).Declarations` for the member `literal_prop` of an object
     /// literal.
-    fn declarations_of_literal_member(&mut self, file: FileId, written: PropId) -> Vec<PropId> {
-        let declarations = (self.c).declarations_of_member(file, Decl::Property(written));
+    fn declarations_of_literal_member(
+        &mut self,
+        file: FileId,
+        literal_prop: PropId,
+    ) -> Vec<PropId> {
+        let declarations = (self.c).declarations_of_member(file, Decl::Property(literal_prop));
         let members = declarations.iter().filter_map(|it| match it.1 {
             Decl::Property(member) => Some(member),
             _ => None,
@@ -4164,58 +4322,86 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         members.collect()
     }
 
-    /// The syntax of the name in each declaration of `prop`.
-    fn property_name_syntaxes(&mut self, prop: &Prop, out: &mut Vec<PropertyNameSyntax>) {
+    /// `isStringNamed` and `isSingleQuotedStringNamed` for a declaration that isn't a member of an object literal.
+    fn name_syntax_of_declaration(
+        &mut self,
+        file: FileId,
+        declaration: Decl,
+    ) -> PropertyNameSyntax {
+        let hir = self.c.hir(file);
         let plain = PropertyNameSyntax {
             is_string: false,
             is_single_quoted: false,
             is_computed: false,
         };
+        // `ast.IsStringLiteral(name)` for a name whose first token is at `start`.
+        let name_at = |start: u32| {
+            let first = hir.text.get(start as usize).copied();
+            PropertyNameSyntax {
+                is_string: matches!(first, Some(b'"' | b'\'')),
+                is_single_quoted: first == Some(b'\''),
+                is_computed: false,
+            }
+        };
+        // `name.Expression()` of a `ComputedPropertyName`, or `ArgumentExpression` of an
+        // `ElementAccessExpression`.
+        let key = match declaration {
+            Decl::Member(member) => match hir[member].key {
+                PropKey::Computed(e) => e,
+                _ => {
+                    return PropertyNameSyntax {
+                        is_string: hir[member].flags.contains(Flags::STRING_NAME),
+                        ..name_at(hir[member].name_pos)
+                    };
+                }
+            },
+            Decl::Expando(e) | Decl::ThisProperty(e) | Decl::ExportsProperty(e) => {
+                let PropKey::Computed(name) = self.c.key_of_assignment_declaration(file, e) else {
+                    return plain;
+                };
+                // `GetElementOrPropertyAccessName`, which skips parentheses.
+                if crate::bind::string_literal_text(hir, name).is_some()
+                    || matches!(hir[name].kind, ExprKind::Number(_))
+                {
+                    return name_at(hir[name].pos);
+                }
+                name
+            }
+            _ => {
+                let node = hir.node(declaration);
+                let name = hir.name(node);
+                match hir.key_of(node) {
+                    (PropKey::Computed(e), _) => e,
+                    (_, NameKind::ComputedString) => {
+                        return PropertyNameSyntax {
+                            is_string: true,
+                            ..plain
+                        };
+                    }
+                    _ if name.is_some() => return name_at(hir.start(name)),
+                    _ => return plain,
+                }
+            }
+        };
+        let key = self.c.type_of_expr(file, key);
+        PropertyNameSyntax {
+            is_string: self.c.is_string_like(key),
+            ..plain
+        }
+    }
+
+    /// Returns the syntax of the name in each declaration of `prop`.
+    fn property_name_syntaxes(&mut self, prop: &Prop, out: &mut Vec<PropertyNameSyntax>) {
         for_each_declared(prop, &mut |prop| {
             match &prop.source {
                 PropSource::Symbol(symbol) => {
-                    let list = self.c.members_of_symbol(*symbol);
-                    let assignments = match list.is_empty() {
-                        true => self.c.assignments_of_symbol(*symbol),
-                        false => smallvec::SmallVec::new(),
-                    };
-                    if list.is_empty() && assignments.is_empty() {
-                        out.push(plain);
-                    }
-                    for &declaration in assignments.iter() {
-                        let hir = self.c.hir(symbol.file);
-                        let is_string = match hir[declaration].kind {
-                            ExprKind::Assign { target, .. } => match hir[target].kind {
-                                ExprKind::Index { index, .. } => {
-                                    let key = self.c.type_of_expr(symbol.file, index);
-                                    self.c.is_string_like(key)
-                                }
-                                _ => false,
-                            },
-                            _ => false,
-                        };
-                        out.push(PropertyNameSyntax { is_string, ..plain });
-                    }
-                    for &(file, member) in list.iter() {
-                        let hir = self.c.hir(file);
-                        let member = &hir[member];
-                        let (is_string, is_computed) = match member.key {
-                            PropKey::Computed(e) => {
-                                let key = self.c.type_of_expr(file, e);
-                                (self.c.is_string_like(key), true)
-                            }
-                            _ => (member.flags.contains(Flags::STRING_NAME), false),
-                        };
-                        out.push(PropertyNameSyntax {
-                            is_string,
-                            is_single_quoted: hir.text.get(member.name_pos as usize)
-                                == Some(&b'\''),
-                            is_computed,
-                        });
+                    let declarations = self.c.declarations_of_property(*symbol);
+                    for &(file, declaration) in declarations.iter() {
+                        out.push(self.name_syntax_of_declaration(file, declaration));
                     }
                 }
-                PropSource::Literal(file, written) => {
-                    for declaration in self.declarations_of_literal_member(*file, *written) {
+                PropSource::Literal(file, literal_prop) => {
+                    for declaration in self.declarations_of_literal_member(*file, *literal_prop) {
                         let name = self.name_syntax_of_literal_property(*file, declaration);
                         out.push(name);
                     }
@@ -4228,8 +4414,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getPropertyNameNodeForSymbol`
     fn property_name(&mut self, prop: &Prop) -> Vec<u8> {
-        let bytes = self.c.atoms().bytes(prop.name);
-        if self.c.is_private_identifier_symbol(prop.name) {
+        if self.c.atoms().is_private_symbol_name(prop.name) {
             return self.c.written_name(prop.name).to_vec();
         }
         // `getPropertyNameNodeForSymbolFromNameType`: the `nameType` is a `unique symbol`.
@@ -4245,17 +4430,19 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             self.enclosing_declaration = outer;
             return cat!(b"[", expression, b"]");
         }
-        let name = bytes.to_vec();
-        let mut written = Vec::new();
-        self.property_name_syntaxes(prop, &mut written);
-        let is_string_named = !written.is_empty() && written.iter().all(|w| w.is_string);
-        let quote = if !written.is_empty() && written.iter().all(|w| w.is_single_quoted) {
+        let name = self.text(prop.name);
+        let mut name_syntaxes = Vec::new();
+        self.property_name_syntaxes(prop, &mut name_syntaxes);
+        let is_string_named =
+            !name_syntaxes.is_empty() && name_syntaxes.iter().all(|w| w.is_string);
+        let quote = if !name_syntaxes.is_empty() && name_syntaxes.iter().all(|w| w.is_single_quoted)
+        {
             b'\''
         } else {
             b'"'
         };
         let has_name_type = self.has_name_type(prop);
-        let is_identifier = is_identifier(&name);
+        let is_identifier = is_identifier_text(&name);
         let is_numeric = self.c.is_numeric_name(prop.name);
         // `getPropertyNameNodeForSymbolFromNameType`
         if has_name_type
@@ -4276,8 +4463,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.string_literal(&name, quote)
     }
 
-    /// `nameType.symbol` of a property that a `unique symbol` names `name`, or else the description
-    /// of that.
+    /// `nameType.symbol` of a property whose name `name` comes from a `unique symbol`, or else that
+    /// symbol's description.
     fn symbol_of_name_type(&mut self, name: Atom) -> Result<Sym, Atom> {
         match self.c.key_type_of_name(name).map(|ty| self.c.data(ty)) {
             Some(&TypeData::UniqueSymbol { symbol, name }) => {
@@ -4287,10 +4474,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `getNameOfSymbolFromNameType`, using the name alone.
+    /// `getNameOfSymbolFromNameType`, using only the name.
     fn name_from_name_type(&mut self, name: Atom) -> Vec<u8> {
-        let bytes = self.c.atoms().bytes(name);
-        if self.c.is_private_identifier_symbol(name) {
+        if self.c.atoms().is_private_symbol_name(name) {
             return self.c.written_name(name).to_vec();
         }
         if self.c.atoms().is_symbol_name(name) {
@@ -4300,9 +4486,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             };
             return cat!(b"[", text, b"]");
         }
-        let text = bytes.to_vec();
+        let text = self.text(name);
         let is_numeric = self.c.is_numeric_name(name);
-        if !is_identifier(&text) && !is_numeric {
+        if !is_identifier_text(&text) && !is_numeric {
             return quoted(&text, b'"', false);
         }
         if is_numeric && text.starts_with(b"-") {
@@ -4315,8 +4501,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     fn has_name_type(&mut self, prop: &Prop) -> bool {
         match &prop.source {
             PropSource::Type(_) => false,
-            // `checkObjectLiteral` takes it from the member the property is created from, whatever
-            // else declares the name.
+            // `checkObjectLiteral` takes it from the member the property is created from,
+            // regardless of what else declares the name.
             PropSource::Literal(file, member) => {
                 self.name_syntax_of_literal_property(*file, *member)
                     .is_computed
@@ -4324,7 +4510,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             // `lateBindMember`
             PropSource::Symbol(symbol) => self.c.files().symbol(*symbol).name == known::computed,
             PropSource::Mapped(..) => true,
-            // That of the first.
+            // The first part decides.
             PropSource::Intersected(_, parts)
             | PropSource::Copy(_, parts, _)
             | PropSource::ReverseMapped(_, parts) => match parts.first() {
@@ -4334,7 +4520,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// Whether `getWidenedProperty` or `transformTypeOfMembers` replaces the symbol by
+    /// True if `getWidenedProperty` or `transformTypeOfMembers` replaces the symbol using
     /// `createSymbolWithType`, which they do if its type changes.
     fn is_created_with_other_type(&mut self, prop: &Prop) -> bool {
         let read_with = PropFlags::WIDEN | PropFlags::REGULAR;
@@ -4348,8 +4534,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     }
 
     /// `symbol.CheckFlags&ast.CheckFlagsLate != 0`. `createSymbolWithType`,
-    /// `createUnionOrIntersectionProperty` and the symbol `getSpreadType` makes of two drop the
-    /// flag. `getSpreadSymbol`, `getAnonymousPartialType` and `resolveMappedTypeMembers` copy it.
+    /// `createUnionOrIntersectionProperty` and the symbol that `getSpreadType` makes from two symbols drop
+    /// the flag. `getSpreadSymbol`, `getAnonymousPartialType` and `resolveMappedTypeMembers` copy it.
     fn is_late_bound(&mut self, prop: &Prop) -> bool {
         if self.is_created_with_other_type(prop) {
             return false;
@@ -4364,10 +4550,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 _ => false,
             },
             PropSource::Copy(ty, parts, has_value_declaration) => match &parts[..] {
-                // With a `ValueDeclaration` it is the symbol itself if it has the type of that.
+                // With a `ValueDeclaration`, it's the symbol itself if it has the same type as the source.
                 [source] => {
                     (!*has_value_declaration
-                        || prop.flags.contains(PropFlags::WRITTEN)
+                        || prop.flags.contains(PropFlags::DECLARED_IN_LITERAL)
                         || self.c.type_of_prop(source, MapperId::IDENTITY) == *ty)
                         && self.is_late_bound(source)
                 }
@@ -4376,8 +4562,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `getNameOfSymbolAsWritten`, from where it has found `name` of `file`, the name in the first
-    /// declaration of `prop` that has one.
+    /// `getNameOfSymbolAsWritten` from the point where it has found `name` of `file`, the name in
+    /// the first declaration of `prop` that has one.
     fn name_of_declared_property(&mut self, prop: &Prop, file: FileId, name: hir::Node) -> Vec<u8> {
         if self.c.hir(file).kind(name) == Kind::ComputedPropertyName
             && !self.c.atoms().is_symbol_name(prop.name)
@@ -4394,9 +4580,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let prop = first_declared(whole).unwrap_or(whole);
         match &prop.source {
             PropSource::Literal(file, property) => {
-                // A computed name ends where the parser stopped, even if the `]` is missing, and
-                // the name of a JSX attribute is more than one token (`data-\u0061`): `end_of_node`
-                // handles both.
+                // A computed name ends where the parser stopped, even if the `]` is missing, and the name
+                // of a JSX attribute is more than one token (`data-\u0061`). `end_of_node` handles both.
                 let first = (self.c).first_declaration_of_literal_member(*file, *property);
                 let name = self.c.hir(*file).node(first).with(Part::Name);
                 return self.name_of_declared_property(whole, *file, name);
@@ -4411,7 +4596,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                         self.c.atoms().bytes(prop.name).to_vec()
                     }
                     Some((file, Decl::Member(member))) => {
-                        // `2n`, and `#x` outside a class, are not a `PropKey` but are still printed.
+                        // `2n`, and `#x` outside a class, aren't a `PropKey` but are still printed.
                         let name = self.c.hir(file).node(member).with(Part::Name);
                         self.name_of_declared_property(whole, file, name)
                     }
@@ -4433,7 +4618,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.name_from_name_type(prop.name)
     }
 
-    /// The links of the property `name` of the reverse mapped type `owner`.
+    /// Returns the links of the property `name` of the reverse mapped type `owner`.
     fn reverse_mapped_property(&mut self, owner: TypeId, name: Atom) -> ReverseMappedProperty {
         let (source, mapped) = match *self.c.data(owner) {
             TypeData::ReverseMapped { source, mapped, .. } => (source, mapped),
@@ -4473,7 +4658,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 .any(|on| on.mapped == property.mapped)
     }
 
-    /// Whether the accessor `prop` is declared in a class, and whether it is an `accessor` field.
+    /// Returns two flags: the accessor `prop` is declared in a class, and it's an `accessor` field.
     fn accessor_declaration(&self, prop: &Prop) -> (bool, bool) {
         match self.c.value_declaration_of_prop(prop) {
             Some((file, Decl::Member(member))) if matches!(prop.source, PropSource::Symbol(_)) => (
@@ -4527,8 +4712,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// The start of `addPropertyToElementList` for a property named by a `unique symbol`.
     fn track_late_bound_name(&mut self, prop: &Prop) {
         let Some(prop) = first_declared(prop) else {
-            let mut name = Vec::new();
-            self.c.write_prop(&mut name, prop);
+            let name = self.c.prop_to_string(prop);
             return self.report(Report::NonSerializableProperty(name));
         };
         let (file, key) = match &prop.source {
@@ -4538,7 +4722,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 Some((file, Decl::Expando(e) | Decl::ThisProperty(e))) => {
                     let hir = self.c.hir(file);
                     if let ExprKind::Assign { target, .. } = hir[e].kind
-                        && let ExprKind::Index { index, .. } = hir[target].kind
+                        && let ExprKind::Index { index, .. } = hir.checked_kind(target)
                         && !is_parenthesized(hir, index)
                         && is_property_access_entity_name_expression(hir, index)
                     {
@@ -4571,24 +4755,26 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             return;
         };
         let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-        // A name that does not resolve where the type is printed is tracked as the symbol it
+        // A name that doesn't resolve where the type is printed is tracked as the symbol it
         // resolves to in its source position, which should be inaccessible.
-        let symbol = files
-            .resolve_name(at.file, at.scope, name, meaning)
-            .or_else(|| {
-                let scope = self.c.enclosing_scope_of_expr(file, first_identifier);
-                files.resolve_name(file, scope, name, meaning)
-            });
+        let mut location = (at.file, at.scope);
+        let mut symbol = files.resolve_name(location.0, location.1, name, meaning);
+        if symbol.is_none() {
+            location = (file, self.c.enclosing_scope_of_expr(file, first_identifier));
+            symbol = files.resolve_name(location.0, location.1, name, meaning);
+        }
         if let Some(symbol) = symbol {
+            self.c
+                .note_use_of_tracked_name(location.0, location.1, name, meaning);
             self.track_symbol(symbol, SymFlags::VALUE);
         }
     }
 
-    /// `parameterToParameterDeclarationName`, only what it tracks: nothing for an identifier.
+    /// Only the tracking part of `parameterToParameterDeclarationName`, which tracks nothing for an identifier.
     fn track_parameter_declaration_name(&mut self, file: FileId, parameter: ParamId) {
         let hir = self.c.hir(file);
         let name = hir[parameter].pat;
-        if self.tracker.is_some()
+        if self.enclosing_declaration.is_some()
             && name.is_some()
             && matches!(hir[name].kind, PatKind::Object(_) | PatKind::Array(_))
         {
@@ -4596,8 +4782,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `cloneBindingName`, only what it tracks: the late-bindable names in `node` of `file`. Its
-    /// visitor also enters the initializers that it then removes.
+    /// Only the tracking part of `cloneBindingName`, which tracks the late-bindable names in `node`
+    /// of `file`. Its visitor also enters the initializers that it then removes.
     fn track_computed_names_in(&mut self, file: FileId, node: hir::Node) {
         let hir = self.c.hir(file);
         // `isLateBindableName`
@@ -4618,33 +4804,22 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `len(ast.SymbolName(propertySymbol))`. The name of a property that a `unique symbol` names ends
-    /// with the id of the symbol. typescript-go assigns ids on first use, in the order of the check:
-    /// four digits in a large program. Ours says where the symbol is declared, and is longer.
-    fn length_of_symbol_name(&self, name: Atom) -> usize {
-        let text = self.c.written_name(name);
-        if !self.c.atoms().is_symbol_name(name) {
-            return text.len();
-        }
-        match bun_core::strings::last_index_of_char(text, b'@') {
-            Some(at) if at >= crate::atom::SYMBOL_NAME_PREFIX.len() => at + 1 + 4,
-            // Here the name of `[Symbol.iterator]` has no id.
-            _ => text.len() + 1 + 4,
-        }
+    /// `len(ast.SymbolName(propertySymbol))`
+    fn length_of_symbol_name(&mut self, name: Atom) -> usize {
+        let length = self.c.length_of_late_bound_name(name);
+        length.unwrap_or_else(|| self.c.written_name(name).len())
     }
 
     /// `addPropertyToElementList`
     fn add_property_to_element_list(
         &mut self,
-        owner: TypeId,
         prop: &Prop,
         mapper: MapperId,
         elements: &mut Vec<Vec<u8>>,
     ) {
-        let reverse_mapped = if matches!(self.c.data(owner), TypeData::ReverseMapped { .. }) {
-            Some(self.reverse_mapped_property(owner, prop.name))
-        } else {
-            None
+        let reverse_mapped = match prop.source {
+            PropSource::ReverseMapped(of, _) => Some(self.reverse_mapped_property(of, prop.name)),
+            _ => None,
         };
         let uses_placeholder = reverse_mapped
             .as_ref()
@@ -4662,10 +4837,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         if self.c.atoms().is_symbol_name(prop.name) {
             self.track_late_bound_name(prop);
         }
-        let declared = if reverse_mapped.is_some() {
-            self.property_with_declarations(owner, prop.name)
-        } else {
-            None
+        let declared = match &reverse_mapped {
+            Some(property) => self.property_with_declarations(property.owner, prop.name),
+            None => None,
         };
         let name = match declared {
             Some(mut declared) => {
@@ -4691,13 +4865,12 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     };
                     let signature = self.c.sig_of_fn(file, func);
                     let signature = self.c.instantiate_sig(signature, symbol_mapper);
-                    let text = self.signature_to_text(signature, kind, &name, false);
+                    let text = self.signature_to_text(signature, kind, &name, false, None);
                     elements.push(cat!(self.comments_before(file, declaration), text, b";"));
                 }
                 return;
             }
-            // The two signatures `newSignature` creates for an `accessor` field have no
-            // declaration.
+            // The two signatures that `newSignature` creates for an `accessor` field have no declaration.
             if !is_error && in_class {
                 self.approximate_length += 3;
                 let getter = self.type_to_node_without_inference_fallback(property_type);
@@ -4729,6 +4902,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                         SignatureKind::Method,
                         &name,
                         is_optional,
+                        None,
                     );
                     // `core.Coalesce(signature.declaration, propertySymbol.ValueDeclaration)`
                     let origin = self.c.types().sig_origin(signature);
@@ -4736,7 +4910,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                         Some((file, func, _)) => {
                             let declaration = match self.c.bound(file).fns[func.idx()].owner {
                                 FnOwner::Member(m) => self.c.hir(file).node(m),
-                                FnOwner::Expr(e) => match self.c.bound(file).expr_parent[e.idx()] {
+                                FnOwner::Expr(e) => match self.c.bound(file).parent_of_expr(e) {
                                     Parent::Prop(p) => self.c.hir(file).node(p),
                                     _ => hir::Node::NONE,
                                 },
@@ -4759,7 +4933,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             if let Some(property) = reverse_mapped {
                 self.reverse_mapped_stack.push(property);
             }
-            let node = self.serialize_type_of_property(owner, prop, property_type);
+            let node = self.serialize_type_of_property(prop, property_type);
             if reverse_mapped.is_some() {
                 self.reverse_mapped_stack.pop();
             }
@@ -4790,28 +4964,216 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         quoted(self.c.atoms().bytes(text), quote, false)
     }
 
-    /// What the printer emits for a deep clone of the expression `e` of `file`. No node of a clone
-    /// has a position, so `getTextOfNode` and `getLiteralText` emit `node.Text()`. `None`: `e` is
-    /// neither a literal nor an entity name.
-    fn cloned_expression_text(&self, file: FileId, e: ExprId) -> Option<Vec<u8>> {
+    /// `emitTemplateLiteral` for a deep clone of `template` of `file`. `RawText` of each piece is
+    /// what the source has.
+    fn cloned_template_text(&self, file: FileId, template: ExprId) -> Option<Vec<u8>> {
         let hir = self.c.hir(file);
-        let text = match hir[e].kind {
-            ExprKind::Ident(name) => self.text(name),
-            ExprKind::Dot { .. } if is_property_access_entity_name_expression(hir, e) => {
-                self.entity_name_text(file, e)?
+        let ExprKind::Template { exprs } = hir[template].kind else {
+            return None;
+        };
+        // The `` ` `` or the `}` that the next piece starts with.
+        let mut at = hir[template].pos as usize;
+        let mut text = Vec::new();
+        for substitution in hir.ids(exprs) {
+            let (end, is_substitution) = super::spans::template_text(&hir.text, at + 1);
+            if !is_substitution {
+                return None;
             }
-            ExprKind::Number(n) => crate::atom::number_to_string(hir.numbers[n as usize]),
+            text.extend_from_slice(hir.text.get(at..end)?);
+            let precedence = OperatorPrecedence::Comma;
+            text.extend_from_slice(&self.cloned_expression_text(file, substitution, precedence)?);
+            let end = self.c.end_of_expr(file, substitution);
+            at = self.c.skip_trivia_from(file, end) as usize;
+            if hir.text.get(at) != Some(&b'}') {
+                return None;
+            }
+        }
+        let (end, is_substitution) = super::spans::template_text(&hir.text, at + 1);
+        let last = hir.text.get(at..end)?;
+        if is_substitution || last.len() < 2 || !last.ends_with(b"`") {
+            return None;
+        }
+        text.extend_from_slice(last);
+        Some(text)
+    }
+
+    /// `emitExpression(node, precedence)` for a deep clone of the expression `e` of `file`. No node
+    /// of a clone has a position, so `getTextOfNode` and `getLiteralText` emit `node.Text()` and
+    /// everything is on one line. Returns `None` if it contains an object or array literal, a
+    /// function, a class, JSX or a type node, which have their own emitters.
+    fn cloned_expression_text(
+        &self,
+        file: FileId,
+        e: ExprId,
+        precedence: OperatorPrecedence,
+    ) -> Option<Vec<u8>> {
+        use OperatorPrecedence as P;
+        if self.c.is_stack_low() {
+            return None;
+        }
+        let hir = self.c.hir(file);
+        let emit = |e: ExprId, precedence: P| self.cloned_expression_text(file, e, precedence);
+        // `emitArgument` of each: `LFCallExpressionArguments`
+        let emit_arguments = |list: IdList<ExprId>| -> Option<Vec<u8>> {
+            let list = hir.ids(list).map(|argument| emit(argument, P::Spread));
+            let list = list.collect::<Option<Vec<Vec<u8>>>>()?;
+            Some(cat!(b"(", list.join(&b", "[..]), b")"))
+        };
+        let question_dot = |chain: Chain| -> &'static [u8] {
+            match chain {
+                Chain::Start => b"?.",
+                Chain::No | Chain::Continue => b"",
+            }
+        };
+        let text = match hir.checked_kind(e) {
+            ExprKind::Ident(name) | ExprKind::PrivateIdentifier(name) => self.text(name),
+            ExprKind::This => b"this".to_vec(),
+            ExprKind::Super => b"super".to_vec(),
+            ExprKind::Null => b"null".to_vec(),
+            ExprKind::True => b"true".to_vec(),
+            ExprKind::False => b"false".to_vec(),
+            ExprKind::Number(_) | ExprKind::BigInt(_) => self.text_of_number_literal(file, e),
             ExprKind::String(value) => self.cloned_string_literal_text(file, value, hir[e].pos),
-            ExprKind::Unary { op, operand }
-                if matches!(op, UnOp::Plus | UnOp::Minus)
-                    && matches!(hir[operand].kind, ExprKind::Number(_)) =>
-            {
-                let sign: &[u8] = if op == UnOp::Plus { b"+" } else { b"-" };
-                cat!(sign, self.cloned_expression_text(file, operand)?)
+            ExprKind::Regex { .. } => {
+                let raw_text = hir.text.get(hir[e].pos as usize..hir[e].end as usize)?;
+                raw_text.to_vec()
             }
+            ExprKind::Template { .. } => self.cloned_template_text(file, e)?,
+            ExprKind::TaggedTemplate(call) if hir[call].type_args.is_empty() => {
+                let template = self.cloned_template_text(file, hir.template_of(call))?;
+                cat!(emit(hir[call].callee, P::Member)?, b" ", template)
+            }
+            ExprKind::Dot {
+                obj, name, chain, ..
+            } => {
+                let object = emit(obj, P::for_chain(chain))?;
+                // `mayNeedDotDotForPropertyAccess`. `TokenFlagsWithSpecifier`: `0x`, `0b`, `0o`.
+                let raw_text = hir.text.get(hir[obj].pos as usize..).unwrap_or_default();
+                let may_need_dot_dot = matches!(hir[obj].kind, ExprKind::Number(_))
+                    && !is_parenthesized(hir, obj)
+                    && !matches!(
+                        raw_text,
+                        [b'0', b'x' | b'X' | b'b' | b'B' | b'o' | b'O', ..]
+                    )
+                    && bun_core::strings::index_of_any(&object, b".eE").is_none();
+                let dot: &[u8] = match chain {
+                    Chain::Start => b"?.",
+                    _ if may_need_dot_dot => b"..",
+                    _ => b".",
+                };
+                cat!(object, dot, self.text(name))
+            }
+            ExprKind::Index { obj, index, chain } => {
+                let object = emit(obj, P::for_chain(chain))?;
+                let index = emit(index, P::Comma)?;
+                cat!(object, question_dot(chain), b"[", index, b"]")
+            }
+            ExprKind::Call(call) if hir[call].type_args.is_empty() => {
+                let call = &hir[call];
+                // `emitCallee`: `isNewExpressionWithoutArguments`
+                let callee = match P::for_expression(hir, call.callee) {
+                    P::LeftHandSide => emit(call.callee, P::Parentheses)?,
+                    _ => emit(call.callee, P::for_chain(call.chain))?,
+                };
+                cat!(callee, question_dot(call.chain), emit_arguments(call.args)?)
+            }
+            ExprKind::New(call) if hir[call].type_args.is_empty() => {
+                let call = &hir[call];
+                let is_call = matches!(
+                    hir[call.callee].kind,
+                    ExprKind::Call(_) | ExprKind::ImportCall { .. }
+                );
+                let callee = emit(
+                    call.callee,
+                    if is_call { P::Parentheses } else { P::Member },
+                )?;
+                // `LFOptionalIfNil`
+                if call.close_pos == u32::MAX {
+                    cat!(b"new ", callee)
+                } else {
+                    cat!(b"new ", callee, emit_arguments(call.args)?)
+                }
+            }
+            ExprKind::Unary {
+                op: op @ (UnOp::PostInc | UnOp::PostDec),
+                operand,
+            } => cat!(emit(operand, P::LeftHandSide)?, unary_operator_text(op)),
+            ExprKind::Unary { op, operand } => {
+                let inner = match hir[operand].kind {
+                    ExprKind::Unary { op: inner, .. } if !is_parenthesized(hir, operand) => {
+                        Some(inner)
+                    }
+                    _ => None,
+                };
+                let space: &[u8] = match (op, inner) {
+                    (UnOp::Typeof | UnOp::Void | UnOp::Delete, _)
+                    | (UnOp::Plus, Some(UnOp::Plus | UnOp::PreInc))
+                    | (UnOp::Minus, Some(UnOp::Minus | UnOp::PreDec)) => b" ",
+                    _ => b"",
+                };
+                cat!(unary_operator_text(op), space, emit(operand, P::Unary)?)
+            }
+            ExprKind::Binary { op, left, right } => {
+                let (left_precedence, right_precedence) = P::for_operands(hir, op, left, right);
+                let (left, right) = (emit(left, left_precedence)?, emit(right, right_precedence)?);
+                let space: &[u8] = if op == BinOp::Comma { b"" } else { b" " };
+                let operator = super::errors::operator_text(op, false);
+                cat!(left, space, operator, b" ", right)
+            }
+            ExprKind::Assign { op, target, value } => {
+                let operator = match op {
+                    Some(op) => super::errors::operator_text(op, true),
+                    None => b"=".to_vec(),
+                };
+                let (target, value) = (emit(target, P::Conditional)?, emit(value, P::Yield)?);
+                cat!(target, b" ", operator, b" ", value)
+            }
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = hir.branches(branches);
+                let (test, yes, no) = (
+                    emit(test, P::LogicalOr)?,
+                    emit(yes, P::Yield)?,
+                    emit(no, P::Yield)?,
+                );
+                cat!(test, b" ? ", yes, b" : ", no)
+            }
+            ExprKind::Spread(operand) => cat!(b"...", emit(operand, P::Yield)?),
+            ExprKind::Await(operand) => cat!(b"await ", emit(operand, P::Unary)?),
+            ExprKind::Yield { value, star } => {
+                let keyword: &[u8] = if star { b"yield*" } else { b"yield" };
+                if value.is_some() {
+                    cat!(keyword, b" ", emit(value, P::Yield)?)
+                } else {
+                    keyword.to_vec()
+                }
+            }
+            // In a run of `NonNullExpression`s, the operand of each one except the innermost is
+            // another one, in parentheses.
+            ExprKind::NonNull(operand) => {
+                let inside = non_null_ends_in(hir, e).len();
+                cat!(
+                    b"(".repeat(inside),
+                    emit(operand, P::Member)?,
+                    b"!",
+                    b")!".repeat(inside)
+                )
+            }
+            ExprKind::AsConst(operand) if hir.is_type_assertion(e, operand) => {
+                cat!(b"<const>", emit(operand, P::Update)?)
+            }
+            ExprKind::AsConst(operand) => cat!(emit(operand, P::Relational)?, b" as const"),
+            ExprKind::ImportCall { args } if hir.type_args_of_import_call(args).is_empty() => {
+                cat!(b"import", emit_arguments(args)?)
+            }
+            ExprKind::ImportMeta => b"import.meta".to_vec(),
+            ExprKind::NewTarget(name) => cat!(b"new.", self.text(name)),
             _ => return None,
         };
-        let parentheses = parentheses_around(hir, e).len();
+        let source_parentheses = parentheses_around(hir, e).len();
+        let parentheses = match source_parentheses {
+            0 => usize::from(P::for_expression(hir, e) < precedence),
+            _ => source_parentheses,
+        };
         Some(cat!(
             b"(".repeat(parentheses),
             text,
@@ -4819,13 +5181,15 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         ))
     }
 
-    /// The same for the property name of the binding element `p`. `None`: also for an identifier.
+    /// The same for the property name of the binding element `p`. Also returns `None` for an identifier.
     fn cloned_property_name_text(&self, file: FileId, p: PatPropId) -> Option<Vec<u8>> {
         let hir = self.c.hir(file);
         let name = match hir[p].key {
             PropKey::Name(name) => name,
+            // `emitComputedPropertyName`
             PropKey::Computed(e) => {
-                return Some(cat!(b"[", self.cloned_expression_text(file, e)?, b"]"));
+                let expression = self.cloned_expression_text(file, e, OperatorPrecedence::Yield)?;
+                return Some(cat!(b"[", expression, b"]"));
             }
             PropKey::Private(_) | PropKey::None => return None,
         };
@@ -4906,12 +5270,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `emitListItems` for a single-line list whose elements are nodes of `file`: `parts` is the
-    /// emitted text of each, `ends` their `End()`. `first_pos`: `Pos()` of the first element,
-    /// unless that equals `Pos()` of the list's parent, which emits those comments. Each other
-    /// element starts at the end of the preceding delimiter. `delimiter`, `parent_end`: see
-    /// `Writer::emit_list_items`. The comments between the elements are emitted when a declaration
-    /// file is emitted for `file`.
+    /// `emitListItems` for a single-line list whose elements are nodes of `file`. `parts` is the emitted text
+    /// of each element and `ends` is their `End()`. `first_pos` is `Pos()` of the first element, unless that
+    /// equals `Pos()` of the list's parent, which emits those comments. Every other element starts at the end
+    /// of the preceding delimiter. For `delimiter` and `parent_end`, see `Writer::emit_list_items`. The
+    /// comments between the elements are emitted when a declaration file is emitted for `file`.
     pub(super) fn list_text(
         &self,
         file: FileId,
@@ -4957,8 +5320,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         writer.into_text()
     }
 
-    /// `signature.parameters`, each with the information `symbolToParameterDeclaration` computes
-    /// for it.
+    /// `signature.parameters`, each with the information that `symbolToParameterDeclaration` computes for it.
     fn signature_parameters(&mut self, signature: SigId) -> Vec<Parameter> {
         let (file, func, mapper) = match self.c.types().sig(signature) {
             SigData::WithReturn { sig: inner, .. } => {
@@ -5004,17 +5366,18 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             let declared = self.c.type_of_param(file, p);
             let mut ty = self.c.instantiate(declared, mapper);
             let optional = self.c.is_optional_parameter(file, p);
-            // `requiresAddingImplicitUndefined`: a parameter with an initializer that cannot be
+            // `requiresAddingImplicitUndefined`: a parameter with an initializer that can't be
             // omitted accepts `undefined`.
             if strict
                 && !optional
                 && parameter.default.is_some()
                 && !parameter.flags.contains(Flags::PARAMETER_PROPERTY)
             {
-                let written = self.c.type_from_node(file, parameter.ty);
+                let annotated_type = self.c.type_from_node(file, parameter.ty);
                 // `declaredParameterTypeContainsUndefined`
                 let includes_undefined = parameter.ty.is_some()
-                    && (self.c.is_error_type(written) || self.c.contains_undefined(written));
+                    && (self.c.is_error_type(annotated_type)
+                        || self.c.contains_undefined(annotated_type));
                 if !includes_undefined {
                     ty = self.c.optional(ty);
                 }
@@ -5102,13 +5465,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 declaration: None,
             });
         }
-        // A list with a variadic element that is not last cannot be printed.
-        if expanded
-            .split_last()
-            .is_some_and(|(_, before)| before.iter().any(|parameter| parameter.rest))
-        {
-            return parameters.to_vec();
-        }
         expanded
     }
 
@@ -5119,10 +5475,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             self.track_parameter_declaration_name(file, declaration);
         }
         self.approximate_length += parameter.name_length + 3;
-        let text = node.text;
         cat! {
             if parameter.rest { &b"..."[..] } else { b"" }, parameter.name,
-            if parameter.optional { &b"?"[..] } else { b"" }, b": ", text
+            if parameter.optional { &b"?"[..] } else { b"" }, b": ", node.text
         }
     }
 
@@ -5172,37 +5527,39 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `NodeBuilder.SerializeReturnTypeForSignature`, in this context.
     fn serialize_return_type_for_signature(&mut self, signature: SigId) -> Node {
-        let (_, outer_scope) = self.enter_signature_scope(signature);
+        let (_, outer_scope) = self.enter_signature_scope(signature, None);
         let returned = self.return_type_node(signature, true);
         self.leave_scope(&outer_scope);
         returned
     }
 
     /// `signatureToSignatureDeclarationHelper`, as printed text, without the `;` of a member.
-    /// `name`, `is_optional`: those of a method.
+    /// `name` and `is_optional` are those of a method. `of` is the type that has `signature`.
     fn signature_to_text(
         &mut self,
         signature: SigId,
         kind: SignatureKind,
         name: &[u8],
         is_optional: bool,
+        of: Option<TypeId>,
     ) -> Vec<u8> {
-        let (head, returned) = self.signature_to_parts(signature, kind, name, is_optional);
+        let (head, returned) = self.signature_to_parts(signature, kind, name, is_optional, of);
         match kind {
             SignatureKind::SetAccessor => head,
             _ => cat!(head, returned.text),
         }
     }
 
-    /// The same: all that precedes the return type, and the return type.
+    /// The same, split into everything before the return type, and the return type.
     fn signature_to_parts(
         &mut self,
         signature: SigId,
         kind: SignatureKind,
         name: &[u8],
         is_optional: bool,
+        of: Option<TypeId>,
     ) -> (Vec<u8>, Node) {
-        let (expanded, outer_scope) = self.enter_signature_scope(signature);
+        let (expanded, outer_scope) = self.enter_signature_scope(signature, of);
         self.approximate_length += 3;
         let mut type_parameters = Vec::new();
         let own_type_parameters = self.c.sig_type_params(signature).into_vec();
@@ -5213,8 +5570,21 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         for parameter in own_type_parameters {
             type_parameters.push(self.type_parameter_declaration(parameter, &clones));
         }
-        let mut parameters = Vec::with_capacity(expanded.len() + 1);
-        for parameter in &expanded {
+        // A list with a variadic element that isn't last isn't expanded. Only a symbol that
+        // `getExpandedParameters` creates has `CheckFlagsRestParameter`.
+        let has_leading_variadic = expanded.split_last().is_some_and(|(_, before)| {
+            let mut created = before
+                .iter()
+                .filter(|parameter| parameter.declaration.is_none());
+            created.any(|parameter| parameter.rest)
+        });
+        let listed = if has_leading_variadic {
+            self.signature_parameters(signature)
+        } else {
+            expanded
+        };
+        let mut parameters = Vec::with_capacity(listed.len() + 1);
+        for parameter in &listed {
             parameters.push(self.parameter_text(parameter));
         }
         if let Some((this, declared_by)) = self.c.sig_this_parameter(signature) {
@@ -5252,27 +5622,37 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         (head, returned)
     }
 
-    /// `enterSignatureScope`: returns the `getExpandedParameters` of `signature`, and the state
-    /// needed to leave the scope.
-    fn enter_signature_scope(&mut self, signature: SigId) -> (Vec<Parameter>, OuterScope) {
+    /// `signature.mapper`: the mapper of the last `instantiateSignature`. `sig_decl` has the
+    /// composition of all of them. `of` is the type that has `signature`.
+    fn mapper_of_signature(&self, signature: SigId, of: Option<TypeId>) -> Option<MapperId> {
+        let (file, func, composed) = self.c.sig_decl(signature)?;
+        let mapper = match of.map(|of| self.c.data(of)) {
+            // `resolveAnonymousTypeMembers`: `instantiateSignatures(.., t.mapper)`
+            Some(TypeData::Synth(shape)) if shape.instantiation_target.is_some() => shape.mapper,
+            _ => match self.c.steps_of_sig_mapper(file, func, composed) {
+                Some((_, last)) => last,
+                None => composed,
+            },
+        };
+        self.c.is_instantiating(mapper).then_some(mapper)
+    }
+
+    /// `enterSignatureScope`. Returns the `getExpandedParameters` of `signature`, and the state
+    /// needed to leave the scope. `of` is the type that has `signature`.
+    fn enter_signature_scope(
+        &mut self,
+        signature: SigId,
+        of: Option<TypeId>,
+    ) -> (Vec<Parameter>, OuterScope) {
         let saved_mapper = self.mapper;
-        if let Some((_, _, mapper)) = self.c.sig_decl(signature)
-            && self
-                .c
-                .types()
-                .mapping(mapper)
-                .iter()
-                .any(|pair| pair.0 != pair.1)
-        {
+        if let Some(mapper) = self.mapper_of_signature(signature, of) {
             self.mapper = mapper;
         }
         let declared = self.signature_parameters(signature);
         let expanded = self.expanded_parameters(&declared);
         let own_type_parameters = self.c.sig_type_params(signature).into_vec();
-        let is_instantiated = self.c.sig_decl(signature).is_some_and(|declared| {
-            let mapping = self.c.types().mapping(declared.2);
-            mapping.iter().any(|pair| pair.0 != pair.1)
-        });
+        let is_instantiated = (self.c.sig_decl(signature))
+            .is_some_and(|declared| self.c.is_instantiating(declared.2));
         let declarations_of = |parameters: &[Parameter]| -> Vec<Option<(FileId, ParamId)>> {
             parameters.iter().map(|p| p.declaration).collect()
         };
@@ -5294,10 +5674,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `getInferenceContext(node) != nil` at the time the parameters of the function expression of
-    /// `signature` were contextually typed: the function is an argument of a call whose type
-    /// arguments are inferred, or is nested in a literal or a conditional expression that is such
-    /// an argument. The contextual signature is instantiated in that case, and
+    /// `getInferenceContext(node) != nil` at the time the parameters of `signature`'s function
+    /// expression were contextually typed. That means the function is an argument of a call whose
+    /// type arguments are inferred, or is nested in a literal or a conditional expression that's
+    /// such an argument. The contextual signature is instantiated in that case, and
     /// `instantiateSignature` clones its type parameters. Here the function has the declared ones.
     fn has_inference_context(&mut self, signature: SigId) -> bool {
         let (file, func) = match *self.c.types().sig(signature) {
@@ -5310,7 +5690,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         };
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         loop {
-            at = match bound.expr_parent[at.idx()] {
+            at = match bound.parent_of_expr(at) {
                 Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => bound.prop_owner[p.idx()],
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee != at => {
@@ -5331,9 +5711,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// A function type or a constructor type.
-    fn signature_to_node(&mut self, signature: SigId, kind: SignatureKind) -> Node {
-        let (head, returned) = self.signature_to_parts(signature, kind, b"", false);
+    /// A function type or a constructor type: the only signature of `of`.
+    fn signature_to_node(&mut self, signature: SigId, kind: SignatureKind, of: TypeId) -> Node {
+        let (head, returned) = self.signature_to_parts(signature, kind, b"", false, Some(of));
         Node::function(&head, returned)
     }
 
@@ -5388,8 +5768,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let constraint = match (&new_name, over_keyof) {
             (Some(new_name), Some((_, true))) => cat!(b"keyof ", new_name),
             (Some(new_name), _) => new_name.clone(),
-            // `isMappedTypeWithKeyofConstraintDeclaration`: `keyof` is preserved, whatever it
-            // resolves to.
+            // `isMappedTypeWithKeyofConstraintDeclaration`: `keyof` is preserved, no matter what it resolves to.
             (None, Some((declared, true))) => {
                 let of = self.c.instantiate(declared, mapper);
                 let of = self.type_to_node(of);
@@ -5497,8 +5876,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let check = self.type_to_node(check_type);
         self.approximate_length += 15;
         let (_, _, mut mapper, nodes) = self.c.cond_origin(ty);
-        // The check type was a type parameter and no longer is: a new type parameter keeps the type
-        // distributive.
+        // The check type was a type parameter and no longer is, so a new type parameter keeps the type distributive.
         let root_check_type = self.c.type_from_node(file, nodes[0]);
         let new_type_variable = if self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS != 0
             && !self.c.is_type_param(check_type)
@@ -5534,7 +5912,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let (yes, no) = (when_true.text, when_false.text);
         let text = match new_name {
             // The first introduces `T` as a type parameter, the second constrains it to the check
-            // type, the third is the test.
+            // type, and the third is the test.
             Some(t) => {
                 let constraint = check.clone().emit_in_extends();
                 let check = check.emit(UNION);
@@ -5550,7 +5928,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     // ───────────────────────────── type nodes ─────────────────────────────
 
-    /// The type of `node` instantiated with the mapper of the signature being printed.
+    /// Returns the type of `node` instantiated with the mapper of the signature being printed.
     fn resolved_type_node_to_node(&mut self, file: FileId, node: TypeNodeId) -> Node {
         let declared = self.c.type_from_node(file, node);
         let ty = self.c.instantiate(declared, self.mapper);

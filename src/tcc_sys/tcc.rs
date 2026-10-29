@@ -148,10 +148,8 @@ pub struct ConfigErr<ErrCtx> {
     pub handler: unsafe extern "C" fn(*mut ErrCtx, *const c_char),
 }
 
-pub struct Config<ErrCtx> {
-    // Call sites pass both literals (default_tcc_options) and runtime strings
-    // (CompileC.flags / BUN_TCC_OPTIONS); kept as a raw ptr rather than a borrow.
-    pub options: Option<NonNull<ZStr>>,
+pub struct Config<'a, ErrCtx> {
+    pub options: Option<&'a ZStr>,
     pub output_type: OutputFormat,
     pub err: ConfigErr<ErrCtx>,
 }
@@ -165,7 +163,7 @@ impl State {
 
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
-        config: &Config<ErrCtx>,
+        config: &Config<'_, ErrCtx>,
     ) -> Result<NonNull<State>, Error> {
         let state_ptr = State::new()?;
         // errdefer state.destroy() — State is an FFI handle without Drop, so use scopeguard.
@@ -180,8 +178,7 @@ impl State {
         // options, so this must be called after setOptions
         if !VALIDATE_OPTIONS {
             if let Some(options) = config.options {
-                // SAFETY: caller guarantees `options` outlives this init call.
-                match state.set_options(unsafe { options.as_ref() }) {
+                match state.set_options(options) {
                     Ok(()) => {}
                     Err(_) => {
                         if cfg!(debug_assertions) {
@@ -198,8 +195,7 @@ impl State {
 
         if VALIDATE_OPTIONS {
             if let Some(options) = config.options {
-                // SAFETY: caller guarantees `options` outlives this init call.
-                state.set_options(unsafe { options.as_ref() })?;
+                state.set_options(options)?;
             }
         }
 

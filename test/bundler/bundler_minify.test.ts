@@ -85,9 +85,9 @@ describe("bundler", () => {
     "}",
   ].join("\n");
   const evalPinnedPrivateNamesOutput = singleCharNames.join("") + "own";
-  // The name that `#own` gets after the reserved ones is still a `#private` name.
-  // As a public field it would print the same.
-  const renamedOwnField = /#[\w$]+ = "own"/;
+  // `Outer` keeps every name of one character, so `#own` gets a new `#private`
+  // name of two. As a public field, or with the name `#own`, it would print the same.
+  const renamedOwnField = /#[\w$]{2} = "own"/;
   itBundled("minify/DirectEvalPinnedPrivateNameNotReusedByNestedClass", {
     files: {
       "/entry.js": evalPinnedPrivateNamesSource + "\nconsole.log(f());",
@@ -107,6 +107,27 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.js").toMatch(renamedOwnField);
     },
+    run: { stdout: evalPinnedPrivateNamesOutput },
+  });
+  // `Inner extends Outer` has the fields of both classes, so the wrong read
+  // does not throw: `this.#n` gives the value of the inner field.
+  itBundled("minify/DirectEvalPinnedPrivateNameNotReusedBySubclass", {
+    files: {
+      "/entry.js": [
+        "class Outer {",
+        ...singleCharNames.map(n => `  #${n} = "${n}";`),
+        "  static make() {",
+        '    eval("1");',
+        "    return class Inner extends Outer {",
+        '      #own = "own";',
+        `      read() { return [${singleCharNames.map(n => `this.#${n}`).join(", ")}].join("") + this.#own; }`,
+        "    };",
+        "  }",
+        "}",
+        "console.log(new (Outer.make())().read());",
+      ].join("\n"),
+    },
+    minifyIdentifiers: true,
     run: { stdout: evalPinnedPrivateNamesOutput },
   });
   // The names of a chunk come from one table: a class of another file takes

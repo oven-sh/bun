@@ -112,9 +112,8 @@ impl StatWatcherScheduler {
         })
     }
 
-    /// # Safety
-    /// `this` must point to a live `StatWatcherScheduler` (caller holds a ref).
-    pub(crate) fn append(this: *mut Self, watcher: RefPtr<StatWatcher>) {
+    /// JS thread, with an open `watcher`: the queue of its scheduler takes over the ref.
+    pub(crate) fn append(watcher: RefPtr<StatWatcher>) {
         log!(
             "append new watcher {}",
             bstr::BStr::new(watcher.path.as_bytes())
@@ -122,9 +121,10 @@ impl StatWatcherScheduler {
         debug_assert!(!watcher.closed.load(Ordering::Relaxed));
         debug_assert!(watcher.next.is_null());
         let interval = watcher.interval;
+        let this = watcher.scheduler.as_non_null();
 
-        // BACKREF — `this` is live (caller holds a ref).
-        let this_ref = ParentRef::from(NonNull::new(this).expect("append: scheduler"));
+        // BACKREF — only this thread writes `closed`: past the push the wrapper holds `watcher`, which holds `this`.
+        let this_ref = ParentRef::from(this);
         debug_assert_eq!(this_ref.main_thread, thread::current().id());
         let watcher = watcher.into_non_null();
         this_ref.watchers.push(watcher);
@@ -133,7 +133,7 @@ impl StatWatcherScheduler {
         if current == 0 || current > interval {
             // we are not running or the new watcher has a smaller interval
             this_ref.current_interval.store(interval, Ordering::Relaxed);
-            Self::set_timer(this, interval);
+            Self::set_timer(this.as_ptr(), interval);
         }
     }
 
@@ -149,8 +149,8 @@ impl StatWatcherScheduler {
         // SAFETY: main-thread-only per fn contract; `runtime_state()` is non-null
         // after `bun_runtime::init()`. Raw-ptr-per-field re-entry pattern.
         let timer_all = unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer };
-        // SAFETY: `this` is live: a scheduler ref is held for the whole call by
-        // every caller (`set_interval`'s caller, `timer_callback`'s `&mut self`,
+        // SAFETY: `this` is live: a scheduler ref is held for the whole call (by the
+        // open watcher that `append` queued, `timer_callback`'s `&mut self`,
         // `shutdown_for_exit`'s `RareData` ref) or, for `StatWatcherTimerUpdate`
         // (whose `scheduler` is a non-owning `ParentRef`), by the watcher's
         // `RefPtr<StatWatcherScheduler>` held across the hop.
@@ -569,7 +569,7 @@ impl StatWatcher {
         let jsvalue = stat_to_js_stats(global_this, &this.get_last_stat(), this.bigint)?;
         js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
-        StatWatcherScheduler::append(this.scheduler.as_ptr(), this);
+        StatWatcherScheduler::append(this);
         Ok(())
     }
 
@@ -597,7 +597,7 @@ impl StatWatcher {
         // watcher keeps running after a throwing listener (Node semantics).
         // `append` does not enter JS, so it is safe with an exception pending.
         if !this.closed.load(Ordering::Relaxed) {
-            StatWatcherScheduler::append(this.scheduler.as_ptr(), this);
+            StatWatcherScheduler::append(this);
         }
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a

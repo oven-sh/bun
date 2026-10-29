@@ -146,11 +146,6 @@ pub(crate) struct CompressionStreamCoder {
     context: bun_jsc::ContextId,
 }
 
-// SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
-// heap state with no thread affinity; TransformStream serializes writes so at
-// most one chunk is ever in flight per coder.
-unsafe impl Send for CompressionStreamCoder {}
-
 impl Drop for CompressionStreamCoder {
     fn drop(&mut self) {
         // SAFETY: each pointer was created by the matching `*_create`/`*Init`
@@ -733,9 +728,6 @@ pub(crate) enum AsyncInput {
     Pinned { ptr: *const u8, len: usize },
     Owned(Vec<u8>),
 }
-// SAFETY: `Pinned.ptr` points at bytes the paired `PinnedArrayBuffer` keeps
-// valid for as long as the job lives; read only under the pool borrow.
-unsafe impl Send for AsyncInput {}
 
 impl AsyncInput {
     /// JS thread: pin `chunk` if it is a pinnable ArrayBuffer/view, else copy `fallback`.
@@ -767,7 +759,8 @@ impl AsyncInput {
                 if ptr.is_null() {
                     return &[];
                 }
-                // SAFETY: see the `Send` note.
+                // SAFETY: `ptr` points at bytes the paired `PinnedArrayBuffer` keeps
+                // valid for as long as the job lives.
                 unsafe { core::slice::from_raw_parts(*ptr, *len) }
             }
             Self::Owned(v) => v.as_slice(),
@@ -975,7 +968,8 @@ pub(crate) struct CompressionAsyncCtx {
 }
 
 // SAFETY: the coder is `ThreadSafeRefCounted` and only touched by whoever holds
-// the transform (pool thread, then JS thread); `AsyncInput` owns or pins its bytes.
+// the transform (pool thread, then JS thread); its z_stream / Brotli*Instance /
+// ZSTD_*Ctx handle is heap state with no thread affinity; `AsyncInput` owns or pins its bytes.
 unsafe impl Send for CompressionAsyncCtx {}
 
 #[derive(bun_jsc::JsAffine)]

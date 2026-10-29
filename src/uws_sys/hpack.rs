@@ -117,3 +117,75 @@ unsafe extern "C" fn Bun__Hpack__decode(
         Some(Err(Error::TooLarge)) => HpackResult::TooLarge,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// As `Http2Context.h` does it: one raw pointer to the `Hpack`, and what a call hands out is read after it returned.
+    #[test]
+    fn pointers_stay_valid_until_the_next_call() {
+        let hpack = Bun__Hpack__create();
+        let too_large = vec![b'~'; 70_000];
+        let fields: [(&[u8], &[u8], bool); 4] = [
+            (b":status", b"200", false),
+            (b"x-a", b"hello world", true),
+            (b"x-a", b"hello world", true),
+            (b"x-b", &too_large, true),
+        ];
+        let mut field = HpackField {
+            name: core::ptr::null(),
+            value: core::ptr::null(),
+            name_len: 0,
+            value_len: 0,
+            static_index: 0,
+        };
+        for capacity in [4096, 0, 100] {
+            // SAFETY: `hpack` is live until `Bun__Hpack__destroy`, and every pointer is read before the next call.
+            unsafe {
+                Bun__Hpack__setEncoderMaxCapacity(&mut *hpack, capacity);
+                for (name, value, add) in fields {
+                    let (name_len, value_len) = (name.len(), value.len());
+                    let (name, value) = (name.as_ptr(), value.as_ptr());
+                    Bun__Hpack__encode(&mut *hpack, name, name_len, value, value_len, add);
+                }
+                let mut len = 0;
+                let block = Bun__Hpack__block(&*hpack, &mut len);
+                let block = core::slice::from_raw_parts(block, len).to_vec();
+                Bun__Hpack__clearBlock(&mut *hpack);
+
+                let (mut position, mut decoded) = (0, Vec::new());
+                let mut next = |field: &mut HpackField| {
+                    Bun__Hpack__decode(
+                        &mut *hpack,
+                        block.as_ptr(),
+                        block.len(),
+                        &mut position,
+                        field,
+                    )
+                };
+                while let HpackResult::Field = next(&mut field) {
+                    let name = core::slice::from_raw_parts(field.name, field.name_len as usize);
+                    let value = core::slice::from_raw_parts(field.value, field.value_len as usize);
+                    decoded.push((name.to_vec(), value.to_vec(), field.static_index));
+                }
+                // The last field is sent as it is, and this side's own decoder refuses it.
+                let expected = fields.map(|(name, value, _)| (name.to_vec(), value.to_vec()));
+                assert_eq!(decoded.len(), 3);
+                for ((name, value, static_index), expected) in decoded.into_iter().zip(expected) {
+                    assert_eq!((name, value), expected);
+                    assert_eq!(static_index, if expected.0 == b":status" { 8 } else { 0 });
+                }
+                assert!(matches!(next(&mut field), HpackResult::TooLarge));
+            }
+        }
+        // SAFETY: as above. An empty block has no address.
+        unsafe {
+            let end = Bun__Hpack__decode(&mut *hpack, core::ptr::null(), 0, &mut 0, &mut field);
+            assert!(matches!(end, HpackResult::EndOfBlock));
+            let invalid = Bun__Hpack__decode(&mut *hpack, [0x80].as_ptr(), 1, &mut 0, &mut field);
+            assert!(matches!(invalid, HpackResult::Invalid));
+            Bun__Hpack__destroy(hpack);
+        }
+    }
+}

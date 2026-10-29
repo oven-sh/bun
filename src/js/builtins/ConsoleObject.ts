@@ -146,7 +146,6 @@ export function write(this: Console & { $writer: $Node.FileSink | undefined }, i
 export function createConsoleConstructor(console: Console) {
   const { inspect, formatWithOptions } = require("node:util");
   require("node:buffer");
-  const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
@@ -173,6 +172,17 @@ export function createConsoleConstructor(console: Console) {
   // For a Map or Set iterator, without running or advancing it.
   const previewEntries: (iterator: object) => [entries: unknown[], isKeyValue: boolean, length: number] =
     $newCppFunction("UtilInspect.cpp", "jsFunctionPreviewEntries", 2);
+  // previewEntries() throws on anything but what these two accept, so a script must not be able to replace them.
+  const isMapIterator: (value: unknown) => boolean = $newCppFunction(
+    "NodeUtilTypesModule.cpp",
+    "jsFunctionIsMapIterator",
+    1,
+  );
+  const isSetIterator: (value: unknown) => boolean = $newCppFunction(
+    "NodeUtilTypesModule.cpp",
+    "jsFunctionIsSetIterator",
+    1,
+  );
 
   /**
    * Returns the number of columns required to display the given string.

@@ -167,6 +167,55 @@ test.concurrent("console.Console#table does not run a replaced next() of a Map o
   expect(exitCode).toBe(0);
 });
 
+// The two tests decide what the native reader gets, and it throws on anything else.
+test.concurrent("console.Console#table does not call a replaced isMapIterator or isSetIterator", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const types = require("node:util/types");
+        const calls = { isMapIterator: 0, isSetIterator: 0 };
+        for (const name of Object.keys(calls)) types[name] = () => (calls[name]++, true);
+        // Made after the replacement.
+        const { Console } = require("node:console");
+        const c = new Console({ stdout: process.stdout, stderr: process.stderr, colorMode: false });
+        c.table([7, 8]);
+        c.table(new Map([["a", 1]]).entries());
+        c.table(new Set([9]).values());
+        console.log(JSON.stringify(calls));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
+  expect(stdout).toMatchInlineSnapshot(`
+    "┌─────────┬────────┐
+    │ (index) │ Values │
+    ├─────────┼────────┤
+    │    0    │   7    │
+    │    1    │   8    │
+    └─────────┴────────┘
+    ┌───────────────────┬─────┬────────┐
+    │ (iteration index) │ Key │ Values │
+    ├───────────────────┼─────┼────────┤
+    │         0         │ 'a' │   1    │
+    └───────────────────┴─────┴────────┘
+    ┌───────────────────┬────────┐
+    │ (iteration index) │ Values │
+    ├───────────────────┼────────┤
+    │         0         │   9    │
+    └───────────────────┴────────┘
+    {"isMapIterator":0,"isSetIterator":0}
+    "
+  `);
+  expect(exitCode).toBe(0);
+});
+
 // A Map or a Set itself is read through its own iterator, and every entry the
 // iterator yields is a row, as in Node.js. `size` does not bound it: quick-lru
 // caps `size` at maxSize, and its iterator also yields the older generation.

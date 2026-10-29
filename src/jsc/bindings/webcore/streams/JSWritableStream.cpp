@@ -332,7 +332,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_abort, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSWritableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "WritableStream.prototype.abort can only be called on a WritableStream"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createInvalidThisErrorForType(lexicalGlobalObject, "WritableStream"_s))));
     if (isWritableStreamLocked(stream))
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot abort a locked WritableStream"_s))));
     auto* promise = writableStreamAbort(lexicalGlobalObject, stream, callFrame->argument(0));
@@ -346,7 +346,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_close, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = dynamicDowncast<JSWritableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "WritableStream.prototype.close can only be called on a WritableStream"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createInvalidThisErrorForType(lexicalGlobalObject, "WritableStream"_s))));
     if (isWritableStreamLocked(stream))
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot close a locked WritableStream"_s))));
     if (writableStreamCloseQueuedOrInFlight(stream))

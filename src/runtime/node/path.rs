@@ -38,12 +38,7 @@ impl PathScratch<'_> {
         if len > Self::POOL_MAX {
             return Self::Spill(vec![0; len].into_boxed_slice());
         }
-        // SAFETY: the global object is only asked for its VM.
-        let pool: &mut RarePathBuf = &mut unsafe { heap.global() }
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .path_buf;
+        let pool: &mut RarePathBuf = &mut heap.bun_vm().as_mut().rare_data().path_buf;
         Self::Pooled(&mut pool.get(len)[..len])
     }
 

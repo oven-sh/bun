@@ -4,6 +4,7 @@ use std::io::Write as _;
 
 use crate::api::bun_process::Status;
 use crate::api::bun_process::sync as spawn_sync;
+use bun_archive::{Archiver, archiver};
 use bun_clap as clap;
 use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_core::{Global, Output, pretty_error, pretty_errorln};
@@ -11,7 +12,6 @@ use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
-use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
 use bun_paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
@@ -148,6 +148,13 @@ impl CreateOptions {
             clap::param!("--verbose                      Too many logs"),
             clap::param!("--no-package-json              Disable package.json transforms"),
             clap::param!("--open                         On finish, start bun & open in-browser"),
+            clap::param!(
+                "--use-system-ca                Use the system's trusted certificate authorities"
+            ),
+            clap::param!(
+                "--use-openssl-ca               Use OpenSSL's default CA store instead of the bundled one"
+            ),
+            clap::param!("--use-bundled-ca               Use bundled CA store"),
             clap::param!("<POS>...                       "),
         ];
         let mut diag = clap::Diagnostic::default();
@@ -165,6 +172,8 @@ impl CreateOptions {
                 return Err(err.into());
             }
         };
+
+        Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
         let mut positionals = args.positionals().to_vec();
         if !positionals.is_empty() && (positionals[0] == b"c" || positionals[0] == b"create") {
@@ -354,8 +363,8 @@ impl CreateCommand {
             return CreateListExamplesCommand::exec(&ctx);
         }
 
-        // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
-        let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::get();
         // Process-lifetime: every mini event loop (the tasks', a Windows spawn's) keeps a pointer to it.
         let env_loader: &'static mut DotEnv::Loader = Box::leak(Box::new(DotEnv::Loader::init()));
         DotEnv::set_instance(std::ptr::from_mut::<DotEnv::Loader>(env_loader));
@@ -540,8 +549,8 @@ impl CreateCommand {
                     struct OverwriteListAppender {
                         buf: Vec<u8>,
                     }
-                    impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
-                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_libarchive::Error> {
+                    impl bun_archive::ArchiveAppender for OverwriteListAppender {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_archive::Error> {
                             self.buf.clear();
                             self.buf.extend_from_slice(path);
                             Ok(&self.buf)
@@ -1087,15 +1096,15 @@ impl CreateCommand {
 
         if let Some(bun_exe) = bun_exe {
             let start_time = bun_core::time::nano_timestamp();
-            let install_args: &[&[u8]] = if ignore_scripts {
-                &[bun_exe, b"install", b"--ignore-scripts"]
-            } else {
-                &[bun_exe, b"install"]
-            };
-            Output::flush();
-            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d> install");
+            let mut install_args: Vec<&[u8]> = vec![bun_exe, b"install"];
             if ignore_scripts {
-                bun_core::pretty!(" --ignore-scripts");
+                install_args.push(b"--ignore-scripts");
+            }
+            install_args.extend(Global::ca_store_flag().map(|flag| flag.as_bytes()));
+            Output::flush();
+            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d>");
+            for arg in &install_args[1..] {
+                bun_core::pretty!(" {}", bstr::BStr::new(arg));
             }
             bun_core::pretty!("<r>\n");
             Output::flush();
@@ -1240,8 +1249,8 @@ impl CreateCommand {
 
     pub(crate) fn extract_info() -> crate::Result<ExtractedInfo> {
         let example_tag;
-        // SAFETY: process-lifetime singleton; init returns *mut.
-        let filesystem = unsafe { &*fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::get();
 
         let create_options = CreateOptions::parse()?;
         let positionals = &create_options.positionals;
@@ -1593,7 +1602,7 @@ impl Example {
         ctx: &Command::Context,
         mut node: Option<&mut ProgressNode>,
         env_loader: &mut DotEnv::Loader,
-        filesystem: &mut fs::FileSystem,
+        filesystem: &fs::FileSystem,
     ) -> crate::Result<Vec<Example>> {
         let mut examples = Example::fetch_all(ctx, env_loader, node.as_deref_mut())?;
         if let Some(node_) = node {
@@ -2045,8 +2054,8 @@ struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
     fn exec(ctx: &Command::Context) -> crate::Result<()> {
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::get();
         let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;

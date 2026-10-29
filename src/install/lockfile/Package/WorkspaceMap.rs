@@ -29,7 +29,6 @@ type Map = StringArrayHashMap<Entry>;
 pub struct Entry {
     pub(crate) name: Box<[u8]>,
     pub(crate) version: Option<Box<[u8]>>,
-    pub(crate) name_loc: bun_ast::Loc,
     /// `"installConfig": { "hoistingLimits": "workspaces" }` — this workspace's
     /// node_modules must be self-contained (see `Lockfile::self_contained_workspaces`).
     pub(crate) hoisting_limits: bool,
@@ -215,11 +214,10 @@ fn process_workspace_name(
     let name = match workspace_json.root.get(b"name") {
         Some(name_expr) => name_expr
             .as_string_cloned(&scratch)?
-            .filter(|name| !name.is_empty())
-            .map(|name| (name, name_expr.loc)),
+            .filter(|name| !name.is_empty()),
         None => None,
     };
-    let Some((name, name_loc)) = name else {
+    let Some(name) = name else {
         bun_output::scoped_log!(
             Lockfile,
             "processWorkspaceName({}) has no name, skipping",
@@ -252,7 +250,6 @@ fn process_workspace_name(
     };
     let entry = Entry {
         name: Box::<[u8]>::from(name),
-        name_loc,
         hoisting_limits: hoisting_limits.as_deref() == Some(b"workspaces".as_slice()),
         unsupported_hoisting_limits: match hoisting_limits {
             // "none" is yarn's default: no limit, which is how every workspace hoists
@@ -298,10 +295,10 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
 }
 
 /// The absolute directory that the `workspaces` of `source` are relative to.
-pub(crate) fn package_json_dir(source: &bun_ast::Source) -> &[u8] {
+pub(crate) fn package_json_dir<'a>(source: &bun_ast::Source<'a>) -> &'a [u8] {
     let dir = keeping_root(source.path.name().dir, source.path.text);
     if dir.is_empty() {
-        return bun_resolver::fs::FileSystem::instance().top_level_dir();
+        return bun_resolver::fs::FileSystem::get().top_level_dir();
     }
     dir
 }

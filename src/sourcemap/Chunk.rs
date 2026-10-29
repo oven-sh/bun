@@ -38,15 +38,6 @@ impl Chunk {
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
 
-    /// # Safety
-    /// The returned `Chunk` aliases `self.buffer`'s allocation; at most one may be dropped.
-    #[inline]
-    pub unsafe fn alias(&self) -> Chunk {
-        // SAFETY: `self` is a valid aligned reference; caller upholds the at-most-one-drop
-        // contract above so the bitwise copy never causes a double free of `buffer`.
-        unsafe { core::ptr::read(self) }
-    }
-
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
     /// to a standard VLQ "mappings" string before emitting JSON.
     pub fn print_source_map_contents_from_internal<const ASCII_ONLY: bool>(
@@ -614,6 +605,13 @@ impl NewBuilder<'_, VLQSourceMap> {
             .expect("unreachable");
         self.prev_state = current_state;
         self.has_prev_state = true;
+    }
+
+    /// VLQ has nowhere to keep a mark.
+    pub fn mark_object_brace(&mut self) {
+        if let Some(internal) = &mut self.source_map.ctx.internal {
+            internal.mark_object_brace(&self.prev_state);
+        }
     }
 
     #[inline(never)]

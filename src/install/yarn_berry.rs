@@ -22,7 +22,7 @@ use crate::migration::{
 use crate::npm;
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
 use crate::package_manager_real::package_json_write_back;
-use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
+use crate::package_manager_real::update_package_json_and_install::save_entry;
 use crate::pnpm::e_object_mut;
 use crate::repository::Repository;
 use crate::resolution::{Resolution, Tag as ResolutionTag, TaggedValue};
@@ -276,7 +276,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
         .map(strings::without_trailing_slash);
 
     let mut folder: &[u8] =
-        strings::without_trailing_slash(crate::bun_fs::FileSystem::instance().top_level_dir());
+        strings::without_trailing_slash(crate::bun_fs::FileSystem::get().top_level_dir());
     let mut in_project = true;
     let mut read_home = false;
     loop {
@@ -593,12 +593,12 @@ fn package_json<'a>(
         .map_err(|_| Error::InvalidPackageJSON)
 }
 
-pub(crate) fn migrate_yarn_berry_lockfile<'a>(
-    this: &'a mut Lockfile,
+pub(crate) fn migrate_yarn_berry_lockfile(
+    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-) -> Result<LoadResult<'a>, Error> {
+) -> Result<LoadResult, Error> {
     this.init_empty();
     crate::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
@@ -1475,7 +1475,6 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     }
 
     Ok(LoadResult::Ok(LoadResultOk {
-        lockfile: this,
         migrated: lockfile::Migrated::Yarn,
         serializer_result: Default::default(),
         format: lockfile::Format::Text,
@@ -2263,11 +2262,7 @@ fn edit_package_json(
     if changed.is_empty() {
         return Ok(None);
     }
-    print_package_json_into_cache_entry(entry, json);
-    // The edits spliced Store-allocated nodes into the cached tree, so the entry has to be reparsed
-    // to own its tree.
-    if entry.reparse_root(log).is_err() {
-        return Err(Error::InvalidPackageJSON);
-    }
+    // The spliced-in nodes live in `bump` and the AST store: the cache entry must own its tree.
+    save_entry(entry, json, log);
     Ok(Some(changed))
 }

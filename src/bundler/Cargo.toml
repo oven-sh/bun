@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bytemuck = "1"
 bun_opaque.workspace = true
 bun_dispatch.workspace = true
 strum.workspace = true
@@ -23,7 +22,9 @@ bun_base64.workspace = true
 bun_alloc.workspace = true
 bun_errno.workspace = true
 bun_exe_format.workspace = true
+bun_glob.workspace = true
 bun_analytics.workspace = true
+bun_aot = { package = "bun_aot_interface", path = "../aot/interface" }
 bun_resolver.workspace = true
 # `bun_resolve_builtins` only depends on `bun_options_types` + `bun_string`
 # (both already in this graph), so no cycle.
@@ -45,11 +46,14 @@ bun_js_parser.workspace = true
 bun_js_printer.workspace = true
 bun_ast.workspace = true
 bun_ptr.workspace = true
+bun_removable_features.workspace = true
 lol_html.workspace = true
 bun_md.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_perf.workspace = true
+bun_sema.workspace = true
+bun_sema_driver.workspace = true
 bun_sourcemap.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
@@ -61,5 +65,13 @@ bun_wyhash.workspace = true
 # has exactly one xxhash implementation.
 bun_hash.workspace = true
 
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../sema/standalone" }
+# The functions that `bun_aot_interface` declares.
+bun_aot_compiler = { package = "bun_aot", path = "../aot", features = ["test_support"] }
+
 [features]
 default = []
+# What only tests of other crates use.
+test_support = []

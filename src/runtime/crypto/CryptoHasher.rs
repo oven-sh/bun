@@ -2,15 +2,12 @@ use core::any::Any;
 use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
+use bun_jsc::ErrorCode;
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsPayload as _, JsWrapper};
-use bun_jsc::{ErrorCode, JSGlobalObject};
 
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::crypto::{HMAC, create_crypto_error, evp};
-use crate::generated_bindgen::crypto_hasher::{
-    CryptoHasherClass, DigestOutput, MD4Class, MD5Class, SHA1Class, SHA224Class, SHA256Class,
-    SHA384Class, SHA512_256Class, SHA512Class,
-};
+use crate::generated_bindgen::crypto_hasher::DigestOutput;
 use crate::node::Encoding;
 use crate::webcore::encoding::BunStringEncode as _;
 use bun_sha_hmac::sha as hashers;
@@ -21,27 +18,6 @@ use bun_sha_hmac::sha as hashers;
 use zig_crypto_algos::{Blake2s256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
 
 const EVP_MAX_MD_SIZE_USIZE: usize = boring_ssl::EVP_MAX_MD_SIZE as usize;
-
-/// Local helper: dereference the raw `*mut VirtualMachine` to reach
-/// `RareData::boring_engine()` and cast the bun_jsc-local opaque `ENGINE`
-/// to the real `bun_boringssl_sys::ENGINE` (both name the same C struct).
-#[inline]
-fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
-    // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
-    // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
-    global
-        .bun_vm()
-        .as_mut()
-        .rare_data()
-        .boring_engine()
-        .cast::<boring_ssl::ENGINE>()
-}
-
-#[inline]
-fn engine_of(heap: &JsHeap<'_>) -> *mut boring_ssl::ENGINE {
-    // SAFETY: the VM's engine is made without running JavaScript.
-    boring_engine(unsafe { heap.global() })
-}
 
 /// `code` is from `ERR_get_error`.
 #[cold]
@@ -146,7 +122,6 @@ impl CryptoHasher {
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__CryptoHasherExtern__getByName(
-        global: &JSGlobalObject,
         name_bytes: *const c_char,
         name_len: usize,
     ) -> Option<Box<CryptoHasher>> {
@@ -165,13 +140,8 @@ impl CryptoHasher {
             | evp::Algorithm::Blake2b512
             | evp::Algorithm::Sha512_224 => {
                 if let Some(md) = algorithm.md() {
-                    // `Algorithm::md()` lives in `bun_sha_hmac` and
-                    // returns that crate's opaque `EVP_MD`; cast to the boringssl-sys
-                    // opaque (same underlying C `struct env_md_st`).
                     return Some(Box::new(CryptoHasher::Evp(Box::new(EVP::init(
-                        algorithm,
-                        md.cast::<boring_ssl::EVP_MD>(),
-                        boring_engine(global),
+                        algorithm, md,
                     )))));
                 }
             }
@@ -185,13 +155,12 @@ impl CryptoHasher {
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__CryptoHasherExtern__getFromOther(
-        global: &JSGlobalObject,
         other_handle: &CryptoHasher,
     ) -> Option<Box<CryptoHasher>> {
         match other_handle {
             CryptoHasher::Zig(other) => Some(Box::new(CryptoHasher::Zig(other.copy()))),
             CryptoHasher::Evp(other) => {
-                let evp = match other.copy(boring_engine(global)) {
+                let evp = match other.copy() {
                     Ok(e) => e,
                     Err(_) => return None,
                 };
@@ -228,7 +197,7 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__digest")]
-    pub(crate) fn extern_digest(&mut self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
+    pub(crate) fn extern_digest(&mut self, digest_buf: &mut [u8]) -> u32 {
         let buf_len = digest_buf.len();
         match self {
             CryptoHasher::Zig(zig) => {
@@ -236,7 +205,7 @@ impl CryptoHasher {
                 u32::try_from(res.len()).expect("int cast")
             }
             CryptoHasher::Evp(evp) => {
-                let res = evp.r#final(boring_engine(global), digest_buf);
+                let res = evp.r#final(digest_buf);
                 u32::try_from(res.len()).expect("int cast")
             }
             _ => 0,
@@ -291,10 +260,8 @@ impl CryptoHasher {
     }
 }
 
-impl CryptoHasherClass for CryptoHasher {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn constructor<'a>(
+impl CryptoHasher {
+    pub(crate) fn constructor<'a>(
         heap: &JsHeap<'a>,
         algorithm: &'a [u8],
         hmac_key: Option<&'a [u8]>,
@@ -322,7 +289,7 @@ impl CryptoHasherClass for CryptoHasher {
             });
         }
 
-        if let Some(evp) = EVP::by_name_and_engine(engine_of(heap), algorithm) {
+        if let Some(evp) = EVP::by_name(algorithm) {
             return Ok(CryptoHasher::Evp(Box::new(evp)));
         }
         CryptoHasherZig::init(algorithm)
@@ -335,7 +302,10 @@ impl CryptoHasherClass for CryptoHasher {
             })
     }
 
-    fn algorithm<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, bun_core::String> {
+    pub(crate) fn get_algorithm<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, bun_core::String> {
         let algorithm = match self {
             CryptoHasher::Evp(evp) => evp.algorithm(),
             CryptoHasher::Zig(zig) => zig.algorithm,
@@ -348,7 +318,7 @@ impl CryptoHasherClass for CryptoHasher {
         Ok(bun_core::String::static_(algorithm.tag_cstr().to_bytes()))
     }
 
-    fn byte_length<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, u32> {
+    pub(crate) fn get_byte_length<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, u32> {
         Ok(match self {
             CryptoHasher::Evp(evp) => evp.size() as u32,
             CryptoHasher::Hmac(hmac) => hmac
@@ -359,15 +329,15 @@ impl CryptoHasherClass for CryptoHasher {
         })
     }
 
-    fn algorithms() -> impl IntoIterator<Item = impl AsRef<[u8]>> {
+    pub(crate) fn get_algorithms() -> impl IntoIterator<Item = impl AsRef<[u8]>> {
         evp::ALL
             .iter()
             .map(|algorithm| algorithm.tag_cstr().to_bytes())
     }
 
-    fn copy<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
+    pub(crate) fn copy<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         let copied = match self {
-            CryptoHasher::Evp(evp) => CryptoHasher::Evp(Box::new(evp.copy(engine_of(heap))?)),
+            CryptoHasher::Evp(evp) => CryptoHasher::Evp(Box::new(evp.copy()?)),
             CryptoHasher::Hmac(hmac) => {
                 let hmac = hmac.as_ref().ok_or_else(|| Self::hmac_consumed(heap))?;
                 CryptoHasher::Hmac(Some(
@@ -380,9 +350,9 @@ impl CryptoHasherClass for CryptoHasher {
         Ok(copied.into_js(heap))
     }
 
-    fn update_string<'a>(
+    pub(crate) fn update_string<'a>(
         &mut self,
-        this: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
         input: &bun_core::String,
         encoding: Option<&'a [u8]>,
@@ -401,20 +371,20 @@ impl CryptoHasherClass for CryptoHasher {
             }
             encoding => self.update(heap, &input.encode(encoding))?,
         }
-        Ok(this)
+        Ok(this_value)
     }
 
-    fn update_bytes<'a>(
+    pub(crate) fn update_bytes<'a>(
         &mut self,
-        this: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
         input: &'a [u8],
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         self.update(heap, input)?;
-        Ok(this)
+        Ok(this_value)
     }
 
-    fn digest<'a>(
+    pub(crate) fn digest<'a>(
         &mut self,
         heap: &JsHeap<'a>,
         output: Option<DigestOutput<'a>>,
@@ -431,24 +401,23 @@ impl CryptoHasherClass for CryptoHasher {
                         .ok_or_else(|| Self::hmac_consumed(heap))?
                         .r#final(out)
                         .len(),
-                    CryptoHasher::Evp(evp) => evp.r#final(engine_of(heap), out).len(),
+                    CryptoHasher::Evp(evp) => evp.r#final(out).len(),
                     CryptoHasher::Zig(zig) => zig.final_(out).len(),
                 })
             },
         )
     }
 
-    fn hash<'a>(
+    pub(crate) fn hash<'a>(
         heap: &JsHeap<'a>,
         algorithm: &bun_core::String,
         input: &'a [u8],
         output: Option<DigestOutput<'a>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let algorithm = &*algorithm.to_utf8();
-        let engine = engine_of(heap);
         let mut digest: evp::Digest = [0; EVP_MAX_MD_SIZE_USIZE];
-        let length = if let Some(mut evp) = EVP::by_name_and_engine(engine, algorithm) {
-            let Some(length) = evp.hash(engine, input, &mut digest) else {
+        let length = if let Some(mut evp) = EVP::by_name(algorithm) {
+            let Some(length) = evp.hash(input, &mut digest) else {
                 return Err(crypto_error(heap, boring_ssl::ERR_get_error()));
             };
             length as usize
@@ -670,33 +639,31 @@ fn already_digested<'a>(heap: &JsHeap<'a>, name: &str, to: &str) -> bindgen::Err
 }
 
 macro_rules! static_hasher {
-    ($name:ident, $class:ident) => {
+    ($name:ident) => {
         pub(crate) struct $name {
             hashing: hashers::$name,
             digested: bool,
         }
 
-        impl $class for $name {
-            type Error<'a> = bindgen::Error<'a>;
-
-            fn constructor() -> Self {
+        impl $name {
+            pub(crate) fn constructor() -> Self {
                 Self {
                     hashing: hashers::$name::init(),
                     digested: false,
                 }
             }
 
-            fn byte_length(&self) -> u32 {
+            pub(crate) fn get_byte_length(&self) -> u32 {
                 hashers::$name::DIGEST as u32
             }
 
-            fn static_byte_length() -> u32 {
+            pub(crate) fn get_static_byte_length() -> u32 {
                 hashers::$name::DIGEST as u32
             }
 
-            fn update<'a>(
+            pub(crate) fn update<'a>(
                 &mut self,
-                this: JsWrapper<'a, Self>,
+                this_value: JsWrapper<'a, Self>,
                 heap: &JsHeap<'a>,
                 input: &'a [u8],
             ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
@@ -704,10 +671,10 @@ macro_rules! static_hasher {
                     return Err(already_digested(heap, stringify!($name), "update"));
                 }
                 self.hashing.update(input);
-                Ok(this)
+                Ok(this_value)
             }
 
-            fn digest<'a>(
+            pub(crate) fn digest<'a>(
                 &mut self,
                 heap: &JsHeap<'a>,
                 output: Option<DigestOutput<'a>>,
@@ -724,28 +691,27 @@ macro_rules! static_hasher {
                 })
             }
 
-            fn hash<'a>(
+            pub(crate) fn hash<'a>(
                 heap: &JsHeap<'a>,
                 input: &'a [u8],
                 output: Option<DigestOutput<'a>>,
             ) -> bindgen::Result<'a, JsLocal<'a>> {
                 let mut digest = [0; hashers::$name::DIGEST];
-                // SAFETY: the engine is the VM's.
-                unsafe { hashers::$name::hash(input, &mut digest, engine_of(heap)) };
+                hashers::$name::hash(input, &mut digest);
                 finish_with(heap, output, JsHeap::create_uint8_array, &digest)
             }
         }
     };
 }
 
-static_hasher!(MD4, MD4Class);
-static_hasher!(MD5, MD5Class);
-static_hasher!(SHA1, SHA1Class);
-static_hasher!(SHA224, SHA224Class);
-static_hasher!(SHA256, SHA256Class);
-static_hasher!(SHA384, SHA384Class);
-static_hasher!(SHA512, SHA512Class);
-static_hasher!(SHA512_256, SHA512_256Class);
+static_hasher!(MD4);
+static_hasher!(MD5);
+static_hasher!(SHA1);
+static_hasher!(SHA224);
+static_hasher!(SHA256);
+static_hasher!(SHA384);
+static_hasher!(SHA512);
+static_hasher!(SHA512_256);
 
 pub(crate) fn sha<'a>(
     heap: &JsHeap<'a>,

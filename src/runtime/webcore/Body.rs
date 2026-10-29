@@ -1393,7 +1393,7 @@ impl Value {
 
 /// Runs when a `HiveRef<Value>` slot is recycled
 /// (`HiveArray::Fallback::put` → `drop_in_place`; see
-/// `bun_collections::HiveRef::unref`). Without this impl `Request`/`Response`
+/// `bun_collections::HiveRefHandle::drop`). Without this impl `Request`/`Response`
 /// GC finalization leaked `WTFStringImpl` refs / `Blob` stores /
 /// `InternalBlob` buffers (H3 elysia rss).
 ///

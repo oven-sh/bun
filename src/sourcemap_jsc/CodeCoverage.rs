@@ -621,7 +621,7 @@ pub struct ByteRangeMapping {
 }
 
 // Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
-// `ByteRangeMapping__generate`), so use the identity context instead of
+// `find`), so use the identity context instead of
 // re-hashing them.
 pub type ByteRangeMappingHashMap =
     bun_collections::HashMap<u64, ByteRangeMapping, bun_collections::IdentityContext<u64>>;
@@ -1071,13 +1071,19 @@ extern "C" fn ByteRangeMapping__addSourceID(
         return;
     };
     // SAFETY: this thread's `MAP` owns the map until thread exit; nothing called below reaches it.
-    let map = unsafe { &mut *map.as_ptr() };
-    let Some(this) = map.get_mut(&bun_wyhash::hash(source_url.to_utf8().slice())) else {
+    let Some(this) = find(unsafe { &mut *map.as_ptr() }, source_url) else {
         return;
     };
     if this.source_hash == bun_wyhash::hash(source_contents.to_utf8().slice()) {
         this.source_ids.push(source_id);
     }
+}
+
+fn find<'a>(
+    map: &'a mut ByteRangeMappingHashMap,
+    path: &bun_core::String,
+) -> Option<&'a mut ByteRangeMapping> {
+    map.get_mut(&bun_wyhash::hash(path.to_utf8().slice()))
 }
 
 /// The table row of `source_url`. `undefined`: nothing compiled yet. `null`: not instrumented.
@@ -1091,8 +1097,7 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
         return JSValue::NULL;
     };
     // SAFETY: this thread's `MAP` owns the map until thread exit; nothing called below reaches it.
-    let map = unsafe { map.as_ref() };
-    let Some(this) = map.get(&bun_wyhash::hash(source_url.to_utf8().slice())) else {
+    let Some(this) = find(unsafe { &mut *map.as_ptr() }, source_url) else {
         return JSValue::NULL;
     };
 

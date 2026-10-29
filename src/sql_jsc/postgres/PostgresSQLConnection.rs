@@ -139,6 +139,9 @@ pub struct PostgresSQLConnection {
 
     /// The CopyData payloads of the read that is being parsed; see `flush_copy_out`.
     copy_out: JsCell<Vec<u8>>,
+
+    /// A per-message CopyBoth chunk told the readable to pause; `flush_copy_out` acts on it.
+    copy_out_full: Cell<bool>,
 }
 
 struct InternedChannel {
@@ -422,6 +425,8 @@ impl PostgresSQLConnection {
         let flags = self.flags.get();
         // What a paused COPY TO STDOUT waits for is its consumer, which is in this process.
         let idle = !flags.contains(ConnectionFlags::KEEP_ALIVE_REQUESTED)
+            // A write that waits for room in the socket keeps us busy: only `on_copy_drain` settles it.
+            && !flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
             && (flags.contains(ConnectionFlags::COPY_OUT_PAUSED)
                 || (!self.has_query_running() && self.write_buffer.get().remaining().is_empty()));
         if idle {
@@ -1115,6 +1120,7 @@ fn open(
             auto_flush_registered: Cell::new(false),
             channel_names: JsCell::new(Vec::new()),
             copy_out: JsCell::new(Vec::new()),
+            copy_out_full: Cell::new(false),
         }));
 
     let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
@@ -1419,7 +1425,11 @@ impl PostgresSQLConnection {
         if request.is_rejected() {
             return;
         }
-        request.cancel_copy();
+        if request.cancel_copy() {
+            // A replication session ends in band with the client's CopyDone. A CancelRequest would
+            // make the walsender raise an error and drop the session's temporary slots.
+            return;
+        }
         let status = request.status.get();
         match status {
             QueryStatus::Success | QueryStatus::Fail => {}

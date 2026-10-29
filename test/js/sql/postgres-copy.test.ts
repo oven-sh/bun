@@ -654,7 +654,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 
 // START_REPLICATION on a replication connection. Physical replication needs no slot and no wal_level=logical: it
 // streams every WAL record. The superuser has the REPLICATION privilege.
-describeWithContainer("postgres, replication", { image: "postgres_plain" }, container => {
+describeWithContainer("postgres, replication", { image: "postgres_plain", concurrent: true }, container => {
   const connect = connectTo(container);
   const replication = async () => {
     await container.ready;
@@ -1175,13 +1175,16 @@ describe.concurrent("START_REPLICATION", () => {
     }
   });
 
-  // The server is told in band: a CancelRequest can be lost.
+  // The server is told in band, not with a CancelRequest: the walsender raises an error on a
+  // CancelRequest and drops the session's temporary slots. So no second connection is opened.
   test.each([
     ["the readable alone", false],
     ["both streams", true],
   ])("cancel() of %s ends the session with a CopyDone", async (_, withWriter) => {
     const wire: string[] = [];
     const { port, server } = await walsender(wire, [Buffer.from("k1")]);
+    let connections = 0;
+    server.on("connection", () => connections++);
     try {
       await using sql = connect(port);
       const query = sql.unsafe("START_REPLICATION 0/0");
@@ -1193,6 +1196,32 @@ describe.concurrent("START_REPLICATION", () => {
       if (writer) expect(failure(await outcome(writer.closed))).toMatchObject(cancelled);
       expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
       expect(wire).toEqual(["Q START_REPLICATION 0/0", "c ", "Q select 1 as x"]);
+      expect(connections).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("an error while the readable is full: the query rejects and the connection stays usable", async () => {
+    const { port, server } = await pgMockServer((type, body) => {
+      if (type === "Q" && body.toString().startsWith("START_REPLICATION")) {
+        return [
+          pgCopyBothResponse([0]),
+          pgCopyData(Buffer.alloc(70 * 1024, "w")),
+          pgErrorResponse({ S: "ERROR", C: "XX000", M: "boom" }),
+          pgReadyForQuery(),
+        ];
+      }
+      if (type === "Q") return selectOne;
+    });
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      expect((await reader.read()).value!.byteLength).toBe(70 * 1024);
+      expect(failure(await outcome(query))).toMatchObject({ code: "ERR_POSTGRES_SERVER_ERROR", errno: "XX000" });
+      expect(failure(await outcome(reader.read()))).toMatchObject({ errno: "XX000" });
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
     } finally {
       server.close();
     }
@@ -1235,6 +1264,9 @@ describe.concurrent("START_REPLICATION", () => {
     }
   });
 
+  // The readable applies backpressure in both directions: a chunk over its high water mark pauses
+  // the socket, so memory stays bounded. The query resolves once the readable is read to its end,
+  // so the reader must keep draining while the writable closes.
   test("close() of the writable while the readable is full", async () => {
     const wire: string[] = [];
     const { port, server } = await walsender(wire, [Buffer.alloc(70 * 1024, "w")]);
@@ -1244,10 +1276,11 @@ describe.concurrent("START_REPLICATION", () => {
       const reader = query.readable().getReader();
       const writer = query.writable().getWriter();
       await writer.write("r1");
-      await writer.close();
-      expect(summary(await query)).toEqual(copied(0));
+      const closed = writer.close();
       expect((await reader.read()).value!.byteLength).toBe(70 * 1024);
       expect(await reader.read()).toEqual({ done: true, value: undefined });
+      await closed;
+      expect(summary(await query)).toEqual(copied(0));
       expect(wire).toEqual(["Q START_REPLICATION 0/0", "d r1", "c "]);
     } finally {
       server.close();

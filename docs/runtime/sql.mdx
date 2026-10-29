@@ -1629,6 +1629,7 @@ for await (const message of query.readable()) {
 - A replication connection takes simple queries only, so use `sql.unsafe(...).simple()` for `IDENTIFY_SYSTEM` and the slot commands.
 - Call `readable()` and `writable()` before the server answers the query: both in the same tick, as above. `readable()` is required. Without `writable()`, the server ends the session after `wal_sender_timeout`.
 - `writer.close()` ends the replication: the server ends the stream, the query resolves, and the connection runs the next query. `reader.cancel()`, `query.cancel()` and leaving the `for await` loop end it the same way, and reject the query with `ERR_POSTGRES_QUERY_CANCELLED`. `writer.abort(reason)` does too, with `reason` as the message.
+- The readable bounds its memory: it pauses the server when you stop reading. So keep reading the readable after `writer.close()`, as the `for await` loop does. The query resolves once the readable reaches its end.
 - The server can end its side first, at the end of a timeline for example. Bun then ends the client's side, the query resolves, and the readable ends once its last chunks are read. Later writes are dropped.
 - The query resolves with one empty result per `CommandComplete` of the walsender.
 

@@ -192,15 +192,13 @@ impl PostgresSQLConnection {
         let Some(request) = self.copying(CopyStream::reads) else {
             return;
         };
-        let state = request.flags.get().copy;
-        if state != CopyStream::ReadableOpen {
-            // One chunk per message: an XLogData carries no length of its own.
+        if request.flags.get().copy != CopyStream::ReadableOpen {
+            // One chunk per message: an XLogData carries no length of its own. The pause waits for
+            // the read to end, so a query that an error rejects in the same read is not left paused.
             match JSUint8Array::from_bytes(self.global(), data.into()) {
                 Ok(chunk) => {
-                    if self.call_copy(&request, chunk) == JSValue::FALSE
-                        && state == CopyStream::BothOpen
-                    {
-                        self.set_reading(false);
+                    if self.call_copy(&request, chunk) == JSValue::FALSE {
+                        self.copy_out_full.set(true);
                     }
                 }
                 Err(err) => self.fail(b"Failed to read data", js_error_to_postgres(err)),
@@ -242,14 +240,16 @@ impl PostgresSQLConnection {
         let both = request.flags.get().copy == CopyStream::BothOpen;
         request.update_flags(|f| f.copy = CopyStream::Readable);
         if both {
-            // The client's CopyDone ends the command, and what is left of the reply is bounded.
+            // The client answers with its own CopyDone, which ends the command.
             self.set_reading(true);
             self.write_copy_end(None);
         }
     }
 
     pub(super) fn flush_copy_out(&self) {
-        if !self.deliver_copy_out() {
+        let coalesced_full = !self.deliver_copy_out();
+        let streamed_full = self.copy_out_full.replace(false);
+        if (coalesced_full || streamed_full) && self.copying(CopyStream::reads).is_some() {
             self.set_reading(false);
         }
     }
@@ -356,15 +356,19 @@ impl PostgresSQLQuery {
     }
 
     /// A backend waiting for room in an unread socket ignores a CancelRequest.
-    pub(super) fn cancel_copy(&self) {
+    /// `true`: the session ends through the client's CopyDone, so no CancelRequest is needed.
+    pub(super) fn cancel_copy(&self) -> bool {
         let Some(connection) = self.copy_connection(CopyStream::reads) else {
-            return;
+            return false;
         };
-        if self.flags.get().copy == CopyStream::BothOpen {
+        let copy = self.flags.get().copy;
+        if copy == CopyStream::BothOpen {
             self.end_copy_both(&connection);
         }
         connection.set_reading(true);
         self.reject_in_flight(connection.cancelled_error(None), connection.global());
+        // In BothClosing the client's CopyDone is already on the wire.
+        copy == CopyStream::BothOpen || copy == CopyStream::BothClosing
     }
 
     /// `mode`: 0 for `readable()`, 1 for `writable()`, 2 for both.

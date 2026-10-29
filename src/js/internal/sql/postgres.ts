@@ -899,7 +899,13 @@ function onCopyInEnd(this: CopySink) {
   const waiting = this.waiting;
   if (waiting !== null) {
     this.waiting = null;
-    $rejectPromise(waiting, notACopyError("writable()", "FROM STDIN"));
+    // Once the server has opened copy mode, a write left waiting is dropped with the session, not
+    // an error. The rejection is only for a statement that was never a COPY FROM STDIN.
+    if (this.streams.opened) {
+      $resolvePromise(waiting, undefined);
+    } else {
+      $rejectPromise(waiting, notACopyError("writable()", "FROM STDIN"));
+    }
   }
 }
 

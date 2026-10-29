@@ -794,7 +794,9 @@ pub enum SourcePathKind {
 
 impl StandaloneModuleGraph {
     /// `descriptor` holds the result of `to_graph_bytes` and stays open: the engine maps the code from it.
-    pub fn from_descriptor(descriptor: Fd) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+    pub fn from_descriptor(
+        descriptor: Fd,
+    ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
         let size = bun_sys::get_file_size(descriptor).map_err(|_| CORRUPTED)?;
         let size = usize::try_from(size).map_err(|_| CORRUPTED)?;
         if size < PAYLOAD_HEADER_SIZE {
@@ -820,7 +822,7 @@ impl StandaloneModuleGraph {
     #[cfg(unix)]
     pub fn from_descriptors(
         descriptors: &[Fd],
-    ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+    ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
         const ALIGNMENT: usize = 64 * 1024;
         let mut sizes = Vec::with_capacity(descriptors.len());
         for &descriptor in descriptors {
@@ -1973,8 +1975,8 @@ pub(crate) mod tests {
         let path = folder.write("graph", &bytes);
         let descriptor = bun_sys::open(&path, bun_sys::O::RDONLY, 0).unwrap();
         let graph = StandaloneModuleGraph::from_descriptor(descriptor).unwrap();
-        // SAFETY: the process-wide graph, which is never freed. No other test installs one.
-        let graph = unsafe { &*graph.unwrap() };
+        // No other test installs the process-wide graph.
+        let graph = graph.unwrap();
         let program = graph.compiled_program.as_ref().unwrap();
         let backing_file = program.backing_file.unwrap();
         assert_eq!(backing_file.descriptor, descriptor.native() as isize);

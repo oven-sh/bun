@@ -2912,7 +2912,7 @@ pub(crate) mod internal {
         loop_: *mut Loop,
         _host: *const c_char,
         port: u16,
-        socket: *mut *mut c_void,
+        socket: &mut MaybeUninit<*mut Request>,
     ) -> c_int {
         let host: Option<&[u8]> = if _host.is_null() {
             None
@@ -2922,8 +2922,7 @@ pub(crate) mod internal {
         };
         let mut is_cache_hit = false;
         let req = getaddrinfo(loop_, host, port, Some(&mut is_cache_hit)).unwrap();
-        // SAFETY: `socket` is the out-param the usockets caller passes; valid for one write.
-        unsafe { *socket = req.cast::<c_void>() };
+        socket.write(req);
         if is_cache_hit { 0 } else { 1 }
     }
 
@@ -3012,7 +3011,7 @@ pub(crate) mod internal {
         loop_: *mut Loop,
         host: *const c_char,
         port: u16,
-        socket: *mut *mut c_void,
+        socket: &mut MaybeUninit<*mut Request>,
     ) -> c_int {
         us_getaddrinfo(loop_, host, port, socket)
     }

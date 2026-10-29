@@ -16,8 +16,7 @@ bun_opaque::opaque_ffi! {
 
 impl EncoderStringTable {
     pub fn new() -> NonNull<EncoderStringTable> {
-        // SAFETY: C++ never returns null from `new`.
-        unsafe { NonNull::new_unchecked(Bun__EncoderStringTable__create()) }
+        Bun__EncoderStringTable__create()
     }
     /// `hot_strings`: `bytecodeOrderStringHash` values from a payload order file, hottest first; their records go first.
     pub fn serialize(this: NonNull<EncoderStringTable>, hot_strings: &[u64]) -> Vec<u8> {
@@ -120,7 +119,8 @@ unsafe extern "C" {
 }
 
 unsafe extern "C" {
-    fn Bun__EncoderStringTable__create() -> *mut EncoderStringTable;
+    // safe: no arguments; C++ never returns null from `new`.
+    safe fn Bun__EncoderStringTable__create() -> NonNull<EncoderStringTable>;
     fn Bun__EncoderStringTable__destroy(this: *mut EncoderStringTable);
     fn Bun__EncoderStringTable__serialize(
         this: *mut EncoderStringTable,

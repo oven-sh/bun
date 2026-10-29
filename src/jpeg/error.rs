@@ -61,6 +61,8 @@ pub enum Error {
     BadProgression(u8, u8, u8, u8),
     #[error("Progressive JPEG image has more than {0} scans")]
     TooManyScans(u32),
+    #[error("Scan of what an earlier scan has coded")]
+    RedundantScan,
     #[error("Bogus virtual array access")]
     BadVirtualAccess,
     #[error(

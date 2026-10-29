@@ -291,6 +291,14 @@ impl Decoder<'_> {
 
     fn start_input_pass(&mut self, source: &mut Source) -> Result<()> {
         self.per_scan_setup()?;
+        if !self.progressive {
+            for i in 0..self.components_in_scan {
+                // libjpeg decodes the component again: a pass over the image for a handful of bytes, up to `max_scans` times.
+                if core::mem::replace(&mut self.scan_component_mut(i)?.scanned, true) {
+                    return Err(Error::RedundantScan);
+                }
+            }
+        }
         match source {
             Source::Lossy(coef) => {
                 self.latch_quant_tables()?;

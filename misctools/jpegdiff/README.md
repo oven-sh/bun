@@ -19,7 +19,8 @@ Set-up, on x86-64 Linux with clang, nasm and llvm-ar:
 Programs:
 
 - `jpegdiff <file or dir>...`: decodes at every scale from 8/8 to 1/8 with both and compares pixels, size, ICC profile,
-  whether it fails, and at which stage.
+  whether it fails, and at which stage. A stream that `bun_jpeg` refuses for a redundant scan, which libjpeg-turbo
+  decodes, is counted as `redundant-scan` and not compared.
 - `mutate <dir>... --iters N --seed S --threads T`: the same for random mutations of the files. Failures are saved to
   `/root/ref/corpus/fail`.
 - `encfuzz --iters N --seed S --threads T --max-dim D`: encodes generated images with both and compares the bytes.

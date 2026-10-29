@@ -38,6 +38,8 @@ pub fn compare(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<&'static s
         return Err("ours failed with Error::Internal, which no input should get to".into());
     }
     match (r, o) {
+        // On purpose: libjpeg-turbo decodes such a scan.
+        (_, Err(OurFailure::Decode(bun_jpeg::Error::RedundantScan))) => Ok("redundant-scan"),
         (Err(reference::Failure::Header(_)), Err(OurFailure::Header(_))) => Ok("header-fail"),
         (Err(reference::Failure::Decode(_)), Err(OurFailure::Decode(_))) => Ok("decode-fail"),
         (Err(r), Err(o)) => Err(format!("failed at different stages: ref {r:?}, ours {o:?}")),

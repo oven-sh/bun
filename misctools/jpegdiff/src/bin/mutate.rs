@@ -96,5 +96,5 @@ fn main() {
         }
     });
     let k: Vec<u64> = kinds.iter().map(|k| k.load(Ordering::Relaxed)).collect();
-    println!("ok {} ok-warned {} header-fail {} decode-fail {}; {} mismatches", k[0], k[1], k[2], k[3], bad.load(Ordering::Relaxed));
+    println!("ok {} ok-warned {} header-fail {} decode-fail {} redundant-scan {}; {} mismatches", k[0], k[1], k[2], k[3], k[4], bad.load(Ordering::Relaxed));
 }

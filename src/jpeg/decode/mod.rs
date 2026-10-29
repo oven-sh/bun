@@ -69,6 +69,8 @@ pub(crate) struct Component {
     downsampled_height: u32,
     /// The table that was current when the first scan with this component began.
     quant_table: Option<[u16; 64]>,
+    /// Whether a scan has had this component. Only a progressive stream may come back to one.
+    scanned: bool,
 
     // These depend on the scan.
     mcu_width: u32,

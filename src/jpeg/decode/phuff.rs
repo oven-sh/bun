@@ -51,7 +51,13 @@ pub(crate) fn update_progression(decoder: &Decoder, coef_bits: &mut CoefBits) ->
             previous.fill(0);
         }
         let band = current.get_mut(ss..=se).ok_or(Error::Internal)?;
-        band.fill(i32::from(decoder.al));
+        // A coefficient has one first scan, and every later one adds a bit. libjpeg takes any scan, as in `start_input_pass`.
+        let al = i32::from(decoder.al);
+        let coded = |&bits: &i32| bits >= 0 && (decoder.ah == 0 || al >= bits);
+        if band.iter().any(coded) {
+            return Err(Error::RedundantScan);
+        }
+        band.fill(al);
     }
     Ok(())
 }

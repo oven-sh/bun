@@ -5,7 +5,6 @@ use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
     ParseFlagResult, ShellTask, parse_flags, shell_join_path, shell_resolve_operand,
-    unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -892,24 +891,29 @@ pub(crate) struct Opts {
 }
 
 impl FlagParser for Opts {
-    fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {
+    fn parse_long<'a>(&mut self, _flag: &'a [u8]) -> Option<ParseFlagResult<'a>> {
         None
     }
 
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+    fn parse_short<'a>(
+        &mut self,
+        ch: u8,
+        smallflags: &'a [u8],
+        i: usize,
+    ) -> Option<ParseFlagResult<'a>> {
         match ch {
             b'R' => self.recursive = true,
             b'v' => self.verbose = true,
             b'n' => self.no_clobber = true,
             // Only the first flag of a group is rejected. Scripts rely on `-Rp` and `-Rf` working.
             _ if i > 0 => {}
-            b'f' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-f"))),
-            b'H' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-H"))),
-            b'i' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-i"))),
-            b'L' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-L"))),
-            b'P' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            b'p' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            _ => return Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
+            b'f' => return Some(ParseFlagResult::Unsupported(b"-f")),
+            b'H' => return Some(ParseFlagResult::Unsupported(b"-H")),
+            b'i' => return Some(ParseFlagResult::Unsupported(b"-i")),
+            b'L' => return Some(ParseFlagResult::Unsupported(b"-L")),
+            b'P' => return Some(ParseFlagResult::Unsupported(b"-P")),
+            b'p' => return Some(ParseFlagResult::Unsupported(b"-P")),
+            _ => return Some(ParseFlagResult::IllegalOption(&smallflags[i..])),
         }
         None
     }

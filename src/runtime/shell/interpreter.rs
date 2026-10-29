@@ -2387,64 +2387,57 @@ pub(crate) fn shell_openat(
 
 /// Custom parse error for invalid options.
 ///
-/// Payload slices borrow from the builtin's argv (NUL-terminated arena strings)
-/// or are `'static` literals; the builtin formats them into an error message
-/// before the next argv mutation, so a raw fat pointer is safe.
-pub(crate) enum ParseError {
-    IllegalOption(*const [u8]),
-    Unsupported(*const [u8]),
+/// Payload slices borrow from the builtin's argv (NUL-terminated `Vec<u8>` in
+/// `Cmd::args`) or are `'static` literals.
+pub(crate) enum ParseError<'a> {
+    IllegalOption(&'a [u8]),
+    Unsupported(&'a [u8]),
     ShowUsage,
 }
 
-impl ParseError {
-    /// Borrow the option-name payload. The pointer borrows either a `'static`
-    /// literal (e.g. `b"-"`) or the owning `Builtin`'s argv storage
-    /// (NUL-terminated `Vec<u8>` in `Cmd::args`, live for the `Builtin`'s
-    /// lifetime — see [`Builtin::arg_bytes`](crate::shell::builtin::Builtin::arg_bytes)).
-    /// Builtins format the error before any argv mutation.
+impl<'a> ParseError<'a> {
+    /// The option-name payload.
     #[inline]
-    pub(crate) fn opt(&self) -> &[u8] {
-        match self {
-            // SAFETY: see doc comment.
-            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => unsafe { &**s },
+    pub(crate) fn opt(&self) -> &'a [u8] {
+        match *self {
+            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => s,
             ParseError::ShowUsage => b"",
         }
     }
 }
 
-pub(crate) enum ParseFlagResult {
+pub(crate) enum ParseFlagResult<'a> {
     ContinueParsing,
     Done,
-    IllegalOption(*const [u8]),
-    Unsupported(*const [u8]),
-}
-
-/// Returns just `name` and lets the caller's `fmt_error_arena` add the
-/// "unsupported option" prefix once.
-#[inline]
-pub(crate) const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
-    std::ptr::from_ref::<[u8]>(name)
+    IllegalOption(&'a [u8]),
+    Unsupported(&'a [u8]),
 }
 
 /// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
 pub(crate) trait FlagParser {
     /// Handle a `--long` flag. Return `None` to fall through to short parsing.
-    fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult>;
+    fn parse_long<'a>(&mut self, flag: &'a [u8]) -> Option<ParseFlagResult<'a>>;
     /// Handle one byte of a `-abc` cluster. Return `None` to keep iterating.
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult>;
+    fn parse_short<'a>(
+        &mut self,
+        ch: u8,
+        smallflags: &'a [u8],
+        i: usize,
+    ) -> Option<ParseFlagResult<'a>>;
 }
 
 /// Returns the trailing non-flag args (`args[idx..]`) on success.
 pub(crate) fn parse_flags<'a, O: FlagParser>(
     opts: &mut O,
     args: &'a [*const core::ffi::c_char],
-) -> Result<Option<&'a [*const core::ffi::c_char]>, ParseError> {
+) -> Result<Option<&'a [*const core::ffi::c_char]>, ParseError<'a>> {
     if args.is_empty() {
         return Ok(None);
     }
     let mut idx = 0usize;
     while idx < args.len() {
-        // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init).
+        // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init) that stay
+        // put until `Cmd::deinit`; every caller is done with `'a` inside the builtin's `start`.
         let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
         match parse_one_flag(opts, flag) {
             ParseFlagResult::Done => return Ok(Some(&args[idx..])),
@@ -2457,12 +2450,12 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
     Err(ParseError::ShowUsage)
 }
 
-fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
+fn parse_one_flag<'a, O: FlagParser>(opts: &mut O, flag: &'a [u8]) -> ParseFlagResult<'a> {
     if flag.is_empty() || flag[0] != b'-' {
         return ParseFlagResult::Done;
     }
     if flag.len() == 1 {
-        return ParseFlagResult::IllegalOption(std::ptr::from_ref::<[u8]>(b"-"));
+        return ParseFlagResult::IllegalOption(b"-");
     }
     if flag.len() > 2 && flag[1] == b'-' {
         if let Some(r) = opts.parse_long(flag) {

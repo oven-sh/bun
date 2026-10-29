@@ -1002,7 +1002,7 @@ impl Builtin {
         interp: &Interpreter,
         cmd: NodeId,
         kind: Kind,
-        e: &ParseError,
+        e: &ParseError<'_>,
         set_wait_err: impl FnOnce(),
     ) -> Yield {
         let buf: Vec<u8> = match e {

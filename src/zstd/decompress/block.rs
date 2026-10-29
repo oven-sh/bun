@@ -222,8 +222,8 @@ impl OutputBuffer<'_> {
 pub(crate) enum Growth {
     /// Zeros up to there, and somewhat further if `limit` allows.
     Zeros { limit: usize },
-    /// What is written becomes its end, without being zeroed first. Only for output in one call, where nothing that
-    /// comes after what is being written is of any use.
+    /// What is written becomes its end, without being zeroed first. Only where nothing that comes after what is being
+    /// written is of any use, as in output in one call.
     Append,
 }
 
@@ -331,19 +331,36 @@ impl Scratch {
     /// A thread keeps no more than that for its next decoder.
     const MAX_SPARE_LIT_BUFFER: usize = 1 << 14;
 
-    fn lit_buffer(&mut self, lit_size: usize) -> Result<&mut [u8]> {
-        let needed = lit_size + WILDCOPY_OVERLENGTH;
+    fn reserve_literals(&mut self, lit_size: usize) -> Result<()> {
         make_room(
             &mut self.lit_buffer,
-            needed,
+            lit_size + WILDCOPY_OVERLENGTH,
             ZSTD_BLOCKSIZE_MAX + WILDCOPY_OVERLENGTH,
-        )?;
+        )
+    }
+
+    /// Makes `lit_buffer` long enough for `lit_size` literals.
+    fn extend_lit_buffer(&mut self, lit_size: usize) -> Result<()> {
+        let needed = lit_size + WILDCOPY_OVERLENGTH;
+        self.reserve_literals(lit_size)?;
         if self.lit_buffer.len() < needed {
             self.lit_buffer.resize(needed, 0);
         }
         // Literals are copied by more than there are: this much can be read along with the last ones.
         self.lit_buffer.sub_mut(lit_size..needed)?.fill(0);
-        self.lit_buffer.sub_mut(..lit_size)
+        Ok(())
+    }
+
+    /// [`Self::extend_lit_buffer`], for literals that `write` writes from the start of the buffer on, all `lit_size` of
+    /// them: what the buffer gets longer by for them is then not cleared first.
+    fn write_literals(
+        &mut self,
+        lit_size: usize,
+        write: impl FnOnce(OutputBuffer<'_>, Growth) -> Result<()>,
+    ) -> Result<()> {
+        self.reserve_literals(lit_size)?;
+        write(OutputBuffer::Used(&mut self.lit_buffer), Growth::Append)?;
+        self.extend_lit_buffer(lit_size)
     }
 }
 
@@ -449,7 +466,7 @@ impl BlockDecoder {
 
                 let huf_source = self.huf_source;
                 let scratch = self.scratch();
-                scratch.lit_buffer(lit_size)?;
+                scratch.extend_lit_buffer(lit_size)?;
                 let Scratch {
                     entropy,
                     lit_buffer,
@@ -525,9 +542,9 @@ impl BlockDecoder {
                     if lit_size + lh_size > src.len() {
                         return Err(Error::CorruptionDetected);
                     }
+                    let literals = src.span(lh_size, lit_size)?;
                     self.scratch()
-                        .lit_buffer(lit_size)?
-                        .write_at(0, src.span(lh_size, lit_size)?)?;
+                        .write_literals(lit_size, |mut to, growth| to.write(0, literals, growth))?;
                     return Ok(Literals {
                         c_size: lh_size + lit_size,
                         size: lit_size,
@@ -565,7 +582,10 @@ impl BlockDecoder {
                 if expected_write_size < lit_size {
                     return Err(Error::DstSizeTooSmall);
                 }
-                self.scratch().lit_buffer(lit_size)?.fill(src.at(lh_size)?);
+                let byte = src.at(lh_size)?;
+                self.scratch().write_literals(lit_size, |mut to, growth| {
+                    to.fill(0, byte, lit_size, growth)
+                })?;
                 Ok(Literals {
                     c_size: lh_size + 1,
                     size: lit_size,

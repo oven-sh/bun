@@ -759,10 +759,14 @@ mod tests {
         Ok(())
     }
 
+    const MAGIC: [u8; 4] = common::ZSTD_MAGICNUMBER.to_le_bytes();
+
+    fn le24(value: usize) -> [u8; 3] {
+        [value as u8, (value >> 8) as u8, (value >> 16) as u8]
+    }
+
     #[test]
     fn output_does_not_catch_up_with_literals_that_would_be_in_its_buffer() {
-        const MAGIC: [u8; 4] = common::ZSTD_MAGICNUMBER.to_le_bytes();
-        let le24 = |value: usize| [value as u8, (value >> 8) as u8, (value >> 16) as u8];
         let size = |more: usize, nb_seq: usize| (1 << 16) + more + 1027 * nb_seq;
         // A last block: 64 KB and `more` times a byte, and sequences of 16 literals and 1027 bytes from 16 back.
         let block = |more: usize, nb_seq: usize| {
@@ -822,6 +826,37 @@ mod tests {
                 assert_eq!(as_a_stream(more, nb_seq), expected, "{more}, {nb_seq}");
             }
         }
+    }
+
+    #[test]
+    fn literals_of_any_size_follow_literals_of_any_size() -> Result<()> {
+        let noise: Vec<u8> = (0..8_000u32)
+            .map(|i| (i.wrapping_mul(i) >> 5) as u8)
+            .collect();
+        // The buffer for them gets a new allocation of 72 bytes, of 532 and of 1064. It then has 552 bytes, which 540
+        // fit in but for what is read along with them, and room for 800. The last one is of 7032 bytes, few enough for
+        // the next decoder of the thread to start with it, empty.
+        let sizes = [40, 500, 520, 540, 800, 7_000, 9, 100];
+        let mut dst = vec![0; 1 << 13];
+        for stored in [[true, true], [false, false], [true, false]] {
+            let mut dctx = DCtx::new();
+            for ((&size, stored), nth) in sizes.iter().zip(stored.into_iter().cycle()).zip(1..) {
+                let expected = if stored {
+                    noise.span(100 * nth, size)?.to_vec()
+                } else {
+                    vec![size as u8; size]
+                };
+                let bytes = expected.sub(..if stored { size } else { 1 })?;
+                // A window of 128 KB, and a last block without a sequence.
+                let literals = le24(usize::from(!stored) | 3 << 2 | size << 4);
+                let header = le24(1 | 2 << 1 | (literals.len() + bytes.len() + 1) << 3);
+                let frame = [&MAGIC[..], &[0, 7 << 3], &header, &literals, bytes, &[0]].concat();
+                dst.fill(0xAA);
+                let written = dctx.decompress(&mut dst, &frame)?;
+                assert!(dst.sub(..written)? == expected, "{size}, {stored}");
+            }
+        }
+        Ok(())
     }
 
     #[test]

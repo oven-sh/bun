@@ -309,7 +309,12 @@ describe.skipIf(!isLinux || isMusl || !cc)("a thread pool whose first thread can
             fetch(request) {
               if (request.url.endsWith("/stop")) {
                 server.stop();
-                return new Response("stopped");
+                // The descriptors of the files sent so far are closed.
+                const { readdirSync, readlinkSync } = require("fs");
+                const open = readdirSync("/proc/self/fd").filter(fd => {
+                  try { return readlinkSync("/proc/self/fd/" + fd).endsWith("/file.txt"); } catch { return false; }
+                });
+                return new Response("stopped, " + open.length + " open");
               }
               return new Response(Bun.file(__dirname + "/file.txt"));
             },
@@ -348,7 +353,7 @@ describe.skipIf(!isLinux || isMusl || !cc)("a thread pool whose first thread can
         exitCode: await proc.exited,
         signalCode: proc.signalCode,
       }).toEqual({
-        answers: ["in a file", "in a file", "in a file", "stopped"],
+        answers: ["in a file", "in a file", "in a file", "stopped, 0 open"],
         refusedAThread: true,
         stderr: [],
         exitCode: 0,

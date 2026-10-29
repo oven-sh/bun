@@ -933,13 +933,27 @@ impl ThreadPool {
     #[cold]
     #[inline(never)]
     fn spawn_failed(&self, err: &std::io::Error) {
-        // Decide with the slot still held: `ensure_worker()` then sees a thread and starts none.
-        let sync = self.sync.load(Ordering::Relaxed);
-        if sync.state() != SyncState::Shutdown && sync.spawned() == 1 && sync.notified() {
-            exit_spawn_failed(err);
+        let mut sync = self.sync.load(Ordering::Relaxed);
+        loop {
+            // Decided with the slot still held: `ensure_worker()` then sees a thread and starts
+            // none. The CAS below makes the last of several refused spawns the one that sees 1.
+            if sync.state() != SyncState::Shutdown && sync.spawned() == 1 && sync.notified() {
+                exit_spawn_failed(err);
+            }
+            let mut new_sync = sync;
+            new_sync.set_spawned(sync.spawned() - 1);
+            match self
+                .sync
+                .cmpxchg_weak(sync, new_sync, Ordering::Release, Ordering::Relaxed)
+            {
+                None => break,
+                Some(current) => sync = current,
+            }
         }
-        // SAFETY: `&self` keeps the pool live.
-        unsafe { Self::release_slot(self) };
+        // The last slot of a pool that shuts down wakes the join()er, as in `release_slot`.
+        if sync.state() == SyncState::Shutdown && sync.spawned() == 1 {
+            self.join_event.notify();
+        }
     }
 
     #[inline(never)]

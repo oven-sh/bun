@@ -1231,13 +1231,7 @@ pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: 
     }
     // Prefer the explicit TLS server_name (e.g. from Node.js servername option)
     if let Some(props) = &client.tls_props {
-        let sn = props.get().server_name;
-        if !sn.is_null() {
-            // SAFETY: server_name is a NUL-terminated CStr owned by the
-            // SSLConfig; `ffi::cstr` yields an unbound-lifetime borrow of that
-            // C allocation, so `to_bytes()` already satisfies `'c` (tied to
-            // `client.tls_props`) without a `(ptr,len)` round-trip.
-            let sn_slice = unsafe { bun_core::ffi::cstr(sn) }.to_bytes();
+        if let Some(sn_slice) = props.get().server_name_bytes() {
             if !sn_slice.is_empty() {
                 return strip_ipv6_brackets(sn_slice);
             }

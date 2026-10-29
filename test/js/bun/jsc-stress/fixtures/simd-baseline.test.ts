@@ -6,7 +6,9 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { deflateSync } from "node:zlib";
+import { hash, load, observeDecodeCase, readPng, type DecodeCase } from "../../image/jpeg-golden/observe";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -269,11 +271,23 @@ describe("JPEG codec", () => {
   test("gradient round-trips through baseline and progressive encoders", async () => {
     // Non-flat content drives the AC coefficient paths of the Huffman coders.
     const source = png((x, y) => [x * 3, y * 6, (x + y) & 0xff]);
-    for (const progressive of [false, true]) {
+    // The hashes are of what Bun 1.4.4 made with libjpeg-turbo on x86-64. Every CPU gives the same bytes.
+    for (const [progressive, bytes, pixels] of [
+      [false, "992f7574be", "531cf6f036"],
+      [true, "c3f721e6bd", "531cf6f036"],
+    ] as const) {
       const jpeg = await new Bun.Image(source).jpeg({ quality: 90, progressive }).bytes();
       expect(await new Bun.Image(jpeg).metadata()).toEqual({ width, height, format: "jpeg" });
       const decoded = await new Bun.Image(jpeg).png().bytes();
       expect(await new Bun.Image(decoded).metadata()).toEqual({ width, height, format: "png" });
+      expect({ bytes: hash(jpeg), pixels: hash(readPng(decoded).rgba) }).toEqual({ bytes, pixels });
     }
+  });
+
+  // Bun writes neither: 4:2:2 is upsampled in one direction only, and YCCK has a row of K to convert.
+  test.each(["wide/422.jpg", "wide/ycck420.jpg"])("%s decodes as it did with libjpeg-turbo", async name => {
+    const files = await load<DecodeCase[]>(join(import.meta.dir, "../../image/jpeg-golden/cases.json.gz"));
+    const file = files.find(file => file.name === name)!;
+    expect(await observeDecodeCase(Buffer.from(file.data, "base64"), file.seed)).toEqual(file.expected!);
   });
 });

@@ -347,8 +347,8 @@ pub struct Bufs {
 
     // NOTE: `DirEntryResolveQueueItem` holds
     // `&'static [u8]` fields, so a zeroed bit-pattern is UB. Use
-    // `MaybeUninit` and `assume_init_{ref,mut}` at the (linear write-then-read)
-    // use sites in `dir_info_cached_maybe_log`.
+    // `MaybeUninit` and `assume_init_ref` at the (linear write-then-read)
+    // use site in `dir_info_cached_miss`.
     pub(crate) dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
     pub(crate) open_dirs: [FD; 256],
     pub(crate) resolve_without_remapping: PathBuffer,
@@ -4556,7 +4556,7 @@ impl<'a> Resolver<'a> {
             if i >= queue.len() {
                 return Ok(None);
             }
-            queue[i].write(DirEntryResolveQueueItem {
+            let slot = queue[i].write(DirEntryResolveQueueItem {
                 unsafe_path: bun_ptr::RawSlice::new(top),
                 result,
                 safe_path: b"",
@@ -4566,8 +4566,6 @@ impl<'a> Resolver<'a> {
             if let Some(top_entry) = rfs!().entries.get(top) {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                        // SAFETY: slot was written immediately above.
-                        let slot = unsafe { queue[i].assume_init_mut() };
                         slot.safe_path = entries.dir;
                         slot.fd = entries.fd;
                     }
@@ -4594,7 +4592,7 @@ impl<'a> Resolver<'a> {
                 if i >= queue.len() {
                     return Ok(None);
                 }
-                queue[i].write(DirEntryResolveQueueItem {
+                let slot = queue[i].write(DirEntryResolveQueueItem {
                     unsafe_path: bun_ptr::RawSlice::new(root_path),
                     result,
                     safe_path: b"",
@@ -4603,8 +4601,6 @@ impl<'a> Resolver<'a> {
                 if let Some(top_entry) = rfs!().entries.get(top) {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                            // SAFETY: slot was written immediately above.
-                            let slot = unsafe { queue[i].assume_init_mut() };
                             slot.safe_path = entries.dir;
                             slot.fd = entries.fd;
                         }

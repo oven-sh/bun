@@ -108,7 +108,7 @@ test.serial("resets the database", async () => {
 ```
 
 - `test.concurrent(...)` / `describe.concurrent(...)` mark individual tests or whole groups.
-- `--concurrent` treats every test as concurrent; `test.serial` opts back out.
+- `--concurrent` treats every test as concurrent; `test.serial` and `describe.serial` opt back out.
 - `--max-concurrency=N` caps how many run at once (default 20).
 - [`concurrentTestGlob`](/test/configuration#concurrenttestglob) in `bunfig.toml` turns it on for matching files only.
 

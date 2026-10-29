@@ -49,7 +49,7 @@ impl Collection {
     /// `bun_test_root` must be a valid, exclusive pointer to a live `BunTestRoot` for the
     /// duration of this call. The caller (`BunTest::init`) passes a pointer to its own
     /// `bun_test_root` field.
-    pub(crate) fn init(bun_test_root: *mut BunTestRoot) -> Collection {
+    pub(crate) fn init(bun_test_root: *mut BunTestRoot, default_concurrent: bool) -> Collection {
         let _g = group::begin();
         // SAFETY: see fn-level Safety doc.
         let bun_test_root = unsafe { &mut *bun_test_root };
@@ -63,7 +63,8 @@ impl Collection {
         let mut root_scope = DescribeScope::create(bun_test::BaseScope {
             parent: Some(&raw mut *bun_test_root.hook_scope),
             name: None,
-            concurrent: false,
+            // The file's default. A scope without `.concurrent` or `.serial` inherits it.
+            concurrent: default_concurrent,
             mode: bun_test::ScopeMode::Normal,
             only,
             has_callback: false,

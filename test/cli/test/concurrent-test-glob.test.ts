@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 describe("concurrent-test-glob", () => {
@@ -354,5 +354,67 @@ test("test 1", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout + stderr).toContain("1 pass");
+  });
+
+  test("describe.serial stays serial in a file that matches the glob", async () => {
+    // A group is "concurrent" when one of its two tests starts before the other one has ended.
+    const testFile = `
+import { describe, test } from "bun:test";
+
+function group(name, register) {
+  let runs = 0;
+  let running = 0;
+  let overlapped = false;
+  register(async () => {
+    runs++;
+    if (++running > 1) overlapped = true;
+    await new Promise(resolve => setImmediate(resolve));
+    running--;
+  });
+  test.serial("result: " + name, () => {
+    console.log([import.meta.file, name, runs + " runs", overlapped ? "concurrent" : "serial"].join(" | "));
+  });
+}
+
+group("test", run => {
+  test("a", run);
+  test("b", run);
+});
+group("describe.serial > test", run => {
+  describe.serial("group", () => {
+    test("a", run);
+    test("b", run);
+  });
+});
+`;
+
+    // The files run in this order: a file that does not match is on each side of the one that does.
+    using dir = tempDir("concurrent-glob-describe-serial", {
+      "bunfig.toml": `[test]\nconcurrentTestGlob = "**/concurrent-*.test.ts"`,
+      "a-sequential.test.ts": testFile,
+      "concurrent-b.test.ts": testFile,
+      "d-sequential.test.ts": testFile,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun test <version> (<revision>)
+      a-sequential.test.ts | test | 2 runs | serial
+      a-sequential.test.ts | describe.serial > test | 2 runs | serial
+      concurrent-b.test.ts | test | 2 runs | concurrent
+      concurrent-b.test.ts | describe.serial > test | 2 runs | serial
+      d-sequential.test.ts | test | 2 runs | serial
+      d-sequential.test.ts | describe.serial > test | 2 runs | serial"
+    `);
+    expect(exitCode).toBe(0);
   });
 });

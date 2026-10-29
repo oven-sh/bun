@@ -114,6 +114,68 @@ test.concurrent("concurrent-and-serial, no flag", async () => {
   `);
 });
 
+test.concurrent("describe.serial --concurrent", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", import.meta.dir + "/concurrent-describe-serial.fixture.ts", "--concurrent"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    concurrent | 2 runs | test
+    concurrent | 2 runs | describe > test
+    serial     | 2 runs | describe.serial > test
+    serial     | 2 runs | describe.serial > test.each
+    serial     | 2 runs | describe.serial.each > test
+    serial     | 2 runs | describe.serial > describe > test
+    serial     | 2 runs | describe.concurrent > describe.serial > test
+    serial     | 2 runs | describe.serial > describe.concurrent > describe.serial > test
+    serial     | 6 runs | describe.serial > beforeEach, test, afterEach
+    serial     | 3 runs | test, describe.serial > test, test
+    serial     | 2 runs | describe.concurrent > test.serial
+    concurrent | 2 runs | describe.serial > test.concurrent
+    concurrent | 2 runs | describe.serial > describe.concurrent > test
+    concurrent | 2 runs | describe.concurrent > describe > test
+    concurrent | 2 runs | describe > describe > test
+    onTestFinished a
+    onTestFinished b"
+  `);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("describe.serial, no flag", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", import.meta.dir + "/concurrent-describe-serial.fixture.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    serial     | 2 runs | test
+    serial     | 2 runs | describe > test
+    serial     | 2 runs | describe.serial > test
+    serial     | 2 runs | describe.serial > test.each
+    serial     | 2 runs | describe.serial.each > test
+    serial     | 2 runs | describe.serial > describe > test
+    serial     | 2 runs | describe.concurrent > describe.serial > test
+    serial     | 2 runs | describe.serial > describe.concurrent > describe.serial > test
+    serial     | 6 runs | describe.serial > beforeEach, test, afterEach
+    serial     | 3 runs | test, describe.serial > test, test
+    serial     | 2 runs | describe.concurrent > test.serial
+    concurrent | 2 runs | describe.serial > test.concurrent
+    concurrent | 2 runs | describe.serial > describe.concurrent > test
+    concurrent | 2 runs | describe.concurrent > describe > test
+    serial     | 2 runs | describe > describe > test
+    onTestFinished a
+    onTestFinished b"
+  `);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("max-concurrency limits concurrent tests", async () => {
   // Test with max-concurrency=3
   const result = await Bun.spawn({

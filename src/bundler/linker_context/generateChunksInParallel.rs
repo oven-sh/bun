@@ -66,9 +66,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         }
         let ctx = GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
-            // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
-            // write provenance preserved.
-            c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
+            c: bun_ptr::ParentRef::from_ref_mut(c),
             chunks: bun_ptr::BackRef::new(&*chunks),
         };
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
@@ -171,9 +169,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             // `GenerateChunkCtx` fields are raw pointers; capture them
             // before the `iter_mut()` borrow so the same slice backref can be
             // stored in every ctx.
-            // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
-            let c_ref =
-                unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
+            let c_ref = bun_ptr::ParentRef::from_ref_mut(c);
             let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
             for chunk in chunks.iter_mut() {
                 chunk_contexts.push(GenerateChunkCtx {
@@ -212,7 +208,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             let group = bun_threading::WaitGroup::init_with_count(total_count);
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
             let mut batch = ThreadPoolLib::Batch::default();
-            for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
+            for (chunk, chunk_ctx) in chunks.iter().zip(chunk_contexts.iter()) {
                 match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         for (i, part_range) in js.parts_in_chunk_in_order.iter().enumerate() {
@@ -223,14 +219,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                     generate_compile_result_for_js_chunk,
                                     &group,
                                 ),
-                                // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
-                                // conflating the borrow with
-                                // LinkerContext's `'a`. Launder via raw ptr so borrowck
-                                // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                                // before `chunk_contexts` drops (we `group.wait()` below).
-                                ctx: unsafe {
-                                    bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
-                                },
+                                ctx: chunk_ctx,
                             });
                             batch.push(ThreadPoolLib::Batch::from(
                                 &raw mut combined_part_ranges.last_mut().unwrap().task.task,
@@ -246,14 +235,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                     generate_compile_result_for_css_chunk,
                                     &group,
                                 ),
-                                // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
-                                // conflating the borrow with
-                                // LinkerContext's `'a`. Launder via raw ptr so borrowck
-                                // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                                // before `chunk_contexts` drops (we `group.wait()` below).
-                                ctx: unsafe {
-                                    bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
-                                },
+                                ctx: chunk_ctx,
                             });
                             batch.push(ThreadPoolLib::Batch::from(
                                 &raw mut combined_part_ranges.last_mut().unwrap().task.task,
@@ -268,14 +250,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                 generate_compile_result_for_html_chunk,
                                 &group,
                             ),
-                            // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
-                            // conflating the borrow with
-                            // LinkerContext's `'a`. Launder via raw ptr so borrowck
-                            // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                            // before `chunk_contexts` drops (we `group.wait()` below).
-                            ctx: unsafe {
-                                bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
-                            },
+                            ctx: chunk_ctx,
                         });
                         batch.push(ThreadPoolLib::Batch::from(
                             &raw mut combined_part_ranges.last_mut().unwrap().task.task,

@@ -37,7 +37,7 @@ pub struct ChunkImport {
     pub(crate) import_kind: ImportKind,
 }
 
-// `'a` is the bundler arena. The keys' borrow of it is still erased (see `LinkerGraph::bump`).
+// `'a` is the bundler arena. The keys' borrow of it is still erased.
 pub struct Chunk<'a> {
     /// This is a random string and is used to represent the output path of this
     /// chunk before the final output path has been computed. See OutputPiece

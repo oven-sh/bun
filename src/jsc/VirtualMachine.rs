@@ -2834,15 +2834,15 @@ extern crate alloc;
 pub type RuntimeState = *mut c_void;
 
 /// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
-#[derive(Copy, Clone, Debug)]
-pub struct WorkerExecArgvFlags {
+#[derive(Copy, Clone)]
+pub struct WorkerExecArgvFlags<'a> {
     /// `!--no-addons`
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
-    /// Where a flag is that is the process's, which a Worker cannot be given
+    /// A flag that is the process's, which a Worker cannot be given
     /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
-    pub invalid: Option<usize>,
+    pub invalid: Option<&'a bun_core::WTFStringImplStruct>,
 }
 
 /// Which of its timers a `--hot` run takes with it.
@@ -2980,8 +2980,9 @@ pub struct RuntimeHooks {
     ),
     /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
     /// `None` if parsing failed.
-    pub parse_worker_exec_argv_flags:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
+    pub parse_worker_exec_argv_flags: for<'a> fn(
+        exec_argv: &'a [Option<&'a bun_core::WTFStringImplStruct>],
+    ) -> Option<WorkerExecArgvFlags<'a>>,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub stop_cron_for_vm_teardown: fn(vm: &mut VirtualMachine),
@@ -3609,12 +3610,8 @@ impl VirtualMachine {
                 .and_then(crate::web_worker::WebWorker::exec_argv)
                 .is_some_and(|exec_argv| {
                     use bun_core::WTFStringImplExt as _;
-                    exec_argv.iter().any(|&arg| {
-                        // SAFETY: each entry borrows the C++ `WorkerOptions`
-                        // array, kept alive by the owning `WebCore::Worker`
-                        // for the worker's lifetime (see `WebWorker::argv`).
-                        !arg.is_null()
-                            && is_bootstrap_flag(unsafe { &*arg }.to_owned_slice_z().as_bytes())
+                    exec_argv.iter().any(|arg| {
+                        arg.is_some_and(|arg| is_bootstrap_flag(arg.to_owned_slice_z().as_bytes()))
                     })
                 });
         if needs_pre_execution && crate::compiled_program::can_load_unused_library_modules() {

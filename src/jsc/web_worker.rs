@@ -51,7 +51,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
-use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
+use bun_core::{
+    EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl,
+    WTFStringImplStruct,
+};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_io::KeepAlive;
 
@@ -333,25 +336,26 @@ impl WebWorker {
     }
 
     /// Borrowed from the C++ `WorkerOptions` (kept alive by the owning
-    /// `WebCore::Worker`).
+    /// `WorkerMessagingProxy`).
     #[inline]
-    pub fn argv(&self) -> &[WTFStringImpl] {
+    pub fn argv(&self) -> &[Option<&WTFStringImplStruct>] {
         // SAFETY: `argv_ptr[..argv_len]` is borrowed from C++ WorkerOptions
-        // (BACKREF — kept alive by the owning Worker for `self`'s lifetime).
+        // (BACKREF — kept alive by the owning proxy for `self`'s lifetime).
+        // Each entry is a `WTF::String`: null, or a `StringImpl` that it keeps alive.
         // `(null, 0)` is tolerated by `ffi::slice`.
-        unsafe { bun_core::ffi::slice(self.argv_ptr, self.argv_len) }
+        unsafe { bun_core::ffi::slice(self.argv_ptr.cast(), self.argv_len) }
     }
 
     /// `None` when
     /// `inherit_exec_argv` (the worker inherits the parent's execArgv),
     /// otherwise `Some(slice)` (possibly empty) borrowed from C++ WorkerOptions.
     #[inline]
-    pub fn exec_argv(&self) -> Option<&[WTFStringImpl]> {
+    pub fn exec_argv(&self) -> Option<&[Option<&WTFStringImplStruct>]> {
         if self.inherit_exec_argv {
             return None;
         }
         // SAFETY: see `argv()`.
-        Some(unsafe { bun_core::ffi::slice(self.exec_argv_ptr, self.exec_argv_len) })
+        Some(unsafe { bun_core::ffi::slice(self.exec_argv_ptr.cast(), self.exec_argv_len) })
     }
 
     /// Worker thread: its teardown has joined its own children, and what it had on other threads is back.
@@ -492,18 +496,12 @@ impl WebWorker {
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
             // SAFETY: caller passed valid (ptr,len) borrowed from C++ WorkerOptions;
-            // the hook only reads the slice.
-            let parsed = unsafe {
-                (hooks.parse_worker_exec_argv_flags)(bun_core::ffi::slice(
-                    exec_argv_ptr,
-                    exec_argv_len,
-                ))
-            };
-            if let Some(flags) = parsed {
+            // see `argv()` for the entries.
+            let exec_argv = unsafe { bun_core::ffi::slice(exec_argv_ptr.cast(), exec_argv_len) };
+            if let Some(flags) = (hooks.parse_worker_exec_argv_flags)(exec_argv) {
                 if let Some(invalid) = flags.invalid {
                     use bun_core::WTFStringImplExt as _;
-                    // SAFETY: an index into the same slice, whose strings the caller keeps alive.
-                    let arg = unsafe { &**exec_argv_ptr.add(invalid) }.to_owned_slice_z();
+                    let arg = invalid.to_owned_slice_z();
                     let mut message = b"Initiated Worker with invalid execArgv flags: ".to_vec();
                     message.extend_from_slice(arg.as_bytes());
                     *error_message = BunString::clone_utf8(&message);

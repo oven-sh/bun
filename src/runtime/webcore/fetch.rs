@@ -237,32 +237,16 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
     }
 
     // bun.handleOom(url_str.toOwnedSlice(...)) → to_owned_slice() aborts on OOM.
-    // `preconnect` takes a `URL<'static>` that borrows a `Box<[u8]>` href and
-    // assumes ownership when `is_url_owned == true` (it reconstructs the Box
-    // to free it). Hand the allocation off via `heap::alloc`.
-    let href_box: Box<[u8]> = url_str.to_owned_slice().into_boxed_slice();
-    let href_raw: *mut [u8] = bun_core::heap::into_raw(href_box);
-    // SAFETY: `href_raw` is a freshly-leaked Box<[u8]>; we either pass ownership
-    // to `preconnect` (which frees it) or reclaim it on the early-return paths.
-    let href: &'static [u8] = unsafe { &*href_raw };
-    let url = ZigURL::parse(href);
-
-    macro_rules! reclaim_href {
-        () => {
-            // SAFETY: paired with the `heap::alloc` above; not yet handed to preconnect.
-            drop(unsafe { bun_core::heap::take(href_raw) });
-        };
-    }
+    let href: Vec<u8> = url_str.to_owned_slice();
+    let url = ZigURL::parse(&href);
 
     if !url.is_http() && !url.is_https() && !url.is_s3() {
-        reclaim_href!();
         return Err(
             global_object.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS"))
         );
     }
 
     if url.hostname.is_empty() {
-        reclaim_href!();
         return Err(global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -272,19 +256,17 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
     }
 
     if !url.has_valid_port() {
-        reclaim_href!();
         return Err(global_object.throw_invalid_arguments(format_args!("Invalid port")));
     }
 
-    // `preconnect` is a free fn in `bun_http::async_http`. Ownership
-    // of `href_raw` transfers here (`is_url_owned: true`).
     // A request to an origin the environment proxies never dials it. One after `tls.DEFAULT_CIPHERS` was assigned does not use the default context.
     let vm = VirtualMachine::get();
     if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
-        reclaim_href!();
         return Ok(());
     }
-    http::async_http::preconnect(url, true);
+    // SAFETY: what `url` borrows is the heap buffer of `href`, which stays where it is when the
+    // `Vec` moves, and `preconnect` does not read `url` after it drops `href`.
+    http::async_http::preconnect(unsafe { url.erase_lifetime() }, href);
     Ok(())
 }
 

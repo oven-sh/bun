@@ -202,9 +202,7 @@
   },
   "src/runtime/webcore/CompressionStreamCoder.rs": {
     "unsafe impl Send": [
-      "AsyncInput",
-      "CompressionAsyncCtx",
-      "CompressionStreamCoder"
+      "CompressionAsyncCtx"
     ]
   },
   "src/runtime/webcore/blob/copy_file.rs": {

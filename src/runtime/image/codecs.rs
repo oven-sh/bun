@@ -356,7 +356,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         }
         Format::Jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).
-            let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
+            let mut handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
             (w, h) = handle.read_header(bytes)?;
         }
         Format::Webp => {

@@ -875,7 +875,7 @@ describe("fs.watch", () => {
           if (kind === "file") fs.appendFileSync(target, "x");
           else fs.mkdirSync(path.join(target, "new"));
           await later.saw();
-          const expected = [kind === "file" ? ["change", name] : ["rename", "new"]];
+          const expected: typeof fresh.events = [kind === "file" ? ["change", name] : ["rename", "new"]];
           expect({ fresh: fresh.events, later: later.events }).toEqual({ fresh: expected, later: expected });
         }
       });

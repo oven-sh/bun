@@ -1527,11 +1527,9 @@ pub(crate) mod js_bundler {
             }
 
             if let Some(define) = config.get_own_object(global_this, "define")? {
-                // SAFETY: `get_own_object` only returns non-null live JSObject*.
-                let define_ref = unsafe { &*define };
                 let define_iter = jsc::JSPropertyIterator::init(
                     global_this,
-                    define_ref,
+                    define,
                     jsc::JSPropertyIteratorOptions {
                         skip_empty_name: true,
                         include_value: true,
@@ -1566,11 +1564,9 @@ pub(crate) mod js_bundler {
             }
 
             if let Some(loaders) = config.get_own_object(global_this, "loader")? {
-                // SAFETY: `get_own_object` only returns non-null live JSObject*.
-                let loaders_ref = unsafe { &*loaders };
                 let loader_iter = jsc::JSPropertyIterator::init(
                     global_this,
-                    loaders_ref,
+                    loaders,
                     jsc::JSPropertyIteratorOptions {
                         skip_empty_name: true,
                         include_value: true,

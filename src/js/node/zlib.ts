@@ -259,6 +259,7 @@ function ZlibBase(
 ) {
   let chunkSize = Z_DEFAULT_CHUNK;
   let maxOutputLength = kMaxLength;
+  let rejectGarbageAfterEnd: boolean | undefined;
   // The ZlibBase class is not exported to user land, the mode should only be passed in by us.
   $assert(typeof mode === "number");
   $assert(mode >= DEFLATE && mode <= ZSTD_DECOMPRESS);
@@ -287,8 +288,9 @@ function ZlibBase(
     // prettier-ignore
     maxOutputLength = checkRangesOrGetDefault(opts.maxOutputLength, "options.maxOutputLength", 1, kMaxLength, kMaxLength);
 
-    if (opts.rejectGarbageAfterEnd !== undefined) {
-      validateBoolean(opts.rejectGarbageAfterEnd, "options.rejectGarbageAfterEnd");
+    rejectGarbageAfterEnd = opts.rejectGarbageAfterEnd;
+    if (rejectGarbageAfterEnd !== undefined) {
+      validateBoolean(rejectGarbageAfterEnd, "options.rejectGarbageAfterEnd");
     }
 
     if (opts.encoding || opts.objectMode || opts.writableObjectMode) {
@@ -316,7 +318,7 @@ function ZlibBase(
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
 
-  this._rejectGarbageAfterEnd = opts?.rejectGarbageAfterEnd === true;
+  this._rejectGarbageAfterEnd = rejectGarbageAfterEnd === true;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
 ZlibBase.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_NORMAL];

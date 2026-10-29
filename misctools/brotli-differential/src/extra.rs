@@ -297,7 +297,7 @@ pub fn run(args: &[String]) -> bool {
             }
         }
         Some("enc-tail") => ring::run_tail(num(2, 1), num(3, 1000), num(4, 0x1C), &corpus()),
-        Some("enc-marks") => ring::run_marks(num(2, 1), num(3, 1000), num(4, 0x60), &args::rest(args, 5).iter().map(|s| args::parse(s) as usize).collect::<Vec<usize>>(), &corpus()),
+        Some("enc-marks") => ring::run_marks(num(2, 1), num(3, 1000), num(4, 0x60), &args::numbers(args, 5), &corpus()),
         Some("enc-words") => ring::run_words(num(2, 1), num(3, 1000), num(4, 1 << 16) as usize, num(5, 0xFFF)),
         Some("enc-every-word") => shapes::run_every_word(num(2, 0x820), num(3, 0) != 0),
         Some("enc-lengths") => ring::run_lengths(num(2, 1), num(3, 1000), num(4, 1 << 19) as usize, num(5, 0xFFF)),

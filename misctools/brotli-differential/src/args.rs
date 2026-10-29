@@ -31,6 +31,12 @@ pub fn rest(args: &[String], from: usize) -> &[String] {
     args.get(from..).unwrap_or_default()
 }
 
+/// The numbers from argument `from` on, at least one.
+pub fn numbers(args: &[String], from: usize) -> Vec<usize> {
+    text(args, from);
+    rest(args, from).iter().map(|s| parse(s) as usize).collect()
+}
+
 /// `<parameter>=<value>`, both as the numbers of the C API.
 pub fn params(args: &[String]) -> Vec<(i32, u32)> {
     args.iter()

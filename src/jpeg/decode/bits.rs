@@ -408,7 +408,7 @@ struct Filled {
     saw_marker: bool,
 }
 
-/// Six more bytes for `buf`, from `data[at..]`, where one of them is FF or fewer than eight are left.
+/// Six more bytes for `buf`, from `data[at..]`.
 #[inline(never)]
 fn fill_bytewise(data: &[u8], mut at: usize, mut buf: u64) -> Filled {
     // Most often what is in the way is a single FF 00.
@@ -417,15 +417,18 @@ fn fill_bytewise(data: &[u8], mut at: usize, mut buf: u64) -> Filled {
         // The top bit of every byte that is FF.
         let ff = ((w & 0x7f7f_7f7f_7f7f_7f7f) + 0x0101_0101_0101_0101) & w & 0x8080_8080_8080_8080;
         let before = ff.leading_zeros();
-        let after = u64::MAX >> (before + 8);
-        let only_ff = (ff ^ (1 << 63 >> before)) >> 8 == 0;
-        if only_ff && (w & after) >> (48 - before) == 0 {
-            let without_zero = (w & !after) | ((w << 8) & after);
-            return Filled {
-                buf: (buf << 48) | (without_zero >> 16),
-                at: at + 7,
-                saw_marker: false,
-            };
+        // The caller saw an FF in the first six bytes, but JavaScript can have written to them since.
+        if before <= 40 {
+            let after = u64::MAX >> (before + 8);
+            let only_ff = (ff ^ (1 << 63 >> before)) >> 8 == 0;
+            if only_ff && (w & after) >> (48 - before) == 0 {
+                let without_zero = (w & !after) | ((w << 8) & after);
+                return Filled {
+                    buf: (buf << 48) | (without_zero >> 16),
+                    at: at + 7,
+                    saw_marker: false,
+                };
+            }
         }
     }
     let mut saw_marker = false;

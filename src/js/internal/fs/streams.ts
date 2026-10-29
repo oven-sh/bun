@@ -1,12 +1,13 @@
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
 const { Readable, Writable, finished } = require("node:stream");
 const fs = require("node:fs");
-const { read, write, fsync, writev } = fs;
+// Read a member at each call: internal/trace_events replaces them when tracing starts.
+const binding = require("internal/fs/binding");
+const { reportUncaughtException } = require("internal/shared");
 const fileHandles = require("internal/fs/file_handles");
 type FileHandleInternals = NonNullable<typeof fileHandles.internals>;
 type FileHandle = $Node.FileHandle;
 type FileSink = $Node.FileSink;
-type FD = number;
 type ErrorCallback = (error?: Error | null) => void;
 
 /** `node:fs`, the `fs` option of a stream, or the operations of a `FileHandle`. */
@@ -41,6 +42,11 @@ interface StreamFs {
   ): void;
   fsync?(fd: number, callback: ErrorCallback): void;
   close?(fd: number, callback: ErrorCallback): void;
+}
+
+/** The I/O goes to `handle`, never to the `fd` argument. What the binding refuses goes to the callback: the stream waits for it. */
+interface FileHandleStreamFs extends StreamFs {
+  handle: FileHandle;
 }
 
 interface FileStreamOptions extends $Node.ReadableOptions, $Node.WritableOptions {
@@ -112,7 +118,6 @@ let kUnref: FileHandleInternals["kUnref"];
 let kFd: FileHandleInternals["kFd"];
 let fileHandlePrototypeRead: FileHandle["read"];
 let fileHandlePrototypeWrite: FileHandle["write"];
-let fileHandlePrototypeFsync: undefined;
 let fileHandlePrototypeWritev: FileHandle["writev"];
 
 function takeFileHandleInternals(internals: FileHandleInternals) {
@@ -123,65 +128,144 @@ function takeFileHandleInternals(internals: FileHandleInternals) {
   ({
     read: fileHandlePrototypeRead,
     write: fileHandlePrototypeWrite,
-    fsync: fileHandlePrototypeFsync,
     writev: fileHandlePrototypeWritev,
-  } = FileHandle.prototype as FileHandle & { fsync?: undefined });
+  } = FileHandle.prototype);
 }
 
 const { internals } = fileHandles;
 if (internals) takeFileHandleInternals(internals);
 else fileHandles.whenLoaded = takeFileHandleInternals;
 
-const fileHandleStreamFs = (fh: FileHandle) => ({
-  // try to use the basic fs.read/write/fsync if available, since they are less
-  // abstractions. however, node.js allows patching the file handle, so this has
-  // to be checked for.
-  read:
-    fh.read === fileHandlePrototypeRead
-      ? read
-      : function (
-          fd: number | null,
-          buf: Buffer,
-          offset: number,
-          length: number,
-          pos: number | undefined,
-          cb: (error: Error | null, bytesRead?: number, buffer?: Buffer) => void,
-        ) {
-          return fh.read(buf, offset, length, pos).then(
-            ({ bytesRead, buffer }) => cb(null, bytesRead, buffer),
-            err => cb(err, 0, buf),
-          );
-        },
-  write:
-    fh.write === fileHandlePrototypeWrite
-      ? write
-      : function (
-          fd: number | null,
-          buffer: Buffer,
-          offset: number,
-          length: number,
-          position: number | undefined,
-          cb: (error: Error | null, bytesWritten?: number, buffer?: Buffer) => void,
-        ) {
-          return fh.write(buffer, offset, length, position).then(
-            ({ bytesWritten, buffer }) => cb(null, bytesWritten, buffer),
-            err => cb(err, 0, buffer),
-          );
-        },
-  writev: fh.writev === fileHandlePrototypeWritev ? writev : undefined,
-  fsync:
-    fh.sync === fileHandlePrototypeFsync
-      ? fsync
-      : function (fd: number, cb: ErrorCallback) {
-          return fh.sync().then(() => cb(), cb);
-        },
-  close: streamFileHandleClose.bind(fh),
+// Node's FileHandleOperations: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L86-L116
+const fileHandleStreamFs = (handle: FileHandle): FileHandleStreamFs => ({
+  handle,
+  open: fileHandleStreamOpen,
+  read: fileHandleStreamRead,
+  write: fileHandleStreamWrite,
+  writev: fileHandleStreamWritev,
+  fsync: fileHandleStreamFsync,
+  close: fileHandleStreamClose,
 });
 
-function streamFileHandleClose(this: FileHandle, fd: FD, cb: ErrorCallback) {
-  $assert(this[kFd] == fd, "fd mismatch");
-  this[kUnref]();
-  this.close().then(() => cb(), cb);
+function fileHandleStreamOpen() {
+  throw $ERR_METHOD_NOT_IMPLEMENTED("open()");
+}
+
+// In Node this callback is a promise job. Here the binding calls it, as for fs.read(): guardCallback() without a closure.
+function fromBinding<T>(
+  cb: (error: Error | null, count?: number, subject?: T) => void,
+  err: Error | null,
+  count: number,
+  subject: T,
+) {
+  try {
+    if (err) cb(err, 0, subject);
+    else cb(null, count, subject);
+  } catch (e) {
+    reportUncaughtException(e);
+  }
+}
+
+// Node calls handle.read(). The built-in read() ends in this call to the binding, which saves the promises of read().
+function fileHandleStreamRead(
+  this: FileHandleStreamFs,
+  fd: number | null,
+  buf: Buffer,
+  offset: number,
+  length: number,
+  pos: number | undefined,
+  cb: (error: Error | null, bytesRead?: number, buffer?: Buffer) => void,
+) {
+  const handle = this.handle;
+  const method = handle.read;
+  if (method === fileHandlePrototypeRead) {
+    try {
+      binding.readCb((err, bytesRead) => fromBinding(cb, err, bytesRead, buf), handle[kFd], buf, offset, length, pos);
+      return;
+    } catch {
+      // The binding refuses arguments before it starts anything. handle.read() reports them to the callback.
+    }
+  }
+  method.$call(handle, buf, offset, length, pos).then(
+    ({ bytesRead, buffer }) => cb(null, bytesRead, buffer as Buffer),
+    err => cb(err, 0, buf),
+  );
+}
+
+function fileHandleStreamWrite(
+  this: FileHandleStreamFs,
+  fd: number | null,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number | undefined,
+  cb: (error: Error | null, bytesWritten?: number, buffer?: Buffer) => void,
+) {
+  const handle = this.handle;
+  const method = handle.write;
+  // For every other chunk (an empty one, any that objectMode lets through) handle.write() does more than this call.
+  if (
+    method === fileHandlePrototypeWrite &&
+    $isTypedArrayView(buffer) &&
+    buffer.byteLength !== 0 &&
+    typeof length === "number"
+  ) {
+    try {
+      binding.writeCb(
+        (err, bytesWritten) => fromBinding(cb, err, bytesWritten, buffer),
+        handle[kFd],
+        buffer,
+        offset,
+        length,
+        position,
+      );
+      return;
+    } catch {
+      // As in fileHandleStreamRead.
+    }
+  }
+  method.$call(handle, buffer, offset, length, position).then(
+    ({ bytesWritten, buffer }) => cb(null, bytesWritten, buffer as Buffer),
+    err => cb(err, 0, buffer),
+  );
+}
+
+function fileHandleStreamWritev(
+  this: FileHandleStreamFs,
+  fd: number | null,
+  buffers: Buffer[],
+  position: number | undefined,
+  cb: (error: Error | null, bytesWritten?: number, buffers?: Buffer[]) => void,
+) {
+  const handle = this.handle;
+  const method = handle.writev;
+  if (method === fileHandlePrototypeWritev) {
+    try {
+      binding.writevCb(
+        (err, bytesWritten) => fromBinding(cb, err, bytesWritten, buffers),
+        handle[kFd],
+        buffers,
+        position,
+      );
+      return;
+    } catch {
+      // As in fileHandleStreamRead.
+    }
+  }
+  method.$call(handle, buffers, position).then(
+    ({ bytesWritten, buffers }) => cb(null, bytesWritten, buffers as Buffer[]),
+    err => cb(err, 0, buffers),
+  );
+}
+
+function fileHandleStreamFsync(this: FileHandleStreamFs, fd: number, cb: ErrorCallback) {
+  this.handle.sync().then(() => cb(), cb);
+}
+
+function fileHandleStreamClose(this: FileHandleStreamFs, fd: number, cb: ErrorCallback) {
+  const handle = this.handle;
+  handle[kUnref]();
+  handle.close().then(() => cb(), cb);
 }
 
 function getValidatedPath(p: string | URL | null | undefined): string {

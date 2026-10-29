@@ -688,6 +688,7 @@ impl<'h> Graph<'h> {
             paths: &paths,
             through_paths: false,
             as_import: false,
+            for_require: false,
             base_url: None,
         };
         // No TypeScript config applies here.
@@ -720,6 +721,7 @@ impl<'h> Graph<'h> {
             paths: &[],
             through_paths: true,
             as_import: false,
+            for_require: false,
             base_url: None,
         };
         let from_base_url = || {
@@ -896,6 +898,7 @@ impl<'h> Graph<'h> {
                 paths: &[],
                 through_paths: true,
                 as_import: true,
+                for_require: is_require,
                 base_url: base_url.map(Vec::as_slice),
             };
             let code = self.real(resolver.resolve_as_require(specifier, from, &how)?.0);
@@ -1302,10 +1305,12 @@ impl Modules for Graph<'_> {
                 let resolve = |specifier: &[u8]| {
                     self.resolve_any_path(flavor, config, &from, specifier, is_require)
                 };
-                // Bun runs `./data` and `pkg/data` with `data.json`, unless the package's `exports` say otherwise.
+                // Bun runs `./data` and `pkg/data` with `data.json`, unless `pkg` has `exports`.
                 let others = [&b".json"[..], b".node"];
+                let is_path = specifier.starts_with(b".") || specifier.starts_with(b"/");
                 let has_exports = |found: &[u8]| {
-                    is_in_package(found)
+                    !is_path
+                        && is_in_package(found)
                         && self
                             .package_json(found)
                             .is_some_and(|it| it.get(b"exports").is_some())

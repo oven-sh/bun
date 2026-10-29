@@ -1121,6 +1121,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "./data.json",
     "./data",
     "./addon",
+    "./node_modules/lib/settings",
     "./f_ts?raw",
     "./f_ts#x",
     "lib",
@@ -1208,6 +1209,23 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
       expect(problems).toEqual(["index.ts:1:8 import/no-unresolved", ...electron]);
     },
   );
+
+  test("a require() matches the `require` condition of `exports`", async () => {
+    const files = {
+      ".oxlintrc.json": oxlintrc({ "import/no-unresolved": ["error", { commonjs: true }] }),
+      "node_modules/dual/package.json": JSON.stringify({
+        name: "dual",
+        exports: { ".": { import: "./index.mjs", require: "./index.cjs" } },
+      }),
+      "node_modules/dual/index.mjs": "export const v = 1;\n",
+      "node_modules/dual/index.cjs": "module.exports = { v: 1 };\n",
+      "node_modules/cjs/package.json": JSON.stringify({ name: "cjs", exports: { ".": { require: "./index.cjs" } } }),
+      "node_modules/cjs/index.cjs": "module.exports = { v: 1 };\n",
+      "index.ts": `import "dual";\nrequire("dual");\nrequire("cjs");\nimport "cjs";\n`,
+    };
+    const { problems } = await lint(files, ["index.ts"]);
+    expect(problems).toEqual(["index.ts:4:8 import/no-unresolved"]);
+  });
 
   test("--tsconfig sets the tsconfig.json whose `paths` apply, as for oxlint's rules", async () => {
     const paths = (to: string) => JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`${to}/*`] } } });

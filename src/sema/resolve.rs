@@ -1438,6 +1438,8 @@ pub struct AsRequire<'a> {
     /// nothing. If a package has `exports`, nothing else is tried, in that package or in one further up. `imports` and
     /// the name of the file's own package are honored.
     pub as_import: bool,
+    /// With `as_import`, the condition `require` matches instead of `import`, as for a `require()`.
+    pub for_require: bool,
     /// `baseUrl`, absolute: where oxc-resolver looks after `paths`, before any package.
     pub base_url: Option<&'a [u8]>,
 }
@@ -2968,7 +2970,7 @@ impl<'h> Resolver<'h> {
         };
         let look = Look {
             esm: false,
-            import: how.as_import,
+            import: how.as_import && !how.for_require,
             // This also skips the lookup in `@types`.
             typescript: false,
             declarations: false,

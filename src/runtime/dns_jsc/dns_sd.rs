@@ -823,10 +823,8 @@ pub(crate) fn lookup(
 
     let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
         if let CacheHit::New(new) = cache {
-            this.pending_host_cache_native.with_mut(|c| {
-                // SAFETY: `new` is the fresh HiveArray slot; no other token for it exists.
-                unsafe { c.put(new) };
-            });
+            // SAFETY: `new` is the fresh HiveArray slot; no other token for it exists.
+            unsafe { this.pending_host_cache_native.get().put(new) };
         }
         return lib_c::lookup(this, query, global_this, context);
     };
@@ -848,11 +846,10 @@ pub(crate) fn lookup(
         // SAFETY: request is exclusively owned; dns_sd never accepted it.
         unsafe {
             if let Some(pos) = (*request).pending_slot {
-                this.pending_host_cache_native.with_mut(|c| {
-                    let slot = c.ptr_at(pos as usize);
-                    // SAFETY: `pos` was alloc'd; no other token outstanding.
-                    c.put(slot);
-                });
+                let c = this.pending_host_cache_native.get();
+                let slot = c.ptr_at(pos as usize);
+                // SAFETY: `pos` was alloc'd; no other token outstanding.
+                c.put(slot);
             }
             DNSLookup::destroy(&raw mut (*request).head);
             drop(bun_core::heap::take(request));

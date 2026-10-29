@@ -15,6 +15,8 @@ pub(super) struct TlsConfig {
     pub keys_pem: Vec<Vec<u8>>,
     /// `None` is the default CA store.
     pub ca_pem: Option<Vec<Vec<u8>>>,
+    /// `ca_pem` is the list of `tls.setDefaultCACertificates()`, which a server trusts and doesn't announce.
+    pub ca_is_default: bool,
     pub crl_pem: Vec<Vec<u8>>,
     pub verify_peer_strict: bool,
     pub verify_hostname: bool,
@@ -134,6 +136,7 @@ impl TlsConfig {
             ca_pem: trust
                 .ca_bytes()
                 .map(|certs| certs.map(|cert| [cert, b"\0"].concat()).collect()),
+            ca_is_default: trust.ca_is_default,
             crl_pem: Vec::new(),
             verify_peer_strict: false,
             verify_hostname: false,
@@ -329,6 +332,7 @@ impl TlsContext {
             key_count: key.len() as u32,
             ca: ca.as_ref().map_or(core::ptr::null(), |list| list.as_ptr()),
             ca_count: ca.as_ref().map_or(0, |list| list.len() as u32),
+            ca_is_default: i32::from(config.ca_is_default),
             crl: crl.as_ptr(),
             crl_count: crl.len() as u32,
             ssl_min_version: ssl::TLS1_3_VERSION.into(),

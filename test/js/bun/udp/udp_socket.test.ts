@@ -294,18 +294,18 @@ describe("udpSocket()", () => {
 
     // The kernel looks at the zone of a link-local peer. Nothing routes to
     // fe80::1 through the loopback interface, and with no zone at all Linux
-    // says EINVAL instead.
-    test.skipIf(!isLinux || !hasIPv6Loopback() || loopbackInterface === undefined)(
-      "the zone of a link-local address is the interface that connect(2) gets",
-      async () => {
-        const hostname = `fe80::1%${loopbackInterface}`;
-        expect(await connectError({ hostname: "::", connect: { hostname, port: 1234 } })).toMatchObject({
-          name: "Error",
-          code: "ENETUNREACH",
-          syscall: "connect",
-        });
-      },
-    );
+    // says EINVAL instead. 2 ** 32 + 1 is no zone: it is not the index 1,
+    // which the loopback interface has.
+    test.skipIf(!isLinux || !hasIPv6Loopback() || loopbackInterface === undefined).each([
+      [`fe80::1%${loopbackInterface}`, "ENETUNREACH"],
+      ["fe80::1%4294967297", "EINVAL"],
+    ])("the zone of a link-local address is the interface that connect(2) gets: %s is %s", async (hostname, code) => {
+      expect(await connectError({ hostname: "::", connect: { hostname, port: 1234 } })).toMatchObject({
+        name: "Error",
+        code,
+        syscall: "connect",
+      });
+    });
 
     // The resolver can answer with ::1 first. The socket is on 127.0.0.1, so
     // that address fails and the next one is the peer.

@@ -381,8 +381,9 @@ describe("oversized inputs", () => {
 
   // WTF::String::fromUTF8 aborts on 2^30 bytes or more that are not ASCII. An AES-CTR ciphertext of
   // zeros decrypts to the key stream, so the input is never written. unwrapKey writes two copies of
-  // it, so small machines skip. A debug build needs 65 seconds to decrypt 1 GiB.
-  it.skipIf(isDebug || totalmem() < 10 * 1024 ** 3)(
+  // it (2 GiB), so small machines skip. The child takes 2 seconds in a release build and 65 in a
+  // debug build, so debug builds skip and the test carries its own ceiling.
+  it.skipIf(isDebug || Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
     'unwrapKey("jwk") rejects 1 GiB that is not ASCII instead of aborting',
     async () => {
       const script = `

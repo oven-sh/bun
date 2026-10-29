@@ -1,0 +1,24 @@
+start Thu Oct 29 14:04:12 UTC 2026 load=0.28 0.12 0.31 steal=31392591
+wakelat 0->1:
+slept~   103us  wake-latency p50=   3.3us p90=   4.1us   wake-call p50=  1.2us p90=  1.6us
+slept~   153us  wake-latency p50=   3.3us p90=   3.7us   wake-call p50=  1.2us p90=  1.3us
+slept~   203us  wake-latency p50=   8.3us p90=  17.9us   wake-call p50=  2.0us p90=  3.9us
+slept~   303us  wake-latency p50=   8.0us p90=  15.2us   wake-call p50=  1.9us p90=  2.4us
+slept~   503us  wake-latency p50=   8.4us p90=  14.9us   wake-call p50=  2.1us p90=  2.6us
+slept~  1003us  wake-latency p50=  15.1us p90=  23.5us   wake-call p50=  2.3us p90=  2.7us
+slept~  3003us  wake-latency p50=  20.5us p90=  56.7us   wake-call p50=  2.4us p90=  4.1us
+slept~ 10003us  wake-latency p50=  37.0us p90=  68.0us   wake-call p50=  3.9us p90=  5.0us
+wakelat 2->3:
+slept~   103us  wake-latency p50=   4.0us p90=   4.4us   wake-call p50=  1.2us p90=  1.5us
+slept~   153us  wake-latency p50=   4.1us p90=   4.5us   wake-call p50=  1.2us p90=  1.4us
+slept~   203us  wake-latency p50=   7.9us p90=   9.7us   wake-call p50=  1.9us p90=  2.2us
+slept~   303us  wake-latency p50=   7.9us p90=  19.1us   wake-call p50=  1.9us p90=  2.1us
+slept~   503us  wake-latency p50=   9.3us p90=  19.6us   wake-call p50=  2.0us p90=  2.3us
+slept~  1003us  wake-latency p50=  11.0us p90=  22.6us   wake-call p50=  2.0us p90=  2.4us
+slept~  3003us  wake-latency p50=  21.9us p90=  28.2us   wake-call p50=  2.1us p90=  2.6us
+slept~ 10003us  wake-latency p50=  24.1us p90=  35.5us   wake-call p50=  2.3us p90=  2.8us
+chains done Thu Oct 29 14:04:39 UTC 2026 load=0.59 0.21 0.33 steal=31392640
+wakelat 0->1 after:
+slept~     3us  wake-latency p50=   5.6us p90=   5.8us   wake-call p50=  2.6us p90=  2.8us
+slept~     5us  wake-latency p50=   5.6us p90=   6.0us   wake-call p50=  2.6us p90=  2.9us
+slept~     8us  wake-latency p50=   5.6us p90=   5.8us   wake-call p50=  2.6us p90=  2.8us

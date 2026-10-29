@@ -3,6 +3,33 @@
 This file is the draft description of the branch `robobun/2d85858d/pool-job-round-trip` (commit 9a3cc840c2), with the numbers behind it.
 The branch is not ready to merge. Read "Open problems" first.
 
+## The report does not reproduce on a quiet machine
+
+The report says that an awaited `bun_jsc::Job` takes about 100 us, 4 times as long as a crypto.subtle call. On this VM that is so only while its host is busy. Then a thread wakes in 22 us, and the thread that wakes it loses 39 us in the call ("VM as it is" in the tables below).
+
+At 2026-10-29 14:04 UTC the host was quiet (steal time 0.15 %). A thread that slept less than 200 us then wakes in 3.3 us, and the wake call takes 1.2 us (`results/meta-quiet.txt`). In that state, with no helper program, both carriers take the same time on main: 7 to 21 us at 2 to 12 CPUs.
+
+p50 in us, main (11c367163a) → this branch, 7 interleaved runs of 3000 awaited calls, with the lowest and highest run in brackets (`results/chains-quiet.txt`):
+
+| call | 1 CPU | 2 CPUs | 4 CPUs | 8 CPUs | 12 CPUs |
+|---|---|---|---|---|---|
+| crypto.hkdf | 3.7 [3.7..3.9] → 2.8 [2.8..4] | 7.6 [7.4..21.1] → 2.8 [1.9..5.7] | 19.6 [10.9..22.4] → 3.1 [1.9..5.8] | 9.2 [8..21.3] → 5 [1.9..5.4] | 10.6 [9.7..22] → 1.9 [1.9..6] |
+| fs.promises.stat | 3.6 [2.9..3.6] → 2.6 [2.5..3.7] | 6.8 [6.6..7.5] → 2.5 [1.7..2.9] | 11.8 [8.2..18.7] → 1.7 [1.7..4] | 10.8 [7.9..19.9] → 1.7 [1.7..5] | 9.5 [7.7..18.6] → 4.6 [1.7..5.4] |
+| fs.promises.readFile (4 KB) | 4.4 [4.3..4.7] → 4.6 [4.3..4.8] | 10 [9.5..10.2] → 3.4 [2.9..3.6] | 9.4 [9.2..9.5] → 3.2 [2.9..3.5] | 20.3 [10.2..21.7] → 3.2 [3..6.5] | 20.1 [10.4..21.7] → 3.6 [3..6.2] |
+| crypto.subtle.sign (HMAC) | 4.2 [3.8..4.4] → 2.8 [2.8..3.2] | 21.1 [7.9..23.4] → 7.6 [2.9..8.1] | 8.5 [8.2..9.6] → 2.1 [2..2.4] | 18.5 [8.1..23.6] → 6.8 [2..7.8] | 10.3 [8.4..20.6] → 7 [2.1..7.8] |
+
+Mean in us (wall time of the chain / calls), and CPU time of the process per call in parentheses.
+
+| call | 1 CPU | 2 CPUs | 4 CPUs | 8 CPUs | 12 CPUs |
+|---|---|---|---|---|---|
+| crypto.hkdf | 4.3 → 3.4 (4.3 → 3.3) | 8.4 → 3 (10.9 → 3.8) | 18 → 3.3 (19.2 → 5) | 12.6 → 5.8 (14.3 → 11.1) | 11.1 → 2.6 (14.6 → 5.7) |
+| fs.promises.stat | 4.1 → 3.2 (4.1 → 3.1) | 7.6 → 2.7 (9.3 → 3.7) | 12.4 → 1.9 (16.5 → 4.6) | 11.3 → 1.9 (14.6 → 4.5) | 10 → 4.5 (12.9 → 9.5) |
+| fs.promises.readFile (4 KB) | 6.1 → 6.4 (6 → 6.4) | 11 → 4.5 (13.1 → 6.9) | 10.7 → 4.4 (12.8 → 8.1) | 20.5 → 5.6 (22.5 → 11) | 19.8 → 6.2 (22.3 → 12.7) |
+| crypto.subtle.sign (HMAC) | 4.7 → 3.3 (4.7 → 3.3) | 21.4 → 8.6 (22.9 → 16.8) | 9.1 → 2.3 (11.3 → 4.8) | 16.8 → 7.5 (19.4 → 15.1) | 11.2 → 7.7 (14.4 → 15.7) |
+
+- `crypto.hkdf` is a `bun_jsc::Job`. `crypto.subtle.sign` uses the older carrier.
+- `fs.promises.readFile` on 1 CPU does not get faster: mean 6.1 → 6.4 us here and 6.9 → 7.3 us in the table below, inside the range of the runs both times.
+
 ## Open problems
 
 A review of the branch found these after the numbers below were made. The ones without a number of mine are not verified by me.

@@ -656,8 +656,6 @@ pub(crate) struct BunTest {
     pub(crate) execution: Execution::Execution,
 }
 
-bun_event_loop::impl_timer_owner!(BunTest; from_timer_ptr => timer);
-
 impl BunTest {
     /// `bun_test_root` must point at the stable global `BunTestRoot` storage
     /// that outlives the returned `BunTest`.

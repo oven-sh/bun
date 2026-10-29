@@ -209,7 +209,7 @@ export interface CpWalk {
   parent: BigIntStats | undefined; // the directory a new root was made in
   root: CpFrame | null; // that root's frame, while its stat is unread
   rootInSrc: boolean; // src is that directory, so the walk starts inside it
-  entered: boolean; // a filter let the walk into its own output once
+  entered: boolean; // a filter let the walk into its own output, and the walk is still in it
   src: KeptRoot | undefined;
   dest: KeptRoot | undefined;
 }
@@ -235,7 +235,7 @@ function unreadRootIn(walk: CpWalk, srcStat: BigIntStats) {
   return root !== null && root.stat === null && areIdentical(srcStat, walk.parent!) ? root : null;
 }
 
-// Only a filter can end a walk of the copy's own output, so only then is the first entry let through.
+// Only a filter can end a walk of the copy's own output, so only then is an entry let in, and not from inside it.
 function enterOnce(walk: CpWalk, opts: CpOptions) {
   if (!opts.filter || walk.entered) return false;
   walk.entered = true;
@@ -693,12 +693,15 @@ function mkDirAndCopy(
 function copyDir(src: string, dest: string, opts: CpOptions, walk: CpWalk, frame: CpFrame) {
   const keepSrc = walk.src !== undefined;
   const keepDest = walk.dest !== undefined;
+  const mayEnter = opts.filter !== undefined && !walk.entered;
   for (const dirent of readdirSync(src, { withFileTypes: true })) {
     const { name } = dirent;
     const srcItem = keepSrc ? keptChildPath(src, name) : join(src, name);
     const destItem = keepDest ? keptChildPath(dest, name) : join(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts, walk, frame, dirent);
     if (!skipped) getStats(destStat, srcItem, destItem, opts, walk, frame);
+    // The walk is out of its output again once the entry that led into it is copied.
+    if (mayEnter) walk.entered = false;
   }
 }
 

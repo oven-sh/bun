@@ -590,6 +590,21 @@ for (const [name, copy] of impls) {
         expect(listTree(join(base, "P"))).toEqual(["file.txt", "out/", "out/file.txt", "self"]);
       });
 
+      // The walk is out of its output again when the filter ended the copy of the first link.
+      test("dereference: a filter that prunes below two links to dest keeps the copy legal", async () => {
+        using dir = tempDir("cp-own-deref-two", { "src": { "a": {}, "b": {} }, "out": {} });
+        const base = String(dir);
+        fs.symlinkSync(join(base, "out"), join(base, "src", "a", "l1"), "junction");
+        fs.symlinkSync(join(base, "out"), join(base, "src", "b", "l2"), "junction");
+
+        await copy(join(base, "src"), join(base, "out"), {
+          recursive: true,
+          dereference: true,
+          filter: (s: string) => !/[\\/]l[12][\\/]/.test(s),
+        });
+        expect(listTree(join(base, "out"))).toEqual(["a/", "a/l1/", "b/", "b/l2/"]);
+      });
+
       // The filter is asked first, so a copy that skips its own output still succeeds, as in Node.js.
       test("a filter that skips the output directory keeps the copy legal", async () => {
         using dir = tempDir("cp-own-filter", { "src/file.txt": "payload", "src/sub": {} });

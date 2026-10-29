@@ -516,6 +516,7 @@ async function copyDir(src: string, dest: string, opts: CpOptions, walk: CpWalk,
   const dir = await opendir(src);
   const keepSrc = walk.src !== undefined;
   const keepDest = walk.dest !== undefined;
+  const mayEnter = opts.filter !== undefined && !walk.entered;
 
   for await (const dirent of dir) {
     const { name } = dirent;
@@ -523,6 +524,8 @@ async function copyDir(src: string, dest: string, opts: CpOptions, walk: CpWalk,
     const destItem = keepDest ? keptChildPath(dest, name) : join(dest, name);
     const { destStat, skipped } = await checkPaths(srcItem, destItem, opts, walk, frame, dirent);
     if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts, walk, frame);
+    // See copyDir() in internal/fs/cp-sync.
+    if (mayEnter) walk.entered = false;
   }
 }
 

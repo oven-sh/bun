@@ -590,6 +590,9 @@ pub struct PackageManager {
     // workspace package. We keep track of the original here.
     pub original_package_json_path: ZBox,
 
+    /// `<top_level_dir>/package.json`. Empty for auto-install, which does not call `init`.
+    pub root_package_json_path: &'static ZStr,
+
     // null means root. Used during `cleanWithLogger` to identifier which
     // workspace is adding/removing packages
     pub workspace_name_hash: Option<PackageNameHash>,
@@ -1023,12 +1026,11 @@ mod holder {
 }
 
 // PORTING.md §Global mutable state: single-thread (main) scratch buffers →
-// RacyCell. `ROOT_PACKAGE_JSON_PATH` is a slice into the buf above it; written
-// once in `init()`, read on main + CLI commands afterwards.
+// RacyCell. `PackageManager::root_package_json_path` is a slice into
+// `ROOT_PACKAGE_JSON_PATH_BUF`, which `init()` writes once.
 static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
-pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCell::new(ZStr::EMPTY);
 
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
@@ -1560,6 +1562,7 @@ fn allocate_package_manager(
     env: &mut dot_env::Loader,
     // NUL-terminated
     original_package_json_path: Vec<u8>,
+    root_package_json_path: &'static ZStr,
     workspace_package_json_cache: WorkspacePackageJSONCache,
     workspace_name_hash: Option<PackageNameHash>,
     subcommand: Subcommand,
@@ -1636,6 +1639,7 @@ fn allocate_package_manager(
             original_package_json_path,
             ZBox::from_vec_with_nul(original_package_json_path)
         );
+        wr!(root_package_json_path, root_package_json_path);
         wr!(workspace_package_json_cache, workspace_package_json_cache);
         wr!(workspace_name_hash, workspace_name_hash);
         wr!(subcommand, subcommand);
@@ -2616,7 +2620,7 @@ pub fn init(
         ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
     }
     // SAFETY: main-thread global
-    unsafe {
+    let root_package_json_path: &'static ZStr = unsafe {
         let tld = fs.top_level_dir();
         let cwd = &mut *CWD_BUF.get();
         cwd[..tld.len()].copy_from_slice(tld);
@@ -2634,8 +2638,8 @@ pub fn init(
         root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
         root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
         root_buf[plen] = 0;
-        ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
-    }
+        ZStr::from_raw(root_buf.as_ptr(), plen)
+    };
     // From here on, package.json is read by path, and written by path by the commands that write
     // it.
     let _ = root_package_json_file.close();
@@ -2740,6 +2744,7 @@ pub fn init(
         entries_option,
         env,
         original_package_json_path_buf,
+        root_package_json_path,
         workspace_package_json_cache,
         workspace_name_hash,
         subcommand,
@@ -2770,8 +2775,7 @@ pub fn init(
         // separators: the folder resolver's `Key` has `/` only; on Windows this path has `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
-        // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
-        let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
+        let raw: &[u8] = root_package_json_path.as_bytes();
         let mut buf = bun_paths::path_buffer_pool::get();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
@@ -3123,6 +3127,7 @@ fn init_with_runtime_once(
         root_dir,
         env,
         original_package_json_path,
+        ZStr::EMPTY,
         workspace_package_json_cache,
         None,
         Subcommand::Install,

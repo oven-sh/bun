@@ -1263,12 +1263,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: in namespace"),
                     );
                     // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
-                    // ToExprWrapper is Copy; pass by value to avoid borrowing `*p`
-                    // across `p.s(...)`. The `*mut P` ctx is derived from the live `&mut Self`
-                    // here so its provenance is a child of the active Unique borrow.
-                    let wrapper = p.to_expr_wrapper_namespace;
-                    let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
-                    let lhs = Binding::to_expr(&d.binding, ctx, wrapper);
+                    let lhs =
+                        Binding::to_expr(&d.binding, p.arena, p, Self::wrap_identifier_namespace);
                     stmts.push(p.s(
                         S::SExpr {
                             value: Expr::assign(lhs, val),

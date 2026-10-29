@@ -53,7 +53,7 @@ impl RegularExpression {
         // `Yarr__RegularExpression__init` never returns).
         if !RegularExpression::opaque_mut(regex).is_valid() {
             // SAFETY: `regex` is a valid live Yarr handle we just allocated; consumed here.
-            unsafe { Self::destroy(regex) };
+            unsafe { Yarr__RegularExpression__deinit(regex) };
             return Err(RegularExpressionError::InvalidRegExp);
         }
         Ok(regex)
@@ -73,13 +73,6 @@ impl RegularExpression {
     #[inline]
     pub fn matches(&self, str: &BunString) -> bool {
         Yarr__RegularExpression__matches(self, str) >= 0
-    }
-
-    /// Destroys the FFI-allocated handle. Caller must not use `this` afterwards.
-    #[inline]
-    pub(crate) unsafe fn destroy(this: *mut Self) {
-        // SAFETY: `this` is a valid live Yarr RegularExpression handle; consumed here.
-        unsafe { Yarr__RegularExpression__deinit(this) }
     }
 }
 
@@ -115,7 +108,7 @@ fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool
 #[unsafe(no_mangle)]
 fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
     // SAFETY: `regex` was produced by `__bun_regex_compile`; consumed here.
-    unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
+    unsafe { Yarr__RegularExpression__deinit(regex.as_ptr().cast()) }
 }
 
 // `bun_yarr` is below this crate too. It calls RegularExpression.cpp itself: this is all it needs from here.

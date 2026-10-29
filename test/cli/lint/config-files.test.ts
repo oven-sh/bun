@@ -1066,7 +1066,8 @@ test.concurrent(
   },
 );
 
-// With an oxlint config, the `import` rules that oxlint doesn't have resolve imports the way oxlint's own do.
+// With an oxlint config, the `import` rules that oxlint doesn't have resolve imports the way oxlint's own do, and the
+// `import/*` settings that aren't set have the built-in config's values.
 describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
   const oxlintrc = (rules: object, settings?: object) =>
     JSON.stringify({ plugins: ["import"], categories: { correctness: "off" }, rules, settings });
@@ -1088,6 +1089,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
         "./renamed": "./other.js",
         "./conditional": { types: "./cond.d.ts", default: "./cond.js" },
         "./star/*": "./dist/*.js",
+        "./hidden": null,
       },
     }),
     "node_modules/lib/dist/main.js": "export const v = 1;\n",
@@ -1096,6 +1098,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "node_modules/lib/cond.js": "export const v = 1;\n",
     "node_modules/lib/cond.d.ts": "export declare const v: number;\n",
     "node_modules/lib/dist/x.js": "export const v = 1;\n",
+    "node_modules/lib/hidden.js": "export const v = 1;\n",
   };
   const found = [
     "./f_ts",
@@ -1109,6 +1112,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "./dir",
     "./data.json",
     "./f_ts?raw",
+    "./f_ts#x",
     "lib",
     "lib/same",
     "lib/renamed",
@@ -1118,25 +1122,60 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "bun:test",
     "node:fs",
   ];
-  const missing = ["./missing", "./f_ts.d.ts", "bun:missing", "other"];
-  const imports = [...found, ...missing].map(it => `import ${JSON.stringify(it)};\n`).join("");
-  const reported = missing.map((_, at) => `index.ts:${found.length + at + 1}:8 import/no-unresolved`);
+  // Like oxlint, `./a.js` finds `./a.ts` but not `./a.tsx` or `./a.mts`, and `.json` isn't added to a name. `exports`
+  // hides every other file of a package.
+  const missing = [
+    "./missing",
+    "./f_ts.d.ts",
+    "./f_tsx.js",
+    "./f_tsx.jsx",
+    "./f_mts.js",
+    "./data",
+    "lib/dist/x",
+    "lib/hidden",
+    "bun:missing",
+    "other",
+  ];
+  const all = [...found, ...missing];
+  const imports = all.map(it => `import ${JSON.stringify(it)};\n`).join("");
+  const at = (specifier: string) => `index.ts:${all.indexOf(specifier) + 1}:8 import/no-unresolved`;
+  const reported = missing.map(at).sort();
 
-  test("import/no-unresolved resolves what bun runs", async () => {
+  test("import/no-unresolved resolves as oxlint's import rules do", async () => {
     const files = { ...project, ".oxlintrc.json": oxlintrc({ "import/no-unresolved": "error" }), "index.ts": imports };
     const { problems, stderr } = await lint(files, ["index.ts"]);
-    expect({ problems, stderr }).toEqual({ problems: reported.sort(), stderr: "" });
+    expect({ problems, stderr }).toEqual({ problems: reported, stderr: "" });
   });
 
-  test("a configured resolver still applies", async () => {
-    const config = oxlintrc({ "import/no-unresolved": "error" }, { "import/resolver": { typescript: true } });
-    const files = { ...project, ".oxlintrc.json": config, "index.ts": imports };
+  test("a configured resolver still applies, next to a rule of oxlint's", async () => {
+    const settings = { "import/resolver": { typescript: true } };
+    const rules = { "import/no-unresolved": "error", "import/no-cycle": "error" };
+    const files = { ...project, ".oxlintrc.json": oxlintrc(rules, settings), "index.ts": imports };
     const { problems } = await lint(files, ["index.ts"]);
-    // eslint-import-resolver-typescript doesn't add `.mts` or `.mjs` to a name, and finds `./f_ts.ts` for `./f_ts.d.ts`.
-    const at = (specifier: string) =>
-      `index.ts:${[...found, ...missing].indexOf(specifier) + 1}:8 import/no-unresolved`;
-    const expected = [...reported.filter(it => it !== at("./f_ts.d.ts")), at("./f_mts"), at("./f_mjs")];
+    // eslint-import-resolver-typescript doesn't add `.mts` or `.mjs` to a name, or take off a `#`. It adds `.json`,
+    // maps `.js` to `.ts` and `.tsx`, and finds `./f_ts.ts` for `./f_ts.d.ts`.
+    const theirs = ["./f_ts.d.ts", "./f_tsx.js", "./f_tsx.jsx", "./data"].map(at);
+    const ours = ["./f_mts", "./f_mjs", "./f_ts#x"].map(at);
+    const expected = [...reported.filter(it => !theirs.includes(it)), ...ours];
     expect(problems).toEqual(expected.sort());
+  });
+
+  test("a nested .oxlintrc.json with a resolver doesn't change how the other files resolve", async () => {
+    const files = {
+      ...project,
+      ".oxlintrc.json": oxlintrc({ "import/no-unresolved": "error" }),
+      "a/index.ts": `import "../f_mts";\nimport "../f_ts.d.ts";\n`,
+      "b/.oxlintrc.json": oxlintrc({ "import/no-unresolved": "error" }, { "import/resolver": { typescript: true } }),
+      "b/index.ts": `import "../f_mts";\nimport "../f_ts.d.ts";\n`,
+    };
+    const expected = ["a/index.ts:2:8 import/no-unresolved", "b/index.ts:1:8 import/no-unresolved"];
+    for (const args of [
+      ["a", "b"],
+      ["b", "a"],
+      ["b/index.ts", "a/index.ts", "--threads", "1"],
+    ]) {
+      expect((await lint(files, args)).problems).toEqual(expected);
+    }
   });
 
   test("--tsconfig sets the tsconfig.json whose `paths` apply, as for oxlint's rules", async () => {
@@ -1167,6 +1206,26 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     };
     const { problems } = await lint(files, ["src"]);
     expect(problems).toEqual(["src/client/c.ts:1:19 import/no-restricted-paths"]);
+  });
+
+  test("import/no-deprecated reads a TypeScript file, as `import/extensions` lists it by default", async () => {
+    const files = {
+      ".oxlintrc.json": oxlintrc({ "import/no-deprecated": "error" }),
+      "src/c.ts": "/** @deprecated use d */\nexport const c = 1;\n",
+      "src/f.ts": `import { c } from "./c";\nexport const f = c;\n`,
+    };
+    const { problems } = await lint(files, ["src/f.ts"]);
+    expect(problems).toEqual(["src/f.ts:1:10 import/no-deprecated", "src/f.ts:2:18 import/no-deprecated"]);
+  });
+
+  test("import/order counts `bun` as a builtin and an `exports` subpath as external", async () => {
+    const files = {
+      ...project,
+      ".oxlintrc.json": oxlintrc({ "import/order": "error" }),
+      "index.ts": `import a from "./f_ts";\nimport b from "lib/renamed";\nimport c from "bun";\nexport default [a, b, c];\n`,
+    };
+    const { problems } = await lint(files, ["index.ts"]);
+    expect(problems).toEqual(["index.ts:2:1 import/order", "index.ts:3:1 import/order"]);
   });
 });
 

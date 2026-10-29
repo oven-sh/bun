@@ -107,7 +107,7 @@ impl<'a> ImportTypes<'a> {
         Some(ImportTypes {
             file,
             resolvers: Resolvers::of(file)?,
-            settings: Settings::new(file.settings()),
+            settings: Settings::of(file),
             package_path: OnceCell::new(),
         })
     }

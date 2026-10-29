@@ -256,7 +256,7 @@ impl NoUnusedModules {
             next: OnceLock::new(),
         };
         let (Some(modules), Some(maps)) = (file.modules(), ExportMaps::of(file)) else { return prepared };
-        let extensions = Settings::new(file.settings()).file_extensions();
+        let extensions = Settings::of(file).file_extensions();
         let list_files_to_process = |src: &[Box<[u8]>]| {
             let src: Vec<&[u8]> = src.iter().map(|it| &**it).collect();
             if src.is_empty() { Ok(Vec::new()) } else { modules.list_files(&src, &extensions) }

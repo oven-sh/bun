@@ -134,7 +134,7 @@ impl Rule for NoUselessPathSegments {
             file,
             cwd: modules.cwd(),
             resolvers,
-            settings: Settings::new(file.settings()),
+            settings: Settings::of(file),
             no_useless_index: self.no_useless_index,
             regex_unnecessary_index: OnceCell::new(),
         };

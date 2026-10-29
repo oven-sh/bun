@@ -98,7 +98,7 @@ import { user as sameUser } from "./user.ts";
 import logoUrl from "./logo.svg?url";
 ```
 
-The `import/resolver` setting changes how paths resolve. Two resolvers are supported: `typescript`, which is the default, and `node` with its `extensions` option. With an ESLint config the default is `node`, as in `eslint-plugin-import`. It tries `.mjs`, `.js`, `.json` and `.node`, and only knows the Node.js built-in modules. With an oxlint config and no setting, paths resolve as they do for oxlint's own `import` rules, such as `import/no-cycle`: `.mts` and `.mjs` are tried too, and `--tsconfig` sets the `tsconfig.json` whose `paths` apply.
+The `import/resolver` setting changes how paths resolve. Two resolvers are supported: `typescript`, which is the default, and `node` with its `extensions` option. With an ESLint config the default is `node`, as in `eslint-plugin-import`. It tries `.mjs`, `.js`, `.json` and `.node`, and only knows the Node.js built-in modules. With an oxlint config and no setting, paths resolve as they do for oxlint's own `import` rules, such as `import/no-cycle`: a name is tried with `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` and `.tsx`, but not with `.json`, `./user.js` finds `./user.ts` but not `./user.tsx`, and `--tsconfig` sets the `tsconfig.json` whose `paths` apply.
 
 ```toml bunfig.toml
 [lint.settings]

@@ -1,22 +1,19 @@
 //! `resolve` from eslint-module-utils: resolves a specifier from a file with the resolvers in
 //! `settings["import/resolver"]`.
 
-use crate::import_settings::is_package_or_file_in_it;
+use crate::import_settings::{is_bun_module, is_package_or_file_in_it};
 use crate::oxlint;
 use bun_core::strings;
 use bun_lint::modules::{Lookup, Modules};
 use bun_lint::paths;
 use bun_lint::prelude::*;
 use bun_lint::utils::node::is_builtin_module;
+use bun_lint_oxlint::module_record::paths_of;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
 /// eslint-import-resolver-node's default extensions.
 const EXTENSIONS: [&[u8]; 4] = [b".mjs", b".js", b".json", b".node"];
-
-/// Bun's own modules, which the built-in config lists in `import/core-modules`. With an oxlint config they are core
-/// modules too.
-const BUN_MODULES: [&[u8]; 5] = [b"bun", b"bun:ffi", b"bun:jsc", b"bun:sqlite", b"bun:test"];
 
 /// A file's resolvers.
 pub(crate) struct Resolvers<'s> {
@@ -24,8 +21,8 @@ pub(crate) struct Resolvers<'s> {
     map: SmallVec<[(&'s [u8], Lookup<'s>); 2]>,
     /// `settings["import/core-modules"]`: an array or a string.
     core_modules: Option<&'s Json>,
-    /// True if [`BUN_MODULES`] are core modules: the file is linted with an oxlint config.
-    has_bun_modules: bool,
+    /// True if the file is linted with an oxlint config: then Bun's own modules are core modules.
+    is_oxlint: bool,
 }
 
 /// The return value of `resolve`.
@@ -170,7 +167,7 @@ impl<'s> Resolvers<'s> {
         let mut resolvers = Resolvers {
             map: SmallVec::new(),
             core_modules,
-            has_bun_modules: is_oxlint,
+            is_oxlint,
         };
         let legacy = settings.get(b"import/resolve");
         match (settings.get(b"import/resolver")).filter(|it| it.is_truthy()) {
@@ -186,7 +183,7 @@ impl<'s> Resolvers<'s> {
 
     /// `coreSet.has(specifier)`
     fn is_core_module(&self, specifier: &[u8]) -> bool {
-        if self.has_bun_modules && BUN_MODULES.contains(&specifier) {
+        if self.is_oxlint && is_bun_module(specifier) {
             return true;
         }
         match self.core_modules {
@@ -227,10 +224,15 @@ impl<'s> Resolvers<'s> {
         if is_posix && strings::contains_char(specifier, b'\\') {
             return Resolved::Nothing;
         }
-        let found = self
-            .map
-            .iter()
-            .find_map(|it| modules.resolve_file(&from, specifier, is_require, &it.1));
+        let found = self.map.iter().find_map(|it| match it.1 {
+            Lookup::Oxlint => {
+                let (first, second) = paths_of(specifier);
+                modules
+                    .resolve_file(&from, first, is_require, &it.1)
+                    .or_else(|| modules.resolve_file(&from, second?, is_require, &it.1))
+            }
+            _ => modules.resolve_file(&from, specifier, is_require, &it.1),
+        });
         found.map_or(Resolved::Nothing, Resolved::File)
     }
 

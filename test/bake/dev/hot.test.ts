@@ -833,19 +833,19 @@ devTest("an empty ES module can get code and lose it again", {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     "index.ts": `
       import * as dep from "./dep.mjs";
-      console.log("value=" + dep.value);
+      console.log("value=" + dep.value + ", has the key: " + ("value" in dep));
       import.meta.hot.accept();
     `,
     "dep.mjs": ``,
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("value=undefined");
+    await c.expectMessage("value=undefined, has the key: false");
     await dev.write("dep.mjs", `export const value = 1;`);
-    await c.expectMessage("value=1");
+    await c.expectMessage("value=1, has the key: true");
     // One byte of white space, not zero bytes: the watcher on macOS does not see a
     // save that only truncates the file.
     await dev.write("dep.mjs", "\n", { dedent: false });
-    await c.expectMessage("value=undefined");
+    await c.expectMessage("value=undefined, has the key: false");
   },
 });

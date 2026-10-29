@@ -154,7 +154,7 @@ pub enum Option {
     page_commit_on_demand = 40,
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
-    purge_holes = 50,
+    purge_holes = 56,
 }
 
 unsafe extern "C" {

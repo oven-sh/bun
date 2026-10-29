@@ -323,7 +323,6 @@ fn is_in_package(path: &[u8]) -> bool {
     strings::contains(path, b"/node_modules/")
 }
 
-/// oxlint treats any other file as if it didn't exist.
 /// A cache of what resolves differently in each flavor.
 #[derive(Default)]
 struct PerFlavor<T>(T, T);
@@ -345,6 +344,7 @@ fn flavor_key(flavor: Flavor) -> &'static [u8] {
     }
 }
 
+/// oxlint treats any other file as if it didn't exist.
 fn is_read_by_oxlint(path: &[u8]) -> bool {
     let others: [&[u8]; 3] = [b".vue", b".astro", b".svelte"];
     EXTENSIONS
@@ -1302,14 +1302,19 @@ impl Modules for Graph<'_> {
                 let resolve = |specifier: &[u8]| {
                     self.resolve_any_path(flavor, config, &from, specifier, is_require)
                 };
-                // Bun runs `./data` with `data.json`. A package's `exports` are exact, so a bare specifier gets none.
+                // Bun runs `./data` and `pkg/data` with `data.json`, unless the package's `exports` say otherwise.
                 let others = [&b".json"[..], b".node"];
-                let is_path = specifier.starts_with(b".") || specifier.starts_with(b"/");
+                let has_exports = |found: &[u8]| {
+                    is_in_package(found)
+                        && self
+                            .package_json(found)
+                            .is_some_and(|it| it.get(b"exports").is_some())
+                };
                 let added = || {
                     others
                         .iter()
-                        .filter(|_| is_path)
                         .find_map(|it| resolve(&[specifier, it].concat()))
+                        .filter(|it| !has_exports(&it.0))
                 };
                 resolve(specifier).or_else(added)?.0.into_owned()
             }

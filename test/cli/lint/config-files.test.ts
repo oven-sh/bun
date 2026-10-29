@@ -1103,6 +1103,9 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "node_modules/lib/hidden.js": "export const v = 1;\n",
     "node_modules/lib/esm.js": "export const v = 1;\n",
     "node_modules/lib/settings.json": "{}",
+    "node_modules/plain/package.json": JSON.stringify({ name: "plain", main: "index.js" }),
+    "node_modules/plain/index.js": "export const v = 1;\n",
+    "node_modules/plain/data.json": "{}",
     "addon.node": "",
   };
   const found = [
@@ -1127,6 +1130,8 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "lib/star/x",
     "lib/esm-only",
     "lib/settings.json",
+    "plain",
+    "plain/data",
     "bun",
     "bun:bundle",
     "bun:test",

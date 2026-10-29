@@ -475,6 +475,40 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
+    /// True when a JS or asset chunk and its source map are byte-identical to
+    /// what `existing` holds, so the client already has everything in it.
+    fn js_content_is_unchanged(
+        existing: &File,
+        ctx: &HotUpdateContext<'_>,
+        index: bun_ast::Index,
+        content: &ReceiveChunkContent,
+    ) -> bool {
+        let ReceiveChunkContent::Js { code, source_map } = content else {
+            return false;
+        };
+        let old_code = match &existing.content {
+            Content::Js(c) if ctx.loaders[index.get() as usize].is_javascript_like() => c,
+            Content::Asset(c) if !ctx.loaders[index.get() as usize].is_javascript_like() => c,
+            _ => return false,
+        };
+        if old_code.len() != code.len() || **old_code != **code {
+            return false;
+        }
+        match (&existing.source_map, source_map) {
+            (packed_map::Shared::Some(old), Some(new)) => {
+                new.chunk.buffer.len() > 0
+                    && old.vlq() == new.chunk.buffer.list.as_slice()
+                    && new
+                        .escaped_source
+                        .as_deref()
+                        .is_some_and(|s| s == old.quoted_contents())
+            }
+            (packed_map::Shared::LineCount(_), Some(new)) => new.chunk.buffer.len() == 0,
+            (packed_map::Shared::LineCount(_), None) => true,
+            _ => false,
+        }
+    }
+
     fn new_edge(&mut self, edge: Edge<SIDE>) -> Result<EdgeIndex, bun_alloc::AllocError> {
         if let Some(index) = self.edges_free_list.pop() {
             self.edges[index.get() as usize] = edge;
@@ -605,7 +639,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists.push(EdgeLists::default());
         }
 
-        if self.stale_files.bit_length > file_index.get() as usize {
+        let was_stale = self.stale_files.bit_length > file_index.get() as usize
+            && self.stale_files.is_set(file_index.get() as usize);
+        if was_stale {
             self.stale_files.unset(file_index.get() as usize);
         }
 
@@ -623,6 +659,23 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     let mut existing = core::mem::take(
                         &mut self.bundled_files.values_mut()[file_index.get() as usize],
                     );
+
+                    // A module that was not stale was bundled again only because an
+                    // importer was. The bundler cannot tell that a plugin-loaded module
+                    // is still fresh, so it loads it again. When the output is the same,
+                    // keep the record and leave it out of the hot update, so the client
+                    // does not evaluate it again or walk its importers for a boundary.
+                    // A stale file always goes in: a save with no change re-runs it.
+                    if !was_stale
+                        && !existing.failed
+                        && existing.is_hmr_root
+                            == ctx.server_to_client_bitset.is_set(index.get() as usize)
+                        && Self::js_content_is_unchanged(&existing, ctx, index, &content)
+                    {
+                        self.bundled_files.values_mut()[file_index.get() as usize] = existing;
+                        return Ok(());
+                    }
+
                     self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
 
                     if existing.failed {

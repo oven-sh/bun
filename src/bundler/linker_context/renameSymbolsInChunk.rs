@@ -329,6 +329,19 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     let mut nested_scopes: Vec<(u32, *const bun_ast::Scope)> = Vec::new();
 
     for &source_index in files_in_order {
+        // A dev server module is its own closure, `(hmr) => { ... }`, and nothing
+        // outside it refers to its bindings. Name it like a CommonJS closure, so
+        // its output does not change with the other modules in the bundle.
+        if c.options.output_format == crate::options::Format::InternalBakeDev
+            && !crate::Index::init(source_index).is_runtime()
+        {
+            nested_scopes.push((
+                source_index,
+                &raw const all_module_scopes[source_index as usize],
+            ));
+            continue;
+        }
+
         let wrap = all_flags[source_index as usize].wrap;
         // Need `&mut [Part]` for `add_top_level_declared_symbols`.
         let parts: &mut [Part] = all_parts[source_index as usize].as_mut_slice();

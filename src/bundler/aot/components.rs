@@ -34,7 +34,8 @@ pub(crate) fn compile_components(
             NonNull::from(known),
         )
     });
-    let mut worker = scopeguard::guard(Worker::get(context.bundle()), |worker| worker.unget());
+    let pool = context.bundle().graph.pool();
+    let mut worker = scopeguard::guard(Worker::get(pool), |worker| worker.unget());
     with_ast_scope(|arena| {
         // A bundle keeps every AST until it finishes. This one is dead once `observer` has seen it.
         let arena_of_bundle = std::mem::replace(&mut worker.arena, BackRef::new(arena));

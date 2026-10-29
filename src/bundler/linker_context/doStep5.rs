@@ -22,7 +22,7 @@ use bun_ast::{
 
 use crate::options::Format;
 use crate::perf;
-use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports, WrapKind, js_meta};
+use crate::{Index, LinkerContext, RefImportData, ResolvedExports, WrapKind, js_meta};
 
 pub use crate::ThreadPool;
 
@@ -56,12 +56,7 @@ impl LinkerContext<'_> {
             return;
         }
 
-        // SAFETY: `c` is `BundleV2.linker` (caller is the worker-pool
-        // dispatch from `scan_imports_and_exports`); `container_of` shape.
-        // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
-        // form `&mut BundleV2` here (concurrent tasks would alias it).
-        let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_const_ptr(c) };
-        let worker = ThreadPool::Worker::get(bundle_v2);
+        let worker = ThreadPool::Worker::get(&c.pool);
         // `Worker::get` returns the thread-local worker
         // (not RAII), so balance with `unget` explicitly via scopeguard.
         let worker = scopeguard::guard(worker, |w| w.unget());

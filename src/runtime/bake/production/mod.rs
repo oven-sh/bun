@@ -284,8 +284,7 @@ fn write_sourcemap_to_disk(
     Ok(())
 }
 
-/// The resolver gives an empty listing to a directory that it can enter but cannot read, when an
-/// earlier lookup went through that directory. A root with no entries is listed if it opens.
+/// An empty listing is also what the resolver keeps for a root that it can enter but cannot read.
 fn router_root_is_listed(info: &resolver::DirInfo, abs_root: &[u8]) -> bool {
     let has_entries = {
         // Other threads rewrite the cached listing in place under this lock.
@@ -302,8 +301,6 @@ fn router_root_is_listed(info: &resolver::DirInfo, abs_root: &[u8]) -> bool {
             .is_ok()
 }
 
-/// Reports the root of router type `index`: the resolver has no listing for it, so the build has
-/// no routes from it.
 #[cold]
 fn report_unreadable_router_root(framework: &bake::Framework, index: usize, abs_root: &[u8]) {
     let root = bun_core::fmt::quote(abs_root);

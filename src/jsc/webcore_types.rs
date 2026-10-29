@@ -215,9 +215,15 @@ impl Blob {
     /// Heap-promote and mark as
     /// heap-allocated so `deinit` knows to free the heap box.
     #[inline]
-    pub fn new(mut blob: Blob) -> *mut Blob {
+    pub fn new(blob: Blob) -> *mut Blob {
+        bun_core::heap::into_raw(Self::new_box(blob))
+    }
+
+    /// [`Blob::new`], for a caller that still has to use the `Blob` before it gives the box away.
+    #[inline]
+    pub fn new_box(mut blob: Blob) -> Box<Blob> {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
-        bun_core::heap::into_raw(Box::new(blob))
+        Box::new(blob)
     }
 
     #[inline]

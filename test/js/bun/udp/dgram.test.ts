@@ -1,5 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
+import { BlockList } from "node:net";
+import { networkInterfaces } from "node:os";
 import { Worker } from "node:worker_threads";
 
 import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
@@ -468,33 +470,153 @@ test.skipIf(isWindows)("connected send() failure reports Node's error shape", as
 });
 
 // The default lookup is dns.lookup, which already answers such a name with
-// ENOTFOUND. A custom lookup can hand the raw string to the native connect,
-// which resolves it synchronously: the same check runs there too, and the
-// socket does not end up marked connected.
-test("connect() with a custom lookup that yields a name that cannot be a hostname reports getaddrinfo ENOTFOUND", async () => {
-  const hostname = "this is not a hostname";
-  const socket = createSocket({ type: "udp4", lookup: (address, _family, callback) => callback(null, address, 4) });
-  const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
-  socket.bind(0, "127.0.0.1", onBound);
-  await bound;
+// ENOTFOUND. A custom lookup can hand the raw string to the native connect.
+// That one takes an address of the socket's family and nothing else, as
+// Node's UDP handle does: it resolves no name, and the socket does not end up
+// marked connected. Node reads a C string, so it connects to the text in
+// front of a NUL. sendBlockList saw the whole text, so Bun takes none of it.
+test.each(["this is not a hostname", "127.0.0.1\0rebound.example"])(
+  "connect() with a custom lookup that yields %j reports connect EINVAL",
+  async hostname => {
+    const socket = createSocket({ type: "udp4", lookup: (address, _family, callback) => callback(null, address, 4) });
+    const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+    socket.bind(0, "127.0.0.1", onBound);
+    await bound;
 
-  const err: any = await new Promise(resolve => socket.connect(1234, hostname, resolve as () => void));
-  let connected = true;
+    const err: any = await new Promise(resolve => socket.connect(1234, hostname, resolve as () => void));
+    let connected = true;
+    try {
+      socket.remoteAddress();
+    } catch {
+      connected = false;
+    }
+    socket.close();
+    const { name, code, syscall, address, port, message } = err ?? {};
+    expect({ name, code, syscall, address, port, message, connected }).toEqual({
+      name: "Error",
+      code: "EINVAL",
+      syscall: "connect",
+      address: hostname,
+      port: 1234,
+      message: `connect EINVAL ${hostname}:1234`,
+      connected: false,
+    });
+  },
+);
+
+// Node's handle reads a zone as the name of an interface only (uv_ip6_addr()).
+// Bun's also reads a number off Windows, because that is how dns.lookup()
+// here prints the zone of a link-local answer. With no zone Linux refuses
+// such a peer with EINVAL.
+const linkLocal = isWindows
+  ? undefined
+  : Object.values(networkInterfaces())
+      .flat()
+      .find(a => a?.family === "IPv6" && a.address.startsWith("fe80:") && a.scopeid);
+test.skipIf(linkLocal === undefined)("connect() reads the zone of a link-local address as a number too", async () => {
+  const socket = createSocket("udp6");
   try {
-    socket.remoteAddress();
-  } catch {
-    connected = false;
+    const err = await new Promise(resolve => {
+      socket.once("error", resolve);
+      socket.connect(1234, `${linkLocal!.address}%${linkLocal!.scopeid}`, resolve as () => void);
+    });
+    expect(err).toBeUndefined();
+    const { address, family, port } = socket.remoteAddress();
+    expect({ address: address.split("%")[0], family, port }).toEqual({
+      address: linkLocal!.address,
+      family: "IPv6",
+      port: 1234,
+    });
+  } finally {
+    socket.close();
   }
-  socket.close();
-  const { name, code, syscall, hostname: errHostname, message } = err ?? {};
-  expect({ name, code, syscall, hostname: errHostname, message, connected }).toEqual({
-    name: "Error",
-    code: "ENOTFOUND",
-    syscall: "getaddrinfo",
-    hostname,
-    message: `getaddrinfo ENOTFOUND ${hostname}`,
-    connected: false,
+});
+
+// isIP() is 0 for "::1%", and the handle reads it as ::1. Node asks the list
+// about family "ipv0", which blocks nothing, and connects.
+test.skipIf(!hasIPv6Loopback())("connect() asks sendBlockList about an address that isIP() does not know", async () => {
+  const sendBlockList = new BlockList();
+  sendBlockList.addAddress("::1", "ipv6");
+  const socket = createSocket({
+    type: "udp6",
+    sendBlockList,
+    lookup: (address, family, callback) => callback(null, address === "host.invalid" ? "::1%" : address, family),
   });
+  try {
+    const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+    socket.bind(0, "::1", onBound);
+    await bound;
+    const err: any = await new Promise(resolve => socket.connect(1234, "host.invalid", resolve as () => void));
+    expect({ code: err?.code, message: err?.message }).toEqual({
+      code: "ERR_IP_BLOCKED",
+      message: "IP(::1%) is blocked by net.BlockList",
+    });
+  } finally {
+    socket.close();
+  }
+});
+
+// dgram can still have the handle when its socket is gone: the context that
+// opened the socket stopped. Node's handle answers UV_EBADF then.
+test("connect() and disconnect() report connect EBADF when the socket of the handle is closed", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const open = async () => {
+    const socket = createSocket("udp4");
+    const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+    socket.bind(0, "127.0.0.1", onBound);
+    await bound;
+    return socket;
+  };
+  const unconnected = await open();
+  const connected = await open();
+  try {
+    const { promise: isConnected, resolve: onConnect } = Promise.withResolvers<void>();
+    connected.connect(unconnected.address().port, "127.0.0.1", onConnect);
+    await isConnected;
+
+    unconnected[kStateSymbol].handle.socket.close();
+    const err: any = await new Promise(resolve => unconnected.connect(1234, "127.0.0.1", resolve as () => void));
+    const { name, code, syscall, address, port, message } = err ?? {};
+    expect({ name, code, syscall, address, port, message }).toEqual({
+      name: "Error",
+      code: "EBADF",
+      syscall: "connect",
+      address: "127.0.0.1",
+      port: 1234,
+      message: "connect EBADF 127.0.0.1:1234",
+    });
+
+    connected[kStateSymbol].handle.socket.close();
+    expect(() => connected.disconnect()).toThrow(
+      expect.objectContaining({ name: "Error", code: "EBADF", syscall: "connect", message: "connect EBADF" }),
+    );
+  } finally {
+    unconnected.close();
+    connected.close();
+  }
+});
+
+// Winsock does not connect to the unspecified address. The code is the one
+// of the connect() that failed.
+test.skipIf(!isWindows)("connect() to 0.0.0.0 reports connect EADDRNOTAVAIL on Windows", async () => {
+  const socket = createSocket("udp4");
+  try {
+    const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+    socket.bind(0, "127.0.0.1", onBound);
+    await bound;
+    const err: any = await new Promise(resolve => socket.connect(1234, "0.0.0.0", resolve as () => void));
+    const { name, code, syscall, address, port, message } = err ?? {};
+    expect({ name, code, syscall, address, port, message }).toEqual({
+      name: "Error",
+      code: "EADDRNOTAVAIL",
+      syscall: "connect",
+      address: "0.0.0.0",
+      port: 1234,
+      message: "connect EADDRNOTAVAIL 0.0.0.0:1234",
+    });
+  } finally {
+    socket.close();
+  }
 });
 
 // Every send callback must fire with (null, byteLength) — never (null, 0) or

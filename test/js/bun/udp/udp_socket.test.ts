@@ -6,14 +6,24 @@ import {
   bunExe,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
+  hasIPv6Loopback,
+  isGlibc,
   isIPv6,
+  isLinux,
+  isMacOS,
   isWindows,
   randomPort,
   tempDir,
 } from "harness";
 import { closeSync, openSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
+
+// "lo" or "lo0". On Windows a zone is the index of the interface, not its name.
+const loopbackInterface = isWindows
+  ? undefined
+  : Object.entries(networkInterfaces()).find(([, addresses]) => addresses?.some(a => a.address === "::1"))?.[0];
 
 describe("udpSocket()", () => {
   test.each(["setTTL", "setMulticastTTL"])(
@@ -243,6 +253,128 @@ describe("udpSocket()", () => {
         error = e;
       }
       expect(pick(error)).toEqual(resolverError);
+    });
+  });
+
+  // The connect option connects to an address as it is written, and asks the
+  // resolver about a host name only. glibc's getaddrinfo() refuses a zone
+  // that is a name unless the address is link-local, so "::1%lo" never got
+  // to connect(2).
+  describe("connect to an address", () => {
+    const connectError = async (options: Parameters<typeof udpSocket>[0]) => {
+      try {
+        (await udpSocket(options)).close();
+      } catch (e: any) {
+        const { name, code, syscall, hostname, message } = e;
+        return { name, code, syscall, hostname, message };
+      }
+    };
+
+    // A zone that no interface has is no zone.
+    const zoned = [loopbackInterface, "nosuch0"].filter(zone => zone !== undefined).map(zone => `::1%${zone}`);
+    test.skipIf(!hasIPv6Loopback()).each(zoned)("%s is ::1", async hostname => {
+      const { promise: received, resolve: onData } = Promise.withResolvers<string>();
+      const server = await udpSocket({
+        hostname: "::1",
+        socket: { data: (_socket, data) => onData(data.toString()) },
+      });
+      try {
+        const client = await udpSocket({ hostname: "::1", connect: { hostname, port: server.port } });
+        try {
+          expect(client.remoteAddress).toEqual({ address: "::1", family: "IPv6", port: server.port });
+          client.send("to the peer");
+          expect(await received).toBe("to the peer");
+        } finally {
+          client.close();
+        }
+      } finally {
+        server.close();
+      }
+    });
+
+    // The kernel looks at the zone of a link-local peer. Nothing routes to
+    // fe80::1 through the loopback interface, and with no zone at all Linux
+    // says EINVAL instead.
+    test.skipIf(!isLinux || !hasIPv6Loopback() || loopbackInterface === undefined)(
+      "the zone of a link-local address is the interface that connect(2) gets",
+      async () => {
+        const hostname = `fe80::1%${loopbackInterface}`;
+        expect(await connectError({ hostname: "::", connect: { hostname, port: 1234 } })).toMatchObject({
+          name: "Error",
+          code: "ENETUNREACH",
+          syscall: "connect",
+        });
+      },
+    );
+
+    // The resolver can answer with ::1 first. The socket is on 127.0.0.1, so
+    // that address fails and the next one is the peer.
+    test("a host name is resolved, and the first address that the socket takes is the peer", async () => {
+      const { promise: received, resolve: onData } = Promise.withResolvers<string>();
+      const server = await udpSocket({
+        hostname: "127.0.0.1",
+        socket: { data: (_socket, data) => onData(data.toString()) },
+      });
+      try {
+        const client = await udpSocket({
+          hostname: "127.0.0.1",
+          connect: { hostname: "localhost", port: server.port },
+        });
+        try {
+          expect(client.remoteAddress).toEqual({ address: "127.0.0.1", family: "IPv4", port: server.port });
+          client.send("to the peer");
+          expect(await received).toBe("to the peer");
+        } finally {
+          client.close();
+        }
+      } finally {
+        server.close();
+      }
+    });
+
+    // glibc refuses these names itself, so no query leaves the machine. The
+    // last two are an address with a zone that net.isIP() does not take.
+    test.skipIf(!isGlibc).each(["-x.invalid", "a*b.invalid", "::1%x y", "::1%/etc/passwd"])(
+      "%j goes to the resolver, and its answer is the error",
+      async hostname => {
+        expect(await connectError({ hostname: "::", connect: { hostname, port: 1234 } })).toEqual({
+          name: "DNSException",
+          code: "ENOTFOUND",
+          syscall: "connect",
+          hostname,
+          message: `connect ENOTFOUND ${hostname}`,
+        });
+      },
+    );
+
+    // What send() does not take for an address is not one here either.
+    test.each([
+      "::1/64",
+      "::1/0",
+      "2001:db8::1/0",
+      "::ffff:127.1",
+      "127.0.0.1 rebound.example",
+      "127.0.0.1\n",
+      "127.0.0.1\0rebound.example",
+      "::1%lo\0rebound.example",
+    ])("%j is neither an address nor a host name", async hostname => {
+      expect(await connectError({ hostname: "::", connect: { hostname, port: 1234 } })).toEqual({
+        name: "Error",
+        code: "ENOTFOUND",
+        syscall: "getaddrinfo",
+        hostname,
+        message: `getaddrinfo ENOTFOUND ${hostname}`,
+      });
+    });
+
+    // The default socket is IPv4. macOS looks at the length of the address
+    // first and can say EINVAL.
+    test("an address that connect(2) refuses fails with that error, not with a resolver error", async () => {
+      expect(await connectError({ connect: { hostname: "::1", port: 1234 } })).toMatchObject({
+        name: "Error",
+        code: isMacOS ? expect.stringMatching(/^(EAFNOSUPPORT|EINVAL)$/) : "EAFNOSUPPORT",
+        syscall: "connect",
+      });
     });
   });
 

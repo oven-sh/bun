@@ -115,6 +115,19 @@ impl Error {
         E::from_raw(self.errno)
     }
 
+    /// libuv's negative code for this error, which Node reports in `err.errno`: the negated host errno on POSIX, the `UV_E*` value of the discriminant on Windows.
+    pub fn uv_errno(&self) -> c_int {
+        #[cfg(windows)]
+        {
+            crate::windows::libuv::e_discriminant_to_uv(self.errno)
+                .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg())
+        }
+        #[cfg(not(windows))]
+        {
+            c_int::from(self.errno).wrapping_neg()
+        }
+    }
+
     #[inline]
     pub fn is_retry(&self) -> bool {
         self.get_errno() == E::EAGAIN
@@ -289,17 +302,8 @@ impl Error {
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
     ) -> (SystemError, Option<(&'static str, &'static str)>) {
-        // Node reports libuv's codes in `err.errno` on every platform. On POSIX
-        // that is just the negated host errno; on Windows the discriminant maps
-        // back to its `UV_E*` value.
-        #[cfg(windows)]
-        let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
-            .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
-        #[cfg(not(windows))]
-        let js_errno = c_int::from(self.errno).wrapping_neg();
-
         let mut err = SystemError {
-            errno: js_errno,
+            errno: self.uv_errno(),
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
             ..Default::default()
         };

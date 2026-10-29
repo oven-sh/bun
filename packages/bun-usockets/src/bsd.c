@@ -1836,59 +1836,57 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     return listenFd;
 }
 
-int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
-    bsd_winsock_ensure();
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(struct addrinfo));
-
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_DGRAM;
-
-    char port_string[16];
-    snprintf(port_string, 16, "%d", port);
-
-    int gai_error = getaddrinfo(host, port_string, &hints, &result);
-
-    if (gai_error != 0) {
-        return gai_error;
-    }
-
-    if (result == NULL) {
+int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr) {
+    socklen_t addrlen;
+    if (addr->ss_family == AF_INET) {
+        addrlen = sizeof(struct sockaddr_in);
+    } else if (addr->ss_family == AF_INET6) {
+        addrlen = sizeof(struct sockaddr_in6);
+    } else {
+        /* AF_UNSPEC would dissolve the association and report success. */
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#endif
+        errno = EINVAL;
         return -1;
     }
 
-    for (struct addrinfo *rp = result; rp != NULL; rp = rp->ai_next) {
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
-            freeaddrinfo(result);
-            return 0;
-        }
-    }
-
-    freeaddrinfo(result);
-    return (int)LIBUS_SOCKET_ERROR;
+    int rc;
+    do {
+        rc = connect(fd, (const struct sockaddr *) addr, addrlen);
+    } while (IS_EINTR(rc));
+    return rc == 0 ? 0 : -1;
 }
 
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+    /* As libuv's uv__udp_disconnect: Winsock takes an address as long as the socket's own. */
+#ifdef _WIN32
+    struct sockaddr_storage addr;
+#else
     struct sockaddr addr;
+#endif
     memset(&addr, 0, sizeof(addr));
-    addr.sa_family = AF_UNSPEC;
+    ((struct sockaddr *) &addr)->sa_family = AF_UNSPEC;
     #ifdef __APPLE__
     addr.sa_len = sizeof(addr);
     #endif
 
-    int res = connect(fd, &addr, sizeof(addr));
-    // EAFNOSUPPORT is harmless in this case - we just want to disconnect
-    if (res == 0 ||
-#ifdef _WIN32
-    WSAGetLastError() == WSAEAFNOSUPPORT
-#else
-    errno == EAFNOSUPPORT
-#endif
-    ) {
+    int res;
+    do {
+        res = connect(fd, (struct sockaddr *) &addr, sizeof(addr));
+    } while (IS_EINTR(res));
+    if (res == 0) {
         return 0;
-    } else {
-        return -1;
     }
+    // EAFNOSUPPORT is harmless in this case - we just want to disconnect
+#ifdef _WIN32
+    return WSAGetLastError() == WSAEAFNOSUPPORT ? 0 : -1;
+#elif defined(__APPLE__) || defined(__FreeBSD__)
+    /* An AF_INET6 socket answers EINVAL there, and the association is gone. */
+    return errno == EAFNOSUPPORT || errno == EINVAL ? 0 : -1;
+#else
+    return errno == EAFNOSUPPORT ? 0 : -1;
+#endif
 }
 
 static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)

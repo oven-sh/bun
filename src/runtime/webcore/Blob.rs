@@ -318,13 +318,7 @@ pub(crate) trait BlobExt {
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue>;
-    /// # Safety
-    /// `buf` must be valid for reads for the duration of the call.
-    unsafe fn to_form_data_with_bytes<const _L: Lifetime>(
-        &self,
-        global: &JSGlobalObject,
-        buf: *mut [u8],
-    ) -> JSValue;
+    fn to_form_data_with_bytes(&self, global: &JSGlobalObject, buf: &[u8]) -> JSValue;
     /// # Safety
     /// See [`BlobExt::to_array_buffer_view_with_bytes`].
     unsafe fn to_array_buffer_with_bytes<const LIFETIME: Lifetime>(
@@ -719,18 +713,19 @@ impl BlobExt for Blob {
     ) -> Blob {
         let mut converter = URLSearchParamsConverter { buf: Vec::new() };
         search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
-        let store = Store::init(converter.buf);
-        // SAFETY: `store` is the sole +1 on this freshly-allocated Store.
-        unsafe {
-            (*store.as_ptr()).mime_type = bun_http_types::MimeType::Compact::from(
+        let store = RefPtr::new(Store {
+            data: store::Data::Bytes(store::Bytes::init(converter.buf)),
+            mime_type: bun_http_types::MimeType::Compact::from(
                 // The bare tag, *without* `;charset=UTF-8` (charset promotion is
                 // Compact::to_mime_type's job, applied when read).
                 bun_http_types::MimeType::Table::from_mime_literal(
                     "application/x-www-form-urlencoded",
                 ),
             )
-            .to_mime_type();
-        }
+            .to_mime_type(),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            is_all_ascii: store::IsAllAscii::default(),
+        });
         let content_type = BlobContentType::from_mime(&store.mime_type);
 
         let blob = Blob::init_with_store(store, global_this);
@@ -2534,25 +2529,13 @@ impl BlobExt for Blob {
         EncodedSlice::utf8(buf).to_json_object(global, CompiledJsonParser::Skip)
     }
 
-    /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
-    ///
-    /// # Safety
-    /// `buf` must be valid for reads for the duration of the call.
-    unsafe fn to_form_data_with_bytes<const _L: Lifetime>(
-        &self,
-        global: &JSGlobalObject,
-        buf: *mut [u8],
-    ) -> JSValue {
+    fn to_form_data_with_bytes(&self, global: &JSGlobalObject, buf: &[u8]) -> JSValue {
         let Some(encoder) = self.get_form_data_encoding() else {
             return global.create_error_instance(format_args!("Invalid encoding"));
         };
 
         // `crate::webcore::form_data::Encoding` re-exports
         // `bun_core::form_data::Encoding` — same type, no re-tagging needed.
-        // SAFETY: `buf` is valid for reads for the duration of this call (either a
-        // leaked Box for `Temporary` or a store-backed view otherwise);
-        // `FormData::to_js` only reads it.
-        let buf = unsafe { &*buf };
         match crate::webcore::form_data::FormData::to_js(global, buf, &encoder.encoding) {
             Ok(v) => v,
             Err(crate::Error::JSError) => global.take_error(jsc::JsError::Thrown),
@@ -2811,20 +2794,11 @@ impl BlobExt for Blob {
             return self.do_read_from_s3::<ToFormDataWithBytesFn>(cx);
         }
 
-        // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
-        // `RefPtr<Store>::as_ptr`). It is *only ever read* by
-        // `to_form_data_with_bytes` (`FormData::to_js` takes `&[u8]`). Note: the
-        // Store is intrusively shared (`ref_count: AtomicU32`); `&mut self` does
-        // NOT imply exclusive ownership of the underlying bytes.
-        let view_ptr = self.shared_view_raw();
-        if view_ptr.len() == 0 {
+        let view = self.shared_view();
+        if view.is_empty() {
             return Ok(jsc::DOMFormData::create(cx.global()));
         }
-        // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
-        // `to_form_data_with_bytes` only reads it.
-        Ok(unsafe {
-            self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(cx.global(), view_ptr)
-        })
+        Ok(self.to_form_data_with_bytes(cx.global(), view))
     }
     #[inline]
     fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(
@@ -5173,10 +5147,8 @@ pub(crate) fn jsdom_file_construct(
     }
 
     blob.calculate_estimated_byte_size();
-    let blob_ = Blob::new(blob);
-    // SAFETY: ptr was just produced by heap::alloc in Blob::new.
-    unsafe { (*blob_).is_jsdom_file.set(true) };
-    Ok(blob_)
+    blob.is_jsdom_file.set(true);
+    Ok(Blob::new(blob))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5580,19 +5552,15 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `[ptr, ptr+len)`
         // is a valid page-aligned mmap'd region we now own.
         let store = Store::init_mmap(unsafe { core::slice::from_raw_parts_mut(ptr, len) });
-        let blob = Blob::new(Blob::init_with_store(store, global_this));
+        let blob = Blob::init_with_store(store, global_this);
         // SAFETY: caller (C++) passes a valid NUL-terminated C string.
         let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
         if !mime_slice.is_empty() {
-            // SAFETY: `blob` was just produced by heap::alloc in Blob::new.
-            unsafe {
-                (*blob)
-                    .content_type
-                    .set(BlobContentType::Owned(mime_slice.into()));
-                (*blob).content_type_was_set.set(true);
-            }
+            blob.content_type
+                .set(BlobContentType::Owned(mime_slice.into()));
+            blob.content_type_was_set.set(true);
         }
-        blob
+        Blob::new(blob)
     }
 }
 
@@ -5813,7 +5781,7 @@ impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         let _ = l; // FormData ignores lifetime — bytes are read-only.
         // SAFETY: `by` is valid for reads per the `ReadFileToJs::call` contract.
-        Ok(unsafe { b.to_form_data_with_bytes::<{ Lifetime::Temporary }>(g, by) })
+        Ok(b.to_form_data_with_bytes(g, unsafe { &*by }))
     }
 }
 

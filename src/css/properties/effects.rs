@@ -47,7 +47,7 @@ impl Filter {
         }
 
         let location = input.current_source_location();
-        let function = input.expect_function_cloned()?;
+        let function = input.expect_function()?;
         // An omitted argument means the function's identity value.
         let one = || NumberOrPercentage::Number(1.0);
         input.parse_nested_block(|i: &mut css::Parser| -> css::Result<Filter> {

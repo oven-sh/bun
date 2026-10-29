@@ -1,7 +1,7 @@
 //! Huffman coding of progressive scans (jcphuff.c).
 
-use super::huff::{BitWriter, Code, Counts, EncodeTable, bit_length, value_bits};
-use super::{Block, PerTable, Scan, Table};
+use super::huff::{BitWriter, Code, Counts, EncodeTable, ZRL, bit_length, value_bits};
+use super::{Block, DCTSIZE, PerTable, Scan, Table};
 use crate::alloc::try_vec_with_capacity;
 use crate::error::Result;
 
@@ -156,7 +156,7 @@ impl AcEncoder {
             next = k + 1;
             self.emit_eob_run(sink);
             while run > 15 {
-                sink.symbol(self.table, 0xf0);
+                sink.symbol(self.table, ZRL);
                 run -= 16;
             }
             let nbits = bit_length(magnitude);
@@ -209,7 +209,7 @@ impl AcEncoder {
             // Runs of 16 zeros, unless the end of the block takes care of them.
             while run > 15 && eob.is_some_and(|eob| k <= eob) {
                 self.emit_eob_run(sink);
-                sink.symbol(self.table, 0xf0);
+                sink.symbol(self.table, ZRL);
                 run -= 16;
                 sink.correction_bits(&mut correction);
             }
@@ -235,7 +235,9 @@ impl AcEncoder {
                 self.waiting_bits += correction.len as usize;
             }
             // Before the counter overflows, or the bits of another block could go over the limit.
-            if self.eob_run == MAX_EOB_RUN || self.waiting_bits > MAX_CORR_BITS - 64 + 1 {
+            if self.eob_run == MAX_EOB_RUN
+                || self.waiting_bits > MAX_CORR_BITS - DCTSIZE * DCTSIZE + 1
+            {
                 self.emit_eob_run(sink);
             }
         }

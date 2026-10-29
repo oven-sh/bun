@@ -118,6 +118,9 @@ impl EncodeTable {
     }
 }
 
+/// The symbol for 16 zeros.
+pub(crate) const ZRL: u8 = 0xf0;
+
 /// The number of bits it takes to write `magnitude`.
 #[inline(always)]
 pub(crate) fn bit_length(magnitude: u32) -> u32 {
@@ -195,7 +198,7 @@ pub(crate) fn encode_block(
         let mut run = k - last - 1;
         last = k;
         while run > 15 {
-            ac_table.put(bits, 0xf0, 0);
+            ac_table.put(bits, u32::from(ZRL), 0);
             run -= 16;
         }
         let coef = i32::from(block.zigzag(k));

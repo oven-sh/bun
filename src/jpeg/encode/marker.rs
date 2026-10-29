@@ -62,16 +62,17 @@ impl Output {
     }
 
     pub(crate) fn file_header(&mut self) {
-        self.marker(M_SOI);
-        self.segment(M_APP0, 14);
-        self.extend(b"JFIF\0");
         // Version 1.01, a pixel aspect ratio of 1:1 and no thumbnail.
-        self.extend(&[1, 1, 0, 0, 1, 0, 1, 0, 0]);
+        const JFIF: &[u8] = b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0";
+        self.marker(M_SOI);
+        self.segment(M_APP0, JFIF.len());
+        self.extend(JFIF);
     }
 
     pub(crate) fn icc_profile(&mut self, profile: &[u8]) -> Result<()> {
         const OVERHEAD: usize = ICC_SIGNATURE.len() + 2;
-        const MAX_DATA_BYTES_IN_MARKER: usize = 65533 - OVERHEAD;
+        // The length of a segment has 16 bits and counts itself.
+        const MAX_DATA_BYTES_IN_MARKER: usize = u16::MAX as usize - 2 - OVERHEAD;
 
         // libjpeg takes the length as an `unsigned int`.
         let profile = profile.get(..profile.len() as u32 as usize).unwrap_or(&[]);
@@ -92,7 +93,7 @@ impl Output {
 
     /// `quant` is in row-major order, each step from 1 to 255.
     fn quant_table(&mut self, table: Table, quant: &[u16; 64]) {
-        self.segment(M_DQT, 1 + 64);
+        self.segment(M_DQT, 1 + quant.len());
         self.extend(&[table as u8]);
         let mut zigzag = [0u8; 64];
         for (out, &position) in zigzag.iter_mut().zip(&NATURAL_ORDER) {
@@ -114,6 +115,7 @@ impl Output {
             if progressive { M_SOF2 } else { M_SOF0 },
             6 + 3 * Component::ALL.len(),
         );
+        // Bits in a sample.
         self.extend(&[8]);
         self.extend(&height.to_be_bytes());
         self.extend(&width.to_be_bytes());
@@ -131,7 +133,7 @@ impl Output {
     pub(crate) fn huff_table(&mut self, table: Table, class: TableClass, spec: &HuffSpec) {
         let [_, bits @ ..] = &spec.bits;
         let length: usize = bits.iter().map(|&count| usize::from(count)).sum();
-        self.segment(M_DHT, 1 + 16 + length);
+        self.segment(M_DHT, 1 + bits.len() + length);
         self.extend(&[((class as u8) << 4) + table as u8]);
         self.extend(bits);
         self.extend(spec.huffval.get(..length).unwrap_or(&[]));

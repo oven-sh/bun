@@ -1448,13 +1448,12 @@ impl JSValkeyClient {
         }
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
-        let vm = self.client.get().vm.as_mut();
+        let vm = self.client.get().vm;
         let loop_ = vm.uws_loop();
         // (A client that redials on its own stays with the context that created it; what joins a
         // context that is gone is closed on the next turn of the loop.)
-        let context = core::ptr::from_ref(vm.context_of(self.context));
-        // SAFETY: the VM's own, or registered ⇒ not freed under this call; JS thread.
-        let groups = vm.client_socket_groups_in(unsafe { &*context });
+        let context = vm.context_of(self.context);
+        let groups = vm.as_mut().client_socket_groups_in(context);
         let group: *mut uws::SocketGroup = if is_tls {
             groups.valkey_group::<true>(loop_)
         } else {

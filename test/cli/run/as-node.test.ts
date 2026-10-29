@@ -225,10 +225,15 @@ describe("fake node cli", () => {
     });
 
     // Node's test runner and syntax check are not replaced by the program on stdin.
-    test.concurrent.each(["--test", "--check"])("%s with a piped program does not run it", async flag => {
-      const { stdout, stderr, exitCode } = await nodeWithStdin('console.log("stdin")', [flag]);
+    test.concurrent.each([
+      ["--test", "--test"],
+      ["--check", "--check"],
+      ["--check -", "--check"],
+      ["-c", "--check"],
+    ])("%s with a piped program does not run it", async (args, refused) => {
+      const { stdout, stderr, exitCode } = await nodeWithStdin('console.log("stdin")', args.split(" "));
       expect(stdout).toBe("");
-      expect(stderr).toContain(`${flag} is not supported when bun runs as node`);
+      expect(stderr).toContain(`${refused} is not supported when bun runs as node`);
       expect(exitCode).toBe(1);
     });
 
@@ -256,8 +261,8 @@ describe("fake node cli", () => {
     });
   });
 
-  // A terminal on stdin: bare `node` starts the REPL, `node -` reads the
-  // program to the end of the input. Bun.Terminal is POSIX-only.
+  // A terminal on stdin is the REPL, for bare `node` and for `node -`, as in
+  // node. Bun.Terminal is POSIX-only.
   describe.skipIf(isWindows)("terminal on stdin", () => {
     async function nodeOnTerminal(
       args: string[],
@@ -314,12 +319,16 @@ describe("fake node cli", () => {
       replTimeout,
     );
 
-    test("node - reads the program to the end of the input", () =>
-      nodeOnTerminal(["-"], async ({ proc, waitFor, write, output }) => {
-        write('console.log("from", "tty")\n\x04');
-        await waitFor("from tty");
-        expect(output()).not.toContain("Welcome to Bun");
-        expect(await proc.exited).toBe(0);
-      }));
+    test(
+      "node - starts the REPL",
+      () =>
+        nodeOnTerminal(["-"], async ({ proc, waitFor, write }) => {
+          await waitFor("Welcome to Bun");
+          await waitFor("> ");
+          write(".exit\r");
+          expect(await proc.exited).toBe(0);
+        }),
+      replTimeout,
+    );
   });
 });

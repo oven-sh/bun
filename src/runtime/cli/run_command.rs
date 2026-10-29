@@ -2551,9 +2551,7 @@ impl RunCommand {
 
         // ── stdin (`bun run -`) ─────────────────────────────────────────────
         if target_name.len() == 1 && target_name[0] == b'-' {
-            // NOT routed through `boot_and_handle_error` — the stdin path
-            // skips the `configure_allocator(long_running=true)` / `.md`
-            // checks and prints `-`, not `[stdin]`, in the error message.
+            // Not `boot_and_handle_error`: its allocator and `.md` checks do not apply.
             if let Err(err) = Self::exec_stdin(ctx, Some(b"-")) {
                 Self::boot_failed_exit(ctx, b"-", &err);
             }
@@ -3090,10 +3088,7 @@ impl RunCommand {
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
-    /// Reads the program on stdin into `ctx.runtime_options.eval` and boots
-    /// the VM with the synthetic `cwd/[stdin]` entry path. `name` is what
-    /// `process.argv[1]` shows: `-` for `bun run -` and `node -`, `None` for a
-    /// bare `node` with a piped stdin (node gives that no argv entry).
+    /// Boots the program on stdin as `cwd/[stdin]`. `name` is `process.argv[1]`, if any.
     fn exec_stdin(ctx: &mut ContextData, name: Option<&[u8]>) -> crate::Result<()> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
@@ -3117,8 +3112,7 @@ impl RunCommand {
         Self::boot(ctx, Self::synthetic_entry_path(STDIN_TRIGGER), None)
     }
 
-    /// `cwd` + `trigger`, where `trigger` is `/[eval]` or `/[stdin]`. The
-    /// module loader serves `eval.script` for the path that ends with it.
+    /// `cwd` + `trigger`: the entry path for which the module loader serves `eval.script`.
     fn synthetic_entry_path(trigger: &[u8]) -> Box<[u8]> {
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf).as_bytes();
@@ -3176,8 +3170,7 @@ impl RunCommand {
         // values. Explicit `--env-file` is still honored. #6338
         ctx.args.disable_default_env_files = true;
 
-        // `Arguments::parse` stops at the first positional, so what follows a
-        // `-` is already in `ctx.passthrough`.
+        // What follows a `-` positional is already in `ctx.passthrough`.
         let reads_stdin = match ctx.positionals.as_slice() {
             [] => true,
             [first, ..] => first.as_ref() == b"-",
@@ -3197,12 +3190,8 @@ impl RunCommand {
         }
 
         if reads_stdin {
-            // Node: bare `node` on a TTY starts the REPL, and otherwise reads
-            // the program from stdin. Only in emulation mode; bun's own `bun`
-            // with no args stays the help text. Use Output's cached stdio flag
-            // (set at startup via libuv's handle probe), which is the same
-            // check `bun update --interactive` uses.
-            if ctx.positionals.is_empty() && Output::is_stdin_tty() {
+            // Bare `node` on a TTY is the REPL, as in node. Bun's own `bun` stays the help text.
+            if Output::is_stdin_tty() {
                 return Self::exec_node_repl(ctx);
             }
             let name = ctx.positionals.first().map(|_| &b"-"[..]);

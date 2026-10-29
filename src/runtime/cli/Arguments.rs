@@ -1284,10 +1284,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
 
-    // Node mode drops the flags that bun does not know. These select a mode
-    // of node that a program on stdin does not replace. With a script, the
-    // script runs as before.
-    if cmd == CommandTag::RunAsNodeCommand && ctx.positionals.is_empty() {
+    // Modes of node that a program on stdin does not replace.
+    if cmd == CommandTag::RunAsNodeCommand
+        && ctx
+            .positionals
+            .first()
+            .is_none_or(|first| first.as_ref() == b"-")
+    {
         let refuse = |name: &[u8]| -> ! {
             Output::err_generic(
                 "--{} is not supported when bun runs as node\n",
@@ -1302,9 +1305,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 _ => {}
             }
         }
-        // To node, `--check` only parses the program. Without `-e` it would
-        // come from stdin.
-        if args.flag(b"--check")
+        // To node, `-c` and `--check` only parse the program.
+        if (args.flag(b"--check") || args.has(b"--config"))
             && args.option(b"--eval").is_none()
             && args.option(b"--print").is_none()
         {
@@ -1585,14 +1587,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        // `bun -e ''` prints the help text, so an empty program is no program
-        // there. `node -e ''` runs it.
+        // `bun -e ''` prints the help text: there an empty program is no program.
         let program = |script: &[u8]| {
-            (cmd == CommandTag::RunAsNodeCommand || !script.is_empty()).then(|| script.into())
+            (!script.is_empty() || !matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand))
+                .then(|| script.into())
         };
         if let Some(script) = args.option(b"--print") {
             ctx.runtime_options.eval.script = program(script);
-            ctx.runtime_options.eval.eval_and_print = ctx.runtime_options.eval.script.is_some();
+            ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = program(script);
         }

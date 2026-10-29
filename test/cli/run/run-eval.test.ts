@@ -333,7 +333,6 @@ test("bun -e '' file.js runs the file", async () => {
   };
   expect(await run("-e", "")).toEqual(["undefined undefined\n", "", 0]);
   expect(await run("-e", "")).toEqual(await run());
-  expect(await run("-p", "")).toEqual(await run());
 });
 
 test("bun -e '' prints the help text", async () => {

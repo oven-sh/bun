@@ -2,17 +2,6 @@ use core::ffi::c_char;
 
 use bun_alloc::AllocError;
 
-/// After running `convert_env_to_wtf8`, the pointers in the process environment block will point into this buffer.
-// PORTING.md §Global mutable state: written exactly once at program startup
-// before any threads are spawned. RacyCell — startup-only.
-static WTF8_ENV_BUF: bun_core::RacyCell<Option<&'static [u8]>> = bun_core::RacyCell::new(None);
-/// `convert_env_to_wtf8` will set this to the original environment block.
-// SAFETY: written exactly once at program startup before any threads are
-// spawned. Stored as a raw (ptr, len) pair (no `&mut` aliasing assertion);
-// `None` means "unset".
-static ORIG_ENVIRON: bun_core::RacyCell<Option<(*mut *mut c_char, usize)>> =
-    bun_core::RacyCell::new(None);
-
 static ENV_CONVERTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// Converts all strings in the process environment block to WTF-8.
@@ -78,12 +67,8 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
 
     let envp_slice = Box::leak(envp.into_boxed_slice());
     let envp_nonnull_len = envp_slice.len() - 1;
-    // SAFETY: single-threaded startup; statics are written exactly once here.
-    unsafe {
-        WTF8_ENV_BUF.write(Some(wtf8_buf));
-        ORIG_ENVIRON.write(Some(bun_core::os::take_environ()));
-        bun_core::os::set_environ(envp_slice.as_mut_ptr(), envp_nonnull_len);
-    }
+    // SAFETY: single-threaded startup; `envp_slice` is leaked.
+    unsafe { bun_core::os::set_environ(envp_slice.as_mut_ptr(), envp_nonnull_len) };
 
     let _ = scopeguard::ScopeGuard::into_inner(env_guard);
     Ok(())

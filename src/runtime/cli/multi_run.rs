@@ -46,6 +46,8 @@ struct ScriptConfig {
     cwd: Box<[u8]>,
     /// PATH env var value for this script
     path: Box<[u8]>,
+    /// Index of its group: pre, main and post scripts share a color.
+    color_idx: usize,
 }
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
@@ -117,7 +119,6 @@ struct ProcessSlot {
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: *const State<'a>,
-    color_idx: usize,
 
     stdout_reader: PipeReader<'a>,
     stderr_reader: PipeReader<'a>,
@@ -375,8 +376,8 @@ impl<'a> State<'a> {
         while let Some(newline_pos) = strings::index_of_char_usize(&pipe.line_buffer, b'\n') {
             let line = &pipe.line_buffer[0..newline_pos + 1];
             // SAFETY: pipe.handle backref set in ProcessHandle::start()
-            let handle = unsafe { &*pipe.handle };
-            self.write_line_with_prefix(handle, line, writer)?;
+            let config = unsafe { (*pipe.handle).config };
+            self.write_line_with_prefix(config, line, writer)?;
             // Remove processed line from buffer
             pipe.line_buffer.drain_front(newline_pos + 1);
         }
@@ -385,22 +386,22 @@ impl<'a> State<'a> {
 
     fn write_line_with_prefix(
         &self,
-        handle: &ProcessHandle,
+        config: &ScriptConfig,
         line: &[u8],
         writer: &mut OutputWriter,
     ) -> Result<(), Error> {
-        self.write_prefix(handle, writer)?;
+        self.write_prefix(config, writer)?;
         writer.write_all(line)?;
         Ok(())
     }
 
-    fn write_prefix(&self, handle: &ProcessHandle, writer: &mut OutputWriter) -> Result<(), Error> {
+    fn write_prefix(&self, config: &ScriptConfig, writer: &mut OutputWriter) -> Result<(), Error> {
         if self.use_colors {
-            writer.write_all(COLORS[handle.color_idx % COLORS.len()])?;
+            writer.write_all(COLORS[config.color_idx % COLORS.len()])?;
         }
 
-        writer.write_all(&handle.config.label)?;
-        let padding = self.max_label_len.saturating_sub(handle.config.label.len());
+        writer.write_all(&config.label)?;
+        let padding = self.max_label_len.saturating_sub(config.label.len());
         for _ in 0..padding {
             writer.write_all(b" ")?;
         }
@@ -415,7 +416,7 @@ impl<'a> State<'a> {
 
     fn flush_pipe_buffer(
         &self,
-        handle: &ProcessHandle<'a>,
+        config: &ScriptConfig,
         pipe: &mut PipeReader<'a>,
     ) -> Result<(), Error> {
         if !pipe.line_buffer.is_empty() {
@@ -426,7 +427,7 @@ impl<'a> State<'a> {
             } else {
                 Output::writer()
             };
-            self.write_line_with_prefix(handle, line, writer)?;
+            self.write_line_with_prefix(config, line, writer)?;
             if needs_newline {
                 let _ = writer.write_all(b"\n");
             }
@@ -451,21 +452,12 @@ impl<'a> State<'a> {
         self.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
-        // Reshaped for borrowck — `flush_pipe_buffer` would need both
-        // `&ProcessHandle` and `&mut handle.stdout_reader` which overlap. Route
-        // through a raw ptr (the State/handle backref pattern is already
-        // raw-ptr-based throughout this file).
-        let handle_ptr = std::ptr::from_mut::<ProcessHandle>(handle);
-        // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
-        // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.
-        unsafe {
-            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader)?;
-            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader)?;
-        }
+        self.flush_pipe_buffer(handle.config, &mut handle.stdout_reader)?;
+        self.flush_pipe_buffer(handle.config, &mut handle.stderr_reader)?;
 
         // Print exit status to stderr (status messages always go to stderr)
         let writer = Output::error_writer();
-        self.write_prefix(handle, writer)?;
+        self.write_prefix(handle.config, writer)?;
 
         let slot = handle.process.as_ref().unwrap();
         match &slot.status {
@@ -773,6 +765,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                color_idx: group_infos.len(),
             });
         }
 
@@ -787,6 +780,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                color_idx: group_infos.len(),
             });
         }
 
@@ -800,6 +794,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                color_idx: group_infos.len(),
             });
         }
     } else {
@@ -834,6 +829,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             command: command_z,
             cwd: Box::from(cwd),
             path: Box::from(path),
+            color_idx: group_infos.len(),
         });
     }
 
@@ -1138,20 +1134,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // Initialize handles
     let mut handles: Vec<ProcessHandle> = Vec::with_capacity(configs.len());
-    for (i, config) in configs.iter().enumerate() {
-        // Find which group this belongs to, for color assignment
-        let mut color_idx: usize = 0;
-        for (gi, group) in group_infos.iter().enumerate() {
-            if i >= group.start && i < group.start + group.count {
-                color_idx = gi;
-                break;
-            }
-        }
-
+    for config in &configs {
         handles.push(ProcessHandle {
             state: &raw const state,
             config,
-            color_idx,
             stdout_reader: PipeReader::new(false),
             stderr_reader: PipeReader::new(true),
             process: None,

@@ -1305,8 +1305,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 _ => {}
             }
         }
-        // To node, `-c` and `--check` only parse the program.
-        if (args.flag(b"--check") || args.has(b"--config"))
+        // To node, `-c` and `--check` only parse the program. `-c` alone is bun's `--config`.
+        if (args.flag(b"--check") || args.option(b"--config") == Some(b""))
             && args.option(b"--eval").is_none()
             && args.option(b"--print").is_none()
         {

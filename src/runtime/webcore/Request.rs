@@ -33,12 +33,7 @@ use bun_ptr::RefPtr;
 use bun_ptr::weak_ptr::WeakPtrData;
 use core::mem::ManuallyDrop;
 
-impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
-        // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
-    }
-}
+bun_core::intrusive_field!(Request, weak_ptr_data: WeakPtrData);
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
 
 impl bun_jsc::JsClass for Request {

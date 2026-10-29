@@ -232,12 +232,7 @@ impl Default for Response {
     }
 }
 
-impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
-        // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
-    }
-}
+bun_core::intrusive_field!(Response, weak_ptr_data: WeakPtrData);
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
 
 // Wire the codegen'd cached `body`/`stream` JS slot accessors + weak `js_ref`

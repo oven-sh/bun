@@ -2411,7 +2411,7 @@ impl<'a> Resolver<'a> {
         found
     }
 
-    /// Whether the package of an entry has the request: a `#` one in "imports", or its own name.
+    /// Whether the package that a search from `start` as the importer reads has the request.
     fn entry_package_answers(start: DirInfoRef, import_path: &[u8]) -> bool {
         start
             .package_json_for_module_type
@@ -2419,6 +2419,11 @@ impl<'a> Resolver<'a> {
                 package_json.answers_import(import_path)
                     || package_json.is_self_reference(import_path)
             })
+    }
+
+    /// For a `Resolver` that is never dropped: `Transpiler::deinit`.
+    pub fn release_custom_dir_scopes(&mut self) {
+        self.custom_dir_scopes = Default::default();
     }
 
     /// Whether the package of the calling module, which is in `dir`, answers `import_path`.

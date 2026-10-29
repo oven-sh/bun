@@ -641,7 +641,12 @@ test("options.paths: a worker that is made from a string is in the package of th
     const found = [commonjs, esm].map(code => {
       const worker = new ThreadWorker(code, { eval: true });
       workers.push(worker);
-      return new Promise((resolve, reject) => worker.once("message", resolve).once("error", reject));
+      return new Promise((resolve, reject) =>
+        worker
+          .once("message", resolve)
+          .once("error", reject)
+          .once("exit", code => reject(new Error(`the worker exited with code ${code} and sent nothing`))),
+      );
     });
     expect(await Promise.all(found)).toEqual(["caller-main.js caller-dep.js", "caller-main.js caller-dep.js"]);
   } finally {
@@ -1160,51 +1165,40 @@ if (isBun) {
   // A search after a miss reads the calling module's directory again, and the listing that it
   // replaces is not freed: about 7 KB for each request. A search of entries elsewhere does not,
   // for a request that the package of the calling module does not claim.
-  test.skipIf(harness.isASAN || harness.isDebug)(
-    "options.paths: a request that misses does not read the calling module's directory again",
-    async () => {
-      const { path: dir, cleanup } = createTempDir("resolve-paths-miss", {
-        "node_modules/keep/index.js": "",
-        "entry/file.js": "",
-        "caller/package.json": JSON.stringify({ name: "caller-pkg", exports: "./main.js" }),
-        "caller/probe.cjs": `
-          const paths = [require("node:path").join(__dirname, "..", "entry")];
-          const miss = count => {
-            for (let i = 0; i < count; i++) {
-              for (const request of ["not-installed", "not-installed/"]) {
-                try {
-                  require.resolve(request, { paths });
-                } catch {}
-              }
+  test("options.paths: a request that misses does not read the calling module's directory again", async () => {
+    const slow = harness.isASAN || harness.isDebug;
+    const { path: dir, cleanup } = createTempDir("resolve-paths-miss", {
+      "node_modules/keep/index.js": "",
+      "entry/file.js": "",
+      "caller/package.json": JSON.stringify({ name: "caller-pkg", exports: "./main.js" }),
+      "caller/probe.cjs": `
+        const paths = [require("node:path").join(__dirname, "..", "entry")];
+        const miss = count => {
+          for (let i = 0; i < count; i++) {
+            for (const request of ["not-installed", "not-installed/"]) {
+              try {
+                require.resolve(request, { paths });
+              } catch {}
             }
-          };
-          miss(500);
-          Bun.gc(true);
-          const before = process.memoryUsage.rss();
-          miss(10000);
-          Bun.gc(true);
-          console.log(Math.round((process.memoryUsage.rss() - before) / 1024 / 1024));
-        `,
-      });
+          }
+        };
+        miss(500);
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        miss(${slow ? 2_000 : 10_000});
+        Bun.gc(true);
+        console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+      `,
+    });
 
-      try {
-        await using proc = Bun.spawn({
-          cmd: [harness.bunExe(), "--no-install", "caller/probe.cjs"],
-          cwd: dir,
-          env: harness.bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-        expect(stdout).toMatch(/^\d+\n$/);
-        // 6 to 8 MB without the second search, over 100 MB with it.
-        expect(Number(stdout)).toBeLessThan(40);
-      } finally {
-        cleanup();
-      }
-    },
-  );
+    try {
+      // Release, 20,000 requests: 6 to 11 MiB without the second search, over 100 MiB with it.
+      // Debug with ASAN, 4,000 requests: 4 to 11 MiB without it, 31 MiB with it.
+      await harness.expectRssDeltaBelow(["--no-install", join(dir, "caller", "probe.cjs")], { release: 40, debug: 18 });
+    } finally {
+      cleanup();
+    }
+  });
 
   // Only in Bun: when Node.js runs this file it must not spawn itself again.
   const node = harness.nodeExeAtLeast("26.3.0");

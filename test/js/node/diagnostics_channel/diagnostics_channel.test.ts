@@ -1155,19 +1155,33 @@ describe("TracingChannel", () => {
     };
     const seen: Record<string, string[]> = {};
 
+    // A program can replace Array.from at any time, so no store is entered through it.
+    const arrayFrom = Array.from;
+    const replacedArrayFrom = mock(() => {
+      throw new Error("the Array.from of the program was called");
+    });
+    const withArrayFromReplaced = (fn: () => void) => {
+      Array.from = replacedArrayFrom as unknown as typeof Array.from;
+      try {
+        fn();
+      } finally {
+        Array.from = arrayFrom;
+      }
+    };
+
     {
       const log: string[] = (seen.runStores = []);
       const stores = three();
       const dc = channel("tc-store-order-channel");
       bindAll(dc, stores, log);
-      dc.runStores({}, () => void log.push(`function in ${entered(stores)}`));
+      withArrayFromReplaced(() => dc.runStores({}, () => void log.push(`function in ${entered(stores)}`)));
     }
     {
       const log: string[] = (seen.traceSync = []);
       const stores = three();
       const tc = tracingChannel("tc-store-order-sync");
       bindAll(tc.start, stores, log);
-      tc.traceSync(() => void log.push(`function in ${entered(stores)}`));
+      withArrayFromReplaced(() => tc.traceSync(() => void log.push(`function in ${entered(stores)}`)));
     }
     {
       const log: string[] = (seen.tracePromise = []);
@@ -1182,12 +1196,14 @@ describe("TracingChannel", () => {
       const stores = three();
       const tc = tracingChannel("tc-store-order-callback");
       bindAll(tc.asyncStart, stores, log);
-      tc.traceCallback(
-        (cb: () => void) => cb(),
-        0,
-        {},
-        undefined,
-        () => void log.push(`callback in ${entered(stores)}`),
+      withArrayFromReplaced(() =>
+        tc.traceCallback(
+          (cb: () => void) => cb(),
+          0,
+          {},
+          undefined,
+          () => void log.push(`callback in ${entered(stores)}`),
+        ),
       );
     }
 
@@ -1198,6 +1214,7 @@ describe("TracingChannel", () => {
       tracePromise: [...transforms, "asyncStart in ABC"],
       traceCallback: [...transforms, "callback in ABC"],
     });
+    expect(replacedArrayFrom).not.toHaveBeenCalled();
   });
 
   test.each(["resolves", "rejects"])(

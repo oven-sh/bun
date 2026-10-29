@@ -170,18 +170,19 @@ class ActiveChannel {
       return fn.$apply(thisArg, args);
     };
 
-    const stores = this._stores!;
-    if (stores.size > 1) {
-      // The first store bound is the outermost one, as in Node.js since v26.1.0 (nodejs/node#61680).
-      const entries = $Array.from(stores);
-      for (let i = entries.length - 1; i >= 0; i--) {
-        run = wrapStoreRun(entries[i][0], data, run, entries[i][1]);
-      }
-    } else {
-      for (const entry of stores.entries()) {
-        run = wrapStoreRun(entry[0], data, run, entry[1]);
+    // The first store bound is the outermost one, as in Node.js since v26.1.0 (nodejs/node#61680).
+    let first: [Store, Transform | undefined] | undefined;
+    let others: [Store, Transform | undefined][] | undefined;
+    for (const entry of this._stores!.entries()) {
+      if (first === undefined) first = entry;
+      else $arrayPush((others ??= []), entry);
+    }
+    if (others !== undefined) {
+      for (let i = others.length - 1; i >= 0; i--) {
+        run = wrapStoreRun(others[i][0], data, run, others[i][1]);
       }
     }
+    if (first !== undefined) run = wrapStoreRun(first[0], data, run, first[1]);
 
     return run();
   }
@@ -456,7 +457,7 @@ function tracePromiseSubscribed(
 
 // asyncEnd follows asyncStart at once: a promise has no point after its continuation. runStores() is for bound stores.
 function publishContinuation(asyncStart: AnyChannel, asyncEnd: AnyChannel, context: TraceContext) {
-  if (asyncStart._stores?.size) {
+  if (asyncStart._stores?.$size) {
     asyncStart.runStores(context, () => asyncEnd.publish(context));
   } else {
     asyncStart.publish(context);

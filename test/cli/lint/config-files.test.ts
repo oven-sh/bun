@@ -1125,6 +1125,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "lib/star/x",
     "lib/esm-only",
     "bun",
+    "bun:bundle",
     "bun:test",
     "node:fs",
   ];

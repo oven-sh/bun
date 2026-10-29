@@ -22,16 +22,21 @@ use smallvec::SmallVec;
 use std::any::Any;
 use std::borrow::Cow;
 
-/// The `import/*` settings of the built-in config. The `import` rules also use them with an oxlint config, which has
-/// no such settings.
+/// The built-in config's `import/*` settings, which the `import` rules also use with an oxlint config.
 pub mod import_defaults {
     /// `import/extensions`
     pub const EXTENSIONS: [&[u8]; 8] = [
         b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx",
     ];
     /// `import/core-modules`: Bun's own modules.
-    pub const CORE_MODULES: [&[u8]; 5] =
-        [b"bun", b"bun:ffi", b"bun:jsc", b"bun:sqlite", b"bun:test"];
+    pub const CORE_MODULES: [&[u8]; 6] = [
+        b"bun",
+        b"bun:bundle",
+        b"bun:ffi",
+        b"bun:jsc",
+        b"bun:sqlite",
+        b"bun:test",
+    ];
     /// `import/external-module-folders`
     pub const EXTERNAL_MODULE_FOLDERS: [&[u8]; 2] = [b"node_modules", b"node_modules/@types"];
 
@@ -168,8 +173,7 @@ pub type MakeRecord = for<'a> fn(&'a File<'a>) -> Record;
 /// One of eslint-plugin-import's resolvers, or oxlint's.
 #[derive(Clone, Debug)]
 pub enum Lookup<'e> {
-    /// What oxlint's `import` rules resolve with: the graph's [`Flavor::Oxlint`] resolution, with the `tsconfig.json`
-    /// of `--tsconfig` or the nearest one.
+    /// The graph's [`Flavor::Oxlint`] resolution: what oxlint's `import` rules resolve with.
     Oxlint,
     /// eslint-import-resolver-typescript, with its `project` option verbatim.
     TypeScript(SmallVec<[&'e [u8]; 1]>),

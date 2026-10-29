@@ -144,16 +144,14 @@ struct ProjectResolver<'h> {
 struct Caches<'h> {
     /// One per flavor, keyed by the `tsconfig.json` path. An empty key means there's none.
     resolvers: PerFlavor<ShardedMap<Vec<u8>, ProjectResolver<'h>>>,
-    /// One per flavor. Maps a directory to the `tsconfig.json` path for its files. With [`Store::tsconfig`], the key is
-    /// a file.
+    /// One per flavor. Maps a directory (a file, with [`Store::tsconfig`]) to the `tsconfig.json` path for its files.
     configs: PerFlavor<ShardedMap<Vec<u8>, Vec<u8>>>,
     /// Caches [`Graph::scopes_in`] and [`Graph::scopes_of`].
     scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
     /// Caches [`Graph::configs_of_typescript_resolver`], keyed by the directory and the projects, and
     /// [`Graph::listed_projects`], keyed by the projects.
     typescript_configs: ShardedMap<Vec<u8>, Vec<Vec<u8>>>,
-    /// The resolution of a non-relative specifier, keyed by the flavor, the `tsconfig.json`, the directory, the kind
-    /// of import and the specifier.
+    /// The resolution of a non-relative specifier, by flavor, `tsconfig.json`, directory, kind of import and specifier.
     non_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
     /// Maps a path to its real path, with symbolic links followed.
     real_paths: ShardedMap<Vec<u8>, Vec<u8>>,

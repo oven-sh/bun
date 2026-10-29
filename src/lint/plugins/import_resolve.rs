@@ -21,8 +21,7 @@ pub(crate) struct Resolvers<'s> {
     map: SmallVec<[(&'s [u8], Lookup<'s>); 2]>,
     /// `settings["import/core-modules"]`: an array or a string.
     core_modules: Option<&'s Json>,
-    /// True if the file is linted with an oxlint config: then Bun's own modules are core modules unless
-    /// `import/core-modules` says otherwise.
+    /// True if the file is linted with an oxlint config: then Bun's own modules are core modules by default.
     is_oxlint: bool,
 }
 
@@ -149,15 +148,12 @@ impl<'s> Resolvers<'s> {
         Some(())
     }
 
-    /// The file's resolvers. `None` if specifiers can't be resolved, because a resolver isn't supported or `resolve`
-    /// throws.
+    /// The file's resolvers. `None` if a resolver isn't supported or `resolve` throws.
     pub(crate) fn of(file: &File<'s>) -> Option<Resolvers<'s>> {
         Resolvers::of_settings(file.settings(), oxlint::is_followed(file))
     }
 
-    /// [`Resolvers::of`] with the settings alone. `is_oxlint` says whether the file is linted with an oxlint config:
-    /// then the resolver that `import/resolver` and `import/resolve` leave unset is oxlint's own, instead of
-    /// eslint-import-resolver-node as in eslint-plugin-import.
+    /// [`Resolvers::of`] with the settings alone. With `is_oxlint`, the default resolver is oxlint's, not Node's.
     pub(crate) fn of_settings(settings: &'s Json, is_oxlint: bool) -> Option<Resolvers<'s>> {
         // `new Set(..)`
         let core_modules = match settings.get(b"import/core-modules") {

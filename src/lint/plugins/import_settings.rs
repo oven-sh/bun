@@ -1,8 +1,7 @@
 //! eslint-plugin-import's `settings["import/.."]`, as `ignore.js`, `getParserPath`, `importType.js` and the `ExportMap`
 //! read them. A value whose type makes upstream throw is treated as missing.
 //!
-//! With an oxlint config, a setting that isn't set has the value the built-in config gives it
-//! ([`import_defaults`]), since the rules are Bun's there, not eslint-plugin-import's.
+//! With an oxlint config, a setting that isn't set has the built-in config's value ([`import_defaults`]).
 
 use crate::oxlint;
 use bun_core::strings;

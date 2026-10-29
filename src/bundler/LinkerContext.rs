@@ -3581,7 +3581,7 @@ impl<'a> LinkerContext<'a> {
                 .graph
                 .symbols
                 .get_const(tracker.import_ref)
-                .is_some_and(|s| s.import_item_status == ImportItemStatus::Generated)
+                .is_some_and(|s| s.import_item_status.get() == ImportItemStatus::Generated)
                 && self.graph.meta.items_resolved_exports()[other_id as usize]
                     .get(b"default")
                     .is_some())
@@ -3845,10 +3845,8 @@ impl<'a> LinkerContext<'a> {
                         .unwrap();
 
                     if named_import.namespace_ref.is_valid() {
-                        // SAFETY: `named_import` borrows `graph.ast`; the symbol slot is a
-                        // disjoint allocation, so no aliasing with this `&mut`.
-                        let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
-                        symbol.import_item_status = ImportItemStatus::Missing;
+                        let symbol = self.graph.symbol(tracker.import_ref);
+                        symbol.import_item_status.set(ImportItemStatus::Missing);
                         result.kind = MatchImportKind::NormalAndNamespace;
                         result.namespace_ref = tracker.import_ref;
                         result.alias = named_import.alias.expect("infallible: alias present");
@@ -3879,10 +3877,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 ImportTrackerStatus::NoMatch => {
                     // Report mismatched imports and exports
-                    // SAFETY: the mutated symbol slot is disjoint from the later borrows
-                    // (`named_import` from graph.ast, `get_source` from parse_graph,
-                    // `log_disjoint`) — all separate allocations.
-                    let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
+                    let symbol = self.graph.symbol(tracker.import_ref);
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
@@ -3898,7 +3893,7 @@ impl<'a> LinkerContext<'a> {
                         .slice();
 
                     // Report mismatched imports and exports
-                    if symbol.import_item_status == ImportItemStatus::Generated {
+                    if symbol.import_item_status.get() == ImportItemStatus::Generated {
                         // This is a debug message instead of an error because although it
                         // appears to be a named import, it's actually an automatically-
                         // generated named import that was originally a property access on an
@@ -3906,7 +3901,7 @@ impl<'a> LinkerContext<'a> {
                         // just resolve to undefined at run-time instead of failing at binding-
                         // time, so we emit a debug message and rewrite the value to the literal
                         // "undefined" instead of emitting an error.
-                        symbol.import_item_status = ImportItemStatus::Missing;
+                        symbol.import_item_status.set(ImportItemStatus::Missing);
 
                         // A name read off `import()` / `require()` is `undefined`
                         // at run time too, so there is nothing to say.
@@ -4454,17 +4449,14 @@ impl<'a> LinkerContext<'a> {
 
                     // TODO: log locations of the ambiguous exports
 
-                    // SAFETY: the mutated symbol slot is disjoint from `source`/`r`
-                    // (parse_graph), `named_import`/`alias` (arena slices), and
-                    // `log_disjoint` — all separate allocations.
-                    let symbol = unsafe { self.graph.symbol_mut(import_ref) };
+                    let symbol = self.graph.symbol(import_ref);
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
                         .expect("infallible: alias present")
                         .slice();
-                    if symbol.import_item_status == ImportItemStatus::Generated {
-                        symbol.import_item_status = ImportItemStatus::Missing;
+                    if symbol.import_item_status.get() == ImportItemStatus::Generated {
+                        symbol.import_item_status.set(ImportItemStatus::Missing);
                         self.log_disjoint().add_range_warning_fmt(
                             Some(source), r,
                             format_args!(

@@ -3044,43 +3044,27 @@ pub struct RuntimeHooks {
     pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(vm: *mut VirtualMachine),
 }
 
-/// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
-/// half of `bun_io`'s cycle-break manual vtable. Every slot is implementable
-/// from in-crate data,
-/// so this is the single fully-populated instance; `aio::get_vm_ctx(.Js)` and
-/// the websocket-client adapters resolve to it.
-/// Recover `&mut VirtualMachine` from the erased vtable `owner`. Private to
-/// this module — every caller is an `unsafe fn` slot in
-/// [`VM_EVENT_LOOP_CTX_VTABLE`] whose contract guarantees `owner` was erased
-/// from a live `*mut VirtualMachine` in [`VirtualMachine::event_loop_ctx`].
-#[inline(always)]
-fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
-    // SAFETY: vtable contract — `owner` is a live `*mut VirtualMachine`.
-    unsafe { &mut *owner.cast::<VirtualMachine>() }
-}
-
 bun_io::link_impl_EventLoopCtx! {
     Js for VirtualMachine => |this| {
-        platform_event_loop_ptr() => vm_from_owner(this.cast()).uws_loop(),
+        platform_event_loop_ptr() => (*this).uws_loop(),
         file_polls_ptr() => {
-            let rare = vm_from_owner(this.cast()).rare_data();
+            let rare = (*this).rare_data();
             &raw mut **rare.file_polls.get_or_insert_with(|| Box::new(bun_io::Store::init()))
         },
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick`.
-        // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
+        // Do NOT mint a `&mut VM`, which
         // would alias the JS thread's `&mut`. Atomic RMW through a shared ref.
         increment_pending_unref_counter() => {
             (*this)
                 .pending_unref_counter
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         },
-        after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
+        after_event_loop_callback() => (*this).after_event_loop_callback,
         set_after_event_loop_callback(cb, ctx) => {
-            let vm = vm_from_owner(this.cast());
-            vm.after_event_loop_callback = cb;
-            vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
+            (*this).after_event_loop_callback = cb;
+            (*this).after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
         },
-        pipe_read_scratch() => &raw const *(*vm_from_owner(this.cast()).rare_data_ptr()).pipe_read_scratch,
+        pipe_read_scratch() => &raw const *(*(*this).rare_data_ptr()).pipe_read_scratch,
     }
 }
 

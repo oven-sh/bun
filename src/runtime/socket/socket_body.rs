@@ -841,20 +841,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         // The selected context: a native SecureContext (a +1 reference that
         // us_socket_sni_resolve consumes) or null to fall through to the
         // listener's default context.
-        let ctx_ptr = if !is_error {
-            if let Some(sc) = context
+        let ctx = if !is_error {
+            context
                 .to_js()
                 .as_class_ref::<crate::api::bun_secure_context::SecureContext>()
-            {
-                sc.ctx.clone().into_raw()
-            } else {
-                core::ptr::null_mut()
-            }
+                .map(|sc| sc.ctx.clone())
         } else {
-            core::ptr::null_mut()
+            None
         };
-        install_sni_alpn_selector(ctx_ptr);
-        socket.sni_resolve(ctx_ptr, is_error);
+        install_sni_alpn_selector(
+            ctx.as_ref()
+                .map_or(ptr::null_mut(), boringssl_sys::OwnedSslCtx::as_ptr),
+        );
+        socket.sni_resolve(ctx, is_error);
     }
 
     pub(crate) fn handle_error(&self, err_value: JSValue) -> JsResult<()> {

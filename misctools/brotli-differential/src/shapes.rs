@@ -1703,6 +1703,38 @@ pub fn run_large_limit(seed: u64, qualities: u64) {
     println!("ok: params {:?}, limit {limit}, dictionaries {total}, {within} of 200 pieces within reach, {} -> {}", case.params, case.data.len(), out.len());
 }
 
+/// Qualities 10 and 11 try other values of NPOSTFIX and NDIRECT for each meta-block, as long as they have a code for every
+/// distance in it. With NPOSTFIX 0 the largest one is 2^26 - 4 + NDIRECT, which the encoder compares to a distance plus 15.
+/// Here one copy, from the first of two dictionaries, is as far away as NDIRECT 1 to 15 allows, or a byte more or less.
+pub fn run_distance_params(seed0: u64, iters: u64, qualities: u64) {
+    let qs = crate::args::qualities(qualities, 10..12);
+    let mut totals = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let n = rng.range(200, 30_000);
+        let mut data = if rng.chance(1, 2) { crate::ring::records(&mut rng, n) } else { crate::ring::words(&mut rng, n) };
+        let first: Vec<u8> = (0..1 << 16).map(|_| rng.next() as u8).collect();
+        // Every other value is only tried after 1.
+        let ndirect = if rng.chance(1, 2) { 1 } else { rng.range(1, 15) };
+        let distance = (1 << 26) - 19 + ndirect + if rng.chance(1, 2) { 1 } else { rng.below(3) } - 1;
+        let offset = rng.below(60_000);
+        // The distance of a byte of the first dictionary is the position, plus both dictionaries, less its offset.
+        let total = distance + offset - data.len();
+        data.extend_from_slice(&first[offset..offset + rng.range(32, 64)]);
+        let dicts = vec![first, vec![0; total - (1 << 16)]];
+        let case = EncCase { data, params: vec![(1, q), (2, rng.range(16, 24) as u32)], dicts, schedule: 0, misuse: false };
+        let out = enc::compare(&case).unwrap_or_else(|e| panic!("seed {seed} params {:?} distance {distance}: {e}", case.params));
+        if let Err(e) = enc::round_trip(&out, &case.data, &case.dicts, false, 0) {
+            panic!("seed {seed} params {:?} distance {distance}: {e}", case.params);
+        }
+        totals.0 += case.data.len();
+        totals.1 += out.len();
+    }
+    println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
+}
+
 /// The input ends with a few bytes that a dictionary has too, followed there by zeros. The encoder looks a position up in a
 /// dictionary by 5 bytes. With fewer left it takes the bytes after the end of the input, which it has cleared, and so finds
 /// a copy that is shorter than any it finds elsewhere. Only qualities 10 and 11 still look for a copy at the last 4 bytes.

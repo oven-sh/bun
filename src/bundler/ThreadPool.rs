@@ -66,6 +66,15 @@ pub struct ThreadPool {
     pub(crate) v2: *const BundleV2<'static>,
 }
 
+// SAFETY: tasks on the pool's threads share `&ThreadPool`. What is not `Sync` on its own:
+// - `worker_pool`. Only `init` and `deinit(&mut self)` write it. Under `&self` it is dereferenced
+//   only as `&ThreadPoolLib::ThreadPool`, which is `Sync`.
+// - `workers_assignments`. The map is behind its `Guarded` lock, and `get_worker_slow` takes out
+//   only the `*mut Worker` of the calling thread.
+// - `v2`. Only `init` writes it. `get_worker_slow` stores it as the `ctx` of a new `Worker`; what
+//   a worker reads through `ctx` is not covered here (`BundleV2` is not `Sync`).
+unsafe impl Sync for ThreadPool {}
+
 impl ThreadPool {
     /// Inherent associated type so call sites that wrote
     /// `ThreadPool::Worker::get(pool)`

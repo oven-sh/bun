@@ -1435,6 +1435,8 @@ impl CommandLineReporter {
         Output::flush();
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
+        // `--bail` exits without running the hooks that are left, so nothing else stops what the tests spawned.
+        bun_test::Execution::report_killed_processes(vm.auto_killer.kill().processes);
 
         vm.exit_handler.exit_code = 1;
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);

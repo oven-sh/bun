@@ -294,7 +294,7 @@ pub(crate) fn spawn_sync(
         &mut bun_test_deadline,
     );
     // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
-    if let Some(deadline) = bun_test_deadline
+    if bun_test_deadline.is_some()
         && result.is_ok()
         && !cx.global().has_exception()
         && let Some(runner) = crate::test_runner::jest::Jest::runner()
@@ -302,11 +302,7 @@ pub(crate) fn spawn_sync(
     {
         let vm = cx.vm().as_mut();
         runner.remove_active_timeout(vm);
-        crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
-            &active_file,
-            &deadline,
-            vm,
-        );
+        crate::test_runner::bun_test::BunTest::bun_test_timeout_in_spawn_sync(&active_file, vm);
         if cx.global().has_exception() {
             return Ok(JSValue::ZERO);
         }

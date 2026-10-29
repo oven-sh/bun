@@ -102,6 +102,8 @@ pub struct EventLoop {
     pub uws_loop: Option<NonNull<uws::Loop>>,
 
     pub entered_event_loop_count: isize,
+    /// [`Self::wait_for_promise`] calls on the stack. Each is a frame that turns this loop itself and returns only when its promise settles.
+    pub waits_in_place: u32,
     /// How many times `tasks` was drained. One uws loop iteration drains it several times, so a
     /// `fetch` can start and finish within one iteration. Atomic because a Worker may read it.
     task_drains: AtomicU64,
@@ -147,6 +149,7 @@ impl Default for EventLoop {
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
             uws_loop: None,
             entered_event_loop_count: 0,
+            waits_in_place: 0,
             task_drains: AtomicU64::new(0),
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
@@ -1216,19 +1219,23 @@ impl EventLoop {
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
         }
+        self.waits_in_place += 1;
+        let mut waited = Ok(());
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
                 || self.global_ref().has_pending_termination_exception()
             {
-                return Err(jsc::Stopped);
+                waited = Err(jsc::Stopped);
+                break;
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
         }
-        Ok(())
+        self.waits_in_place -= 1;
+        waited
     }
 
     pub fn wakeup(&self) {

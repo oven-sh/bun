@@ -510,7 +510,7 @@ pub struct Resolver<'a> {
     pub env_loader: Option<NonNull<DotEnv::Loader>>,
     pub store_fd: bool,
 
-    pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
+    pub standalone_module_graph: Option<&'static dyn StandaloneModuleGraph>,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -606,10 +606,8 @@ impl<'a> Resolver<'a> {
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
     ///
     /// # Safety
-    /// `from`'s `standalone_module_graph` / `env_loader` borrow data that
-    /// outlives the returned resolver (process-lifetime singletons in every
-    /// caller). The lifetime is widened from `'from` to `'a` here; callers
-    /// must uphold that the borrowed data outlives `'a`.
+    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
+    /// loader that `from.env_loader` points to must outlive `'a`.
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
         log: NonNull<bun_ast::Log>,
@@ -636,16 +634,7 @@ impl<'a> Resolver<'a> {
             on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
             store_fd: from.store_fd,
-            // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
-            // vtable layout is identical (only the borrow-checker tag differs);
-            // a raw-pointer `as`-cast cannot change the `+ 'b` bound, so widen
-            // via a layout-preserving transmute on the `Option<&dyn>`.
-            standalone_module_graph: unsafe {
-                core::mem::transmute::<
-                    Option<&'_ dyn StandaloneModuleGraph>,
-                    Option<&'a dyn StandaloneModuleGraph>,
-                >(from.standalone_module_graph)
-            },
+            standalone_module_graph: from.standalone_module_graph,
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,

@@ -505,6 +505,13 @@ export const TestNodeOptions = b.dictionary(
 export const TestBareOptions = b.dictionary({ size: b.u32.validateInteger(1, 10).optional }, { reportedAs: "" });
 export const nodeOptionsSize = b.fn({ args: { options: TestNodeOptions }, returns: b.u32.optional });
 export const bareOptionsSize = b.fn({ args: { options: TestBareOptions }, returns: b.u32.optional });
+/** `length` is a second name of `size`, and `scale` of `ratio`. */
+export const TestExclusive = b.dictionary({
+  size: { type: b.u8.optional, altNames: ["length"], exclusive: true },
+  ratio: { type: b.f64.optional, altNames: ["scale"], exclusive: true, expected: ["number"] },
+  last: b.u8.optional,
+});
+export const exclusiveEcho = b.fn({ args: { options: TestExclusive }, returns: TestExclusive });
 
 export const timeValue = b.fn({ args: { time: b.f64.allowDate }, returns: b.f64 });
 /** "none" without the argument. `undefined` is converted, to "undefined". */

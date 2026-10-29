@@ -23,6 +23,7 @@ import {
   isIfPassed,
   kindTests,
   LocalStringType,
+  type Member,
   memberIdentifier,
   type Method,
   type ModuleDefinition,
@@ -583,11 +584,12 @@ function cppContext(
 function cppSourceForDictionary(type: DictionaryType): string {
   if (!type.accepted) return "";
   let nameIndex = 0;
-  const members = type.members.map((member, i) => {
-    const [first, ...others] = member.names.map(
+  /** Reads `names` in order while the value is `undefined`, and converts what it finds as `names[0]`. `refusal` is C++ that runs ahead of the conversion of a value that is not `undefined`. */
+  const readMember = (member: Member, i: number, names: readonly string[], refusal?: string) => {
+    const [first, ...others] = names.map(
       () => `members.get(${nameIndex++});\n${cppReturnIfFailed(`!!value${i}`, "false")}`,
     );
-    const qualified = type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name;
+    const qualified = type.reportedAs ? `${type.reportedAs}.${names[0]}` : names[0];
     const lines: string[] = [];
     const ctx = cppContext(lines, i, qualified, member.expected, `value${i}`);
     lines.push(
@@ -599,8 +601,25 @@ function cppSourceForDictionary(type: DictionaryType): string {
     ${ctx}.throwRequired(*globalObject, scope);
     return false;
 }`);
-    lines.push(member.type.cppConvertInto(`result.${member.fieldName}`, `value${i}`, ctx, qualified, "false"));
+    const convert = member.type.cppConvertInto(`result.${member.fieldName}`, `value${i}`, ctx, qualified, "false");
+    lines.push(refusal ? `if (!value${i}.isUndefined()) {\n${indent(`${refusal}\n${convert}`, 4)}\n}` : convert);
     return `    {\n${indent(lines.join("\n"), 8)}\n    }`;
+  };
+  const members = type.members.flatMap((member, i) => {
+    if (!member.exclusive) return readMember(member, i, member.names);
+    const [first, second] = member.names;
+    return [
+      readMember(member, i, [first]),
+      readMember(
+        member,
+        i,
+        [second],
+        `if (result.${member.fieldName}) [[unlikely]] {
+    Bun::ERR::INCOMPATIBLE_OPTION_PAIR(scope, globalObject, ${asciiLiteral(first)}, ${asciiLiteral(second)});
+    return false;
+}`,
+      ),
+    ];
   });
   const count = type.names.length;
   return `
@@ -2473,7 +2492,8 @@ export function dts(files: readonly SchemaFile[]): string {
   const declarations = files.flatMap(file =>
     file.types.map(type => {
       if (type instanceof DictionaryType) {
-        return `  interface ${type.name} {\n${type.members.map(m => member(m.name, m.type.takesUndefined, m.type.tsType)).join("\n")}\n  }`;
+        const names = (m: Member) => (m.exclusive ? m.names : [m.name]);
+        return `  interface ${type.name} {\n${type.members.flatMap(m => names(m).map(name => member(name, m.type.takesUndefined, m.type.tsType))).join("\n")}\n  }`;
       }
       if (!(type instanceof ClassType)) return "";
       return `  interface ${type.name}${type.base ? ` extends ${type.base.name}` : ""} {

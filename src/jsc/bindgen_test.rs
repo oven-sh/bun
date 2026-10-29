@@ -10,11 +10,11 @@ use crate::bindgen::{
 };
 use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
-    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
-    TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
-    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
-    js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
-    js_TestSquare,
+    TestChoice, TestColor, TestColorOrRest, TestExclusive, TestFailure, TestFlag, TestHandle,
+    TestNames, TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho,
+    TestOtherAsNullOptions, TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError,
+    js_TestMemberFunctions, js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
+    js_TestShape, js_TestSquare,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -969,6 +969,14 @@ pub(crate) fn node_options_size(options: &TestNodeOptions) -> Option<u32> {
 
 pub(crate) fn bare_options_size(options: &TestBareOptions) -> Option<u32> {
     options.size
+}
+
+pub(crate) fn exclusive_echo(options: &TestExclusive) -> TestExclusive {
+    TestExclusive {
+        size: options.size,
+        ratio: options.ratio,
+        last: options.last,
+    }
 }
 
 pub(crate) fn time_value(time: f64) -> f64 {

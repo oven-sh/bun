@@ -2484,8 +2484,14 @@ export interface MemberOptions {
   type: Type;
   /** Name of the field in the Rust struct, and in the C++ one that mirrors it. Defaults to the JS name in snake_case. */
   rustName?: string;
-  /** Other JS names, tried in order while the value is `undefined`. */
+  /** Other JS names, tried in order while the value is `undefined`. What any of them holds is reported under the member's own name. */
   altNames?: readonly string[];
+  /**
+   * The one name in `altNames` is a second name that Node gives the option, as `cost` is of scrypt's `N`. Both are read,
+   * and each is converted and reported under its own name. An object that gives both throws
+   * `ERR_INCOMPATIBLE_OPTION_PAIR` when the second is read, before it is converted.
+   */
+  exclusive?: boolean;
   /** As a function's `expected`, for this member. */
   expected?: readonly string[] | string;
 }
@@ -2496,6 +2502,7 @@ export class Member {
   readonly fieldName: string;
   readonly type: Type;
   readonly expected?: readonly string[] | string;
+  readonly exclusive: boolean;
   constructor(name: string, spec: Type | MemberOptions) {
     const options: MemberOptions = spec instanceof Type ? { type: spec } : spec;
     this.names = [name, ...(options.altNames ?? [])];
@@ -2508,6 +2515,16 @@ export class Member {
     assert(options.expected === undefined || options.expected.length > 0, `expected: ${name} expects nothing`);
     if (options.expected !== undefined) refuseExpectedOfRange(name, options.type);
     this.expected = options.expected;
+    this.exclusive = options.exclusive ?? false;
+    assert(!this.exclusive || this.names.length === 2, `exclusive: ${name} has one other name in altNames`);
+    // The converter asks the field whether the first name filled it, which a std::optional answers.
+    assert(
+      !this.exclusive ||
+        (this.type instanceof OptionalType &&
+          this.type.modifier === "optional" &&
+          this.type.inner.nullRepresentation === "optional"),
+      `exclusive: ${name} is .optional, and not a string, bytes, an instance or a JS value`,
+    );
   }
   get name(): string {
     return this.names[0];
@@ -2591,6 +2608,10 @@ export class DictionaryType extends NamedType {
   }
   get refuses(): string | null {
     return this.nonObjectAsEmpty ? null : nonObjects;
+  }
+  /** An object that gives both names of an `exclusive` member is refused, whatever the member's type takes. */
+  get canRefuse(): boolean {
+    return super.canRefuse || this.members.some(member => member.exclusive);
   }
   get borrowedByBody(): boolean {
     return true;

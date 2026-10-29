@@ -707,16 +707,6 @@ pub(crate) struct Argon2<Bytes> {
 
 impl Scrypt {
     fn new(global: &JSGlobalObject, keylen: u32, options: &ScryptOptions) -> JsResult<Self> {
-        if options.n.is_some() && options.cost.is_some() {
-            return Err(global.throw_incompatible_option_pair(b"N", b"cost"));
-        }
-        if options.r.is_some() && options.block_size.is_some() {
-            return Err(global.throw_incompatible_option_pair(b"r", b"blockSize"));
-        }
-        if options.p.is_some() && options.parallelization.is_some() {
-            return Err(global.throw_incompatible_option_pair(b"p", b"parallelization"));
-        }
-
         const N_DEFAULT: u32 = 16384;
         const R_DEFAULT: u32 = 8;
         const P_DEFAULT: u32 = 1;
@@ -725,9 +715,9 @@ impl Scrypt {
         let or_default = |value: Option<u32>, default| value.filter(|&n| n != 0).unwrap_or(default);
 
         let ctx = Scrypt {
-            n: or_default(options.n.or(options.cost), N_DEFAULT),
-            r: or_default(options.r.or(options.block_size), R_DEFAULT),
-            p: or_default(options.p.or(options.parallelization), P_DEFAULT),
+            n: or_default(options.n, N_DEFAULT),
+            r: or_default(options.r, R_DEFAULT),
+            p: or_default(options.p, P_DEFAULT),
             maxmem: options
                 .maxmem
                 .filter(|&maxmem| maxmem != 0)
@@ -1070,8 +1060,15 @@ pub(crate) fn scrypt_with_defaults<'a>(
     password: StringOrJsBytes<'a>,
     salt: StringOrJsBytes<'a>,
     keylen: u32,
-    callback: JsLocal<'a, Callable>,
+    callback: JsLocal<'a>,
 ) -> JsResult<()> {
+    let Some(callback) = callback.as_callable() else {
+        return Err(cx.global().throw_invalid_argument_type_value(
+            b"callback",
+            b"function",
+            callback.to_js(),
+        ));
+    };
     scrypt(
         cx,
         password,

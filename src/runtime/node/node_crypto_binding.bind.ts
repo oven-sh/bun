@@ -37,14 +37,12 @@ const randomUUID = {
 } as const;
 
 const optionalUint32 = b.u32.validateInteger().optional;
+/** Node refuses the second name of an option where it reads it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/scrypt.js#L91-L100 */
 export const ScryptOptions = b.dictionary(
   {
-    N: optionalUint32,
-    cost: optionalUint32,
-    r: optionalUint32,
-    blockSize: optionalUint32,
-    p: optionalUint32,
-    parallelization: optionalUint32,
+    N: { type: optionalUint32, altNames: ["cost"], exclusive: true },
+    r: { type: optionalUint32, altNames: ["blockSize"], exclusive: true },
+    p: { type: optionalUint32, altNames: ["parallelization"], exclusive: true },
     maxmem: b.u64.validateInteger().optional,
   },
   { allowArray: true, nonObjectAsEmpty: true, reportedAs: "" },
@@ -154,15 +152,17 @@ export const crypto = b.namespace({
   getHashes: { returns: b.array(b.string.utf8) },
   scrypt: [
     {
-      args: { ...passwordAndSaltHandles, keylen, options: ScryptOptions, callback: b.callable },
+      /** `.default({})` so that an `undefined` fourth argument does not choose the other overload. */
+      args: { ...passwordAndSaltHandles, keylen, options: ScryptOptions.default({}), callback: b.callable },
       expected: { ...passwordAndSaltNames, callback: ["function"] },
       rustPath: "crate::node::crypto::scrypt",
       length: 5,
       ...js,
     },
+    /** Without a fifth argument the fourth is the callback, whatever it is: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/scrypt.js#L40-L44. The body reports one that is no function. */
     {
-      args: { ...passwordAndSaltHandles, keylen, callback: b.callable },
-      expected: { ...passwordAndSaltNames, callback: ["function"] },
+      args: { ...passwordAndSaltHandles, keylen, callback: b.any },
+      expected: passwordAndSaltNames,
       rustPath: "crate::node::crypto::scrypt_with_defaults",
       ...js,
     },

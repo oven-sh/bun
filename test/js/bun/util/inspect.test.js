@@ -1667,6 +1667,30 @@ describe("printing a Map or Set iterator does not run it", () => {
     expect(Bun.inspect(values, { compact: true })).toBe("MapIterator { [Circular] }");
     expect(Bun.inspect(holder, { compact: true })).toBe('Map(1) { "self": MapIterator { [Circular] } }');
     expect(values.next()).toEqual({ value: values, done: false });
+
+    const set = new Set();
+    const members = set.values();
+    set.add(members);
+    expect(Bun.inspect(members, { compact: true })).toBe("SetIterator { [Circular] }");
+    expect(Bun.inspect(set, { compact: true })).toBe("Set(1) { SetIterator { [Circular] } }");
+    expect(members.next()).toEqual({ value: members, done: false });
+
+    const pairs = new Set();
+    const entries = pairs.entries();
+    pairs.add(entries);
+    expect(Bun.inspect(entries, { compact: true })).toBe("SetIterator { [ [Circular], [Circular] ] }");
+  });
+
+  it("without a depth limit the print of such an iterator still ends", () => {
+    const holder = new Map();
+    const values = holder.values();
+    holder.set("self", values);
+    expect(Bun.inspect(values, { compact: true, depth: Infinity })).toBe("MapIterator { [Circular] }");
+
+    const set = new Set();
+    const members = set.values();
+    set.add(members);
+    expect(Bun.inspect(members, { compact: true, depth: Infinity })).toBe("SetIterator { [Circular] }");
   });
 
   it("the entries are read before the first one is formatted", () => {
@@ -1682,6 +1706,42 @@ describe("printing a Map or Set iterator does not run it", () => {
     changing.set("second", 2);
     expect(Bun.inspect(iterator, { compact: true })).toBe('MapIterator { [ "first", custom ], [ "second", 2 ] }');
     expect([...iterator].map(entry => entry[0])).toEqual(["second", "added"]);
+  });
+
+  // The collection drops the later entries while the first one is formatted, so only the copy holds them.
+  it("entries that the collection dropped during the print survive a collection", () => {
+    const sinks = {
+      "Bun.inspect": iterator => Bun.inspect(iterator),
+      "Bun.inspect.table": iterator => Bun.inspect.table(iterator),
+      "AggregateError.errors": iterator => Bun.inspect(Object.assign(new AggregateError([]), { errors: iterator })),
+    };
+    // More than a MarkedArgumentBuffer holds inline.
+    const count = 40;
+    const formatted = {};
+    for (const sink in sinks) {
+      for (const drop of ["clear", "delete"]) {
+        const dropping = new Map();
+        // Made before the first set(), so the iterator does not keep a table of its own alive.
+        const iterator = dropping.entries();
+        const seen = [];
+        for (let i = 0; i < count; i++) {
+          dropping.set(i, {
+            [Bun.inspect.custom]() {
+              if (i === 0) {
+                if (drop === "clear") dropping.clear();
+                else for (let j = 1; j < count; j++) dropping.delete(j);
+                Bun.gc(true);
+              }
+              seen.push(i);
+              return "entry" + i;
+            },
+          });
+        }
+        sinks[sink](iterator);
+        formatted[`${sink}, ${drop}`] = seen.length;
+      }
+    }
+    expect(formatted).toEqual(Object.fromEntries(Object.keys(formatted).map(key => [key, count])));
   });
 
   it("an entry that throws when it is formatted leaves the iterator where it is", () => {
@@ -1723,6 +1783,17 @@ describe("printing a Map or Set iterator does not run it", () => {
     growing.add(2);
     expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 2 }");
     expect(iterator.next()).toEqual({ value: 2, done: false });
+  });
+
+  it("a matcher that fails leaves the iterator its entries", () => {
+    const left = {};
+    for (const matcher of ["toBeNull", "toBeUndefined", "toBeFalsy", "toBeInstanceOf"]) {
+      const iterator = new Map([[1, 2]]).entries();
+      expect(() => expect(iterator)[matcher](Array)).toThrow();
+      left[matcher] = [...iterator];
+    }
+    const kept = [[1, 2]];
+    expect(left).toEqual({ toBeNull: kept, toBeUndefined: kept, toBeFalsy: kept, toBeInstanceOf: kept });
   });
 
   it("what has to iterate still iterates", () => {
@@ -1793,6 +1864,18 @@ describe("printing a Map or Set iterator does not run it", () => {
         "Bun.inspect": it => Bun.inspect(it),
         "Bun.inspect.table": it => Bun.inspect.table(it),
         "AggregateError.errors": it => Bun.inspect(Object.assign(new AggregateError([]), { errors: it })),
+        "console.error of an error that holds it": it => console.error(Object.assign(new Error("holder"), { held: it })),
+        // No print in the program: native code formats the value for the message of an error.
+        "a rejected argument": it => {
+          try {
+            require("node:fs").openSync("/", it);
+          } catch {}
+        },
+        "a rejected encoding": it => {
+          try {
+            require("node:crypto").createHash("sha1").setDefaultEncoding(it);
+          } catch {}
+        },
       };
       const usedUp = [];
       for (const sink in sinks) {

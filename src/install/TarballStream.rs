@@ -205,7 +205,7 @@ impl TarballStream {
         let lockfile_github_tag = tarball.github_resolved.slice();
         let resolved_github_dirname: &'static [u8] =
             if tarball.resolution.tag == ResolutionTag::Github && !lockfile_github_tag.is_empty() {
-                FileSystem::instance()
+                FileSystem::get()
                     .dirname_store()
                     .append(lockfile_github_tag)
                     .expect("unreachable")
@@ -645,7 +645,7 @@ impl Extraction {
             #[cfg(windows)]
             {
                 let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
-                self.resolved_github_dirname = FileSystem::instance()
+                self.resolved_github_dirname = FileSystem::get()
                     .dirname_store()
                     .append(&result)
                     .expect("unreachable");
@@ -653,7 +653,7 @@ impl Extraction {
             #[cfg(not(windows))]
             {
                 // bun.asByteSlice(root) — on posix OSPathChar==u8, so this is a no-op cast.
-                self.resolved_github_dirname = FileSystem::instance()
+                self.resolved_github_dirname = FileSystem::get()
                     .dirname_store()
                     .append(root)
                     .expect("unreachable");

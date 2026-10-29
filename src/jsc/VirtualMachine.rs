@@ -534,12 +534,12 @@ pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::Standalone
 /// InternalModuleRegistry::generateModule: ahead-of-time bytecode for internal module `id` from a `bun build --compile`
 /// executable (process-lifetime bytes JSC may alias), if this process is one and it carries it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
+pub extern "C" fn Bun__standaloneInternalModuleBytecode(
     _vm: *mut c_void,
     id: u32,
-    bytes: *mut *const u8,
-    size: *mut usize,
-    entry_offset: *mut u32,
+    bytes: &mut *const u8,
+    size: &mut usize,
+    entry_offset: &mut u32,
 ) -> bool {
     let Some(graph) = standalone_module_graph() else {
         return false;
@@ -547,12 +547,10 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
     let Some((found, found_entry_offset)) = graph.builtin_module_bytecode(id) else {
         return false;
     };
-    // SAFETY: out-params supplied by the C++ caller; `found` points into the executable's mapped section.
-    unsafe {
-        *bytes = found.cast::<u8>();
-        *size = found.len();
-        *entry_offset = found_entry_offset;
-    }
+    // `found` points into the executable's mapped section.
+    *bytes = found.cast::<u8>();
+    *size = found.len();
+    *entry_offset = found_entry_offset;
     true
 }
 
@@ -568,7 +566,7 @@ pub extern "C" fn Bun__hasStandaloneModuleGraph() -> bool {
 pub unsafe extern "C" fn Bun__standaloneModuleKey(
     name: *const u8,
     len: usize,
-    out_len: *mut usize,
+    out_len: &mut usize,
 ) -> *const u8 {
     // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
     let name = unsafe { bun_core::ffi::slice(name, len) };
@@ -578,8 +576,7 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
         Some(canonical) => {
             let canonical = crate::compiled_program::entry_module_key(canonical);
-            // SAFETY: `out_len` is the caller's writable out-parameter.
-            unsafe { *out_len = canonical.len() };
+            *out_len = canonical.len();
             canonical.as_ptr()
         }
         None => core::ptr::null(),
@@ -599,11 +596,11 @@ pub unsafe extern "C" fn Bun__standaloneModuleHasModuleInfo(name: *const u8, len
 /// The executable's pre-resolved module graph blob and module-info slot table (`JSVMClientData::prelinkedModuleGraph`);
 /// false when there is none. Both spans live as long as the process.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standalonePrelinkedModuleGraph(
-    blob: *mut *const u8,
-    blob_len: *mut usize,
-    slot_table: *mut *const u8,
-    slot_table_len: *mut usize,
+pub extern "C" fn Bun__standalonePrelinkedModuleGraph(
+    blob: &mut *const u8,
+    blob_len: &mut usize,
+    slot_table: &mut *const u8,
+    slot_table_len: &mut usize,
 ) -> bool {
     let Some((graph, slots)) =
         standalone_module_graph().map(|graph| graph.prelinked_module_graph())
@@ -613,13 +610,10 @@ pub unsafe extern "C" fn Bun__standalonePrelinkedModuleGraph(
     if graph.is_empty() || slots.is_empty() {
         return false;
     }
-    // SAFETY: the caller's writable out-parameters.
-    unsafe {
-        *blob = graph.as_ptr();
-        *blob_len = graph.len();
-        *slot_table = slots.as_ptr();
-        *slot_table_len = slots.len();
-    }
+    *blob = graph.as_ptr();
+    *blob_len = graph.len();
+    *slot_table = slots.as_ptr();
+    *slot_table_len = slots.len();
     true
 }
 
@@ -636,14 +630,10 @@ pub unsafe extern "C" fn Bun__standalonePrelinkedModuleIndex(name: *const u8, le
 
 /// The module key (canonical embedded name) of graph module `index`; null if out of range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standalonePrelinkedModuleName(
-    index: u32,
-    out_len: *mut usize,
-) -> *const u8 {
+pub extern "C" fn Bun__standalonePrelinkedModuleName(index: u32, out_len: &mut usize) -> *const u8 {
     match standalone_module_graph().and_then(|graph| graph.prelinked_module_name(index)) {
         Some(name) => {
-            // SAFETY: `out_len` is the caller's writable out-parameter.
-            unsafe { *out_len = name.len() };
+            *out_len = name.len();
             name.as_ptr()
         }
         None => core::ptr::null(),

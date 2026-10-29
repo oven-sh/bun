@@ -770,24 +770,16 @@ pub unsafe extern "C" fn Bun__VmHandle__wake(r: *const Shared) {
 }
 
 /// Any thread: Node's `can_call_into_js()`.
-///
-/// # Safety
-/// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__scriptAllowed(r: *const Shared) -> bool {
-    // SAFETY: fn contract.
-    unsafe { VmHandle::borrow_ref(r) }.script_allowed()
+pub extern "C" fn Bun__VmHandle__scriptAllowed(r: &Shared) -> bool {
+    r.state() == State::Open
 }
 
 /// The address of this handle's state byte, for C++ to test
 /// `*addr == BUN_VM_HANDLE_STATE_OPEN` inline on its native→JS entries.
-///
-/// # Safety
-/// `r` is a live reference.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__stateAddress(r: *const Shared) -> *const AtomicU8 {
-    // SAFETY: fn contract; `hot.state` lives in the Arc payload `r` points at.
-    unsafe { &raw const (*r).hot.state }
+pub extern "C" fn Bun__VmHandle__stateAddress(r: &Shared) -> *const AtomicU8 {
+    &raw const r.hot.state
 }
 
 // C++ (BunClientData.h) hard-codes this value.

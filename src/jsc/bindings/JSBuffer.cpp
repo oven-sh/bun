@@ -2861,6 +2861,12 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_inspect, (JSGlobalObject * le
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_inspectBody>(*lexicalGlobalObject, *callFrame, "inspect");
 }
 
+bool isInspectFunctionOfBuffer(JSValue value)
+{
+    auto* function = dynamicDowncast<JSFunction>(value);
+    return function && function->isHostFunction() && function->nativeFunction() == JSC::toTagged(jsBufferPrototypeFunction_inspect);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_lastIndexOfBody>(*lexicalGlobalObject, *callFrame, "lastIndexOf");

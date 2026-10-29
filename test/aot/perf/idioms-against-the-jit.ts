@@ -11,7 +11,8 @@
 // process: the same at any load. A cost under half an instruction counts as half. Collections and the most memory resident are those of the long run.
 //
 // --out writes a row an idiom; --against reads such a file of an earlier build and lists what came under the JIT's instructions, what went over them, and what a compiled form gained
-// or lost by over 10% and 3 instructions, and where the JIT's own number moved. --write-behind rewrites ./behind-the-jit.<os>-<arch>.json and ./typed-dearer-than-untyped.<os>-<arch>.json, the idioms that ./idioms-against-the-jit.test.ts lists as todo.
+// or lost by over 10% and 3 instructions, and where the JIT's own number moved. --write-behind rewrites ./behind-the-jit.<os>-<arch>.json and ./typed-dearer-than-untyped.<os>-<arch>.json, the idioms that ./idioms-against-the-jit.test.ts lists as todo,
+// and pins in ./everyday-pins.<os>-<arch>.json what each of them takes that has no pin yet.
 // --keep leaves the programs' sources in the folder. Each --build-flag goes to every `bun build --compile --aot`: with --against, what an option of the compiler is worth.
 // --in-a-very-large-program compiles every idiom as its text would be compiled inside a very large program, where little counts as code that runs often, and lets the loop
 // of an idiom of ./everyday find turn() at run time, under the JIT too. --write-behind then rewrites ./behind-the-jit-in-a-very-large-program.<os>-<arch>.json alone.
@@ -24,6 +25,7 @@ import {
   behindPath as behindByDefaultPath,
   type Cost,
   dearerPath,
+  everydayPinsPath,
   idiomsAgainstTheJit,
   isTypedDearer,
   isWhole,
@@ -117,6 +119,15 @@ if (options["write-behind"]) {
         .map(row => [row.name, Math.round(typedOverUntyped(row) * 100) / 100] as const),
     ].sort(([a], [b]) => (a < b ? -1 : 1));
     writeFileSync(dearerPath, JSON.stringify(Object.fromEntries(dearer), null, 2) + "\n");
+    // ./pinned-everyday-idioms.ts holds what a list excuses.
+    const pins: Record<string, { typed: number; untyped: number }> = JSON.parse(readFileSync(everydayPinsPath, "utf8"));
+    const listed = new Set([...behind, ...dearer].map(([name]) => name));
+    const rounded = (count: number) => Math.round(count * 10) / 10;
+    for (const row of whole)
+      if (listed.has(row.name) && row.name.startsWith("everyday-"))
+        pins[row.name] ??= { typed: rounded(row.typed.instructions), untyped: rounded(row.untyped.instructions) };
+    const sorted = Object.fromEntries(Object.entries(pins).sort(([a], [b]) => (a < b ? -1 : 1)));
+    writeFileSync(everydayPinsPath, JSON.stringify(sorted, null, 2) + "\n");
   }
 }
 
@@ -164,7 +175,9 @@ if (options.against) {
   );
   list(
     "went over the JIT",
-    moved.filter(row => row.ratioWas <= lineAgainstTheJit && row.ratioIs > lineAgainstTheJit).sort((a, b) => byGain(b, a)),
+    moved
+      .filter(row => row.ratioWas <= lineAgainstTheJit && row.ratioIs > lineAgainstTheJit)
+      .sort((a, b) => byGain(b, a)),
   );
   list(
     "take over 10% fewer instructions",

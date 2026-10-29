@@ -12,6 +12,8 @@ pub struct BuiltinNames {
     by_atom: FxHashMap<Atom, BuiltinName>,
     by_private_atom: FxHashMap<Atom, BuiltinName>,
     by_symbol_key_atom: FxHashMap<Atom, BuiltinName>,
+    /// The texts for which `Symbol.for` answers a symbol under which native code looks for a method to hand functions of the start-up modules to.
+    texts_of_symbols_for_startup_loads: Box<[Atom]>,
     atoms: Box<[Option<Atom>]>,
 }
 
@@ -54,6 +56,10 @@ impl BuiltinNames {
             by_atom,
             by_private_atom,
             by_symbol_key_atom,
+            texts_of_symbols_for_startup_loads: table::NAMES_OF_METHODS_CALLING_STARTUP_LOADS
+                .iter()
+                .map(|&name| atoms.intern(table::text_of_name(name)))
+                .collect(),
             atoms: name_atoms,
         }
     }
@@ -68,6 +74,10 @@ impl BuiltinNames {
 
     pub fn get_symbol_key(&self, atom: Atom) -> Option<BuiltinName> {
         self.by_symbol_key_atom.get(&atom).copied()
+    }
+
+    pub fn is_text_of_symbol_for_startup_loads(&self, text: Atom) -> bool {
+        self.texts_of_symbols_for_startup_loads.contains(&text)
     }
 
     pub fn atom_of(&self, name: BuiltinName) -> Option<Atom> {

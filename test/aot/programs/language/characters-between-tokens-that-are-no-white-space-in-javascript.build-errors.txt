@@ -1,2 +1,0 @@
-error: TS1127: Invalid character.
-error: TS1134: Variable declaration expected.

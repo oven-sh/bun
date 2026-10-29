@@ -876,7 +876,7 @@ pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
 // the runtime without an upward crate dep. Signatures MUST match the
 // `unsafe extern "C"` block there.
 //
-// All but `ssl` are emitted by `#[uws_callback(export = "...")]` on the
+// All but the three below are emitted by `#[uws_callback(export = "...")]` on the
 // inherent methods above; `ssl` keeps a hand-written shim because the safe
 // method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
 // raw pointer.

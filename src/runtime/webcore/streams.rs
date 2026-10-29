@@ -311,23 +311,20 @@ pub(crate) enum WritableFuture {
 }
 
 impl WritablePending {
-    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> *mut JSPromise {
+    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
         self.state = PendingState::Pending;
 
         match &self.future {
-            WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>(strong.get()),
+            WritableFuture::Promise { strong, .. } => strong.value(),
             _ => {
+                let strong = JSPromiseStrong::init(cx.global());
+                let value = strong.value();
                 self.future = WritableFuture::Promise {
-                    strong: JSPromiseStrong::init(cx.global()),
+                    strong,
                     global: BackRef::new(cx.global()),
                     context: cx.context().id(),
                 };
-                match &self.future {
-                    WritableFuture::Promise { strong, .. } => {
-                        std::ptr::from_mut::<JSPromise>(strong.get())
-                    }
-                    _ => unreachable!(),
-                }
+                value
             }
         }
     }
@@ -401,9 +398,7 @@ impl Writable {
             Writable::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
                 // classification; exclusive borrow scoped to the call.
-                let prom = unsafe { (*pending).promise(cx) };
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                JSPromise::opaque_ref(prom).to_js()
+                unsafe { (*pending).promise(cx) }
             }
         }
     }

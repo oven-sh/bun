@@ -563,8 +563,8 @@ pub unsafe fn enqueue_parse_npm_package(
     name: StringOrTinyString,
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
-    // SAFETY: `network_task` is a freshly-vended pool slot whose `'static`
-    // reborrow matches the `Task<'static>` slot lifetime.
+    // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
+    // before this task is done, which is what the `'static` stands for.
     let network = unsafe { &mut *network_task };
     let task_value = Task::Task {
         package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
@@ -2812,8 +2812,8 @@ pub(crate) fn create_extract_task_for_streaming(
     tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
 ) -> *mut Task::Task<'static> {
-    // SAFETY: `network_task` is a freshly-vended pool slot whose `'static`
-    // reborrow matches the `Task<'static>` slot lifetime.
+    // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
+    // before this task is done, which is what the `'static` stands for.
     let network = unsafe { &mut *network_task };
     let id = network.task_id;
     let task_value = Task::Task {
@@ -3595,10 +3595,6 @@ fn get_or_put_resolved_package(
     match version.tag {
         dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
             // Resolve the version from the loaded NPM manifest
-            // Snapshot the disk-fallback scalars *before* establishing
-            // `this_ptr`: `manifest_disk_cache_ctx` takes `&mut self`, and
-            // materializing `&mut *this_ptr` after `name_str`/`scope` are
-            // derived from it would pop their borrow-stack tags under SB.
             let cache_ctx = this.manifest_disk_cache_ctx();
             let needs_ext = this.options.minimum_release_age_ms.is_some();
             let this_ptr: *mut PackageManager = this;
@@ -3811,10 +3807,9 @@ fn get_or_put_resolved_package(
                 }
             }
 
-            // The callee doesn't touch `this.manifests`, which `manifest` and `find_result` point
-            // into.
             get_or_put_resolved_package_with_find_result(
-                // SAFETY: see `this_ptr` note above.
+                // SAFETY: the callee doesn't touch `this.manifests`, which `manifest` and
+                // `find_result` point into.
                 unsafe { &mut *this_ptr },
                 name_hash,
                 name,

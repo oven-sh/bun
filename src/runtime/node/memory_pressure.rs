@@ -374,7 +374,8 @@ mod windows {
             initial: BOOL,
             name: *const u16,
         ) -> HANDLE;
-        fn SetEvent(h: HANDLE) -> BOOL;
+        /// A bad handle yields `FALSE`.
+        safe fn SetEvent(h: HANDLE) -> BOOL;
         /// A bad handle yields `WAIT_FAILED`.
         safe fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
         fn WaitForMultipleObjects(n: DWORD, h: *const HANDLE, wait_all: BOOL, ms: DWORD) -> DWORD;
@@ -471,8 +472,7 @@ mod windows {
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
         let mut watcher =
             unsafe { bun_core::heap::take(raw.as_ptr().cast::<MemoryPressureWatcher>()) };
-        // SAFETY: FFI; `shutdown` is a valid event owned by `watcher`.
-        unsafe { SetEvent(watcher.shutdown.0) };
+        SetEvent(watcher.shutdown.0);
         if let Some(thread) = watcher.thread.take() {
             let _ = thread.join();
         }

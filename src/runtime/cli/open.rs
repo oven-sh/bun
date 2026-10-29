@@ -374,7 +374,7 @@ impl EditorContext {
     pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         // first: choose from user preference
         // /usr/bin/vim
-        if !self.name.is_empty() && bun_paths::is_absolute(&self.name) {
+        if bun_paths::is_absolute(&self.name) {
             self.editor =
                 Some(Editor::by_name(bun_paths::basename(&self.name)).unwrap_or(Editor::Other));
             self.path.clone_from(&self.name);

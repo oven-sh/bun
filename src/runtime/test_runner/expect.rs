@@ -1301,7 +1301,7 @@ impl Expect {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                // SAFETY: FFI call with valid global, &bun_core::String, host-fn ptr, and JSValue.
+                // SAFETY: `matcher_fn` is a function (checked above), so an object.
                 // C++ takes the function pointer **by value** (`NativeFunctionPtr`), not a
                 // pointer-to-function-pointer — `JSHostFn` already is the
                 // function-pointer type, so pass it directly.
@@ -2806,14 +2806,14 @@ fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> O
 unsafe extern "C" {
     /// `wrapped_fn` must be an object.
     fn Bun__JSWrappingFunction__create(
-        global_this: *const JSGlobalObject,
+        global_this: &JSGlobalObject,
         symbol_name: &bun_core::String,
         // C++: `Bun::NativeFunctionPtr`. Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
     ) -> JSValue;
     /// `this` must be a cell: `asCell()` is not checked.
-    fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: *const JSGlobalObject) -> JSValue;
+    fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: &JSGlobalObject) -> JSValue;
 
     safe fn ExpectMatcherUtils__getSingleton(global_this: &JSGlobalObject) -> JSValue;
 

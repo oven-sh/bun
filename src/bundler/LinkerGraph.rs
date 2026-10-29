@@ -257,8 +257,8 @@ pub struct LinkerGraph<'a> {
 
 // SAFETY: workers share `&LinkerGraph`. What is not `Sync` on its own:
 // - The `MultiArrayList`s. Workers write their columns through `split_raw()` and
-//   `items_raw()`, and each task writes only the rows of its own file or chunk
-//   (see the CONCURRENCY notes on the tasks).
+//   `items_raw()`, and each task writes only the rows of its own file or chunk.
+//   Nothing writes `Part.scopes` or the `symbols` column of `ast` while workers run.
 // - The `BitSet`s, which workers only read.
 // - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.
 //   `LinkerContext::link()` shortens them all with `follow_all()` before workers

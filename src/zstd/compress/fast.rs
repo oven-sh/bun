@@ -578,9 +578,9 @@ impl Finder {
     /// at `ip2` for a repeat. The C code computes hashes and reads the table one position ahead. Here that is left to
     /// the processor: a turn only takes the position and the 8 bytes there, `bytes0`, from the one before.
     ///
-    /// `MLS` and `HLOG` are what `hasher` is made with, or both 0 for any: see [`table_of_size`].
+    /// `HLOG` is how many bits `hasher` gives, or 0 for any: see [`table_of_size`].
     #[inline(never)]
-    fn find_matches<const MLS: u32, const HLOG: u32>(
+    fn find_matches<const HLOG: u32>(
         &mut self,
         hash_table: &mut [u32],
         sink: &mut MatchSink<'_, '_>,
@@ -595,11 +595,7 @@ impl Finder {
             mut rep_offset2,
         } = *self;
         let near = sink.near;
-        let hasher = if HLOG > 0 {
-            Hasher::new(HLOG, MLS)
-        } else {
-            hasher
-        };
+        let hasher = hasher.of_size::<HLOG>();
         let Some(hash_table) = table_of_size::<HLOG>(hash_table) else {
             return;
         };
@@ -708,7 +704,7 @@ impl Finder {
 impl Finder {
     /// `ZSTD_compressBlock_fast_extDict_generic`, which goes about it as [`Self::find_matches`] does.
     #[inline(never)]
-    fn find_matches_ext_dict<const MLS: u32, const HLOG: u32>(
+    fn find_matches_ext_dict<const HLOG: u32>(
         &mut self,
         hash_table: &mut [u32],
         sink: &mut MatchSink<'_, '_>,
@@ -727,11 +723,7 @@ impl Finder {
         let older_len = window.older.len();
         // The index of the first place.
         let origin_index = base_index.wrapping_sub(older_len);
-        let hasher = if HLOG > 0 {
-            Hasher::new(HLOG, MLS)
-        } else {
-            hasher
-        };
+        let hasher = hasher.of_size::<HLOG>();
         let Some(hash_table) = table_of_size::<HLOG>(hash_table) else {
             return;
         };
@@ -863,22 +855,14 @@ pub(crate) fn compress_block_fast(
     let mut sink = MatchSink::new(seq_store, &block);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
     // What the levels come with, for an input of any size.
-    match (ms.c_params.min_match, hlog) {
-        (7, 14) => finder.find_matches::<7, 14>(hash_table, &mut sink),
-        (6, 16) => finder.find_matches::<6, 16>(hash_table, &mut sink),
-        (6, 14) => finder.find_matches::<6, 14>(hash_table, &mut sink),
-        (6, 13) => finder.find_matches::<6, 13>(hash_table, &mut sink),
-        (5, 15) => finder.find_matches::<5, 15>(hash_table, &mut sink),
-        (5, 14) => finder.find_matches::<5, 14>(hash_table, &mut sink),
-        (5, 13) => finder.find_matches::<5, 13>(hash_table, &mut sink),
-        (5, 12) => finder.find_matches::<5, 12>(hash_table, &mut sink),
-        (5, 11) => finder.find_matches::<5, 11>(hash_table, &mut sink),
-        (4, 15) => finder.find_matches::<4, 15>(hash_table, &mut sink),
-        (4, 14) => finder.find_matches::<4, 14>(hash_table, &mut sink),
-        (4, 13) => finder.find_matches::<4, 13>(hash_table, &mut sink),
-        (4, 12) => finder.find_matches::<4, 12>(hash_table, &mut sink),
-        (4, 11) => finder.find_matches::<4, 11>(hash_table, &mut sink),
-        _ => finder.find_matches::<0, 0>(hash_table, &mut sink),
+    match hlog {
+        16 => finder.find_matches::<16>(hash_table, &mut sink),
+        15 => finder.find_matches::<15>(hash_table, &mut sink),
+        14 => finder.find_matches::<14>(hash_table, &mut sink),
+        13 => finder.find_matches::<13>(hash_table, &mut sink),
+        12 => finder.find_matches::<12>(hash_table, &mut sink),
+        11 => finder.find_matches::<11>(hash_table, &mut sink),
+        _ => finder.find_matches::<0>(hash_table, &mut sink),
     }
     let last_literals = sink.last_literals()?;
     restore_rep(
@@ -943,11 +927,14 @@ impl<'a> TaggedTable<'a> {
         })
     }
 
-    /// The place that the table has for the `MLS` first bytes of `bytes`, as many as it was made for. `None` if the tag
-    /// tells that it is for something else, or if it is the first place, which stands for none.
+    /// The place that the table has for `bytes`. `None` if the tag tells that it is for something else, or if it is the
+    /// first place, which stands for none.
+    ///
+    /// `hasher` takes as many bytes as the table was made for. It is that of the table of the input, so that one
+    /// multiplication does for both.
     #[inline(always)]
-    pub(super) fn get<const MLS: u32>(self, bytes: u64) -> Option<u32> {
-        let hash_and_tag = Hasher::new(self.h_bits, MLS).hash(bytes);
+    pub(super) fn get(self, hasher: Hasher, bytes: u64) -> Option<u32> {
+        let hash_and_tag = hasher.with_log(self.h_bits).hash(bytes);
         let index_and_tag = hashed_get(self.table, hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS);
         if !compare_packed_tags(index_and_tag as usize, hash_and_tag) {
             return None;
@@ -962,7 +949,7 @@ impl<'a> TaggedTable<'a> {
 impl Finder {
     /// `ZSTD_compressBlock_fast_dictMatchState_generic`
     #[inline(never)]
-    fn find_matches_dict<const MLS: u32>(
+    fn find_matches_dict(
         &mut self,
         hash_table: &mut [u32],
         sink: &mut MatchSink<'_, '_>,
@@ -979,7 +966,6 @@ impl Finder {
             mut rep_offset2,
         } = *self;
         let near = window.near;
-        let hasher = hasher.with_mls(MLS);
         if hash_table.is_empty() || dict_table.table.is_empty() {
             return;
         }
@@ -1008,7 +994,7 @@ impl Finder {
                 }
 
                 // A match in the dictionary is only taken if there is no candidate in the prefix.
-                if let Some(place) = dict_table.get::<MLS>(bytes0)
+                if let Some(place) = dict_table.get(hasher, bytes0)
                     && window.older.read32(place) == Some(bytes0 as u32)
                     && match_index <= base_index
                 {
@@ -1098,12 +1084,7 @@ pub(crate) fn compress_block_fast_dict_match_state(
     };
     let mut sink = MatchSink::with_near(seq_store, block.window.near, block.istart);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
-    match ms.c_params.min_match {
-        5 => finder.find_matches_dict::<5>(hash_table, &mut sink, block.window, dict_table),
-        6 => finder.find_matches_dict::<6>(hash_table, &mut sink, block.window, dict_table),
-        7 => finder.find_matches_dict::<7>(hash_table, &mut sink, block.window, dict_table),
-        _ => finder.find_matches_dict::<4>(hash_table, &mut sink, block.window, dict_table),
-    }
+    finder.find_matches_dict(hash_table, &mut sink, block.window, dict_table);
     let last_literals = sink.last_literals()?;
     let [rep0, rep1, _] = rep;
     *rep0 = finder.rep_offset1;
@@ -1134,11 +1115,11 @@ pub(crate) fn compress_block_fast_ext_dict(
     let mut sink = MatchSink::with_near(seq_store, block.window.near, block.istart);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
     // What the levels come with, for an input that is large enough to get here.
-    match (ms.c_params.min_match, hlog) {
-        (7, 14) => finder.find_matches_ext_dict::<7, 14>(hash_table, &mut sink, block.window),
-        (6, 16) => finder.find_matches_ext_dict::<6, 16>(hash_table, &mut sink, block.window),
-        (6, 13) => finder.find_matches_ext_dict::<6, 13>(hash_table, &mut sink, block.window),
-        _ => finder.find_matches_ext_dict::<0, 0>(hash_table, &mut sink, block.window),
+    match hlog {
+        16 => finder.find_matches_ext_dict::<16>(hash_table, &mut sink, block.window),
+        14 => finder.find_matches_ext_dict::<14>(hash_table, &mut sink, block.window),
+        13 => finder.find_matches_ext_dict::<13>(hash_table, &mut sink, block.window),
+        _ => finder.find_matches_ext_dict::<0>(hash_table, &mut sink, block.window),
     }
     let last_literals = sink.last_literals()?;
     restore_rep(

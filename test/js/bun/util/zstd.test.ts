@@ -1620,6 +1620,45 @@ describe("the output is that of zstd 1.5.7", () => {
     `);
   });
 
+  it("with every least length of a match, at the strategies that hash as many bytes", () => {
+    const dictionary = sample(20_000, 4);
+    const short = corpus.slice(400_000, 405_000);
+    short.set(dictionary.subarray(-600, -100), 1_000);
+    const results: Record<string, string> = {};
+    for (const [name, strategy] of [
+      ["fast", c.ZSTD_fast],
+      ["dfast", c.ZSTD_dfast],
+    ] as const) {
+      for (const minMatch of [3, 4, 5, 6, 7]) {
+        const params = { [c.ZSTD_c_strategy]: strategy, [c.ZSTD_c_minMatch]: minMatch };
+        const tables = (hashLog: number) => ({ [c.ZSTD_c_hashLog]: hashLog, [c.ZSTD_c_chainLog]: hashLog - 1 });
+        const compressed = [
+          zlib.zstdCompressSync(large, { params: { ...params, ...tables(16) } }),
+          zlib.zstdCompressSync(large, { params: { ...params, ...tables(10) } }),
+          zlib.zstdCompressSync(short, { params, dictionary, pledgedSrcSize: short.length }),
+        ];
+        results[`${name}, ${minMatch}`] = compressed.map(digest).join(", ");
+        expect(zlib.zstdDecompressSync(compressed[0]).equals(large)).toBe(true);
+        expect(zlib.zstdDecompressSync(compressed[1]).equals(large)).toBe(true);
+        expect(zlib.zstdDecompressSync(compressed[2], { dictionary }).equals(short)).toBe(true);
+      }
+    }
+    expect(results).toMatchInlineSnapshot(`
+      {
+        "dfast, 3": "44487 25e0622d3e12bfbd, 48050 558295cad240a785, 1005 858a418a2405d05a",
+        "dfast, 4": "44487 25e0622d3e12bfbd, 48050 558295cad240a785, 1005 858a418a2405d05a",
+        "dfast, 5": "44922 5901d333a7330ff9, 48936 4abcce7cd20aaf96, 1028 6aaf30fe0e09dd18",
+        "dfast, 6": "45343 386c1fe73dd038a9, 49635 2fa5fd5697de4709, 1032 46565d1807a0eaa6",
+        "dfast, 7": "46545 39a718fcbe68cb38, 51913 6367517af191ced2, 1089 8dde7dc61d61525b",
+        "fast, 3": "45605 bb8d5e0a2a6d89bc, 48410 b143a25a8491bf48, 1013 c8b68aa258a78281",
+        "fast, 4": "45605 bb8d5e0a2a6d89bc, 48410 b143a25a8491bf48, 1013 c8b68aa258a78281",
+        "fast, 5": "45771 fe9b40f28db9fd9, 49021 56c10ab35e811607, 1036 c3e106a367a73897",
+        "fast, 6": "46011 8660df15f934f2e1, 49559 90160f0d372cf91, 1040 78faf9395332bbf",
+        "fast, 7": "46936 560777669662bd37, 52350 c186154a65c5f997, 1088 538a72fd960bac79",
+      }
+    `);
+  });
+
   it("where a block is one match, which is too short for the optimal parser to take at once", () => {
     const digests = (data: Buffer, windowLog: number) =>
       [16, 19, 22].map(level => {

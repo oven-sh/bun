@@ -1643,6 +1643,12 @@ impl Hasher {
         }
     }
 
+    /// The same for what [`table_of_size`] gives.
+    #[inline(always)]
+    pub(crate) const fn of_size<const BITS: u32>(self) -> Self {
+        if BITS > 0 { self.with_log(BITS) } else { self }
+    }
+
     /// The same of `mls` bytes.
     pub(crate) const fn with_mls(self, mls: u32) -> Self {
         Self {

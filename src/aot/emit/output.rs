@@ -19,9 +19,7 @@ impl<'a> OutputSlice<'a> {
 
     pub(super) fn put_words(&mut self, words: &[u32]) {
         if cfg!(target_endian = "little") {
-            let first_byte = words.as_ptr().cast::<u8>();
-            // SAFETY: every byte of a `u32` is initialized, and a byte is aligned anywhere.
-            self.put_bytes(unsafe { std::slice::from_raw_parts(first_byte, size_of_val(words)) });
+            self.put_bytes(bun_core::slice_as_bytes(words));
         } else {
             words
                 .iter()

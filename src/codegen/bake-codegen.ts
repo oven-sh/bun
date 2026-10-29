@@ -142,7 +142,8 @@ async function run() {
             .replaceAll(outName("$importMeta") + ".hot", "import.meta.hot");
           code = `let ${outName("unloadedModuleRegistry")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
 
-          code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
+          // The directive makes the server runtime strict code. On the client it loads as a module script.
+          code = debug ? `"use strict";((${params}) => {${code}})\n` : `"use strict";((${params})=>{${code}})\n`;
         } else {
           code = debug ? `(async (${names}) => {${code}})({\n` : `(async(${names})=>{${code}})({`;
         }

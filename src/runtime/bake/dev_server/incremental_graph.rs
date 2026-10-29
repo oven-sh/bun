@@ -179,6 +179,8 @@ impl Default for File {
 pub(crate) struct CurrentChunkSourceMapData {
     pub(crate) file_index: ServerFileIndex,
     pub(crate) source_map: packed_map::Shared,
+    /// The bundler's index of the source that the part was printed from. Valid only in the bundle that made the part.
+    pub(crate) source_index: bun_ast::Index,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -271,6 +273,9 @@ impl Default for TakeJSBundleOptionsClient<'_> {
 pub(crate) struct TakeJSBundleOptionsServer {
     pub(crate) kind: ChunkKind,
 }
+
+/// Starts every server chunk. The directive makes the chunk strict code and adds no line, so the source map does not move.
+const SERVER_CHUNK_START: &bun_core::ZStr = bun_core::ZStr::from_static(b"\"use strict\";({\0");
 
 #[repr(C)]
 #[derive(Default)]
@@ -795,6 +800,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         .push(CurrentChunkSourceMapData {
                             file_index: ServerFileIndex::init(file_index.get()),
                             source_map: packed,
+                            source_index: index,
                         });
                 }
             }
@@ -1793,6 +1799,41 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(chunk)
     }
 
+    /// One part of the chunk as its own program, strict like the chunk or sloppy. A program that starts with `(` gets JSC's error for arrow parameters.
+    pub(crate) fn current_chunk_part_alone(&self, part: usize, strict: bool) -> Vec<u8> {
+        debug_assert!(matches!(SIDE, Side::Server));
+        let start: &[u8] = if strict {
+            b"\"use strict\";0,{"
+        } else {
+            b"0,{"
+        };
+        const END: &[u8] = b"}";
+        let code = &self.current_chunk_code[part];
+        let mut text = Vec::with_capacity(start.len() + code.len() + END.len());
+        text.extend_from_slice(start);
+        text.extend_from_slice(code);
+        text.extend_from_slice(END);
+        text
+    }
+
+    /// Removes a part from the current server chunk. Its file leaves `client_components_added` unless another part remains.
+    pub(crate) fn remove_current_chunk_part(&mut self, part: usize) -> CurrentChunkSourceMapData {
+        debug_assert!(matches!(SIDE, Side::Server));
+        self.current_chunk_len -= self.current_chunk_code.remove(part).len();
+        let removed = self.current_chunk_source_maps.remove(part);
+        let file = removed.file_index;
+        if !self
+            .current_chunk_source_maps
+            .iter()
+            .any(|remaining| remaining.file_index == file)
+        {
+            self.dev_incremental_result()
+                .client_components_added
+                .retain(|added| *added != file);
+        }
+        removed
+    }
+
     /// `IncrementalGraph(.client).takeJSBundle` — client-side overload (kept
     /// under the side-agnostic name for existing call sites).
     pub(crate) fn take_js_bundle(
@@ -1955,7 +1996,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match options.kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"({\0"),
+                code: SERVER_CHUNK_START,
                 line_count: 0,
             },
         };

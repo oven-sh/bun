@@ -418,6 +418,123 @@ devTest("function that is assigned to should become a live binding", {
   },
 });
 
+// A production build loads every server file as part of an ES module, so all of
+// it is strict code. The file reads three things that differ between the modes:
+// `this` of a plain call, a write to a frozen object, and a write to a name
+// that nothing declares.
+const readMode = (kind: string, version: string) => `
+  function self() { return typeof this; }
+  let frozen; try { Object.freeze({ x: 1 }).x = 2; frozen = "no throw"; } catch (e) { frozen = e.name; }
+  let undeclared; try { undeclaredBy${version} = 1; undeclared = "made a global"; } catch (e) { undeclared = e.name; }
+  (globalThis.modes ??= {})["${kind}"] = ["${version}", self(), frozen, undeclared].join(" ");
+`;
+const strict = (version: string) => `${version} undefined TypeError ReferenceError`;
+const fourKindsOfFile = (version: string) => ({
+  "es-module.ts": `${readMode("esModule", version)} export {};`,
+  "cjs-with-directive.cjs": `"use strict"; ${readMode("cjsWithDirective", version)} module.exports = {};`,
+  "cjs.cjs": `${readMode("cjs", version)} module.exports = {};`,
+  "no-module-syntax.js": readMode("noModuleSyntax", version),
+});
+for (const separateSSRGraph of [false, true]) {
+  // The SSR graph has its own copy of a file, in the same chunk.
+  const graph = separateSSRGraph ? ` with { bunBakeGraph: "ssr" }` : "";
+  devTest(`server modules run as strict code (${separateSSRGraph ? "SSR graph" : "server graph"})`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
+    },
+    files: {
+      ...fourKindsOfFile("first"),
+      "routes/index.ts": `
+        import "../es-module"${graph};
+        import "../cjs-with-directive.cjs"${graph};
+        import "../cjs.cjs"${graph};
+        import "../no-module-syntax.js"${graph};
+        export default function () {
+          return Response.json({
+            ...globalThis.modes,
+            globals: Object.keys(globalThis).filter(key => key.startsWith("undeclaredBy")),
+          });
+        }
+      `,
+    },
+    async test(dev) {
+      const allStrict = (version: string) => ({
+        esModule: strict(version),
+        cjsWithDirective: strict(version),
+        cjs: strict(version),
+        noModuleSyntax: strict(version),
+        globals: [],
+      });
+      expect(await dev.fetch("/").json()).toEqual(allStrict("first"));
+      // A hot update is a new chunk.
+      for (const [file, contents] of Object.entries(fourKindsOfFile("second"))) {
+        await dev.write(file, contents);
+      }
+      expect(await dev.fetch("/").json()).toEqual(allStrict("second"));
+    },
+  });
+}
+devTest("a server module stays strict when an update changes its format", {
+  framework: minimalFramework,
+  files: {
+    "flip.js": `${readMode("flip", "esm")} export {};`,
+    "routes/index.ts": `
+      import "../flip.js";
+      export default function () {
+        return new Response(globalThis.modes.flip);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals(strict("esm"));
+    await dev.write("flip.js", `${readMode("flip", "cjs")} module.exports = {};`);
+    await dev.fetch("/").equals(strict("cjs"));
+    await dev.write("flip.js", `"use strict"; ${readMode("flip", "directive")} module.exports = {};`);
+    await dev.fetch("/").equals(strict("directive"));
+    await dev.write("flip.js", `${readMode("flip", "again")} export {};`);
+    await dev.fetch("/").equals(strict("again"));
+  },
+});
+devTest("the server HMR runtime is strict code", {
+  framework: minimalFramework,
+  files: {
+    // The runtime calls the listener. A sloppy function, which \`Function\`
+    // makes, can read its caller unless the caller is strict code.
+    "routes/index.ts": `
+      import.meta.hot.on("bun:beforeUpdate", new Function("globalThis.callerOfListener = String(arguments.callee.caller)"));
+      export default function () {
+        return new Response("first " + globalThis.callerOfListener);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("first undefined");
+    await dev.patch("routes/index.ts", { find: "first ", replace: "second " });
+    await dev.fetch("/").equals("second null");
+  },
+});
+// The runtime resets `module.exports` of a CommonJS module that throws. As
+// strict code that write throws too, when the module made `exports` read-only.
+devTest("a CommonJS module with a read-only module.exports keeps its own error", {
+  framework: minimalFramework,
+  files: {
+    "lib.cjs": `
+      Object.defineProperty(module, "exports", { get: () => 1 });
+      throw new Error("the error of lib.cjs");
+    `,
+    "routes/index.ts": `
+      import "../lib.cjs";
+      export default function () {
+        return new Response("loaded");
+      }
+    `,
+  },
+  async test(dev) {
+    await Promise.all([dev.fetch("/").catch(() => {}), dev.output.waitForLine(/the error of lib\.cjs/)]);
+  },
+});
+
 devTest("browser field is used", {
   files: {
     // Ensure the package.json gets parsed before the HTML is bundled.

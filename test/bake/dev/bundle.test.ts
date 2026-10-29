@@ -1926,3 +1926,498 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+
+// JSC parses a server chunk as one program. It rejects some code that the
+// bundler's parser accepts, such as the body of a regular expression, and the
+// dev server aborted on that. Each rejected file is now a build error, and the
+// rest of the chunk loads.
+// https://github.com/oven-sh/bun/issues/15530
+{
+  const nothingToRepeat = (value: string) => `
+    export {};
+    // The bundler's parser does not read the body of a regular expression.
+    globalThis.value = /+/.source + "${value}";
+  `;
+  const missingParen = `
+    export {};
+    globalThis.value = /(/.source;
+  `;
+  const fixed = (value: string) => `globalThis.value = "${value}"; export {};`;
+  const staticImport = `
+    import "../lib";
+    export default function () {
+      return new Response("value: " + globalThis.value);
+    }
+  `;
+  for (const { name, bad, error, route = staticImport, perfectIncremental = "0" } of [
+    {
+      name: "an invalid regular expression",
+      bad: nothingToRepeat(""),
+      error: "lib.ts:3:20: error: Invalid regular expression: nothing to repeat",
+    },
+    {
+      // A request for a failed route does not bundle the route again.
+      name: "an invalid regular expression, with BUN_ASSUME_PERFECT_INCREMENTAL",
+      bad: nothingToRepeat(""),
+      error: "lib.ts:3:20: error: Invalid regular expression: nothing to repeat",
+      perfectIncremental: "1",
+    },
+    {
+      name: "an invalid regular expression at the start of the file",
+      bad: `/+/.test(""); export {};`,
+      error: "lib.ts:1:1: error: Invalid regular expression: nothing to repeat",
+    },
+    {
+      // For this one JSC reports an error in the text that wraps the chunk.
+      name: "an invalid regular expression in the parameters of an arrow function",
+      bad: `export const test = (text: string, pattern = /+/) => pattern.test(text);`,
+      error: "lib.ts:1:46: error: Invalid regular expression: nothing to repeat",
+    },
+    {
+      name: "an invalid regular expression in a module that import() loads",
+      bad: nothingToRepeat(""),
+      error: "lib.ts:3:20: error: Invalid regular expression: nothing to repeat",
+      route: `
+        export default async function () {
+          await import("../lib");
+          return new Response("value: " + globalThis.value);
+        }
+      `,
+    },
+    {
+      // The token after the expression is on the next line.
+      name: "an invalid regular expression at the end of a line",
+      bad: `
+        export {};
+        globalThis.value = [
+          /ok/,
+          /+/
+        ].length;
+      `,
+      error: "lib.ts:4:3: error: Invalid regular expression: nothing to repeat",
+    },
+    {
+      name: "new.target outside a function",
+      bad: `globalThis.value = new.target; export {};`,
+      error: "lib.ts:1:20: error: new.target is not valid inside arrow functions in global code.",
+    },
+    {
+      name: "a using declaration directly in a case clause",
+      bad: `
+        export {};
+        switch (globalThis.value) {
+          case 1:
+            using resource = null;
+        }
+      `,
+      error: "lib.ts:4:5: error: 'using' declaration is not allowed directly in a switch case or default clause.",
+    },
+    {
+      name: "two constructors in a class",
+      bad: `
+        export {};
+        globalThis.value = class {
+          constructor() {}
+          constructor(value) {}
+        };
+      `,
+      error: "lib.ts:5:1: error: Cannot declare multiple constructors in a single class.",
+    },
+    {
+      // A valid file. Bun names the namespace of the export `await`, which an async function cannot declare.
+      // #34361 makes Bun print another name, and then this file loads.
+      name: "a binding that Bun names await in a module with top-level await",
+      bad: `
+        globalThis.value = await "top-level await";
+        export * as await from "node:path";
+      `,
+      error: "lib.ts:2:1: error: Cannot use 'await' as a variable name in an async function.",
+    },
+  ]) {
+    devTest(`a server file that JSC rejects is a build error (${name})`, {
+      framework: minimalFramework,
+      env: { BUN_ASSUME_PERFECT_INCREMENTAL: perfectIncremental },
+      files: {
+        "lib.ts": bad,
+        "routes/index.ts": route,
+      },
+      async test(dev) {
+        // The first chunk holds the file. The framework entry point and the route still load from it.
+        {
+          await using c = await dev.client("/", { errors: [error] });
+          // The failure page is open when the next rejected save comes.
+          await dev.write("lib.ts", missingParen, {
+            errors: ["lib.ts:2:20: error: Invalid regular expression: missing )"],
+          });
+        }
+        await dev.write("lib.ts", fixed("fixed"));
+        await dev.fetch("/").equals("value: fixed");
+
+        // A hot update holds the file, which is loaded.
+        await dev.write("lib.ts", bad, { errors: null });
+        {
+          await using c = await dev.client("/", { errors: [error] });
+        }
+        await dev.write("lib.ts", fixed("fixed again"));
+        await dev.fetch("/").equals("value: fixed again");
+
+        expect(dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toContain(
+          "note: JavaScriptCore rejected the code that Bun generated for this file. If the file is valid, this is a bug in Bun's bundler.",
+        );
+      },
+    });
+  }
+  for (const perfectIncremental of ["0", "1"]) {
+    devTest(
+      `each server file that JSC rejects is a build error (BUN_ASSUME_PERFECT_INCREMENTAL=${perfectIncremental})`,
+      {
+        framework: minimalFramework,
+        env: { BUN_ASSUME_PERFECT_INCREMENTAL: perfectIncremental },
+        files: {
+          // JSC starts a new line at U+2028, also in a comment of another module.
+          "first.ts": `/*! a\u2028b */ export const first = "first";`,
+          "repeat.ts": `export const repeat = /+/.source;`,
+          "middle.ts": `export const middle = "middle";`,
+          "paren.ts": `export const paren = (pattern = /(/) => pattern.source;`,
+          "last.ts": `export const last = "last";`,
+          "routes/index.ts": `
+          import { first } from "../first";
+          import { repeat } from "../repeat";
+          import { middle } from "../middle";
+          import { paren } from "../paren";
+          import { last } from "../last";
+          export default function () {
+            return new Response([first, repeat, middle, paren(), last].join(" "));
+          }
+        `,
+        },
+        async test(dev) {
+          const repeat = "repeat.ts:1:23: error: Invalid regular expression: nothing to repeat";
+          const paren = "paren.ts:1:33: error: Invalid regular expression: missing )";
+          {
+            await using c = await dev.client("/", { errors: [paren, repeat] });
+            // One fixed file leaves the failure of the other.
+            await dev.write("repeat.ts", `export const repeat = "repeat";`, { errors: [paren] });
+          }
+          await dev.write("paren.ts", `export const paren = () => "paren";`);
+          await dev.fetch("/").equals("first repeat middle paren last");
+        },
+      },
+    );
+  }
+  devTest("a hot update loads the files that JSC accepts when it rejects another", {
+    framework: minimalFramework,
+    files: {
+      "bad.ts": `export const bad = "bad v1";`,
+      "good.ts": `export const good = "good v1";`,
+      "routes/index.ts": `
+        import { bad } from "../bad";
+        import { good } from "../good";
+        export default function () {
+          return new Response(bad + ", " + good);
+        }
+      `,
+      "routes/other.ts": `
+        import { good } from "../good";
+        export default function () {
+          return new Response("other " + good);
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("bad v1, good v1");
+      await dev.fetch("/other").equals("other good v1");
+      {
+        await using batch = await dev.batchChanges({ errors: null });
+        await dev.write("bad.ts", `export const bad = /+/.source;`);
+        await dev.write("good.ts", `export const good = "good v2";`);
+      }
+      // No request for "/" came first, so only the hot update can have loaded good.ts.
+      await dev.fetch("/other").equals("other good v2");
+      {
+        await using c = await dev.client("/", {
+          errors: ["bad.ts:1:20: error: Invalid regular expression: nothing to repeat"],
+        });
+      }
+      await dev.write("bad.ts", `export const bad = "bad v2";`);
+      await dev.fetch("/").equals("bad v2, good v2");
+      await dev.fetch("/other").equals("other good v2");
+    },
+  });
+  // JSC does not run a program while a Proxy is in the prototype chain of the global object. No module explains that.
+  devTest("a server chunk that throws when JSC loads it is a build error of each of its files", {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts": `
+        export default function () {
+          return new Response("index");
+        }
+      `,
+      "routes/prototype.ts": `
+        const prototype = Object.getPrototypeOf(globalThis);
+        export default function (req) {
+          const restore = new URL(req.url).searchParams.has("restore");
+          Object.setPrototypeOf(globalThis, restore ? prototype : new Proxy(prototype, {}));
+          return new Response(restore ? "restored" : "proxied");
+        }
+      `,
+      "message.ts": `export const message = "other";`,
+      "routes/other.ts": `
+        import { message } from "../message";
+        export default function () {
+          return new Response(message);
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("index");
+      await dev.fetch("/prototype").equals("proxied");
+      {
+        const error =
+          "error: The server code of this bundle did not load: Proxy is not allowed in the global prototype chain.";
+        await using c = await dev.client("/other", {
+          errors: [`message.ts: ${error}`, `routes/other.ts: ${error}`],
+        });
+      }
+      // A route that loaded before still works.
+      await dev.fetch("/").equals("index");
+      await dev.fetch("/prototype?restore").equals("restored");
+      await dev.fetch("/other").equals("other");
+    },
+  });
+  // JSC's parser has the stack budget of this option. Bun's parser has the stack of its thread, so it accepts a file
+  // that is too deep for JSC.
+  devTest("a server file that is too deep for JSC's parser is a build error", {
+    framework: minimalFramework,
+    env: { BUN_JSC_maxPerThreadStackUsage: String(512 * 1024) },
+    files: {
+      "deep.ts": `export {};`,
+      "routes/index.ts": `
+        import "../deep";
+        export default function () {
+          return new Response("index");
+        }
+      `,
+      // The first depth of nested blocks that JSC's parser does not take in this build, with this budget.
+      "routes/depth.ts": `
+        export default function () {
+          for (let depth = 8; ; depth = Math.ceil(depth * 1.25)) {
+            try {
+              new Function(Buffer.alloc(depth, "{").toString() + Buffer.alloc(depth, "}").toString());
+            } catch {
+              return new Response(String(depth));
+            }
+          }
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("index");
+      const depth = 2 * Number(await dev.fetch("/depth").text());
+      const blocks = Buffer.alloc(depth, "{").toString() + Buffer.alloc(depth, "}").toString();
+      await dev.write("deep.ts", `${blocks}\nexport {};\n`, { errors: null });
+      {
+        await using c = await dev.client("/", {
+          // The column is the depth where JSC stopped.
+          errors: [expect.stringMatching(/^deep\.ts:1:\d+: error: Maximum call stack size exceeded\.$/) as any],
+        });
+      }
+      await dev.write("deep.ts", `export {};`);
+      await dev.fetch("/").equals("index");
+    },
+  });
+  // A plugin can give the client and the server different text for one file. The file then has a source for each.
+  devTest("a file that JSC rejects is reported at its place in the text that the server got", {
+    framework: {
+      fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+      serverComponents: separateSSRGraph,
+    },
+    pluginFile: `
+      export default [
+        {
+          name: "text-by-side",
+          setup(build) {
+            build.onLoad({ filter: /Comp[.]ts$/ }, args => ({
+              loader: "ts",
+              contents:
+                args.side === "client"
+                  ? '"use client"; export function Button() {}'
+                  : '"use client";\\n\\n\\nexport function Button() { return /+/; }',
+            }));
+          },
+        },
+      ];
+    `,
+    files: {
+      "Comp.ts": `"use client"; export function Button() {}`,
+      "client.ts": `import { Button } from "./Comp"; Button();`,
+      "routes/index.ts": `
+        export default function () {
+          return new Response("page");
+        }
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/", {
+        errors: ["Comp.ts:4:35: error: Invalid regular expression: nothing to repeat"],
+      });
+    },
+  });
+  // `receive_chunk` lists a client component before JSC sees its code.
+  const manifestRoute = `
+    import { serverManifest } from "bun:bake/server";
+    export default function () {
+      console.log("manifest read");
+      return Response.json(Object.keys(serverManifest).sort());
+    }
+  `;
+  const usesButton = `
+    import * as Comp from "../Comp";
+    export default function () {
+      return new Response(typeof Comp.Button);
+    }
+  `;
+  devTest("a client component that JSC rejects is not registered until it loads", {
+    framework: minimalFramework,
+    files: {
+      "Comp.ts": `
+        "use client";
+        export function Button() { return /+/; }
+      `,
+      "routes/index.ts": usesButton,
+      "routes/manifest.ts": manifestRoute,
+    },
+    async test(dev) {
+      {
+        await using c = await dev.client("/", {
+          errors: ["Comp.ts:2:35: error: Invalid regular expression: nothing to repeat"],
+        });
+      }
+      expect(await dev.fetch("/manifest").json()).toEqual([]);
+      // The runtime did not try to load a module that it never got.
+      await dev.output.waitForLine(/manifest read/);
+      expect(dev.output.lines.join("\n")).not.toContain("Failed to load bundled module");
+
+      await dev.write("Comp.ts", `"use client"; export function Button() { return /a/; }`);
+      await dev.fetch("/").equals("object");
+      expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button"]);
+    },
+  });
+  // With a separate SSR graph the chunk has two parts of the file: its proxy
+  // for the server graph, and its own code for the SSR graph.
+  devTest("a client component that JSC rejects in the SSR graph keeps its proxy registered", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      "Comp.ts": `
+        "use client";
+        export function Button() { return /+/; }
+      `,
+      "routes/index.ts": usesButton,
+      "routes/manifest.ts": manifestRoute,
+    },
+    async test(dev) {
+      {
+        await using c = await dev.client("/", {
+          errors: ["Comp.ts:2:35: error: Invalid regular expression: nothing to repeat"],
+        });
+      }
+      // The proxy loaded, so the runtime has the component.
+      expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button"]);
+
+      await dev.write("Comp.ts", `"use client"; export function Button() { return /a/; }`);
+      await dev.fetch("/").equals("object");
+      expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button"]);
+    },
+  });
+  devTest("a file that stops being a client component in the save that JSC rejects leaves the manifest", {
+    framework: minimalFramework,
+    files: {
+      "Comp.ts": `"use client"; export function Button() { return /a/; }`,
+      "routes/index.ts": usesButton,
+      "routes/manifest.ts": manifestRoute,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("object");
+      expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button"]);
+
+      // No module of this update is left to load.
+      await dev.write("Comp.ts", `export function Button() { return /+/; }`, { errors: null });
+      expect(await dev.fetch("/manifest").json()).toEqual([]);
+
+      await dev.write("Comp.ts", `export function Button() { return /a/; }`);
+      await dev.fetch("/").equals("function");
+      expect(await dev.fetch("/manifest").json()).toEqual([]);
+    },
+  });
+}
+
+// Server modules are strict code in the dev server. Code that only sloppy
+// code can have, and that the bundler's parser accepts, is a build error
+// with a note that says so.
+{
+  const fixed = (file: string) =>
+    `globalThis.value = "fixed"; ${file.endsWith(".cjs") ? "module.exports = {};" : "export {};"}`;
+  for (const { name, file, bad, error } of [
+    {
+      name: "delete of a name in an ES module",
+      file: "lib.ts",
+      bad: `
+        let cache = 1;
+        globalThis.value = delete cache;
+        export {};
+      `,
+      error: "lib.ts:2:27: error: Cannot delete unqualified property 'cache' in strict mode.",
+    },
+    {
+      name: "a with statement in a CommonJS file",
+      file: "lib.cjs",
+      bad: `with (Math) { globalThis.value = PI; } module.exports = {};`,
+      error: "lib.cjs:1:1: error: 'with' statements are not valid in strict mode.",
+    },
+    {
+      name: "a variable named arguments in a CommonJS file",
+      file: "lib.cjs",
+      bad: `
+        globalThis.value = (function () {
+          var arguments = 1;
+          return arguments;
+        })();
+        module.exports = {};
+      `,
+      error: "lib.cjs:2:7: error: Cannot declare a variable named arguments in strict mode.",
+    },
+    {
+      // For this one JSC reports an error in the text that wraps the chunk.
+      name: "an arrow function parameter named eval in a CommonJS file",
+      file: "lib.cjs",
+      bad: `const pick = (eval) => eval; globalThis.value = pick("value"); module.exports = {};`,
+      error: "lib.cjs:1:15: error: Cannot destructure to a parameter name 'eval' in strict mode.",
+    },
+  ]) {
+    devTest(`a server file that only strict code rejects is a build error (${name})`, {
+      framework: minimalFramework,
+      files: {
+        [file]: bad,
+        "routes/index.ts": `
+          import "../${file}";
+          export default function () {
+            return new Response("value: " + globalThis.value);
+          }
+        `,
+      },
+      async test(dev) {
+        {
+          await using c = await dev.client("/", { errors: [error] });
+        }
+        const output = dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+        expect(output).toContain(
+          'note: The dev server runs every server module as strict code, as "bun build --app" does',
+        );
+        // The file is valid sloppy code, so the note about the code that Bun generated does not apply.
+        expect(output).not.toContain("this is a bug in Bun's bundler");
+        await dev.write(file, fixed(file));
+        await dev.fetch("/").equals("value: fixed");
+      },
+    });
+  }
+}

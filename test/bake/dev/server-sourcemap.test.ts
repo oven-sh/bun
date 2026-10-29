@@ -140,12 +140,13 @@ function helperFunction() {
     const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
 
     const hasUtilsThrowLine = cleanLines.includes("helperFunction") && cleanLines.includes("5:1");
-    const hasUtilsCallLine = cleanLines.includes("doSomething2") && cleanLines.includes("1:28");
     const hasPageCallLine = cleanLines.includes("NestedPage") && cleanLines.includes("3:38");
 
     expect(hasUtilsThrowLine).toBe(true);
-    expect(hasUtilsCallLine).toBe(true);
     expect(hasPageCallLine).toBe(true);
+    // `doSomething` ends with a tail call. Server modules are strict code, so
+    // the call leaves no frame, as in a production build and under `bun run`.
+    expect(cleanLines).not.toMatch(/at doSomething\w* \(/);
   },
 });
 

@@ -1568,12 +1568,13 @@ describe("printing a Map or Set iterator does not run it", () => {
     expect({ text: Bun.inspect(iterator), left: [...iterator] }).toEqual({ text, left: [...kinds[kind]()] });
   });
 
-  it("the text is the same as before", () => {
+  it("prints each form of the text", () => {
     expect(Bun.inspect(map().entries())).toBe('MapIterator { \n  [ "a", 1 ],\n  [ "b", 2 ],\n}');
     expect(Bun.inspect(map().entries(), { compact: true })).toBe('MapIterator { [ "a", 1 ], [ "b", 2 ] }');
     expect(Bun.inspect(map().keys(), { compact: true })).toBe('MapIterator { "a", "b" }');
     expect(Bun.inspect(set().values())).toBe('SetIterator { \n  "a",\n  "b",\n}');
-    expect(Bun.inspect(set().entries(), { compact: true })).toBe('SetIterator { [ "a", "a" ], [ "b", "b" ]}');
+    expect(Bun.inspect(set().values(), { compact: true })).toBe('SetIterator { "a", "b" }');
+    expect(Bun.inspect(set().entries(), { compact: true })).toBe('SetIterator { [ "a", "a" ], [ "b", "b" ] }');
     expect(Bun.inspect(new Map().entries())).toBe("MapIterator { }");
     expect(Bun.inspect(new Set().values())).toBe("SetIterator { }");
   });
@@ -1619,7 +1620,7 @@ describe("printing a Map or Set iterator does not run it", () => {
     iterator.next();
     cleared.clear();
     cleared.add(3);
-    expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 3}");
+    expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 3 }");
 
     // Growth and deletes replace the table the iterator points at.
     const grown = new Set([0, 1]);
@@ -1627,7 +1628,7 @@ describe("printing a Map or Set iterator does not run it", () => {
     iterator.next();
     for (let i = 2; i < 40; i++) grown.add(i);
     for (let i = 2; i < 36; i++) grown.delete(i);
-    expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 1, 36, 37, 38, 39}");
+    expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 1, 36, 37, 38, 39 }");
     expect([...iterator]).toEqual([1, 36, 37, 38, 39]);
   });
 
@@ -1652,7 +1653,7 @@ describe("printing a Map or Set iterator does not run it", () => {
     expect(Bun.inspect(bare, { compact: true })).toBe('MapIterator { "a", "b" }');
 
     const frozen = Object.freeze(set().values());
-    expect(Bun.inspect(frozen, { compact: true })).toBe('SetIterator { "a", "b"}');
+    expect(Bun.inspect(frozen, { compact: true })).toBe('SetIterator { "a", "b" }');
     expect(frozen.next()).toEqual({ value: "a", done: false });
 
     const foreign = runInNewContext("const i = new Map([[1, 2], [3, 4]]).entries(); i.next(); i");
@@ -1710,7 +1711,7 @@ describe("printing a Map or Set iterator does not run it", () => {
       enumerable: true,
       configurable: true,
     });
-    expect({ text: Bun.inspect(iterator, { compact: true }), reads }).toEqual({ text: "SetIterator { 1}", reads: 0 });
+    expect({ text: Bun.inspect(iterator, { compact: true }), reads }).toEqual({ text: "SetIterator { 1 }", reads: 0 });
   });
 
   // Node.js closes an iterator like this when it prints it. Here a print changes nothing.
@@ -1720,7 +1721,7 @@ describe("printing a Map or Set iterator does not run it", () => {
     iterator.next();
     expect(Bun.inspect(iterator)).toBe("SetIterator { }");
     growing.add(2);
-    expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 2}");
+    expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 2 }");
     expect(iterator.next()).toEqual({ value: 2, done: false });
   });
 

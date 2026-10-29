@@ -4718,8 +4718,7 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    // Only the MapIterator case writes a trailing space.
-                    if count > 0 && label == "MapIterator" {
+                    if count > 0 {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {

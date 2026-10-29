@@ -953,6 +953,23 @@ You can also compose from a separate CSS module file:
 }
 ```
 
+The path after `from` can also be a [subpath import](https://nodejs.org/api/packages.html#subpath-imports) from the `"imports"` field of your `package.json`. An `@import` rule accepts the same paths.
+
+```json title="package.json" icon="file-json"
+{
+  "imports": {
+    "#background": "./background.module.css"
+  }
+}
+```
+
+```css title="styles.module.css" icon="file-code"
+.button {
+  composes: background from "#background";
+  color: red;
+}
+```
+
 <Warning>
 When composing classes from separate files, make sure they do not contain the same properties.
 

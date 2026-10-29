@@ -719,20 +719,22 @@ describe("bare :global", () => {
 });
 
 describe("css modules", () => {
+  const unhash = (text: string) => text.replace(/_[\w-]{6}(?![\w-])/g, "_H");
+
   /**
    * Bundles the first of `files` through a JS import. `css` is the stylesheet on one line, without
    * comments and with every `_<hash>` written `_H`. `styles` is the default export of the file.
    */
-  async function bundle(files: Record<string, string>) {
+  async function bundle(files: Record<string, string>, plugins: Bun.BunPlugin[] = []) {
     using dir = tempDir("css-modules", {
       ...files,
       "entry.js": `export { default } from "./${Object.keys(files)[0]}";`,
     });
     const out = join(String(dir), "out");
-    const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir: out, throw: false });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const result = await Bun.build({ entrypoints, outdir: out, throw: false, plugins });
     const logs = result.logs.map(log => Bun.stripANSI(log.message));
     if (!result.success) return { logs };
-    const unhash = (text: string) => text.replace(/_[\w-]{6}(?![\w-])/g, "_H");
     const css = await Bun.file(join(out, "entry.css")).text();
     const { default: styles } = await import(join(out, "entry.js"));
     return {
@@ -932,6 +934,88 @@ describe("css modules", () => {
       logs: [],
       css: `.k { composes: g from "./g.css"; } .j { composes: m from "./missing.css"; } .i { composes: 12px; }`,
       styles: {},
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/19663
+  const packageJson = (imports: Record<string, unknown>) => JSON.stringify({ name: "app", imports });
+  const composesFrom = (specifier: string) => ({
+    "styles.module.css": `.a { composes: red from "${specifier}"; font-size: 1px }`,
+    "other.module.css": `.red { color: red }`,
+  });
+  const composed = { logs: [], css: `.red_H { color: red; } .a_H { font-size: 1px; }`, styles: { a: "red_H a_H" } };
+
+  test.concurrent.each([
+    {
+      name: 'a package.json "imports" alias',
+      specifier: "#other",
+      files: { "package.json": packageJson({ "#other": "./other.module.css" }) },
+    },
+    {
+      name: 'a package.json "imports" pattern',
+      specifier: "#css/other.module.css",
+      files: { "package.json": packageJson({ "#css/*": "./*" }) },
+    },
+    {
+      name: 'a package.json "imports" alias of a file in a package',
+      specifier: "#other",
+      files: {
+        "package.json": packageJson({ "#other": "pkg/red.module.css" }),
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg" }),
+        "node_modules/pkg/red.module.css": `.red { color: red }`,
+      },
+    },
+    {
+      name: "a tsconfig.json paths alias that starts with #",
+      specifier: "#/other.module.css",
+      files: { "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "#/*": ["./*"] } } }) },
+    },
+  ])("composes from $name", async ({ specifier, files }) => {
+    expect(await bundle({ ...composesFrom(specifier), ...files })).toEqual(composed);
+  });
+
+  test.concurrent('composes from an "imports" alias that an onResolve plugin declines', async () => {
+    const offered: string[] = [];
+    const result = await bundle(
+      { ...composesFrom("#other"), "package.json": packageJson({ "#other": "./other.module.css" }) },
+      [
+        {
+          name: "decline",
+          setup: build => void build.onResolve({ filter: /^#/ }, args => void offered.push(args.path)),
+        },
+      ],
+    );
+    expect({ result, offered }).toEqual({ result: composed, offered: ["#other"] });
+  });
+
+  test.concurrent.each([
+    { name: 'that "imports" does not have', manifest: packageJson({ "#other": "./other.module.css" }) },
+    { name: 'in a package without "imports"', manifest: JSON.stringify({ name: "app" }) },
+  ])('composes from a "#" specifier $name is an error', async ({ manifest }) => {
+    expect(await bundle({ ...composesFrom("#missing"), "package.json": manifest })).toEqual({
+      logs: [`Could not resolve: "#missing". Maybe you need to "bun install"?`],
+    });
+  });
+
+  // The report's own command. Not concurrent: the child has the default timeout to itself.
+  test('bun build of a stylesheet that composes from an "imports" alias', async () => {
+    using dir = tempDir("css-modules-imports", {
+      "package.json": packageJson({ "#other": "./other.module.css" }),
+      "other.module.css": `.red {\n  background: red;\n}\n`,
+      "styles.module.css": `.background {\n  composes: red from "#other";\n}\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "styles.module.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: unhash(stdout), stderr, exitCode }).toEqual({
+      stdout: `/* other.module.css */\n.red_H {\n  background: red;\n}\n\n/* styles.module.css */\n.background_H {\n}\n`,
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

@@ -1007,6 +1007,124 @@ describe("esbuild-bundler", () => {
     external: ["./src/external.png"],
   });
 
+  // https://github.com/oven-sh/bun/issues/19663
+  const packageJsonImports = JSON.stringify({
+    name: "app",
+    imports: {
+      "#plain": "./plain.css",
+      "#dir/*": "./dir/*",
+      "#supported": "./supported.css",
+      "#theme": { custom: "./custom.css", default: "./default.css" },
+    },
+  });
+  itBundled("css/CSSAtImportPackageJsonImports", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "#plain";
+        @import url(#dir/nested.css);
+        @import "#supported" supports(display: grid);
+        .entry { color: red }
+      `,
+      "/plain.css": `.plain { color: green }`,
+      "/dir/nested.css": `.nested { color: blue }`,
+      "/supported.css": `.supported { color: white }`,
+      "/package.json": packageJsonImports,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* plain.css */
+        .plain {
+          color: green;
+        }
+        /* dir/nested.css */
+        .nested {
+          color: #00f;
+        }
+        /* supported.css */
+        @supports (display: grid) {
+          .supported {
+            color: #fff;
+          }
+        }
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  for (const { name, conditions, file, color } of [
+    { name: "DefaultCondition", conditions: [], file: "default.css", color: "#00f" },
+    { name: "UserCondition", conditions: ["custom"], file: "custom.css", color: "green" },
+  ]) {
+    itBundled(`css/CSSAtImportPackageJsonImports${name}`, {
+      files: {
+        "/entry.css": `@import "#theme";`,
+        "/custom.css": `.theme { color: green }`,
+        "/default.css": `.theme { color: blue }`,
+        "/package.json": packageJsonImports,
+      },
+      conditions,
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+          /* ${file} */
+          .theme {
+            color: ${color};
+          }
+          /* entry.css */
+        `);
+      },
+    });
+  }
+  itBundled("css/CSSAtImportPackageJsonImportsMissing", {
+    files: {
+      "/entry.css": `@import "#missing";`,
+      "/package.json": packageJsonImports,
+    },
+    bundleErrors: {
+      "/entry.css": ['Could not resolve: "#missing". Maybe you need to "bun install"?'],
+    },
+  });
+  itBundled("css/CSSAtImportPackageJsonImportsExternal", {
+    files: {
+      "/entry.css": `@import "#plain"; .entry { color: red }`,
+      "/plain.css": `.plain { color: green }`,
+      "/package.json": packageJsonImports,
+    },
+    external: ["#plain"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        @import "#plain";
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
+  itBundled("css/URLFragmentIsNotAPackageJsonImport", {
+    files: {
+      "/entry.css": `path { fill: url(#plain) } a { mask: url("#plain") }`,
+      "/plain.css": `.plain { color: green }`,
+      "/package.json": packageJsonImports,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        path {
+          fill: url("#plain");
+        }
+        a {
+          mask: url("#plain");
+        }
+      `);
+    },
+  });
+
   itBundled("css/InvalidImportURLInCSS", {
     // GENERATED
     files: {

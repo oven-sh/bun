@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 describe("bundler", () => {
   // Basic test for bundling HTML with JS and CSS
@@ -143,6 +143,70 @@ describe("bundler", () => {
       // External URLs should remain unchanged
       api.expectFile("out/index.html").toContain("https://cdn.example.com/style.css");
       api.expectFile("out/index.html").toContain("https://cdn.example.com/script.js");
+    },
+  });
+
+  // An href or src of "#..." names a part of the page, also when package.json "imports" has that name.
+  // A script is the exception: its src can be a package.json "imports" alias.
+  const fragmentUrls = {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="#">
+    <link rel="stylesheet" href="./local.css">
+    <link rel="stylesheet" href="#theme">
+    <link rel="preload" as="style" href="#theme">
+    <link rel="icon" href="#">
+    <script type="module" src="#app"></script>
+  </head>
+  <body>
+    <img src="#image">
+  </body>
+</html>`,
+      "/local.css": "body { margin: 0; }",
+      "/theme.css": ".theme { color: red; }",
+      "/image.png": "fake image content",
+      "/app.js": "console.log('from #app')",
+      "/package.json": JSON.stringify({
+        name: "app",
+        imports: { "#theme": "./theme.css", "#image": "./image.png", "#app": "./app.js" },
+      }),
+    },
+    entryPoints: ["/index.html"],
+  };
+  function expectFragmentUrls(api: BundlerTestBundleAPI) {
+    const html = api.readFile("out/index.html");
+    expect(html.match(/<(?:link|img|script)\b[^>]*>/g)).toEqual([
+      `<link rel="stylesheet" href="#">`,
+      `<link rel="stylesheet" href="#theme">`,
+      `<link rel="preload" as="style" href="#theme">`,
+      `<link rel="icon" href="#">`,
+      expect.stringMatching(/^<link rel="stylesheet" crossorigin href="\.\/[a-z]+-[a-z0-9]+\.css">$/),
+      expect.stringMatching(/^<script type="module" crossorigin src="\.\/[a-z]+-[a-z0-9]+\.js">$/),
+      `<img src="#image">`,
+    ]);
+    const css = api.readFile("out/" + html.match(/href="(.*?\.css)"/)![1]);
+    expect(css).toContain("margin: 0");
+    expect(css).not.toContain("theme");
+    expect(api.readFile("out/" + html.match(/src="(.*?\.js)"/)![1])).toContain("from #app");
+  }
+  itBundled("html/fragment-urls", {
+    ...fragmentUrls,
+    onAfterBundle: expectFragmentUrls,
+  });
+  // A stylesheet link with a fragment href makes no import record, so no plugin sees it.
+  const offered: string[] = [];
+  itBundled("html/fragment-urls-onResolve", {
+    ...fragmentUrls,
+    plugins(build) {
+      build.onResolve({ filter: /^#/ }, args => void offered.push(args.path));
+    },
+    onAfterBundle(api) {
+      expectFragmentUrls(api);
+      expect(offered.toSorted()).toEqual(["#", "#app", "#image"]);
     },
   });
 

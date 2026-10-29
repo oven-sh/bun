@@ -1380,7 +1380,7 @@ impl<'a> Resolver<'a> {
         if !kind.is_entry_point()
             && (self.is_external_pattern(import_path)
             // "fill: url(#filter);"
-            || (kind.is_from_css() && import_path.starts_with(b"#"))
+            || (kind == ast::ImportKind::Url && import_path.starts_with(b"#"))
             // "background: url(http://example.com/images/image.png);"
             || import_path.starts_with(b"http://")
             // "background: url(https://example.com/images/image.png);"

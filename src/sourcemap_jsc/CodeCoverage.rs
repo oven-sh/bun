@@ -1067,25 +1067,23 @@ extern "C" fn ByteRangeMapping__addSourceID(
     source_contents: &bun_core::String,
     source_id: i32,
 ) {
-    let Some(mut this) = find(source_url) else {
+    let Some(map) = thread_map_opt() else {
         return;
     };
-    // SAFETY: pointer into the thread-local map, valid for this call.
-    let this = unsafe { this.as_mut() };
+    // SAFETY: this thread's `MAP` owns the map until thread exit; nothing called below reaches it.
+    let Some(this) = find(unsafe { &mut *map.as_ptr() }, source_url) else {
+        return;
+    };
     if this.source_hash == bun_wyhash::hash(source_contents.to_utf8().slice()) {
         this.source_ids.push(source_id);
     }
 }
 
-fn find(path: &bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
-    let slice = path.to_utf8();
-
-    let map_ptr = thread_map_opt()?;
-    // SAFETY: map_ptr points into this thread's owned Box; valid until thread exit.
-    let map = unsafe { &mut *map_ptr.as_ptr() };
-    let hash = bun_wyhash::hash(slice.slice());
-    let entry = map.get_mut(&hash)?;
-    Some(NonNull::from(entry))
+fn find<'a>(
+    map: &'a mut ByteRangeMappingHashMap,
+    path: &bun_core::String,
+) -> Option<&'a mut ByteRangeMapping> {
+    map.get_mut(&bun_wyhash::hash(path.to_utf8().slice()))
 }
 
 /// The table row of `source_url`. `undefined`: nothing compiled yet. `null`: not instrumented.
@@ -1095,11 +1093,13 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
     source_url: &bun_core::String,
     ignore_sourcemap: bool,
 ) -> JSValue {
-    let Some(this_ptr) = find(source_url) else {
+    let Some(map) = thread_map_opt() else {
         return JSValue::NULL;
     };
-    // SAFETY: pointer into the thread-local map, valid for this call.
-    let this = unsafe { &*this_ptr.as_ptr() };
+    // SAFETY: this thread's `MAP` owns the map until thread exit; nothing called below reaches it.
+    let Some(this) = find(unsafe { &mut *map.as_ptr() }, source_url) else {
+        return JSValue::NULL;
+    };
 
     let Some(report) = Report::generate(global_this, this, ignore_sourcemap) else {
         return JSValue::UNDEFINED;

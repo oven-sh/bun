@@ -3452,6 +3452,10 @@ util[MIMEType][prototype][toJSON] = util[MIMEType][prototype][toString]
 util[MIMEType][prototype][constructor] c-w function
 util[MIMEType][prototype][constructor] = util[MIMEType]
 util[MIMEType][prototype][Symbol(Symbol.toStringTag)] c-- string
+util[MIMEType][parse] c-w function
+util[MIMEType][parse]: function native name="parse" length=1 above=Function extensible=true
+util[MIMEType][parse][length] c-- number
+util[MIMEType][parse][name] c-- string
 util[MIMEParams] cew function
 util[MIMEParams]: function native name="MIMEParams" length=0 above=Function extensible=true
 util[MIMEParams][length] c-- number

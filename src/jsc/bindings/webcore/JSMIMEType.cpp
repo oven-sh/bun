@@ -216,44 +216,47 @@ static String encodeParamValue(const StringView& value)
     return makeString('"', escapeQuoteOrBackslash(value), '"');
 }
 
-// Helper to parse type/subtype
-// Returns {type, subtype, parameters_start_index} or throws on error
-static std::tuple<String, String, size_t> parseTypeAndSubtype(JSGlobalObject* globalObject, GCOwnedDataScope<StringView>& input)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+struct ParsedTypeAndSubtype {
+    String type;
+    String subtype;
+    size_t paramsStartIndex;
+};
 
+// The arguments of ERR_INVALID_MIME_SYNTAX. `index` is -1 when no single character is to blame.
+struct MIMESyntaxFailure {
+    ASCIILiteral production;
+    int index;
+};
+
+// Reports a syntax failure as a value: the constructor throws it, MIMEType.parse returns null for it.
+static std::expected<ParsedTypeAndSubtype, MIMESyntaxFailure> parseTypeAndSubtype(StringView input)
+{
     size_t position = findEndBeginningWhitespace(input);
-    size_t length = input->length();
+    size_t length = input.length();
 
     // Find end of type
-    size_t typeEnd = input->find('/', position);
+    size_t typeEnd = input.find('/', position);
     if (typeEnd == notFound) {
-        StringView remaining = input->substring(position);
-        int invalidTypeIndex = findFirstInvalidHTTPTokenChar(remaining);
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), invalidTypeIndex);
-        return {};
+        StringView remaining = input.substring(position);
+        return makeUnexpected(MIMESyntaxFailure { "type"_s, findFirstInvalidHTTPTokenChar(remaining) });
     }
 
-    StringView typeView = input->substring(position, typeEnd - position);
+    StringView typeView = input.substring(position, typeEnd - position);
     int invalidTypeIndex = findFirstInvalidHTTPTokenChar(typeView);
-    if (typeView.isEmpty() || invalidTypeIndex != -1) {
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), invalidTypeIndex);
-        return {};
-    }
-    String type = typeView.convertToASCIILowercase();
+    if (typeView.isEmpty() || invalidTypeIndex != -1)
+        return makeUnexpected(MIMESyntaxFailure { "type"_s, invalidTypeIndex });
     position = typeEnd + 1; // Skip '/'
 
     // Find end of subtype
-    size_t subtypeEnd = input->find(';', position);
+    size_t subtypeEnd = input.find(';', position);
     size_t paramsStartIndex;
     StringView rawSubtypeView;
 
     if (subtypeEnd == notFound) {
-        rawSubtypeView = input->substring(position);
+        rawSubtypeView = input.substring(position);
         paramsStartIndex = length; // Parameters start at the end if no ';'
     } else {
-        rawSubtypeView = input->substring(position, subtypeEnd - position);
+        rawSubtypeView = input.substring(position, subtypeEnd - position);
         paramsStartIndex = subtypeEnd + 1; // Parameters start after ';'
     }
 
@@ -262,14 +265,10 @@ static std::tuple<String, String, size_t> parseTypeAndSubtype(JSGlobalObject* gl
     StringView subtypeView = rawSubtypeView.left(trimmedSubtypeEnd);
 
     int invalidSubtypeIndex = findFirstInvalidHTTPTokenChar(subtypeView);
-    if (subtypeView.isEmpty() || invalidSubtypeIndex != -1) {
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "subtype"_s, input->toString(), invalidSubtypeIndex);
-        return {};
-    }
-    String subtype = subtypeView.convertToASCIILowercase();
+    if (subtypeView.isEmpty() || invalidSubtypeIndex != -1)
+        return makeUnexpected(MIMESyntaxFailure { "subtype"_s, invalidSubtypeIndex });
 
-    // Return type, subtype, and the index where parameters start
-    return std::make_tuple(WTF::move(type), WTF::move(subtype), paramsStartIndex);
+    return ParsedTypeAndSubtype { typeView.convertToASCIILowercase(), subtypeView.convertToASCIILowercase(), paramsStartIndex };
 }
 
 //-- JSMIMEType (Instance) Implementation --
@@ -527,6 +526,11 @@ Structure* JSMIMETypeConstructor::createStructure(VM& vm, JSGlobalObject* global
 
 JSC_DECLARE_HOST_FUNCTION(callMIMEType);
 JSC_DECLARE_HOST_FUNCTION(constructMIMEType);
+JSC_DECLARE_HOST_FUNCTION(jsMIMETypeConstructorFuncParse);
+
+static const HashTableValue JSMIMETypeConstructorValues[] = {
+    { "parse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMIMETypeConstructorFuncParse, 1 } },
+};
 
 JSMIMETypeConstructor::JSMIMETypeConstructor(VM& vm, Structure* structure)
     : Base(vm, structure, callMIMEType, constructMIMEType)
@@ -540,7 +544,13 @@ JSC_DEFINE_HOST_FUNCTION(callMIMEType, (JSGlobalObject * globalObject, CallFrame
     return throwVMError(globalObject, scope, createNotAConstructorError(globalObject, callFrame->jsCallee()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, CallFrame* callFrame))
+enum class MIMETypeEntry : bool {
+    Construct,
+    Parse,
+};
+
+// Not inlined: `new MIMEType` and `MIMEType.parse` run one copy of the parser and of the code that builds the instance.
+static NEVER_INLINE EncodedJSValue constructOrParseMIMEType(JSGlobalObject* globalObject, CallFrame* callFrame, MIMETypeEntry entry)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -548,31 +558,38 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, Call
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSMIMETypeClassStructure.get(zigGlobalObject);
 
-    JSC::JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSMIMETypeClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
-        if (!newTarget) {
-            throwTypeError(globalObject, scope, "Class constructor MIMEType cannot be invoked without 'new'"_s);
-            return {};
-        }
+    // MIMEType.parse does not read its receiver: a subclass gets a plain MIMEType from it, as in Node.js.
+    if (entry == MIMETypeEntry::Construct) {
+        JSC::JSValue newTarget = callFrame->newTarget();
+        if (zigGlobalObject->m_JSMIMETypeClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+            if (!newTarget) {
+                throwTypeError(globalObject, scope, "Class constructor MIMEType cannot be invoked without 'new'"_s);
+                return {};
+            }
 
-        auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSMIMETypeClassStructure.get(functionGlobalObject));
-        RETURN_IF_EXCEPTION(scope, {});
+            auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
+            RETURN_IF_EXCEPTION(scope, {});
+            structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSMIMETypeClassStructure.get(functionGlobalObject));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
     // 1. Get input string
     JSValue inputArg = callFrame->argument(0);
     auto* jsInputString = inputArg.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    // Not ported: Node.js v26.8.0+ throws ERR_ILLEGAL_CONSTRUCTOR here when a second argument of the constructor is not nullish. That would break calls that work in Bun today. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/mime.js#L442-L444
     auto inputString = jsInputString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     // 2. Parse type and subtype
-    String type, subtype;
-    size_t paramsStartIndex;
-    std::tie(type, subtype, paramsStartIndex) = parseTypeAndSubtype(globalObject, inputString);
-    RETURN_IF_EXCEPTION(scope, {}); // Check if parseTypeAndSubtype threw
+    auto parsed = parseTypeAndSubtype(inputString);
+    if (!parsed) [[unlikely]] {
+        if (entry == MIMETypeEntry::Parse)
+            return JSValue::encode(jsNull());
+        return Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, parsed.error().production, inputString->toString(), parsed.error().index);
+    }
+    auto& [type, subtype, paramsStartIndex] = *parsed;
 
     // 3. Create and parse parameters
     // We need the structure for JSMIMEParams to create the map and the instance
@@ -592,10 +609,22 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, Call
     return JSC::JSValue::encode(instance);
 }
 
+JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return constructOrParseMIMEType(globalObject, callFrame, MIMETypeEntry::Construct);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMIMETypeConstructorFuncParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return constructOrParseMIMEType(globalObject, callFrame, MIMETypeEntry::Parse);
+}
+
 void JSMIMETypeConstructor::finishCreation(VM& vm, JSObject* prototype)
 {
     Base::finishCreation(vm, 1, "MIMEType"_s); // Constructor length is 1
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // After `prototype`, so that the own keys have the order that Node.js gives them.
+    Bun::reifyStaticPropertyTable(vm, JSMIMETypeConstructor::info(), JSMIMETypeConstructorValues, *this);
 }
 
 //-- Structure Setup --

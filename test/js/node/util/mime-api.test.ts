@@ -1,4 +1,5 @@
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunExe, expectRssDeltaBelow } from "harness";
 import { MIMEParams, MIMEType } from "util";
@@ -214,6 +215,19 @@ describe("MIME API", () => {
     expect(() => params.set("x", `${NOT_HTTP_QUOTED_STRING_CODE_POINT};`)).toThrow(/parameter value/i);
     expect(() => params.set("x", `${NOT_HTTP_QUOTED_STRING_CODE_POINT}x`)).toThrow(/parameter value/i);
     expect(() => params.set("x", `x${NOT_HTTP_QUOTED_STRING_CODE_POINT}`)).toThrow(/parameter value/i);
+  });
+
+  // The tests of MIMEType.parse that Node.js can run too are in mime-parse.test.ts.
+  test("MIMEType.parse makes no error object for an input that is not valid", () => {
+    // Not yet in @types/node 26.
+    const MIMETypeWithParse = MIMEType as typeof MIMEType & { parse(input: string): MIMEType | null };
+    const errors = () => heapStats().objectTypeCounts.Error ?? 0;
+    Bun.gc(true);
+    const before = errors();
+    const results: unknown[] = [];
+    for (let i = 0; i < 500; i++) results.push(MIMETypeWithParse.parse(i % 2 ? "text plain" : "text/"));
+    expect(errors() - before).toBe(0);
+    expect(results.every(result => result === null)).toBe(true);
   });
 });
 

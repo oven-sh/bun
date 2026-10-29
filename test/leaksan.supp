@@ -90,7 +90,6 @@ leak:URL__host
 leak:runtime.node.node_os.version
 leak:runtime.node.node_os.release
 leak:JSC::stringProtoFuncReplaceUsingRegExp
-leak:WebCore::parseTypeAndSubtype
 leak:runtime.node.util.parse_args.parseArgs
 leak:JSC::IntlDateTimeFormat::initializeDateTimeFormat
 leak:WebCore__DOMURL__fileSystemPath

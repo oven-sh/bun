@@ -502,31 +502,34 @@ new file mode 100644
     },
   );
 
-  test("a hunk whose - side matches nothing fails the install", async () => {
-    await using project = createProject("patch-stale-hunk", {
-      "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
-      patches: {
-        "is-even@1.0.0.patch": /* patch */ `diff --git a/index.js b/index.js
+  test.each([{ flags: [] }, { flags: ["--allow-unused-patches"] }])(
+    "a hunk whose - side matches nothing fails the install with flags $flags",
+    async ({ flags }) => {
+      await using project = createProject("patch-stale-hunk", {
+        "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+        patches: {
+          "is-even@1.0.0.patch": /* patch */ `diff --git a/index.js b/index.js
 --- a/index.js
 +++ b/index.js
 @@ -1 +1 @@
 -a line that exists in no version of this package
 +module.exports = "STALE-HUNK-APPLIED";
 `,
-      },
-    });
-    const { dir, env } = project;
+        },
+      });
+      const { dir, env } = project;
 
-    const { stderr, exitCode } = await runBun(dir, env, "install");
-    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      const { stderr, exitCode } = await runBun(dir, env, "install", ...flags);
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
       "Resolving dependencies
       error: failed applying patch file: hunk #1 does not apply to index.js (expected at line 1)
       error: failed to apply patchfile (patches/is-even@1.0.0.patch)"
     `);
-    const index = file(dir, "node_modules", "is-even", "index.js");
-    expect((await index.exists()) && (await index.text()).includes("STALE-HUNK-APPLIED")).toBe(false);
-    expect(exitCode).toBe(1);
-  });
+      const index = file(dir, "node_modules", "is-even", "index.js");
+      expect((await index.exists()) && (await index.text()).includes("STALE-HUNK-APPLIED")).toBe(false);
+      expect(exitCode).toBe(1);
+    },
+  );
 
   // The package is installed already, so the linker is what meets the patch. The isolated linker
   // used to carry on, and saved package.json and bun.lock.

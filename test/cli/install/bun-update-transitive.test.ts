@@ -1159,79 +1159,183 @@ test.concurrent.each<[string, string[], string]>([
   expect(exitCode).toBe(0);
 });
 
-// --latest moves past the patch on purpose; the orphaned patchedDependencies entry is pointed out on stderr.
-test.concurrent(
-  "`bun update <name> --latest` moves a patched dependency and warns that its patch no longer applies",
-  async () => {
-    const dir = await setup({
-      "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
-      "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
-    });
-    await reinstall(dir, pkgJson({ "no-deps": "^1.0.0" }, PATCHED));
-    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
-    const { stdout, stderr, exitCode } = await run(dir, "update", "no-deps", "--latest");
-    expectSummary(stdout, movedRow("no-deps", "1.0.0", "2.0.0"), "", installed(1));
-    expect(stderr).toContain("warn: patches/no-deps@1.0.0.patch no longer applies (no-deps is now 2.0.0)\n");
-    expect(stderr).not.toContain("error:");
-    expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "no-deps": "^2.0.0" }, PATCHED));
-    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
-    expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
-    expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
-    expect(exitCode).toBe(0);
-  },
-);
-
-describe.concurrent.each<Linker>(["hoisted", "isolated"])("frozen patch validation with %s linking", linker => {
-  test.each([{ flags: [] }, { flags: ["--silent"] }, { flags: ["--dry-run"] }])(
-    "rejects a stale patch with flags $flags",
-    async ({ flags }) => {
-      const layout = { linker };
-      const dir = await setup(
-        {
-          "package.json": pkgJson({ "no-deps": "1.1.0", "one-fixed-dep": "1.0.0" }, PATCHED),
-          "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
-        },
-        layout,
-      );
-      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
-      expect(warningLines(await frozen(dir, layout))).toEqual([]);
-      await reinstall(dir, pkgJson({ "no-deps": "1.1.0" }, PATCHED), layout);
-      expect((await lock(dir)).patchedDependencies).toBeUndefined();
-
-      const manifest = await packageJsonText(dir);
-      const lockfile = await lockText(dir);
-      const installedManifest = await file(join(dir, "node_modules", "no-deps", "package.json")).text();
-      const installedSource = await file(join(dir, "node_modules", "no-deps", "index.js")).text();
-      for (const cold of [false, true]) {
-        if (cold) await rm(join(dir, "node_modules"), { recursive: true });
-        const { stderr, exitCode } = await run(dir, "install", "--frozen-lockfile", ...linkerArgs(layout), ...flags);
-        if (flags.includes("--silent")) {
-          expect(stderr).toBe("");
-        } else {
-          expect(stderr).toContain(
-            'error: patch "no-deps@1.0.0" does not match any resolved version (no-deps is now 1.1.0)',
-          );
-          expect(stderr).toContain(
-            "Remove the obsolete patchedDependencies entry or recreate the patch for the resolved version",
-          );
-        }
-        expect(exitCode).toBe(1);
-        expect(await packageJsonText(dir)).toBe(manifest);
-        expect(await lockText(dir)).toBe(lockfile);
-        expect(await file(join(dir, "patches", "no-deps@1.0.0.patch")).text()).toBe(NO_DEPS_PATCH);
-        if (cold) {
-          expect(await exists(join(dir, "node_modules"))).toBeFalse();
-        } else {
-          expect(await file(join(dir, "node_modules", "no-deps", "package.json")).text()).toBe(installedManifest);
-          expect(await file(join(dir, "node_modules", "no-deps", "index.js")).text()).toBe(installedSource);
-        }
-      }
-    },
-  );
+// Moving beyond a patched version requires an explicit unused-patch allowance.
+test.concurrent("`bun update <name> --latest` requires an allowance to leave a patch unused", async () => {
+  const dir = await setup({
+    "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
+    "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+  });
+  await reinstall(dir, pkgJson({ "no-deps": "^1.0.0" }, PATCHED));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  const manifest = await packageJsonText(dir);
+  const lockfile = await lockText(dir);
+  const rejected = await run(dir, "update", "no-deps", "--latest");
+  expect(rejected.stderr).toContain('error: patch "no-deps@1.0.0" was not used');
+  expect(rejected.exitCode).toBe(1);
+  expect(await packageJsonText(dir)).toBe(manifest);
+  expect(await lockText(dir)).toBe(lockfile);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "no-deps", "--latest", "--allow-unused-patches");
+  expectSummary(stdout, movedRow("no-deps", "1.0.0", "2.0.0"), "", installed(1));
+  expect(stderr).toContain('warn: patch "no-deps@1.0.0" was not used\n');
+  expect(stderr).not.toContain("error:");
+  expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "no-deps": "^2.0.0" }, PATCHED));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
+  expect(exitCode).toBe(0);
 });
 
-// A version bump that leaves a patchedDependencies key behind is warned about without --frozen-lockfile.
-test.concurrent("installs warn about stale patch versions unless frozen", async () => {
+describe.concurrent.each<Linker>(["hoisted", "isolated"])("unused patch validation with %s linking", linker => {
+  test.each([
+    { flags: [] },
+    { flags: ["--frozen-lockfile"] },
+    { flags: ["--dry-run"] },
+    { flags: ["--silent"] },
+    { flags: ["--frozen-lockfile", "--silent"] },
+    { flags: ["--production"] },
+    { flags: ["--lockfile-only"] },
+  ])("requires an explicit allowance with flags $flags", async ({ flags }) => {
+    const layout = { linker };
+    const dir = await setup(
+      { "package.json": pkgJson({ "no-deps": "1.1.0" }), "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH },
+      layout,
+    );
+    await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": "1.1.0" }, PATCHED)));
+    expect((await lock(dir)).patchedDependencies).toBeUndefined();
+    const manifest = await packageJsonText(dir);
+    const lockfile = await lockText(dir);
+    const installedSource = await file(join(dir, "node_modules", "no-deps", "index.js")).text();
+    for (const cold of [false, true]) {
+      if (cold) await rm(join(dir, "node_modules"), { recursive: true });
+      const { stderr, exitCode } = await run(dir, "install", ...linkerArgs(layout), ...flags);
+      if (flags.includes("--silent")) {
+        expect(stderr).toBe("");
+      } else {
+        expect(stderr).toContain('error: patch "no-deps@1.0.0" was not used');
+        expect(stderr).toContain("--allow-unused-patches");
+      }
+      expect(exitCode).toBe(1);
+      expect(await packageJsonText(dir)).toBe(manifest);
+      expect(await lockText(dir)).toBe(lockfile);
+      expect(await file(join(dir, "patches", "no-deps@1.0.0.patch")).text()).toBe(NO_DEPS_PATCH);
+      if (cold) {
+        expect(await exists(join(dir, "node_modules"))).toBeFalse();
+      } else {
+        expect(await file(join(dir, "node_modules", "no-deps", "index.js")).text()).toBe(installedSource);
+      }
+    }
+    const allowed = await run(dir, "install", ...linkerArgs(layout), ...flags, "--allow-unused-patches");
+    expect(warningLines(allowed.stderr)).toEqual(
+      flags.includes("--silent") ? [] : ['warn: patch "no-deps@1.0.0" was not used'],
+    );
+    expect(allowed.exitCode).toBe(0);
+  });
+
+  test("accepts a patch matching one of multiple installed versions", async () => {
+    const dir = await setup(
+      {
+        "package.json": pkgJson({ "no-deps": "1.1.0", "one-fixed-dep": "1.0.0" }, PATCHED),
+        "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+      },
+      { linker },
+    );
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
+    expect(warningLines(await frozen(dir, { linker }))).toEqual([]);
+  });
+});
+
+test.concurrent("a patch for an omitted dev dependency still matches the lockfile", async () => {
+  const dir = await setup({
+    "package.json": pkgJson({}, { ...PATCHED, devDependencies: { "no-deps": "1.0.0" } }),
+    "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+  });
+  await rm(join(dir, "node_modules"), { recursive: true });
+  expect(warningLines(await install(dir, "--production"))).toEqual([]);
+  expect(await exists(join(dir, "node_modules", "no-deps"))).toBeFalse();
+});
+
+test.concurrent("bunfig allows patches for packages that are not installed", async () => {
+  const dir = await setup({ "package.json": pkgJson({}), "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH });
+  await write(join(dir, "package.json"), stringify(pkgJson({}, PATCHED)));
+  const strict = await run(dir, "install");
+  expect(strict.stderr).toContain('error: patch "no-deps@1.0.0" was not used');
+  expect(strict.exitCode).toBe(1);
+  await write(join(dir, "bunfig.toml"), "[install]\nallowUnusedPatches = true\n");
+  expect(warningLines(await install(dir))).toEqual(['warn: patch "no-deps@1.0.0" was not used']);
+  expect(warningLines(await frozen(dir))).toEqual(['warn: patch "no-deps@1.0.0" was not used']);
+  await write(join(dir, "bunfig.toml"), "[install]\nallowUnusedPatches = false\n");
+  const strictAgain = await run(dir, "install", "--silent");
+  expect(strictAgain.stderr).toBe("");
+  expect(strictAgain.exitCode).toBe(1);
+  expect((await run(dir, "install", "--allow-unused-patches")).exitCode).toBe(0);
+});
+
+test.concurrent("bunfig rejects a non-boolean unused-patch allowance", async () => {
+  const dir = await setup({ "package.json": pkgJson({}) });
+  await write(join(dir, "bunfig.toml"), '[install]\nallowUnusedPatches = "true"\n');
+  const result = await run(dir, "install");
+  expect(result.stderr).toContain("Expected boolean");
+  expect(result.exitCode).toBe(1);
+});
+
+test.concurrent.each([null, false, 17, {}])("ignores a non-string patch value %j", async value => {
+  const dir = await setup({
+    "package.json": pkgJson({ "no-deps": "1.1.0" }, { patchedDependencies: { "no-deps@1.0.0": value } }),
+  });
+  expect(warningLines(await frozen(dir))).toEqual([]);
+});
+
+test.concurrent("a local copy does not hide unused patches for registry copies", async () => {
+  const dir = await setup({
+    "package.json": pkgJson({ "no-deps": "file:./local", "one-fixed-dep": "1.0.0" }),
+    "local/package.json": { name: "no-deps", version: "1.1.0" },
+    "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+  });
+  await write(
+    join(dir, "package.json"),
+    stringify(
+      pkgJson(
+        { "no-deps": "file:./local", "one-fixed-dep": "1.0.0" },
+        { patchedDependencies: { "no-deps@0.0.0": "patches/no-deps@1.0.0.patch" } },
+      ),
+    ),
+  );
+  const result = await run(dir, "install", "--frozen-lockfile");
+  expect(result.stderr).toContain('error: patch "no-deps@0.0.0" was not used');
+  expect(result.exitCode).toBe(1);
+  await write(
+    join(dir, "package.json"),
+    stringify(pkgJson({ "no-deps": "file:./local", "one-fixed-dep": "1.0.0" }, PATCHED)),
+  );
+  expect(warningLines(await install(dir))).toEqual([]);
+});
+
+test.concurrent("unused patch diagnostics redact credentials", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "no-deps": "1.1.0" }), "patches/old.patch": NO_DEPS_PATCH });
+  await write(
+    join(dir, "package.json"),
+    stringify(
+      pkgJson(
+        { "no-deps": "1.1.0" },
+        {
+          patchedDependencies: {
+            "no-deps@https://user:unused-patch-secret@example.invalid/old.tgz": "patches/old.patch",
+          },
+        },
+      ),
+    ),
+  );
+  for (const flags of [[], ["--allow-unused-patches"]]) {
+    const result = await run(dir, "install", ...flags);
+    expect(result.stderr).toContain('patch "no-deps@https://***@example.invalid/old.tgz" was not used');
+    expect(result.stdout + result.stderr).not.toContain("unused-patch-secret");
+    expect(result.exitCode).toBe(flags.length ? 0 : 1);
+  }
+});
+
+// Explicitly allowed unused patches still warn on later installs.
+test.concurrent("allowed unused patch versions keep warning", async () => {
   const dir = await setup({
     "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
     "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
@@ -1240,30 +1344,26 @@ test.concurrent("installs warn about stale patch versions unless frozen", async 
   expect(warningLines(await install(dir))).toEqual([]);
 
   await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": "1.1.0" }, PATCHED)));
-  const moved = ["warn: patches/no-deps@1.0.0.patch no longer applies (no-deps is now 1.1.0)"];
-  expect(warningLines(await install(dir))).toEqual(moved);
+  const moved = ['warn: patch "no-deps@1.0.0" was not used'];
+  expect(warningLines(await install(dir, "--allow-unused-patches"))).toEqual(moved);
   expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
   // until package.json is fixed
-  expect(warningLines(await install(dir))).toEqual(moved);
+  expect(warningLines(await install(dir, "--allow-unused-patches"))).toEqual(moved);
   const frozenInstall = await run(dir, "install", "--frozen-lockfile");
-  expect(frozenInstall.stderr).toContain(
-    'error: patch "no-deps@1.0.0" does not match any resolved version (no-deps is now 1.1.0)',
-  );
+  expect(frozenInstall.stderr).toContain('error: patch "no-deps@1.0.0" was not used');
   expect(frozenInstall.exitCode).toBe(1);
-  expect(await install(dir, "--silent")).toBe("");
-  expect(warningLines(await install(dir, "--dry-run"))).toEqual([]);
+  expect(await install(dir, "--silent", "--allow-unused-patches")).toBe("");
+  expect(warningLines(await install(dir, "--dry-run", "--allow-unused-patches"))).toEqual(moved);
 
-  const removed = await run(dir, "remove", "no-deps");
-  expect(warningLines(removed.stderr)).toEqual([
-    "warn: patches/no-deps@1.0.0.patch no longer applies (no-deps is no longer installed)",
-  ]);
+  const removed = await run(dir, "remove", "no-deps", "--allow-unused-patches");
+  expect(warningLines(removed.stderr)).toEqual(['warn: patch "no-deps@1.0.0" was not used']);
   expect(removed.exitCode).toBe(0);
 });
 
 test.concurrent.each<[string, (version: string) => string]>([
   ["a tarball file", version => `file:./no-deps-${version}.tgz`],
   ["a tarball URL", version => `${registry.registryUrl()}no-deps/-/no-deps-${version}.tgz`],
-])("installs warn about a stale patch for %s unless frozen", async (_, spec) => {
+])("allowed unused patches warn for %s", async (_, spec) => {
   const dir = await setup({ "package.json": pkgJson({}), "patches/no-deps.patch": NO_DEPS_PATCH });
   for (const tarball of ["no-deps-1.0.0.tgz", "no-deps-1.0.1.tgz"]) {
     await write(join(dir, tarball), file(join(registry.packagesPath, "no-deps", tarball)));
@@ -1276,21 +1376,25 @@ test.concurrent.each<[string, (version: string) => string]>([
   expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeTrue();
 
   await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": spec("1.0.1") }, patched)));
-  const stderr = await install(dir);
-  const now = (await locked()).slice("no-deps@".length);
-  const moved = [`warn: patches/no-deps.patch no longer applies (no-deps is now ${now})`];
+  const stderr = await install(dir, "--allow-unused-patches");
+  const moved = [`warn: patch "${Object.keys(patched.patchedDependencies)[0]}" was not used`];
   expect(warningLines(stderr)).toEqual(moved);
   expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
   const frozenInstall = await run(dir, "install", "--frozen-lockfile");
-  expect(frozenInstall.stderr).toContain("does not match any resolved version");
+  expect(frozenInstall.stderr).toContain("was not used");
   expect(frozenInstall.exitCode).toBe(1);
 });
 
 test.concurrent("a patchedDependencies key without a version is pointed out where it is in package.json", async () => {
   const dir = await setup({
-    "package.json": pkgJson({ "no-deps": "1.0.0" }, { patchedDependencies: { "no-deps": "patches/no-deps.patch" } }),
+    "package.json": pkgJson({ "no-deps": "1.0.0" }),
     "patches/no-deps.patch": NO_DEPS_PATCH,
   });
+  await write(
+    join(dir, "package.json"),
+    stringify(pkgJson({ "no-deps": "1.0.0" }, { patchedDependencies: { "no-deps": "patches/no-deps.patch" } })),
+  );
+  await write(join(dir, "bunfig.toml"), "[install]\nallowUnusedPatches = true\n");
   const stderr = await install(dir);
   expect(warningLines(stderr)).toEqual(["warn: patchedDependencies keys need a version: no-deps@1.0.0"]);
   expect(stderr).toMatch(/package\.json:\d+:\d+/);

@@ -697,16 +697,13 @@ pub fn install_with_manager(
     super::package_json_write_back::fold_resolved_positionals(manager);
 
     let lockfile_before_clean = clean_lockfile(manager, log_level)?;
-    if !manager.options.dry_run || manager.options.enable.frozen_lockfile() {
-        Output::flush();
-        crate::update_transitive::check_orphaned_patches(manager)?;
-    }
     let requests_removed_from_lockfile = if manager.subcommand == Subcommand::Remove {
         count_requests_removed_from_lockfile(manager, &lockfile_before_clean)
     } else {
         0
     };
 
+    let mut moved_by_overrides: Vec<PackageID> = Vec::new();
     if manager.lockfile.packages.len() > 0 {
         root = *manager.lockfile.packages.get(0);
 
@@ -717,7 +714,6 @@ pub fn install_with_manager(
 
         manager.verify_resolutions(log_level);
 
-        let mut moved_by_overrides: Vec<PackageID> = Vec::new();
         let synced = super::package_json_write_back::edit_after_resolve(manager)?;
         if synced.links {
             // Removes the registry packages that were resolved for rows that now link a workspace.
@@ -742,21 +738,23 @@ pub fn install_with_manager(
                 had_any_diffs |= !moved_by_overrides.is_empty();
             }
         }
+    }
 
-        if manager.options.security_scanner.is_some() {
-            // Another package manager's lockfile doesn't say what the scanner has already seen.
-            let loaded_bun_lockfile = lockfile_before_clean.loaded_package_count > 0
-                && load_result.migrated_from().is_none();
-            run_security_scanner(
-                manager,
-                ctx,
-                original_cwd,
-                &lockfile_before_clean,
-                &named.moved,
-                moved_by_overrides,
-                loaded_bun_lockfile,
-            );
-        }
+    crate::update_transitive::check_unused_patches(manager)?;
+
+    if manager.lockfile.packages.len() > 0 && manager.options.security_scanner.is_some() {
+        // Another package manager's lockfile doesn't say what the scanner has already seen.
+        let loaded_bun_lockfile =
+            lockfile_before_clean.loaded_package_count > 0 && load_result.migrated_from().is_none();
+        run_security_scanner(
+            manager,
+            ctx,
+            original_cwd,
+            &lockfile_before_clean,
+            &named.moved,
+            moved_by_overrides,
+            loaded_bun_lockfile,
+        );
     }
 
     // append scripts to lockfile before generating new metahash

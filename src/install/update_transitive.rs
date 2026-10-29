@@ -820,13 +820,9 @@ fn warn_patch_key_without_version(
     );
 }
 
-/// Checks patch targets after the lockfile is cleaned; frozen installs reject mismatched versions.
-pub(crate) fn check_orphaned_patches(manager: &mut PackageManager) -> crate::Result<()> {
-    let frozen = manager.options.enable.frozen_lockfile();
+pub(crate) fn check_unused_patches(manager: &mut PackageManager) -> crate::Result<()> {
+    let allow_unused = manager.options.allow_unused_patches;
     let silent = manager.options.log_level == LogLevel::Silent;
-    if !frozen && (manager.lockfile.patched_dependencies.count() == 0 || silent) {
-        return Ok(());
-    }
     let log = manager.log_mut();
     let root_dir = manager.root_dir.dir;
     let Some((source, patched)) =
@@ -835,93 +831,65 @@ pub(crate) fn check_orphaned_patches(manager: &mut PackageManager) -> crate::Res
         return Ok(());
     };
     let mut keys: Vec<(Box<[u8]>, bun_ast::Loc)> = Vec::with_capacity(patched.property_count());
-    patched.for_each_property(|key, loc, _| keys.push((Box::from(key), loc)));
+    patched.for_each_property(|key, loc, value| {
+        if value.is_string() {
+            keys.push((Box::from(key), loc));
+        }
+    });
 
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let mut failed = false;
+    let resolutions = lockfile.packages.items_resolution();
+    let mut unused = false;
     for (key, key_loc) in keys {
-        // Split at the first `@` after the scope's. A URL in place of the version can contain more.
-        let Some(at) = strings::index_of_char_pos(&key, b'@', 1) else {
+        let at = strings::index_of_char_pos(&key, b'@', 1);
+        if at.is_none() && allow_unused {
             if !silent {
                 warn_patch_key_without_version(log, source, key_loc, &key, lockfile);
             }
             continue;
-        };
-        let (name, version) = (&key[..at], &key[at + 1..]);
-        let installed: &[PackageID] = lockfile
-            .package_index
-            .get(&Semver::string::Builder::string_hash(name))
-            .map_or(&[], PackageIndexEntry::as_slice);
-        // `file:` folders, `link:` dependencies and workspaces are never patched.
-        if installed
-            .iter()
-            .any(|&id| !pkg_res[id as usize].can_enqueue_install_task())
-        {
+        }
+        let matched = at.is_some_and(|at| {
+            let (name, version) = (&key[..at], &key[at + 1..]);
+            lockfile
+                .package_index
+                .get(&Semver::string::Builder::string_hash(name))
+                .map_or(&[][..], PackageIndexEntry::as_slice)
+                .iter()
+                .any(|&id| {
+                    let resolution = &resolutions[id as usize];
+                    resolution.can_enqueue_install_task()
+                        && &*text(resolution.fmt(buf, bun_core::fmt::PathSep::Posix)) == version
+                })
+        });
+        if matched {
             continue;
         }
-        let mut now: Vec<u8> = Vec::new();
-        let mut still_applies = false;
-        for &id in installed {
-            let current = text(pkg_res[id as usize].fmt(buf, bun_core::fmt::PathSep::Posix));
-            if &*current == version {
-                still_applies = true;
-                break;
-            }
-            if !now.is_empty() {
-                now.extend_from_slice(b", ");
-            }
-            now.extend_from_slice(&current);
-        }
-        if still_applies {
-            continue;
-        }
-        if frozen && !now.is_empty() {
-            failed = true;
-            if !silent {
+        unused = true;
+        if !silent {
+            if allow_unused {
+                bun_core::warn!(
+                    "patch \"{}\" was not used",
+                    bun_core::fmt::for_terminal(BStr::new(&key))
+                );
+            } else {
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r>: patch \"{}\" does not match any resolved version ({} is now {})",
-                    bun_core::fmt::EscapeControlChars(BStr::new(&key)),
-                    bun_core::fmt::EscapeControlChars(BStr::new(name)),
-                    bun_core::fmt::for_terminal(BStr::new(&now))
+                    "<r><red>error<r>: patch \"{}\" was not used",
+                    bun_core::fmt::for_terminal(BStr::new(&key))
                 );
             }
-            continue;
-        }
-        if silent {
-            continue;
-        }
-        let Some(patch) = lockfile
-            .patched_dependencies
-            .get(&Semver::string::Builder::string_hash(&key))
-        else {
-            continue;
-        };
-        if now.is_empty() {
-            bun_core::warn!(
-                "{} no longer applies ({} is no longer installed)",
-                bun_core::fmt::escape_control_chars(patch.path.slice(buf)),
-                bun_core::fmt::EscapeControlChars(BStr::new(name))
-            );
-        } else {
-            bun_core::warn!(
-                "{} no longer applies ({} is now {})",
-                bun_core::fmt::escape_control_chars(patch.path.slice(buf)),
-                bun_core::fmt::EscapeControlChars(BStr::new(name)),
-                bun_core::fmt::for_terminal(BStr::new(&now))
-            );
         }
     }
-    if failed && !silent {
-        bun_core::note!(
-            "Remove the obsolete patchedDependencies entry or recreate the patch for the resolved version"
-        );
-    }
-    Output::flush();
-    if failed {
+    if unused && !allow_unused {
+        if !silent {
+            bun_core::note!(
+                "Remove or regenerate unused patches, or use --allow-unused-patches to keep them"
+            );
+        }
+        Output::flush();
         return Err(crate::Error::InstallFailed);
     }
+    Output::flush();
     Ok(())
 }
 

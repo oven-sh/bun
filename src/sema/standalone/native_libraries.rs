@@ -283,19 +283,19 @@ extern "C" fn Bun__abortForRemovedFeature(feature: u16) -> ! {
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__offsetInCode(_address: *const c_void) -> i64 {
+extern "C" fn Bun__AOT__offsetInCode(_address: *const c_void) -> i64 {
     -1
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__frameAtReturnAddress(_return_address: *const c_void) -> i64 {
+extern "C" fn Bun__AOT__frameAtReturnAddress(_return_address: *const c_void) -> i64 {
     -1
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__describeAddresses(
+extern "C" fn Bun__AOT__describeAddresses(
     _addresses: *const usize,
     _count: usize,
     _buffer: *mut u8,
@@ -312,34 +312,31 @@ extern "C" fn Bun__AOT__addressOfOffsetInCode(offset: usize) -> usize {
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn BunString__fromBytes(_bytes: *const u8, _len: usize) -> bun_core::String {
+extern "C" fn BunString__fromBytes(_bytes: *const u8, _len: usize) -> bun_core::String {
     panic!("this program has no WTF strings")
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn BunString__fromLatin1(_bytes: *const u8, _len: usize) -> bun_core::String {
+extern "C" fn BunString__fromLatin1(_bytes: *const u8, _len: usize) -> bun_core::String {
     panic!("this program has no WTF strings")
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn BunString__fromUTF16(_units: *const u16, _len: usize) -> bun_core::String {
+extern "C" fn BunString__fromUTF16(_units: *const u16, _len: usize) -> bun_core::String {
     panic!("this program has no WTF strings")
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn BunString__fromUTF16ToLatin1(
-    _units: *const u16,
-    _len: usize,
-) -> bun_core::String {
+extern "C" fn BunString__fromUTF16ToLatin1(_units: *const u16, _len: usize) -> bun_core::String {
     panic!("this program has no WTF strings")
 }
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__WTFStringImpl__destroy(_this: *const WTFStringImplStruct) {
+extern "C" fn Bun__WTFStringImpl__destroy(_this: *const WTFStringImplStruct) {
     panic!("this program has no WTF strings")
 }
 
@@ -363,7 +360,7 @@ extern "C" fn bun_remember_inherited_file_descriptors() {}
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__collateUTF8(
+extern "C" fn Bun__collateUTF8(
     _is_numeric_and_base: bool,
     _a: *const u8,
     _a_len: usize,
@@ -375,7 +372,7 @@ unsafe extern "C" fn Bun__collateUTF8(
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn Bun__collateUTF16(
+extern "C" fn Bun__collateUTF16(
     _is_numeric_and_base: bool,
     _a: *const u16,
     _a_len: usize,

@@ -27,7 +27,7 @@ const server = Bun.serve({
 const endpoint = new QuicEndpoint();
 const client = await connect(`127.0.0.1:${server.port}`, {
   endpoint, servername: "localhost", verifyPeer: "manual",
-  transportParams: { maxIdleTimeout: 30, initialMaxData: window }, onerror() {},
+  transportParams: { maxIdleTimeout: Number(process.env.IDLE ?? 30), initialMaxData: window }, onerror() {},
 });
 client.closed.catch(() => {});
 await client.opened;

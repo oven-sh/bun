@@ -72,7 +72,7 @@ notes = f"""<details><summary>Notes</summary>
 **Reach.** No user has reported one of these defects: this tracker has 0 issues for `MAX_DATA`, `cc_sent`, `frame_hq_gen_read` and `maybe_flush_stream`.
 
 - The overrun needs a connection window that many responses use up at the same time, and a peer that does not raise it in between. A bun client on the same machine raises it first, so the test keeps the client's MAX_DATA from the server with a UDP relay.
-- The stall needs header blocks of one turn that are larger than the client's connection window. 100 responses with a 1,000-byte header field stall into windows of up to 100,000 bytes. `Bun.serve` allows 100 streams per connection, and curl 8.14.1 advertises 786,432 bytes.
+- The stall needs responses of one turn that are larger than the client's connection window. Through `Bun.serve`, 100 responses with a 1,000-byte header field and a 3,000-byte body stall into windows of up to 160,000 bytes (11 to 17 arrive), and complete into 180,000. `Bun.serve` allows 100 streams per connection, and curl 8.14.1 advertises 786,432 bytes.
 - Only node:quic reaches the stream's window. `Bun.serve` sends at most two header blocks per stream, and lsquic refuses a peer whose windows are below 4,096 bytes.
 - The 100 Continue defect needs no small window. One POST with `expect: 100-continue` whose response has a 2,000-byte header field, beside one 5 MB download on the same connection, gets its 100 and no response without the third patch (3 of 3), and gets the response with it (3 of 3). The defect needs an `Expect` header, a final header block of more than about 1,150 bytes, a first body write of 1 to about 1,150 bytes, and a connection that is busy.
 

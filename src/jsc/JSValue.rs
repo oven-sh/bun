@@ -2369,6 +2369,7 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__isIterable(self, global))
     }
     /// `JSValue.forEach` — invoke `callback` for each iterable element.
+    /// It runs the iteration protocol, so it uses an iterator up. A printer calls `console_object::formatter::for_each_listed`.
     pub fn for_each(
         self,
         global: &JSGlobalObject,

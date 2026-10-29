@@ -106,6 +106,11 @@ public:
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
+// A frame of the async context, shaped like async_hooks.ts's `Frame`, that binds `storage` to
+// `value` on top of `previous`. `storage` is native code's own (a graph, the key of a test
+// file): no AsyncLocalStorage ever matches it, so run(), exit() and enterWith() copy or share
+// the frame like any other storage's and never drop it.
+JSC::JSObject* createAsyncContextFrame(Zig::GlobalObject*, JSC::JSObject* storage, JSC::JSValue value, JSC::JSValue previous);
 
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.

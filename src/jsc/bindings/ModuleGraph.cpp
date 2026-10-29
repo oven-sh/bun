@@ -346,21 +346,26 @@ Structure* createModuleGraphFrameStructure(VM& vm, JSGlobalObject* globalObject)
     return structure;
 }
 
-// `graph` null: a frame that leaves the graph's context the frames below are in, keeping their
-// AsyncLocalStorage stores.
-static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue previous)
+JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSObject* storage, JSValue value, JSValue previous)
 {
     VM& vm = globalObject->vm();
     JSObject* frame = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
-    // No AsyncLocalStorage is ever this frame's storage: the graph, or the global object for the
-    // realm's own context. (Not the frame: AsyncLocalStorage copies frames, and a copy is another object.)
-    frame->putDirectOffset(vm, FrameStorage, graph ? static_cast<JSObject*>(graph) : static_cast<JSObject*>(globalObject));
-    frame->putDirectOffset(vm, FrameValue, jsUndefined());
+    frame->putDirectOffset(vm, FrameStorage, storage);
+    frame->putDirectOffset(vm, FrameValue, value);
     frame->putDirectOffset(vm, FramePrev, previous);
     // What disable()d AsyncLocalStorages the frame below masks, frames above it mask too.
     JSValue masked = previous.isObject() ? asObject(previous)->getDirect(vm, WebCore::builtinNames(vm).maskedPublicName()) : JSValue();
     frame->putDirectOffset(vm, FrameMasked, masked ? masked : jsUndefined());
     return frame;
+}
+
+// `graph` null: a frame that leaves the graph's context the frames below are in, keeping their
+// AsyncLocalStorage stores.
+static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue previous)
+{
+    // No AsyncLocalStorage is ever this frame's storage: the graph, or the global object for the
+    // realm's own context. (Not the frame: AsyncLocalStorage copies frames, and a copy is another object.)
+    return createAsyncContextFrame(globalObject, graph ? static_cast<JSObject*>(graph) : static_cast<JSObject*>(globalObject), jsUndefined(), previous);
 }
 
 JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject* globalObject, JSValue asyncContext)

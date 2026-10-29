@@ -347,6 +347,10 @@ pub struct VirtualMachine {
     pub on_unhandled_rejection: OnUnhandledRejection,
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
+    /// Set while `on_unhandled_rejection` runs for a promise rejection under `bun test`: the
+    /// `owner` of `unhandled_rejection_owned`, where the runner looks for the test that
+    /// rejected the promise. The caller keeps the value alive.
+    pub unhandled_rejection_owner: Option<JSValue>,
     pub unhandled_error_counter: usize,
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
@@ -4600,7 +4604,8 @@ impl VirtualMachine {
     }
 
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`
-    /// takes it), or null. The tracker queue reports after the fact, so it decided when it happened.
+    /// takes it), under `bun test` the async context it was rejected in, or null. The tracker
+    /// queue reports after the fact, so it decided when it happened.
     pub fn unhandled_rejection_owned(
         &mut self,
         global_object: &JSGlobalObject,
@@ -4624,7 +4629,9 @@ impl VirtualMachine {
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
+            self.unhandled_rejection_owner = Some(owner);
             (self.on_unhandled_rejection)(self, global_object, reason);
+            self.unhandled_rejection_owner = None;
             return;
         }
 

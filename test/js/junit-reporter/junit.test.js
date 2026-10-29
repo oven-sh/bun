@@ -503,6 +503,55 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  it("keeps the failure of a concurrent test in its own <testcase>", async () => {
+    await using tmpDir = tempDir("junit-concurrent", {
+      "package.json": "{}",
+      // "fails" throws. Its afterEach then waits until "passes" has completed.
+      "concurrent.test.js": `
+        import { afterEach, describe, test } from "bun:test";
+        const passed = Promise.withResolvers();
+        let hooks = 0;
+        describe.concurrent("group", () => {
+          afterEach(async () => {
+            if (hooks++ === 0) await passed.promise;
+            else setTimeout(() => setTimeout(passed.resolve, 0), 0);
+          });
+          test("fails", () => {
+            throw new Error("from fails");
+          });
+          test("passes", async () => {
+            await new Promise(resolve => setTimeout(resolve, 0));
+          });
+        });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const testcases = result.testsuites.testsuite[0].testsuite[0].testcase;
+    expect(
+      testcases.map(testcase => ({
+        name: testcase.$.name,
+        failure: testcase.failure?.map(failure => ({ ...failure.$, body: failure._?.split("\n")[0] })),
+      })),
+    ).toEqual([
+      { name: "passes", failure: undefined },
+      { name: "fails", failure: [{ type: "Error", message: "from fails", body: "Error: from fails" }] },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   it("includes the error type, message and stack in <failure>", async () => {
     await using tmpDir = tempDir("junit-failure", {
       "package.json": "{}",

@@ -583,6 +583,17 @@ pub(crate) mod on_unhandled_rejection {
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
+            // A group of more than one sequence has no currently active test. The error belongs
+            // to the test whose body started what threw it. `done(err)` is not looked up.
+            let rejected_in = jsc_vm.unhandled_rejection_owner.take();
+            if matches!(current_state_data, RefDataValue::Execution { entry_data: None, .. })
+                && !buntest.reporting_done_error
+            {
+                let execution = &buntest.execution;
+                if let Some(owner) = execution.owner(execution.owner_id_of(global_object, rejection, rejected_in)) {
+                    current_state_data = owner;
+                }
+            }
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)

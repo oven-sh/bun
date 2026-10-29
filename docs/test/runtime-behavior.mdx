@@ -127,6 +127,30 @@ test("test 1", () => {
 Promise.reject(new Error("Unhandled rejection"));
 ```
 
+### Errors While a Test Runs
+
+An error that nothing catches while a test runs fails that test. This includes an error thrown from a timer callback and a promise that rejects with no handler:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+// bun test reports this test as failed
+test("test 1", async () => {
+  setTimeout(() => {
+    throw new Error("Thrown from a timer");
+  }, 1);
+  await Bun.sleep(10);
+});
+```
+
+When tests run [concurrently](/test/index#concurrent-test-execution), the error fails the test whose callback started the timer or the promise. The other tests continue. `bun test` reports the error as "Unhandled error between tests" and exits with a non-zero code when it cannot name a running test that caused it:
+
+- The test that caused it has ended.
+- A hook such as `beforeEach`, or code outside a test, caused it.
+- The test is marked with `test.failing`.
+- The rejection reached a promise through another promise, as with `promise.then(onFulfilled)` or `Promise.all()`.
+- Bun rejected the promise, as with a `fetch()` that is not awaited.
+
 ### Custom Error Handling
 
 You can set up custom error handlers in your test setup:

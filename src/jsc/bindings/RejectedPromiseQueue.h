@@ -25,11 +25,15 @@ public:
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
+    // bun test: from now on, a promise that no Bun.ModuleGraph owns keeps the async context it was
+    // rejected in as its rejection owner. The runner looks there for the test that rejected it.
+    void keepAsyncContext() { m_keepsAsyncContext = true; }
+    bool keepsAsyncContext() const { return m_keepsAsyncContext; }
 
 private:
     struct Entry {
         JSC::WriteBarrier<JSC::Unknown> promise; // JSPromise
-        JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph or null
+        JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph, an async context frame (keepsAsyncContext()), or null
     };
     static bool isHandled(const Entry& entry) { return static_cast<JSC::JSPromise*>(entry.promise.get().asCell())->isHandled(); }
     bool wasReported(JSC::JSPromise*);
@@ -39,6 +43,7 @@ private:
     WTF::Vector<Entry> m_entries;
     // Promises reported as unhandled. Weak: a reported promise that dies leaves it.
     JSC::WriteBarrier<JSC::JSWeakSet> m_reported;
+    bool m_keepsAsyncContext { false };
 };
 
 // Inlined into promiseRejectionTracker, their one caller.

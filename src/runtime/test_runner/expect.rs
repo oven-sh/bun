@@ -483,6 +483,26 @@ impl Expect {
         Ok(())
     }
 
+    /// Waits for `promise` inside a matcher. The test that waits is on the stack, so in a group
+    /// of more than one sequence its owner frame (`Execution::owner_key`) would stay current
+    /// while the event loop runs, and a job that captured no async context would run in it.
+    fn wait_for_promise(
+        vm: &mut VirtualMachine,
+        global_this: &JSGlobalObject,
+        promise: bun_jsc::AnyPromise,
+    ) -> Result<(), bun_jsc::Stopped> {
+        let owner_frame = bun_test::clone_active_strong()
+            .and_then(|buntest| buntest.get().execution.owner_key.as_ref().map(|key| key.get()))
+            .map(|key| bun_jsc::cpp::Bun__TestOwner__leave(global_this, key))
+            .filter(|previous| !previous.is_empty());
+        let waited = vm.wait_for_promise(promise);
+        if let Some(previous) = owner_frame {
+            bun_jsc::cpp::Bun__TestOwner__reenter(global_this, previous);
+            previous.ensure_still_alive();
+        }
+        waited
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -503,12 +523,8 @@ impl Expect {
 
                     Self::call_then_if_pending(global_this, value, promise)?;
 
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+                    Self::wait_for_promise(global_this.bun_vm().as_mut(), global_this, promise)
+                        .map_err(|stopped| stopped.throw(global_this))?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -800,6 +816,23 @@ pub(crate) struct TrimResult<'a> {
 }
 
 impl Expect {
+    /// `toThrow()` takes an uncaught error for what its function threw. In a group of more than
+    /// one sequence another running test can own the error (`Execution::owner_key`). That error
+    /// is the runner's to report.
+    fn on_unhandled_rejection_in_to_throw(vm: &mut VirtualMachine, global_this: &JSGlobalObject, value: JSValue) {
+        // SAFETY: `get_value_as_to_throw` points the context at its `caller` for as long as this handler is installed.
+        let caller = vm.on_unhandled_rejection_ctx.map_or(0, |ctx| unsafe { *ctx.cast::<u32>() });
+        let owned_by_another_test = bun_test::clone_active_strong().is_some_and(|buntest| {
+            let execution = &buntest.get().execution;
+            let owner = execution.owner_id_of(global_this, value, vm.unhandled_rejection_owner);
+            owner != caller && execution.owner(owner).is_some()
+        });
+        if owned_by_another_test {
+            return super::jest::on_unhandled_rejection::on_unhandled_rejection(vm, global_this, value);
+        }
+        VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value(vm, global_this, value)
+    }
+
     pub(crate) fn get_value_as_to_throw(
         &self,
         global_this: &JSGlobalObject,
@@ -825,7 +858,11 @@ impl Expect {
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
-        vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        let mut caller = bun_test::clone_active_strong().map_or(0, |buntest| {
+            buntest.get().execution.owner_id_of(global_this, JSValue::ZERO, None)
+        });
+        vm.on_unhandled_rejection_ctx = Some((&raw mut caller).cast());
+        vm.on_unhandled_rejection = Self::on_unhandled_rejection_in_to_throw;
         return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
             Err(err) => global_this.take_exception(err),
@@ -843,7 +880,7 @@ impl Expect {
                 scope.apply(vm);
                 return Err(err);
             }
-            let waited = vm.wait_for_promise(promise);
+            let waited = Self::wait_for_promise(vm, global_this, promise);
             scope.apply(vm);
             waited.map_err(|stopped| stopped.throw(global_this))?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
@@ -1374,11 +1411,7 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
+            Self::wait_for_promise(global_this.bun_vm().as_mut(), global_this, promise)
                 .map_err(|stopped| stopped.throw(global_this))?;
 
             result = promise.result(vm);

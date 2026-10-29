@@ -122,6 +122,33 @@ describe("node:test", () => {
     });
   });
 
+  test.concurrent.each([[[]], [["--concurrent"]]])(
+    "should fail the test that caused an uncaught error %j",
+    async args => {
+      const { exitCode, stderr } = await runTests(["33-concurrent-uncaught-error.js"], {}, args);
+      const lines = stderr.split("\n");
+      expect({
+        tests: lines
+          .filter(line => /^\((pass|fail)\) /.test(line))
+          .map(line => line.replace(/ \[[\d.]+ms\]$/, ""))
+          .sort(),
+        summary: lines.map(line => line.trim()).filter(line => /^\d+ (pass|fail|errors?)$/.test(line)),
+        exitCode,
+      }).toEqual({
+        tests: [
+          "(fail) suite > it() leaves a rejected promise",
+          "(fail) suite > it() throws from a timer",
+          "(fail) test() leaves a rejected promise",
+          "(fail) test() throws from a timer",
+          "(pass) passes",
+        ],
+        summary: ["1 pass", "4 fail"],
+        exitCode: 1,
+      });
+    },
+    30_000,
+  );
+
   test("should run todo bodies under --todo instead of registering an empty function", async () => {
     const { exitCode, stderr } = await runTests(["13-todo-bodies.js"], {}, ["--todo"]);
     expect(stderr).toContain("2 todo");

@@ -292,7 +292,7 @@ public:
 
     // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
     bool hasModuleGraphs() const { return !!m_moduleGraphs; }
-    // The shape of an async-context frame that names a Bun.ModuleGraph (ModuleGraph.cpp).
+    // The shape of an async-context frame that native code makes (ModuleGraph.cpp: createAsyncContextFrame).
     JSC::Structure* moduleGraphFrameStructure() const { return m_moduleGraphFrameStructure.getInitializedOnMainThread(this); }
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
@@ -325,6 +325,8 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
+    // See RejectedPromiseQueue::keepAsyncContext().
+    void keepAsyncContextOfRejectedPromises() { m_aboutToBeNotifiedRejectedPromises.keepAsyncContext(); }
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const
@@ -717,7 +719,8 @@ private:
 
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it
-    // happened: a Bun.ModuleGraph, or null for the global object's own code.
+    // happened: a Bun.ModuleGraph, the async context (bun test), or null for the
+    // global object's own code.
     // Guarded by cellLock() (visited on the GC thread).
     Bun::RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
 };

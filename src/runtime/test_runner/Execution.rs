@@ -38,7 +38,7 @@
 use core::ptr::NonNull;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_jsc::{JSGlobalObject, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
@@ -100,6 +100,14 @@ pub(crate) struct Execution {
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
     pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    /// Made when the file starts its first group of more than one sequence. In such a group
+    /// `get_current_state_data()` cannot name the sequence an uncaught error belongs to, so
+    /// each test body is called inside an async context frame that binds this key to the
+    /// sequence's `owner_id`. What the body starts captures the frame, and `owner_of` reads
+    /// the id back from the context the error was thrown or rejected in.
+    pub(crate) owner_key: Option<Strong>,
+    /// The last `ExecutionSequence::owner_id` handed out. Each call of a test body gets its own.
+    pub(crate) last_owner_id: u32,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -159,6 +167,10 @@ pub(crate) struct ExecutionSequence {
     pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
+    /// Counts the retries and repeats of this sequence. A completion of an earlier attempt is outdated.
+    pub(crate) attempt: u32,
+    /// What the owner frame of the running test body binds `Execution::owner_key` to. 0: none.
+    pub(crate) owner_id: u32,
     pub(crate) result: Result,
     pub(crate) executing: bool,
     pub(crate) started_at: Timespec,
@@ -167,6 +179,8 @@ pub(crate) struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
+    /// Errors thrown during this attempt, for the JUnit report.
+    pub(crate) failure: Option<test_command::TestFailure>,
 }
 
 impl ExecutionSequence {
@@ -183,12 +197,15 @@ impl ExecutionSequence {
             remaining_repeat_count: repeat_count,
             remaining_retry_count: retry_count,
             // defaults:
+            attempt: 0,
+            owner_id: 0,
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
+            failure: None,
         }
     }
 
@@ -282,6 +299,8 @@ impl Execution {
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
+            owner_key: None,
+            last_owner_id: 0,
         }
     }
 
@@ -478,9 +497,9 @@ impl Execution {
             return None;
         }
         let sequence = &mut self.sequences[seq_abs];
-        if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
+        if sequence.attempt != entry_data.attempt {
             group_log::log(format_args!(
-                "runOneCompleted: the data is for a previous repeat count (outdated)",
+                "runOneCompleted: the data is for a previous retry or repeat (outdated)",
             ));
             return None;
         }
@@ -539,7 +558,6 @@ impl Execution {
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
-                Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -547,7 +565,6 @@ impl Execution {
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
             if test_passed && sequence.remaining_repeat_count > 0 {
                 sequence.remaining_repeat_count -= 1;
-                Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -707,20 +724,6 @@ impl Execution {
         }
     }
 
-    /// Drop any captured failure so the next retry/repeat starts fresh.
-    /// Kept out of `reset_sequence` so within-attempt errors (e.g. a throwing
-    /// afterEach after the test body already threw) accumulate instead of
-    /// clobbering the primary failure.
-    fn discard_junit_failure(buntest: NonNull<BunTest>) {
-        // SAFETY: `buntest` points at the live per-file BunTest; single-threaded
-        // test runner, no other borrow live here.
-        if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
-            // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
-            // provenance (see BunTest docs); single-threaded, no other borrow.
-            unsafe { (*reporter.as_ptr()).test_failure = None };
-        }
-    }
-
     pub(crate) fn reset_sequence(sequence: &mut ExecutionSequence) {
         debug_assert!(!sequence.executing);
         {
@@ -745,12 +748,15 @@ impl Execution {
         }
 
         // Preserve retry/repeat counts across reset
-        *sequence = ExecutionSequence::init(
-            sequence.first_entry,
-            sequence.test_entry,
-            sequence.remaining_retry_count,
-            sequence.remaining_repeat_count,
-        );
+        *sequence = ExecutionSequence {
+            attempt: sequence.attempt.wrapping_add(1),
+            ..ExecutionSequence::init(
+                sequence.first_entry,
+                sequence.test_entry,
+                sequence.remaining_retry_count,
+                sequence.remaining_repeat_count,
+            )
+        };
 
         // Snapshot counters are keyed by full test name and incremented on every
         // toMatchSnapshot() call. Without this reset, retries / repeats would
@@ -762,6 +768,42 @@ impl Execution {
         if let Some(runner) = super::jest::Jest::runner() {
             runner.snapshots.reset_counts();
         }
+    }
+
+    /// The `owner_id` that the async context of an uncaught error carries, or 0. An empty
+    /// `error` asks for the context that is current. `rejected_in` is
+    /// `VirtualMachine::unhandled_rejection_owner`.
+    pub(crate) fn owner_id_of(
+        &self,
+        global_this: &JSGlobalObject,
+        error: JSValue,
+        rejected_in: Option<JSValue>,
+    ) -> u32 {
+        let Some(key) = &self.owner_key else { return 0 };
+        bun_jsc::cpp::Bun__TestOwner__find(global_this, key.get(), error, rejected_in.unwrap_or_default())
+    }
+
+    /// The running sequence whose test body was called with `owner_id`, for a group of more
+    /// than one sequence. An uncaught error that carries the id belongs to it.
+    pub(crate) fn owner(&self, owner_id: u32) -> Option<RefDataValue> {
+        if owner_id == 0 {
+            return None;
+        }
+        let sequences = self.active_group_ref()?.sequences(self);
+        let sequence_index = sequences.iter().position(|sequence| sequence.owner_id == owner_id)?;
+        let sequence = &sequences[sequence_index];
+        // `.failing` expects the error of its own callback. One from a timer stays an unhandled error.
+        if sequence.entry_mode() == ScopeMode::Failing {
+            return None;
+        }
+        Some(RefDataValue::Execution {
+            group_index: self.group_index,
+            entry_data: Some(EntryData {
+                sequence_index,
+                entry: sequence.active_entry?.as_ptr().cast::<()>(),
+                attempt: sequence.attempt,
+            }),
+        })
     }
 
     pub(crate) fn handle_uncaught_exception(
@@ -833,6 +875,12 @@ fn step_group(
             if !group.executing {
                 Execution::on_group_started(global_this);
                 group.executing = true;
+                if group.sequence_end - group.sequence_start > 1 && this.owner_key.is_none() {
+                    this.owner_key = Some(Strong::create(
+                        bun_jsc::cpp::Bun__TestOwner__createKey(global_this),
+                        global_this,
+                    ));
+                }
             }
         }
 
@@ -1009,7 +1057,7 @@ fn step_sequence_one(
         let entry_data = EntryData {
             sequence_index,
             entry: next_item_ptr.as_ptr() as *const (),
-            remaining_repeat_count: sequence.remaining_repeat_count as i64,
+            attempt: sequence.attempt,
         };
         let callback_data = RefDataValue::Execution {
             group_index: this.group_index,
@@ -1028,10 +1076,24 @@ fn step_sequence_one(
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
+        let mut callback = cb.get();
+        // Hooks get no owner: an uncaught error from what a hook started is not a test's failure.
+        if Some(next_item_ptr) == sequence.test_entry
+            && let Some(key) = &this.owner_key
+        {
+            // SAFETY: group points into this.groups; read-only.
+            let group = unsafe { group.as_ref() };
+            if group.sequence_end - group.sequence_start > 1 {
+                this.last_owner_id += 1;
+                sequence.owner_id = this.last_owner_id;
+                callback = bun_jsc::cpp::Bun__TestOwner__wrap(global_this, key.get(), sequence.owner_id, callback);
+            }
+        }
+
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,
-            cb.get(),
+            callback,
             next_item.has_done_parameter,
             callback_data,
             &next_item.timespec,

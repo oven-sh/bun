@@ -648,6 +648,8 @@ pub(crate) struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
+    /// `done(err)` is reporting its error. `jest::on_unhandled_rejection` does not look for its owner.
+    pub(crate) reporting_done_error: bool,
 
     pub(crate) phase: Phase,
     pub(crate) collection: Collection,
@@ -685,6 +687,7 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+            reporting_done_error: false,
         }
     }
 
@@ -721,7 +724,7 @@ impl BunTest {
                     entry_data: Some(EntryData {
                         sequence_index: active_sequence_index,
                         entry: active_entry.as_ptr().cast::<()>(),
-                        remaining_repeat_count: sequence.remaining_repeat_count as i64,
+                        attempt: sequence.attempt,
                     }),
                 }
             }
@@ -819,7 +822,14 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
+                let active = clone_active_strong();
+                if let Some(active) = &active {
+                    active.get().reporting_done_error = true;
+                }
                 let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                if let Some(active) = &active {
+                    active.get().reporting_done_error = false;
+                }
             }
         }
         this.called.set(true);
@@ -1292,13 +1302,14 @@ impl BunTest {
             let Some(reporter) = self.reporter else {
                 break 'ctx core::ptr::null_mut();
             };
-            // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
-            // `&mut`; single-threaded test runner, no other borrow live here.
-            let reporter = unsafe { &mut *reporter.as_ptr() };
-            if reporter.jest.test_options.reporters.junit {
-                core::ptr::from_mut(&mut reporter.test_failure).cast()
-            } else {
-                core::ptr::null_mut()
+            // SAFETY: the reporter outlives every BunTest; single-threaded, no `&mut` to it is live.
+            if !unsafe { reporter.as_ref() }.jest.test_options.reporters.junit {
+                break 'ctx core::ptr::null_mut();
+            }
+            match self.execution.get_current_and_valid_execution_sequence(user_data) {
+                // SAFETY: points into `execution.sequences`, a boxed slice that lives until the file is done.
+                Some((sequence, _)) => unsafe { &raw mut (*sequence.as_ptr()).failure }.cast(),
+                None => core::ptr::null_mut(),
             }
         };
 
@@ -1395,7 +1406,7 @@ impl Drop for BunTest {
 pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
-    pub(crate) remaining_repeat_count: i64,
+    pub(crate) attempt: u32,
 }
 
 // Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
@@ -1462,8 +1473,8 @@ impl fmt::Display for RefDataValue {
                 if let Some(ed) = entry_data {
                     write!(
                         f,
-                        "execution: group_index={},sequence_index={},entry_index={:x},remaining_repeat_count={}",
-                        group_index, ed.sequence_index, ed.entry as usize, ed.remaining_repeat_count
+                        "execution: group_index={},sequence_index={},entry_index={:x},attempt={}",
+                        group_index, ed.sequence_index, ed.entry as usize, ed.attempt
                     )
                 } else {
                     write!(f, "execution: group_index={}", group_index)

@@ -9917,12 +9917,13 @@ declare module "bun" {
      */
     resize(width: number, height?: number, options?: Image.ResizeOptions): this;
     /**
-     * Resize by height only. The width follows the source aspect ratio.
+     * Resize by height only. A `null` or `undefined` width follows the
+     * source aspect ratio.
      *
      * @example
      * img.resize(null, 600); // height 600, keep aspect ratio
      */
-    resize(width: null | undefined, height: number, options?: Image.ResizeOptions): this;
+    resize(width: number | null | undefined, height: number, options?: Image.ResizeOptions): this;
     /** Rotate by a multiple of 90°. */
     rotate(degrees: number): this;
     /** Mirror about the x-axis (vertical). */

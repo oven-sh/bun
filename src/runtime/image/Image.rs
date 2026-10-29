@@ -1636,11 +1636,13 @@ impl PipelineTask {
         // (flip/flop are pure mirrors that never change w/h, so the hint
         //  stays valid through them.)
         let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
-            // A zero side means "preserve aspect" — constrain on the given
-            // side only. Both zero leaves the hint empty (full decode).
+            // A zero side is derived from the decoded frame, so only the given
+            // side bounds the scale. 1 keeps the picker's "not below target"
+            // check true there. Both zero leaves the hint empty (full decode).
             let (mut tw, mut th) = match (r.w, r.h) {
-                (0, h) => (h, h),
-                (w, 0) => (w, w),
+                (0, 0) => (0, 0),
+                (0, h) => (1, h),
+                (w, 0) => (w, 1),
                 (w, h) => (w, h),
             };
             let swap_explicit = self.pipeline.rotate == 90 || self.pipeline.rotate == 270;
@@ -2020,16 +2022,10 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     })
 }
 
-/// Derive the unspecified side of a resize box from the source aspect ratio:
-/// `given` is the requested size of one side, `src_given` and `src_other` are
-/// the source sizes of that side and of the derived side.
-///
-/// Computed in f64 so the product cannot wrap (`given` is user-controlled
-/// and a source side is bounded only by `max_pixels`) and rounded to the
-/// nearest pixel, as Sharp/libvips do. The quotient can exceed u32 for
-/// tall-thin sources (1×5M with .resize(1k) → 5e9), so clamp to the same
-/// per-side cap `resize` uses before the narrowing cast. The maxPixels
-/// guard then rejects the product.
+/// The other side of a resize box for a `given` size of one side, from the
+/// source sizes of that side (`src_given`) and of the other (`src_other`).
+/// f64 so the product cannot wrap, rounded as Sharp does, then clamped to
+/// the per-side cap: 1×5M with `.resize(1k)` derives 5e9.
 fn derive_axis(given: u32, src_given: u32, src_other: u32) -> u32 {
     let derived = (f64::from(src_other) * f64::from(given) / f64::from(src_given)).round();
     coerce_int!(u32, derived, 1.0, 0x3FFFF as f64)
@@ -2037,10 +2033,8 @@ fn derive_axis(given: u32, src_given: u32, src_other: u32) -> u32 {
 
 /// Map a resize spec to concrete output dims given the current dims.
 fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
-    // A derived side already carries the source aspect ratio, so `fit:
-    // "inside"` has nothing to shrink there. Re-fitting a derived box would
-    // round the given side off by one (943×1520 at width 500 → 499×805).
-    // Sharp ignores `fit` for a single-axis resize as well.
+    // A derived side already has the source ratio, so `fit: "inside"` is
+    // a no-op for it (a re-fit rounds the given side off by one, #47203).
     let (w, h) = match (r.w, r.h) {
         (0, 0) => return (sw, sh),
         (0, h) => (derive_axis(h, sh, sw), h),

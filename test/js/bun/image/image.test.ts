@@ -1124,8 +1124,13 @@ describe("Bun.Image", () => {
       expect(() => new Bun.Image(cornersPng).rotate(v)).toThrow(/only multiples of 90/);
     }
     // resize/quality/maxPixels clamp; NaN→lo bound, ±Inf→matching bound.
+    // The resize lo bound is the aspect-ratio sentinel, so NaN on both sides
+    // keeps the 4×3 source and NaN on one side derives it from the other.
     const out = await new Bun.Image(cornersPng).resize(NaN, NaN).jpeg({ quality: NaN }).bytes();
     expect(out[0]).toBe(0xff);
+    expect(await new Bun.Image(out).metadata()).toMatchObject({ width: 4, height: 3 });
+    const halfNaN = await new Bun.Image(cornersPng).resize(NaN, 6).png().bytes();
+    expect(await new Bun.Image(halfNaN).metadata()).toMatchObject({ width: 8, height: 6 });
     expect((await new Bun.Image(gradientPng, { maxPixels: Infinity }).metadata()).width).toBe(16);
     // Infinity width clamps to the per-side cap; output then exceeds maxPixels
     // and rejects with the bomb-guard error.

@@ -703,8 +703,10 @@ async function readServerUrl(proc: Subprocess<any, "pipe", "pipe">): Promise<str
     text += decoder.decode(value, { stream: true });
     const match = text.match(/http:\/\/[^\s\x1b]+/);
     if (match) {
-      stdout.releaseLock();
-      proc.stdout.text();
+      // Keep draining the rest of stdout in the background.
+      (async () => {
+        while (!(await stdout.read()).done) {}
+      })();
       return match[0];
     }
   }

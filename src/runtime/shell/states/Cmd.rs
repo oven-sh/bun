@@ -463,7 +463,7 @@ impl Cmd {
         let event_loop = interp.event_loop;
 
         let arena = bun_alloc::Arena::new();
-        let mut spawn_args = SpawnArgs::default::<false>(&arena, interp.as_ctx_ptr(), event_loop);
+        let mut spawn_args = SpawnArgs::default::<false>(&arena, event_loop);
         spawn_args.cwd = interp.as_cmd(this).base.shell().cwd();
 
         // Fill env from export_env + cmd_local_env.
@@ -602,9 +602,7 @@ impl Cmd {
             }
         };
         let cmd_parent = crate::shell::subproc::CmdHandle {
-            // SAFETY: `interp_ptr` is the live owning Interpreter (from
-            // `&mut Interpreter` above); single-threaded, write provenance.
-            interp: unsafe { bun_ptr::ParentRef::from_raw_mut(interp_ptr) },
+            interp: bun_ptr::ParentRef::new(interp),
             id: this,
         };
 

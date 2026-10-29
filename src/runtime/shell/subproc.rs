@@ -9,7 +9,6 @@ use crate::api::bun::process::{WindowsOptions, WindowsStdioResult};
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
@@ -132,31 +131,8 @@ pub(crate) const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 /// each use site.
 #[derive(Clone, Copy)]
 pub(crate) struct CmdHandle {
-    pub(crate) interp: bun_ptr::ParentRef<Interpreter, bun_ptr::Mut>,
+    pub(crate) interp: bun_ptr::ParentRef<Interpreter>,
     pub(crate) id: NodeId,
-}
-
-impl CmdHandle {
-    /// Resolve to the live `Cmd` slot. Single-threaded; the caller must not
-    /// hold another `&Interpreter` across this borrow.
-    ///
-    /// # Safety
-    /// `interp` must be live and `id` must still index a `Node::Cmd` slot
-    /// (i.e. the Cmd has not yet been `free_node`d). Both hold for every call
-    /// site: the subprocess / PipeReader callbacks fire strictly before
-    /// `Cmd::deinit` recycles the slot.
-    #[inline]
-    pub(crate) unsafe fn cmd_mut(self) -> &'static mut ShellCmd {
-        // SAFETY: per fn contract — `interp` constructed via `from_raw_mut`
-        // (write provenance), single-threaded, no overlapping `&mut`.
-        // `&'static mut T` forge — `bun_ptr::Interned` is read-only by
-        // construction so does NOT cover this; tracked under the sibling
-        // `static-widen-mut` pattern. Routed through `detach_lifetime_mut` so
-        // the widen is centralised in `bun_ptr` and grep-able. The `'static` is
-        // a lie scoped to the (3) callers, all of which drop the borrow before
-        // `free_node` recycles the slot.
-        unsafe { bun_ptr::detach_lifetime_mut(self.interp.assume_mut().as_cmd_mut(self.id)) }
-    }
 }
 
 pub struct ShellSubprocess {
@@ -268,9 +244,8 @@ impl ShellSubprocess {
             this as usize,
             handle.id
         );
-        // SAFETY: the owning Cmd outlives its subprocess; the `&mut Cmd` ends
-        // before the Yield runs.
-        let y = unsafe { handle.cmd_mut() }.buffered_input_close();
+        // The `&mut Cmd` ends before the Yield runs.
+        let y = handle.interp.as_cmd_mut(handle.id).buffered_input_close();
         // May free `*this`.
         y.run(&handle.interp);
     }
@@ -654,8 +629,8 @@ impl ShellSubprocess {
         }
 
         // Backref so PipeReader callbacks can drive `Yield::run` from async I/O
-        // completion; plumbed explicitly through `SpawnArgs`.
-        let interp = spawn_args.interp;
+        // completion.
+        let interp = cmd_parent.interp;
         // argv is built by the caller (Cmd::transition_to_exec) from
         // `Cmd.args`, NUL-terminated and null-sentinel-terminated, so this
         // function never needs to borrow the `Cmd` arena slot.
@@ -663,8 +638,7 @@ impl ShellSubprocess {
 
         spawn_args.env_array.push(core::ptr::null());
 
-        // SAFETY: `interp` is the live owning interpreter (see `SpawnArgs::interp`).
-        let foreground = !unsafe { &*interp }.in_background(cmd_parent.id);
+        let foreground = !interp.in_background(cmd_parent.id);
         let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
         // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
         // C-string arrays with argv[0] non-null; valid for this call.
@@ -916,9 +890,8 @@ impl ShellSubprocess {
         let Some(code) = exit_code else { return };
         // SAFETY: caller contract; `CmdHandle` is `Copy`, no borrow is kept.
         let handle = unsafe { (*this).cmd_parent };
-        // SAFETY: the owning Cmd outlives its subprocess; the `&mut Cmd` ends
-        // before the Yield runs.
-        let cmd = unsafe { handle.cmd_mut() };
+        // The `&mut Cmd` ends before the Yield runs.
+        let cmd = handle.interp.as_cmd_mut(handle.id);
         cmd.base.interrupted |= interrupted;
         let y = cmd.on_exit(code.into());
         // May free `*this`.
@@ -1216,7 +1189,7 @@ impl Readable {
         event_loop: EventLoopHandle,
         process: *mut ShellSubprocess,
         result: StdioResult,
-        interp: *mut crate::shell::interpreter::Interpreter,
+        interp: bun_ptr::ParentRef<Interpreter>,
         _max_size: u32,
         _is_sync: bool,
     ) -> Readable {
@@ -1346,10 +1319,6 @@ pub(crate) struct SpawnArgs<'a> {
     /// would alias the `out_subproc` write into `cmd.exec.subproc.child`.
     /// Must include the trailing null sentinel.
     pub(crate) argv: Vec<*const c_char>,
-    /// Backref so [`PipeReader`] async-I/O callbacks can drive
-    /// [`Yield::run`]. The spawning `Cmd` passes it explicitly here and it is
-    /// plumbed through `Readable::init` → `PipeReader::create`.
-    pub(crate) interp: *mut crate::shell::interpreter::Interpreter,
 
     pub(crate) override_env: bool,
     pub(crate) env_array: Vec<*const c_char>,
@@ -1367,12 +1336,10 @@ pub(crate) struct SpawnArgs<'a> {
 impl<'a> SpawnArgs<'a> {
     pub(crate) fn default<const IS_SYNC: bool>(
         arena: &'a Arena,
-        interp: *mut crate::shell::interpreter::Interpreter,
         event_loop: EventLoopHandle,
     ) -> SpawnArgs<'a> {
         let mut out = SpawnArgs {
             arena,
-            interp,
             argv: Vec::new(),
 
             override_env: false,
@@ -1477,8 +1444,8 @@ pub(crate) struct PipeReader {
     pub(crate) buffered_output: BufferedOutput,
     /// Backref so async read/write callbacks can drive `Yield::run`. See
     /// `IOWriter::interp` / `IOReader::interp` for the same pattern. Wired
-    /// from `Cmd::interp` at `PipeReader::create` time.
-    pub(crate) interp: *mut crate::shell::interpreter::Interpreter,
+    /// from `CmdHandle::interp` at `PipeReader::create` time.
+    pub(crate) interp: bun_ptr::ParentRef<Interpreter>,
     // ref_count: handled by Rc<PipeReader>; mutation through shared handles
     // goes via the `rc_as_mut_ptr` interior-mutability helper below.
 }
@@ -1680,8 +1647,7 @@ impl PipeReader {
 
     /// Drive a `Yield` from inside an async I/O callback. Mirrors
     /// `IOWriter::run_yield` / `IOReader::run_yield`. `interp` is wired at
-    /// `create` time from the spawning `Cmd`; the null guard is a defensive
-    /// debug-assert for tests that construct a PipeReader without a Cmd.
+    /// `create` time from the spawning `Cmd`.
     fn run_yield(&self, y: Yield) {
         Self::run_yield_with(self.interp, y);
     }
@@ -1689,17 +1655,8 @@ impl PipeReader {
     /// Free-function form of [`run_yield`] for callers that must not hold any
     /// `&PipeReader` borrow across the interpreter trampoline (which can
     /// re-derive `&PipeReader` via the `Readable::Pipe` `Rc`).
-    fn run_yield_with(interp: *mut crate::shell::interpreter::Interpreter, y: Yield) {
-        if interp.is_null() {
-            debug_assert!(
-                matches!(y, Yield::Done | Yield::Suspended),
-                "PipeReader async callback fired without interp backref"
-            );
-            return;
-        }
-        // SAFETY: interp outlives every PipeReader (it owns the Cmd that
-        // spawned the subprocess holding this reader). Single-threaded.
-        y.run(unsafe { &*interp });
+    fn run_yield_with(interp: bun_ptr::ParentRef<Interpreter>, y: Yield) {
+        y.run(&interp);
     }
 
     pub(crate) fn create(
@@ -1709,7 +1666,7 @@ impl PipeReader {
         capture: Option<Rc<IOWriter>>,
         buffered_output: BufferedOutput,
         out_type: OutKind,
-        interp: *mut crate::shell::interpreter::Interpreter,
+        interp: bun_ptr::ParentRef<Interpreter>,
     ) -> Rc<PipeReader> {
         let mut captured_writer = CapturedWriter::default();
         if let Some(cap) = capture {
@@ -1966,9 +1923,10 @@ impl PipeReader {
         if let Some(proc) = process {
             // SAFETY: `proc` is the heap-allocated `ShellSubprocess` (stable
             // address) freed only by `Cmd::deinit`, which runs strictly after
-            // every PipeReader has signalled done. `cmd_mut` resolves through
-            // the node arena (see `CmdHandle`).
-            let cmd = unsafe { (*proc).cmd_parent.cmd_mut() };
+            // every PipeReader has signalled done. `CmdHandle` is `Copy`, no
+            // borrow is kept.
+            let handle = unsafe { (*proc).cmd_parent };
+            let cmd = handle.interp.as_cmd_mut(handle.id);
             // SAFETY: caller contract — the `&mut` is scoped to this call and
             // ends *before* the `cmd` call below.
             let e: Option<SystemError> = unsafe { (*this).take_captured_error() };

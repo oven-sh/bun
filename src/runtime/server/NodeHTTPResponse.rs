@@ -2722,12 +2722,10 @@ impl Drop for NodeHTTPResponse {
 /// `data`/`length` describe a caller-owned buffer valid for the call.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
-    response: *mut NodeHTTPResponse,
+    response: &NodeHTTPResponse,
     data: *const u8,
     length: usize,
 ) {
-    // SAFETY: see the function-level contract above.
-    let response = unsafe { &*response };
     // SAFETY: `data`/`length` describe a caller-owned buffer valid for the
     // call (function-level contract above).
     let bytes = unsafe { core::slice::from_raw_parts(data, length) };
@@ -2744,15 +2742,13 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
 pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     any_server_tag: u64,
     global_object: &JSGlobalObject,
-    has_body: *mut bool,
+    has_body: &mut bool,
     request: *mut uws_sys::Request,
     is_ssl: i32,
     response_ptr: *mut c_void,
     is_current: bool,
-    node_response_ptr: *mut *mut NodeHTTPResponse,
+    node_response_ptr: &mut *mut NodeHTTPResponse,
 ) -> JSValue {
-    // SAFETY: all pointers are provided by C++ NodeHTTPServer and are live for the call.
-    let has_body = unsafe { &mut *has_body };
     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
     let request_ref = bun_opaque::opaque_deref(request.cast_const());
 
@@ -2781,7 +2777,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         uws::AnyResponse::TCP(response_ptr.cast())
     };
 
-    let response = bun_core::heap::into_raw(Box::new(NodeHTTPResponse {
+    let response = Box::new(NodeHTTPResponse {
         // 1 - the HTTP response
         // 1 - the JS object
         // 1 - the Server handler.
@@ -2808,18 +2804,16 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
         pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
         auto_flusher: JsCell::new(AutoFlusher::default()),
-    }));
+    });
 
-    // SAFETY: `response` was just allocated and leaked; we hold the only reference.
-    let response_ref = unsafe { &*response };
     if *has_body {
-        response_ref.body_read_ref.with_mut(|r| r.r#ref(vm));
+        response.body_read_ref.with_mut(|r| r.r#ref(vm));
     }
-    response_ref.poll_ref.with_mut(|r| r.r#ref(vm));
+    response.poll_ref.with_mut(|r| r.r#ref(vm));
+    let response = bun_core::heap::into_raw(response);
     // SAFETY: `response` is a fresh `heap::alloc` heap payload; ownership of
     // the +1 wrapper ref transfers to the GC.
     let js_this = unsafe { NodeHTTPResponse::to_js_ptr(response, global_object) };
-    // SAFETY: out-param provided by caller.
-    unsafe { *node_response_ptr = response };
+    *node_response_ptr = response;
     js_this
 }

@@ -2752,17 +2752,7 @@ mod _async_tasks {
         pub value: ResultListEntryValue,
     }
 
-    // SAFETY: all four accessors route through the same `next` field; the atomic
-    // variants reinterpret it in-place as `AtomicPtr<Self>` (identical layout/
-    // alignment to `*mut Self`). `UnboundedQueue` only ever calls these with a
-    // live, properly aligned `*mut ResultListEntry` it previously had pushed.
-    unsafe impl bun_threading::Linked for ResultListEntry {
-        #[inline]
-        unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-            // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-            unsafe { core::ptr::addr_of!((*item).next) }
-        }
-    }
+    bun_core::intrusive_field!(ResultListEntry, next: bun_threading::Link<ResultListEntry>);
 
     pub(super) struct ReaddirSubtask {
         pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask, bun_ptr::Mut>,

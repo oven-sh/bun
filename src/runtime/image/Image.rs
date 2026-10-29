@@ -2008,16 +2008,11 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     })
 }
 
-/// Per-side cap `resize` applies to user input. A derived side gets the same
-/// cap so every downstream u32 product stays in range; the maxPixels guard
-/// then rejects the product.
+/// Per-side cap for a requested or derived side.
 const MAX_SIDE: u32 = 0x3FFFF;
 
-/// The side that keeps the source aspect ratio once `given` is fixed:
-/// `given * src_other / src_given`, rounded with ties to even like sharp's
-/// `std::rint`. `given` is at most `MAX_SIDE` and `src_other` is a u32, so the
-/// product is exact in f64. The quotient can exceed u32 for tall-thin sources
-/// (1×5M with .resize(1k) → 5e9), hence the clamp.
+/// The side that keeps the source ratio once `given` is fixed. Ties round to
+/// even like sharp's `std::rint`. The quotient can exceed u32, hence the clamp.
 fn derive_side(given: u32, src_given: u32, src_other: u32) -> u32 {
     ((given as f64) * (src_other as f64) / (src_given as f64))
         .round_ties_even()
@@ -2029,26 +2024,16 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
     let mut w = r.w;
     let mut h = r.h;
     if h == 0 {
-        // Height omitted: the width stays exact and the height follows the
-        // source ratio. The box then already has that ratio, so `Fit::Inside`
-        // has nothing to fit. Re-fitting against the rounded height would move
-        // the width the caller asked for by one pixel. The one exception is a
-        // height the per-side cap clamped: the box lost the source ratio, so
-        // the width follows the capped height instead.
+        // The width stays exact. Only a capped height shrinks it.
         h = derive_side(w, sw, sh);
         if r.without_enlargement && w > sw {
-            // A wider width means a taller height too. Decide before the cap
-            // can pull the width back under `sw`.
             return (sw, sh);
         }
-        if r.fit == Fit::Inside && h == MAX_SIDE {
+        if h == MAX_SIDE {
             w = derive_side(h, sh, sw);
         }
     } else if r.fit == Fit::Inside {
-        // Shrink the box so the source's aspect ratio is preserved and both
-        // sides fit (sharp's `fit:'inside'`): the side that binds stays exact,
-        // the other follows the source ratio. Cross-multiply in u64 so the
-        // comparison is exact.
+        // The side that binds stays exact, the other follows the source ratio.
         if (w as u64) * (sh as u64) <= (h as u64) * (sw as u64) {
             h = derive_side(w, sw, sh);
         } else {

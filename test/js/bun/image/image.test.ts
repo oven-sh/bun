@@ -431,19 +431,20 @@ describe("Bun.Image", () => {
       ]);
     });
 
-    test("a derived height past the per-side cap keeps the ratio with fit:'inside'", async () => {
+    test("a derived height past the per-side cap keeps the ratio", async () => {
       // 1×300000 at width 800 derives a height of 240,000,000. The cap holds
       // it at 0x3FFFF, so the width follows the capped height instead of
-      // staying at 800 (an 800×262143 canvas). withoutEnlargement still
-      // returns the source: 800 is wider than 1.
+      // staying at 800 (an 800×262143 canvas), whatever the fit.
+      // withoutEnlargement still returns the source: 800 is wider than 1.
       const tall = dimsOf(makePng(1, 300000, (_x, y) => [y & 255, (y >> 8) & 255, 0, 255]));
       expect(
         await Promise.all([
+          tall(800),
           tall(800, undefined, { fit: "inside" }),
           tall(800, 1e9, { fit: "inside" }),
           tall(800, undefined, { fit: "inside", withoutEnlargement: true }),
         ]),
-      ).toEqual(["1x262143", "1x262143", "1x300000"]);
+      ).toEqual(["1x262143", "1x262143", "1x262143", "1x300000"]);
     });
   });
 

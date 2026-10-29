@@ -606,7 +606,7 @@ mod draft {
         static PANIC_STAGE: Cell<usize> = const { Cell::new(0) };
 
         static INSIDE_NATIVE_PLUGIN: Cell<Option<*const c_char>> = const { Cell::new(None) };
-        static UNSUPPORTED_UV_FUNCTION: Cell<Option<*const c_char>> = const { Cell::new(None) };
+        static UNSUPPORTED_UV_FUNCTION: Cell<Option<&'static [u8]>> = const { Cell::new(None) };
 
         /// This can be set by various parts of the codebase to indicate a broader
         /// action being taken. It is printed when a crash happens, which can help
@@ -914,10 +914,6 @@ mod draft {
                         {
                             let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                 .with(|c| c.get())
-                                .map(|p| {
-                                    // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                    unsafe { bun_core::ffi::cstr(p) }.to_bytes()
-                                })
                                 .unwrap_or(b"<unknown>");
                             if write!(
                                 writer,
@@ -1161,10 +1157,6 @@ mod draft {
                             {
                                 let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                     .with(|c| c.get())
-                                    .map(|p| {
-                                        // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                        unsafe { bun_core::ffi::cstr(p) }.to_bytes()
-                                    })
                                     .unwrap_or(b"<unknown>");
                                 if write!(
                                     writer,
@@ -3877,14 +3869,15 @@ mod draft {
     /// # Safety
     /// `name` must be a valid NUL-terminated C string.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
+    unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) -> ! {
         bun_analytics::features::unsupported_uv_function.fetch_add(1, Ordering::Relaxed);
-        UNSUPPORTED_UV_FUNCTION.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
+        // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
+        // This function never returns, so the string outlives every read on this thread.
+        let name_bytes: &'static [u8] = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+        UNSUPPORTED_UV_FUNCTION.with(|c| c.set(Some(name_bytes)));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();
         }
-        // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
-        let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
         let mut msg = BoundedArray::<u8, 256>::default();
         let _ = write!(
             msg.writer(),

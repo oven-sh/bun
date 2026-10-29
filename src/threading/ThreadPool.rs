@@ -294,7 +294,7 @@ impl ThreadPool {
             if !other.run_queue.is_empty() || !other.run_buffer.is_empty() {
                 return true;
             }
-            thread = other.next;
+            thread = other.next.get();
         }
         false
     }
@@ -358,7 +358,7 @@ impl ThreadPool {
             // `Thread::pop` walks the same links.
             let thread = bun_ptr::BackRef::from(thread);
             thread.push_idle_task(new_task());
-            next = thread.next;
+            next = thread.next.get();
         }
         self.wake_for_idle_events();
     }
@@ -1103,15 +1103,14 @@ impl ThreadPool {
         }
     }
 
-    fn register(&self, thread: *mut Thread) {
+    fn register(&self, thread: &Thread) {
         // Push the thread onto the threads stack in a lock-free manner.
         let mut threads = self.threads.load(Ordering::Relaxed);
         loop {
-            // SAFETY: thread is the calling worker's own stack-local Thread.
-            unsafe { (*thread).next = threads };
+            thread.next.set(threads);
             match self.threads.compare_exchange_weak(
                 threads,
-                thread,
+                ptr::from_ref(thread).cast_mut(),
                 Ordering::Release,
                 Ordering::Relaxed,
             ) {
@@ -1162,7 +1161,7 @@ impl ThreadPool {
         // After receiving the shutdown signal, shutdown the next thread in the pool.
         // We have to do that without touching the thread pool itself since its memory is invalidated by now.
         // So just follow our .next link.
-        let Some(next_thread) = NonNull::new(thread.next) else {
+        let Some(next_thread) = NonNull::new(thread.next.get()) else {
             return;
         };
         // `next_thread` is a registered worker still blocked in
@@ -1211,8 +1210,8 @@ enum WaitError {
 // which profiled ~43% hotter on the steal traversal.
 #[repr(C)]
 pub struct Thread {
-    next: *mut Thread,
-    target: *mut Thread,
+    next: Cell<*mut Thread>,
+    target: Cell<*mut Thread>,
     join_event: Event,
     run_queue: node::Queue,
     idle_queue: node::Queue,
@@ -1230,15 +1229,15 @@ thread_local! {
 ///
 /// `pool` is a [`BackRef`]: the pool's `join()` blocks on every registered
 /// worker, so it strictly outlives this guard.
-struct ThreadRegistration {
+struct ThreadRegistration<'a> {
     pool: bun_ptr::BackRef<ThreadPool>,
-    thread: *mut Thread,
+    thread: &'a Thread,
 }
 
-impl ThreadRegistration {
-    /// SAFETY: `thread` must point to the caller's stack-local `Thread`.
-    unsafe fn new(pool: &ThreadPool, thread: *mut Thread) -> Self {
-        CURRENT.with(|c| c.set(thread));
+impl<'a> ThreadRegistration<'a> {
+    /// SAFETY: the guard must be dropped, not leaked: until then `CURRENT` and `pool` point to `thread`.
+    unsafe fn new(pool: &ThreadPool, thread: &'a Thread) -> Self {
+        CURRENT.with(|c| c.set(ptr::from_ref(thread).cast_mut()));
         pool.register(thread);
         Self {
             pool: bun_ptr::BackRef::new(pool),
@@ -1247,12 +1246,13 @@ impl ThreadRegistration {
     }
 }
 
-impl Drop for ThreadRegistration {
+impl Drop for ThreadRegistration<'_> {
     fn drop(&mut self) {
+        let thread = ptr::from_ref(self.thread).cast_mut();
         // SAFETY: per `new()` contract. `unregister` takes `*const` (not the
         // `BackRef`) because the pool may be freed by the joiner before it
         // returns — see `unregister`'s doc.
-        unsafe { ThreadPool::unregister(self.pool.as_const_ptr(), self.thread) };
+        unsafe { ThreadPool::unregister(self.pool.as_const_ptr(), thread) };
         CURRENT.with(|c| c.set(ptr::null_mut()));
     }
 }
@@ -1353,21 +1353,20 @@ impl Thread {
             }
         }
 
-        let mut self_ = Thread {
-            next: ptr::null_mut(),
-            target: ptr::null_mut(),
+        let self_ = Thread {
+            next: Cell::new(ptr::null_mut()),
+            target: Cell::new(ptr::null_mut()),
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             idle_queue: node::Queue::default(),
             run_buffer: node::Buffer::default(),
             thread_pool,
         };
-        let self_ptr: *mut Thread = &raw mut self_;
         // `BackRef` invariant: pool's `join()` waits for every worker, so the
         // pointee outlives this fn. Hoist a single shared ref for the hot loop.
         let pool: &ThreadPool = thread_pool.get();
-        // SAFETY: self_ptr is our stack-local Thread.
-        let _registration = unsafe { ThreadRegistration::new(pool, self_ptr) };
+        // SAFETY: a local declared after `self_`, so it is dropped first.
+        let _registration = unsafe { ThreadRegistration::new(pool, &self_) };
 
         let stats = stats_enabled();
         let mut is_waking = false;
@@ -1384,8 +1383,7 @@ impl Thread {
                     // worker thread tears down its own `Worker`/`WorkerData`
                     // (whose `ThreadLocalArena` is mimalloc thread-local and
                     // must be freed here, not from the bundler thread).
-                    // SAFETY: self_ptr is our own stack-local Thread.
-                    unsafe { (*self_ptr).drain_idle_events() };
+                    self_.drain_idle_events();
                     return;
                 }
             };
@@ -1395,8 +1393,7 @@ impl Thread {
                     .fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
             }
 
-            // SAFETY: self_ptr is our own stack-local Thread.
-            while let Some(result) = unsafe { (*self_ptr).pop(pool) } {
+            while let Some(result) = self_.pop(pool) {
                 if result.pushed || is_waking {
                     pool.notify(is_waking);
                 }
@@ -1415,8 +1412,7 @@ impl Thread {
             }
 
             Output::flush();
-            // SAFETY: self_ptr is our own stack-local Thread.
-            unsafe { (*self_ptr).drain_idle_events() };
+            self_.drain_idle_events();
         }
     }
 
@@ -1443,7 +1439,7 @@ impl Thread {
     /// already proved liveness once (`join()` waits on every registered
     /// worker), so the per-access raw-pointer derefs that the `*const`
     /// signature forced are gone.
-    pub(crate) fn pop(&mut self, thread_pool: &ThreadPool) -> Option<node::Stole> {
+    pub(crate) fn pop(&self, thread_pool: &ThreadPool) -> Option<node::Stole> {
         // Check our local buffer first
         if let Some(node) = self.run_buffer.pop() {
             return Some(node::Stole {
@@ -1466,8 +1462,8 @@ impl Thread {
         let mut num_threads = thread_pool.sync.load(Ordering::Relaxed).spawned();
         while num_threads > 0 {
             // Traverse the stack of registered threads on the thread pool
-            let target = if !self.target.is_null() {
-                self.target
+            let target = if !self.target.get().is_null() {
+                self.target.get()
             } else {
                 let t = thread_pool.threads.load(Ordering::Acquire);
                 if t.is_null() {
@@ -1476,7 +1472,7 @@ impl Thread {
                 t
             };
             // SAFETY: target is a registered Thread in the lock-free stack.
-            self.target = unsafe { (*target).next };
+            self.target.set(unsafe { (*target).next.get() });
 
             // Try to steal from their queue first to avoid contention (the target steal's from queue last).
             // SAFETY: target is a registered Thread in the lock-free stack, alive until join().
@@ -1486,7 +1482,7 @@ impl Thread {
 
             // Skip stealing from the buffer if we're the target.
             // We still steal from our own queue above given it may have just been locked the first time we tried.
-            if target == std::ptr::from_mut::<Thread>(self) {
+            if ptr::eq(target, self) {
                 num_threads -= 1;
                 continue;
             }

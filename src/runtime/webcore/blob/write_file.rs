@@ -1238,7 +1238,6 @@ impl WriteFileWaitFromLockedValueTask {
         mut this: Box<WriteFileWaitFromLockedValueTask>,
         value: &mut body::Value,
     ) -> jsc::JsResult<()> {
-        let promise: *mut JSPromise = std::ptr::from_mut(this.promise.get());
         let global_ref = this.global_this;
         let global_this = global_ref.get();
         let context = global_this.bun_vm().context_of(this.context);
@@ -1248,22 +1247,19 @@ impl WriteFileWaitFromLockedValueTask {
                 let err = err_ref.to_js(global_this);
                 file_blob.detach();
                 let _ = value.use_();
-                drop(this);
-                JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(err))?;
+                this.promise
+                    .get()
+                    .reject_with_async_stack(global_this, Ok(err))?;
             }
             body::Value::Used => {
                 file_blob.detach();
                 let _ = value.use_();
-                drop(this);
-                // SAFETY: GC-owned promise cell; exclusive borrow scoped to the call.
-                unsafe {
-                    (*promise).reject(
-                        global_this,
-                        Ok(global_this.create_error_instance(format_args!(
-                            "Body was used after it was consumed"
-                        ))),
-                    )?;
-                }
+                this.promise.get().reject(
+                    global_this,
+                    Ok(global_this.create_error_instance(format_args!(
+                        "Body was used after it was consumed"
+                    ))),
+                )?;
             }
             body::Value::WTFStringImpl(_)
             | body::Value::InternalBlob(_)
@@ -1284,29 +1280,23 @@ impl WriteFileWaitFromLockedValueTask {
                     Ok(p) => p,
                     Err(err) => {
                         file_blob.detach();
-                        drop(this);
-                        JSPromise::opaque_mut(promise).reject(global_this, Err(err))?;
+                        this.promise.get().reject(global_this, Err(err))?;
                         return Ok(());
                     }
                 };
 
-                let _this_box = this;
                 let _g = scopeguard::guard((), |()| file_blob.detach());
 
                 if let Some(p) = new_promise.as_any_promise() {
-                    // SAFETY: GC-owned promise cell; exclusive borrows scoped per call.
-                    unsafe {
-                        match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
-                            // Fulfill the new promise using the pending promise
-                            jsc::PromiseResult::Pending => {
-                                (*promise).resolve(global_this, new_promise)?
-                            }
-                            jsc::PromiseResult::Rejected(err) => {
-                                (*promise).reject(global_this, Ok(err))?
-                            }
-                            jsc::PromiseResult::Fulfilled(result) => {
-                                (*promise).resolve(global_this, result)?
-                            }
+                    let promise = this.promise.get();
+                    match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                        // Fulfill the new promise using the pending promise
+                        jsc::PromiseResult::Pending => promise.resolve(global_this, new_promise)?,
+                        jsc::PromiseResult::Rejected(err) => {
+                            promise.reject(global_this, Ok(err))?
+                        }
+                        jsc::PromiseResult::Fulfilled(result) => {
+                            promise.resolve(global_this, result)?
                         }
                     }
                 }
@@ -1316,11 +1306,7 @@ impl WriteFileWaitFromLockedValueTask {
                 // Restore the moved-out blob so the next `then()` has its store.
                 this.file_blob = file_blob;
                 locked.on_receive_value = Some(Self::then_wrap);
-                locked.task = Some(
-                    NonNull::new(bun_core::heap::into_raw(this))
-                        .unwrap()
-                        .cast::<c_void>(),
-                );
+                locked.task = Some(bun_core::heap::into_raw_nn(this).cast::<c_void>());
             }
         }
         Ok(())

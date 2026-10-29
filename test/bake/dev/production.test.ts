@@ -599,18 +599,19 @@ export default function () {
     });
 
     test.concurrent("reports every root and every route before it fails the build", async () => {
-      using dir = tempDir(
-        "bake-production-unreadable-roots",
-        fixture(roots("missing", "routes", "../bake-production-no-root"), {
+      // The project is one directory down, so the root "../no-root" is outside the project and inside `dir`.
+      using dir = tempDir("bake-production-unreadable-roots", {
+        app: fixture(roots("missing", "routes", "../no-root"), {
           "routes/index.ts": page("index"),
           "routes/[oops.ts": page("oops"),
         }),
-      );
-      const { result, stderr } = await build(String(dir));
+      });
+      const app = path.join(String(dir), "app");
+      const { result, stderr } = await build(app);
       expect(result, stderr).toEqual(
         failed(
-          ...report("ENOENT: Cannot read", path.join(String(dir), "missing"), 0),
-          ...report("ENOENT: Cannot read", path.join(String(dir), "..", "bake-production-no-root"), 2),
+          ...report("ENOENT: Cannot read", path.join(app, "missing"), 0),
+          ...report("ENOENT: Cannot read", path.join(String(dir), "no-root"), 2),
           `error: "routes/[oops.ts" is not a valid route`,
           `               -------`,
           `               Missing "]" to match this route parameter`,

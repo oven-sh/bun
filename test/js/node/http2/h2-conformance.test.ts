@@ -4200,6 +4200,10 @@ describe("HPACK (RFC 7541)", () => {
       return headers;
     };
     const headers = values(0, 110);
+    // Seven codes of 19 bits in a row, from each place in a group of 7 bytes.
+    const runs = Object.fromEntries(
+      Array.from({ length: 7 }, (_, at) => [`x-run-${at}`, short.slice(at) + Buffer.alloc(7, "\\") + short]),
+    );
 
     const { srv, seen, port } = await listen();
     const c = await RawH2.connect(port);
@@ -4218,8 +4222,8 @@ describe("HPACK (RFC 7541)", () => {
       expect((await c.waitFor(headersOrGoaway(1))).type).toBe(FrameType.HEADERS);
       expect(seen.pop()).toMatchObject(headers);
 
-      // Coded by the client, which goes about 128 bytes and more in another way.
-      for (const sent of [headers, values(111, 200)]) {
+      // Coded by the client. From 128 bytes on it takes 7 bytes at a time, or one by one where the codes are long.
+      for (const sent of [headers, values(111, 200), runs]) {
         await get(client, { ":path": "/", ...sent });
         expect(seen.pop()).toMatchObject(sent);
       }

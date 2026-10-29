@@ -8,9 +8,7 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{JSPromise, JSPromiseStrong};
 
-use crate::generated_bindgen::password_object::{
-    PasswordCost, PasswordHashAlgorithm, PasswordHashOptions,
-};
+use crate::generated_bindgen::password_object::{PasswordHashAlgorithm, PasswordHashOptions};
 
 // The argon2/bcrypt API-surface shim lives at `crypto::pwhash` (this dir);
 // the implementation is wired there, not here.
@@ -84,7 +82,7 @@ impl AlgorithmValue {
 
         let algorithm = Algorithm::from_label(heap, "hash", label)?;
         if let Algorithm::Bcrypt = algorithm {
-            let Some(rounds) = cost(heap, &options.cost, "cost")? else {
+            let Some(rounds) = cost(heap, options.cost, "cost")? else {
                 return Ok(Self::with_defaults(algorithm));
             };
             if rounds.fract() != 0.0 || !(4.0..=31.0).contains(&rounds) {
@@ -94,7 +92,7 @@ impl AlgorithmValue {
         }
 
         let mut argon = Argon2Params::DEFAULT;
-        if let Some(time_cost) = cost(heap, &options.time_cost, "timeCost")? {
+        if let Some(time_cost) = cost(heap, options.time_cost, "timeCost")? {
             if time_cost < 1.0 || time_cost.is_nan() {
                 return Err(invalid("Time cost must be greater than 0"));
             }
@@ -105,7 +103,7 @@ impl AlgorithmValue {
             }
             argon.time_cost = time_cost as u32;
         }
-        if let Some(memory_cost) = cost(heap, &options.memory_cost, "memoryCost")? {
+        if let Some(memory_cost) = cost(heap, options.memory_cost, "memoryCost")? {
             // argon2 requires `memoryCost >= 8 * parallelism`; Bun hard-codes `parallelism = 1` (see
             // `Argon2Params::to_params`), so the floor is 8.
             if memory_cost < 8.0 || memory_cost.is_nan() {
@@ -139,17 +137,15 @@ fn invalid_argument_type<'a>(
 }
 
 /// `None` for `undefined`, `null` and `""`.
-fn cost<'a>(
-    heap: &JsHeap<'a>,
-    value: &PasswordCost,
-    name: &str,
-) -> bindgen::Result<'a, Option<f64>> {
-    match value {
-        PasswordCost::None => Ok(None),
-        PasswordCost::Text(text) if text.is_empty() => Ok(None),
-        PasswordCost::Number(number) => Ok(Some(*number)),
-        _ => Err(invalid_argument_type(heap, "hash", name, "number")),
+fn cost<'a>(heap: &JsHeap<'a>, value: JsLocal<'a>, name: &str) -> bindgen::Result<'a, Option<f64>> {
+    let value = value.to_js();
+    if value.is_undefined_or_null() || (value.is_string() && !value.to_boolean()) {
+        return Ok(None);
     }
+    if !value.is_number() {
+        return Err(invalid_argument_type(heap, "hash", name, "number"));
+    }
+    Ok(Some(value.as_number()))
 }
 
 impl Algorithm {

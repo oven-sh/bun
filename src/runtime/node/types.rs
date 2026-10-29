@@ -1031,7 +1031,6 @@ impl PathLikeExt for PathLike<'_> {
         parsing: &mut Parsing,
         relative_paths: RelativePaths,
     ) -> JsResult<Option<PathLike<'static>>> {
-        use jsc::JSType;
         let will_be_async = parsing.flavor == Flavor::Async;
         let from_string = |str: bun_core::String| match relative_paths {
             RelativePaths::StartAtWorkingDirectory => {
@@ -1039,6 +1038,7 @@ impl PathLikeExt for PathLike<'_> {
             }
             RelativePaths::StayAsWritten => path_like_from_string(ctx, str, will_be_async),
         };
+        use jsc::JSType;
         let path = match path {
             generated::PathLike::Buffer(buffer) => {
                 let arg = buffer.to_js();
@@ -1048,7 +1048,7 @@ impl PathLikeExt for PathLike<'_> {
                 ) {
                     return Ok(None);
                 }
-                let mut buffer = if parsing.flavor == Flavor::Async {
+                let mut buffer = if will_be_async {
                     PinnedArrayBuffer::root(ctx, arg)
                 } else {
                     PinnedArrayBuffer::pin(ctx, arg)
@@ -1068,7 +1068,7 @@ impl PathLikeExt for PathLike<'_> {
             }
 
             generated::PathLike::String(str) => {
-                let str = bun_core::String::from_js(str.to_js(), ctx)?;
+                let str = str.to_js().to_bun_string(ctx)?;
                 from_string(str)?
             }
             generated::PathLike::Url(domurl) => {
@@ -1513,7 +1513,7 @@ impl PathOrFdExt for PathOrFileDescriptor<'_> {
     ) -> JsResult<Option<PathOrFileDescriptor<'static>>> {
         match path {
             generated::PathOrFileDescriptor::Fd(fd) => {
-                Ok(Some(PathOrFileDescriptor::Fd(Fd::from_js(fd))))
+                Ok(Some(PathOrFileDescriptor::Fd(Fd::from_uv(fd))))
             }
             generated::PathOrFileDescriptor::Path(path) => {
                 Ok(PathLike::from_js(ctx, path, parsing)?.map(PathOrFileDescriptor::Path))
@@ -1767,7 +1767,7 @@ impl PathOrBlob {
                 return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
             }
             blob::PathOrBlob::Path(generated::PathOrFileDescriptor::Fd(fd)) => {
-                return Ok(PathOrBlob::Path(PathOrFileDescriptor::Fd(Fd::from_js(fd))));
+                return Ok(PathOrBlob::Path(PathOrFileDescriptor::Fd(Fd::from_uv(fd))));
             }
             blob::PathOrBlob::Path(generated::PathOrFileDescriptor::Path(path)) => path,
         };

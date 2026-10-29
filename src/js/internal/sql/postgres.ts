@@ -801,7 +801,7 @@ class CopySink {
 
   write(chunk: string | ArrayBufferView | ArrayBufferLike) {
     try {
-      if (this.handle!.copyWrite(chunk as Parameters<CopyHandle["copyWrite"]>[0])) {
+      if (this.handle!.copyWrite(chunk)) {
         return;
       }
     } catch (err) {

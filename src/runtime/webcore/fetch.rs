@@ -44,9 +44,9 @@ pub(crate) mod proxy_testing;
 // ──────────────────────────────────────────────────────────────────────────
 
 use crate::generated_bindgen::fetch::{
-    FetchInit, FetchInput, FetchVerbose, FlagOrNumber, MaxRedirects,
+    FetchInit, FetchInput, FetchVerbose, FlagOrNumber, HeadersInit, MaxRedirects, SignalInit,
 };
-use crate::generated_bindgen::response::{BodyInit, HeadersInit, SignalInit};
+use crate::generated_bindgen::response::BodyInit;
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
@@ -1027,9 +1027,9 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
                     if headers__.is_empty() {
                         break 'brk None;
                     }
-                    Some(core::ptr::from_ref(headers__).cast_mut())
+                    Some(headers__.as_mut_ptr())
                 }
-                HeadersInit::Init(headers_value) => {
+                HeadersInit::Other(headers_value) => {
                     HeadersRef::create_from_js(ctx, headers_value.to_js())?
                         .map(|headers__| created_headers.insert(headers__).as_ptr())
                 }

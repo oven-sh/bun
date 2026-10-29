@@ -1,5 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { BodyInit, HeadersInit, SignalInit } from "./response.bind.ts";
+import { BodyInit, Headers } from "./response.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::fetch" });
 
@@ -9,6 +9,14 @@ const js = { capability: "js", throws: true } as const;
 export const FlagOrNumber = b.union({ flag: b.bool, number: b.f64, other: b.ignored });
 export const MaxRedirects = b.union({ none: b.null, number: b.f64, other: b.ignored });
 export const FetchVerbose = b.union({ string: b.stringLike, flag: b.bool, other: b.ignored });
+export const SignalInit = b.union({
+  missing: b.undefined,
+  none: b.null,
+  signal: b.abortSignal.shared,
+  other: b.ignored,
+});
+/** `headers` is copied. `other` is converted as the `HeadersInit` of the Fetch standard. */
+export const HeadersInit = b.union({ missing: b.undefined, headers: Headers, other: b.opaque });
 export const FetchInit = b.dictionary(
   {
     url: b.string.loose.optional,

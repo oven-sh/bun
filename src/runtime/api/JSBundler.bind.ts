@@ -41,7 +41,7 @@ const ownRecord = { type: b.object.optional, own: true } as const;
 export const BuildOptimize = b.dictionary({ bytecode: flag }, { allowArray: true, reportedAs: "optimize" });
 export const BuildEnvBehavior = b.union({
   missing: b.undefined,
-  disable: b.null,
+  none: b.null,
   enabled: b.bool,
   number: b.f64,
   text: b.string.allowStringObject.utf8.owned,

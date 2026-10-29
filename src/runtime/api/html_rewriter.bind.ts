@@ -120,10 +120,9 @@ export const Element = b.class({
     onEndTag: {
       ...chainable(b.self.nullable),
       /** A detached element returns `null` without checking it. */
-      args: { handler: b.callable.otherAsNull },
+      args: { handler: b.opaque },
       capability: "js",
       throws: true,
-      length: 1,
     },
     prepend: contentOp(b.self.optional),
     remove: chainable(b.self.optional),
@@ -151,7 +150,7 @@ export const DocumentHandlers = b.dictionary(
     text: b.callable.optional,
     end: b.callable.optional,
   },
-  { allowArray: true, reportedAs: "" },
+  { deferred: true, reportedAs: "" },
 );
 
 export const ElementHandlers = b.dictionary(
@@ -181,10 +180,10 @@ export const HTMLRewriter = b.class({
     },
     onDocument: {
       ...chainable(b.self),
-      args: { handlers: DocumentHandlers.withValue },
-      expected: { handlers: "Expected object" },
+      args: { handlers: DocumentHandlers.otherAsNull },
       capability: "js",
       throws: true,
+      length: 1,
     },
     /** Returns what it was given: a `Response`, a string or an `ArrayBuffer`. */
     transform: {

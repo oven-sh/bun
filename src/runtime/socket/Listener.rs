@@ -908,8 +908,7 @@ impl Listener {
                 let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
                 // On Windows the listening socket fd is a system-kind SOCKET
                 // handle; routing it through `.uv()` panics for anything but
-                // stdio. The sys_jsc helper branches on kind
-                // (system→u64, uv→i32, posix→i32).
+                // stdio. The sys_jsc helper branches on kind.
                 use bun_sys_jsc::FdJsc as _;
                 socket.fd().to_number_without_making_lib_uv_owned()
             }

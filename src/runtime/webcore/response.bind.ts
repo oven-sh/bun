@@ -1,7 +1,8 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
+import { BuildArtifact } from "../api/JSBundler.bind.ts";
 import { Image } from "../image/Image.bind.ts";
-import { ReadableStream } from "./ByteStream.bind.ts";
+import { Blob } from "./Blob.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
 const getter = { getter: b.string.local, capability: "js" } as const;
@@ -29,14 +30,6 @@ export const Headers = b.wrapped("WebCore::JSFetchHeaders", "JSFetchHeaders.h", 
   reportedAs: "Headers",
 }).withValue;
 
-/** By name: their schemas import this one. */
-const Blob = b.wrapped("Bun::Bindgen::Generated::JSBlob", "GeneratedBlob.h", {
-  rustPath: "bun_jsc::webcore_types::Blob",
-});
-const BuildArtifact = b.wrapped("Bun::Bindgen::Generated::JSBuildArtifact", "GeneratedJSBundler.h", {
-  rustPath: "crate::api::js_bundler::BuildArtifact",
-  tsType: "Bun.BuildArtifact",
-});
 /**
  * A `DataView` is not among the buffers: like `object`, it is an async iterable or else the parts of a `Blob`,
  * as `other` is.
@@ -58,15 +51,16 @@ export const BodyInit = b.union(
     blob: Blob.withValue,
     buildArtifact: BuildArtifact.withValue,
     image: Image.withValue,
-    readableStream: ReadableStream,
+    readableStream: b.cell("WebCore::JSReadableStream", "streams/JSReadableStream.h", {
+      rustPath: "crate::webcore::ReadableStream",
+      tsType: "ReadableStream",
+    }),
     object: b.object,
     other: b.opaque,
   },
   { fromJS: true },
 );
 
-/** `headers` is copied. `init` is converted as the `HeadersInit` of the Fetch standard. */
-export const HeadersInit = b.union({ missing: b.undefined, headers: Headers, init: b.opaque });
 export const ResponseInit = b.dictionary(
   {
     headers: b.opaque.optional,
@@ -78,13 +72,6 @@ export const ResponseInit = b.dictionary(
 );
 export const ResponseInitArgument = b.union({ none: b.null, init: ResponseInit, other: b.ignored });
 export const ResponseInitOrStatus = b.union({ status: b.f64, init: ResponseInit, other: b.ignored });
-
-export const SignalInit = b.union({
-  missing: b.undefined,
-  none: b.null,
-  signal: b.abortSignal.shared,
-  other: b.ignored,
-});
 
 const clone = { returns: b.self, ...js, passThis: true, rustName: "do_clone", length: 1 } as const;
 

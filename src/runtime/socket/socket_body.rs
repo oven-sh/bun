@@ -11,7 +11,7 @@ use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
@@ -3225,7 +3225,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn get_fd(&self) -> i64 {
         // On Windows the fd is a system-kind SOCKET handle; routing it through
         // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
-        // kind (system→u64, uv→i32, posix→i32).
+        // kind.
         use bun_sys_jsc::FdJsc as _;
         self.socket
             .get()
@@ -3682,11 +3682,8 @@ impl TCPSocket {
     pub(crate) fn get_ephemeral_key_info(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         Ok(JSValue::NULL)
     }
-    pub(crate) fn get_cipher<'a>(
-        &self,
-        _: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, Option<CipherInfo<'a>>> {
-        Ok(None)
+    pub(crate) fn get_cipher(&self) -> Option<CipherInfo> {
+        None
     }
     pub(crate) fn get_tls_peer_finished_message(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)

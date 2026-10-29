@@ -10,11 +10,10 @@ use crate::webcore::jsc::{
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
-use bun_sys_jsc::FdJsc as _;
 use bun_uws as uws;
 
 use crate::generated_bindgen::sink::{
-    ArrayBufferSinkStartOptions, SinkPath, SinkStartFd, js_ReadableSinkController as js,
+    ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController as js,
 };
 use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
@@ -117,7 +116,8 @@ impl Start {
     }
 
     /// `start({ path, fd })` of a `FileSink`.
-    pub(crate) fn file_sink(path: &SinkPath, fd: &SinkStartFd) -> Start {
+    pub(crate) fn file_sink(path: &SinkPath, fd: Option<bun_jsc::bindgen::JsLocal<'_>>) -> Start {
+        use bun_sys_jsc::FdJsc as _;
         let error = |errno: sys::SystemErrno| {
             Start::Err(SysError {
                 errno: errno as _,
@@ -130,18 +130,11 @@ impl Start {
                 crate::webcore::PathOrFileDescriptor::Path(path.clone().into_utf8())
             }
             (SinkPath::Other, _) => return error(sys::SystemErrno::EINVAL),
-            (SinkPath::Missing, SinkStartFd::None) => {
-                crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID)
-            }
-            (SinkPath::Missing, SinkStartFd::Text(text)) if text.is_empty() => {
-                crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID)
-            }
-            (SinkPath::Missing, &SinkStartFd::Number(fd))
-                if !fd.is_sign_negative() && fd <= f64::from(i32::MAX) && fd.fract() == 0.0 =>
-            {
-                crate::webcore::PathOrFileDescriptor::Fd(Fd::from_js(fd as i32))
-            }
-            (SinkPath::Missing, _) => return error(sys::SystemErrno::EBADF),
+            (SinkPath::Missing, None) => crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
+            (SinkPath::Missing, Some(fd)) => match Fd::from_js(fd.to_js()) {
+                Some(fd) => crate::webcore::PathOrFileDescriptor::Fd(fd),
+                None => return error(sys::SystemErrno::EBADF),
+            },
         };
         Start::FileSink(FileSinkOptions {
             input_path,

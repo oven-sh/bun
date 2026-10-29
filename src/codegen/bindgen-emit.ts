@@ -136,9 +136,7 @@ const signaturesOf = (file: SchemaFile): Signature[] => [
 
 /** The conversions the file's Rust calls. Each function that has an argument has its own for it. */
 const conversionsOf = (file: SchemaFile): Conversion[] => [
-  ...file.types.flatMap(type =>
-    (type instanceof DeferredDictionaryType || type instanceof UnionType) && type.accepted ? type.conversions : [],
-  ),
+  ...file.types.flatMap(type => (type instanceof DeferredDictionaryType && type.accepted ? type.conversions : [])),
   ...signaturesOf(file).flatMap(({ args }) =>
     args.flatMap(({ type }) => (type instanceof DeferredType && type.conversion ? [type.conversion] : [])),
   ),
@@ -156,9 +154,7 @@ const conversionFunctionsOf = (file: SchemaFile) => [
 function nameConversions(file: SchemaFile): void {
   const owners = new Map(
     file.types.flatMap(type =>
-      type instanceof DeferredDictionaryType || type instanceof UnionType
-        ? type.conversions.map(conversion => [conversion, type] as const)
-        : [],
+      type instanceof DeferredDictionaryType ? type.conversions.map(conversion => [conversion, type] as const) : [],
     ),
   );
   const bySource = new Map<string, Pick<Conversion, "symbol" | "rustName">>();
@@ -382,7 +378,7 @@ function cppHeaderForUnion(type: UnionType): string {
   /** As error messages list them: null last. */
   const idlTypes = alternatives
     .toSorted((a, b) => Number(a.type instanceof UnitType) - Number(b.type instanceof UnitType))
-    .map(a => (a.type instanceof DeferredType ? a.type.inner : a.type).idlType)
+    .map(a => a.type.idlType)
     .join(", ");
   const { outcomes, code } = cppChooseByKind("value", type.alternativesByKind);
   const cases = outcomes.flatMap((candidates, index) =>
@@ -988,12 +984,9 @@ function cppCallBody(
     readLast.push(...type.cppReadLast(`converted${i}`, value));
     return [...lines, ...cppDeclareConverted(type, `converted${i}`, value, ctx, name, fromParameters?.failure ?? "{}")];
   };
-  const declare = (i: number) => cppDeclareArgument(signature.args[i], i, fromParameters);
-  // What `cppPrepare` makes is made for all arguments before any is converted.
-  const declaresFirst = signature.args.some(({ type }) => type.cppPrepare("") !== null);
   const lines = [
-    ...(declaresFirst ? signature.args.flatMap((_, i) => declare(i)) : []),
-    ...signature.conversionOrder.flatMap(i => [...(declaresFirst ? [] : declare(i)), ...convert(signature.args[i], i)]),
+    ...signature.args.flatMap((argument, i) => cppDeclareArgument(argument, i, fromParameters)),
+    ...signature.conversionOrder.flatMap(i => convert(signature.args[i], i)),
     ...readLast,
   ];
   const byPointer = passedByPointer(signature.args, leading.length);
@@ -2219,7 +2212,6 @@ ${variants
   return text + rustFromJS(type, scope);
 }
 
-/** `Name::from_js`. */
 function rustFromJS(type: NamedType, scope: RustScope): string {
   if (!type.fromJS) return "";
   const extern = type.rustExternType(scope);
@@ -2755,7 +2747,7 @@ bun_jsc::jsc_abi_extern! {
           thunkSymbol(fn, signature),
           parameters,
           "JSValue",
-          `${leading.map(name => `let ${name} = bindgen::JsLocal::${name === "callee" ? "<bun_jsc::JSObject>::" : ""}from_extern(${name}, &cx.heap);\n`).join("")}${take}let result = ${infallible(call, signature.throws, signature.returns)};
+          `${leading.map(name => `let ${name} = bindgen::JsLocal::from_extern(${name}, &cx.heap);\n`).join("")}${take}let result = ${infallible(call, signature.throws, signature.returns)};
 ${rustReturnKeepingStringsAlive(signature, `bindgen::host_fn_return(cx, result, |heap, value| ${signature.returns.rustToJS("value", scope)})`)}`,
         );
       })

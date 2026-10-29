@@ -7,7 +7,7 @@ use core::ffi::c_int;
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core as bstr;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc};
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
@@ -852,18 +852,19 @@ pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]
 }
 
 pub(crate) fn canonicalize_ip<'a>(
-    heap: &JsHeap<'a>,
+    cx: &mut JsScope<'a>,
     (address, address_value): (&[u8], JsLocal<'a>),
-) -> bindgen::Result<'a, Option<JsLocal<'a>>> {
+) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
+    let global_this = cx.global();
 
     let mut ip_addr = [0u8; bun_boringssl::INET6_ADDRSTRLEN + 1];
     let Some(slice) = bun_boringssl::canonicalize_ip(address, &mut ip_addr) else {
-        return Ok(None);
+        return Ok(JSValue::UNDEFINED);
     };
     if address == slice {
-        return Ok(Some(address_value));
+        return Ok(address_value.to_js());
     }
 
-    Ok(Some(heap.create_utf8_string(slice)?.as_value()))
+    bun_string_jsc::create_utf8_for_js(global_this, slice)
 }

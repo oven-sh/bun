@@ -478,6 +478,8 @@ export const notCalled: Record<string, string> = {
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": ofOneModule("node:tls"),
   "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties": ofOneModule("internal/util/inspect"),
   "%H2FrameParser%.prototype.getFrameCounters": ofOneModule("node:http2"),
+  "%TCPSocket%.prototype.getCipher": "it answers undefined: a socket of this class has no cipher",
+  "%TLSSocket%.prototype.getCipher": "a socket of this class takes a server with a certificate",
   "%TLSSocket%.prototype.getSharedSigalgs": afterHandshake,
   "%QuicSession%.prototype.getEphemeralKey": afterHandshake,
   "%NpmJscNpmManifestTestHelpers%.parseManifest": "it reads a manifest that `bun install` has stored",

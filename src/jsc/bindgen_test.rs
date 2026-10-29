@@ -13,7 +13,7 @@ use crate::generated_bindgen::bindgen_test::{
     TestChoice, TestColor, TestColorOrOther, TestCountOrNested, TestCountOrText, TestCounterHolder,
     TestDeferredHolder, TestDeferredOptions, TestDeferredOrText, TestDeferredOwnIfPassed,
     TestDeferredPrivateMember, TestFailure, TestFlag, TestFlagOrOther, TestHandle, TestKind,
-    TestLength, TestLenientOptions, TestMaybeCounter, TestName, TestNames, TestNodeOptions,
+    TestLength, TestLenientOptions, TestMaybeCounter, TestNames, TestNodeOptions,
     TestObjectOrOther, TestOptions, TestOptionsEcho, TestOtherAsNullOptions, TestOuter,
     TestOuterDeferred, TestOwnIfPassed, TestOwnOptions, TestPathOrFd, TestPathOrURL, TestPosition,
     TestPrivateMember, TestRangeOptions, TestSignalOptions, TestTextOrBuffer, TestTextOrFlag,
@@ -900,10 +900,10 @@ pub(crate) fn after_first<'a>(
 pub(crate) fn this_and_callee<'a>(
     heap: &JsHeap<'a>,
     this_value: JsLocal<'a>,
-    callee: JsLocal<'a, JSObject>,
+    callee: JsLocal<'a>,
     value: JsLocal<'a>,
 ) -> bindgen::Result<'a, JsLocal<'a>> {
-    let values = [this_value, callee.as_value(), value];
+    let values = [this_value, callee, value];
     bindgen::to_js::array(heap, values, bindgen::to_js::any)
 }
 
@@ -1011,10 +1011,7 @@ pub(crate) fn counter_with_value<'a>(
     value
 }
 
-pub(crate) fn counter_of_member<'a>(
-    _: &JsHeap<'a>,
-    holder: &TestCounterHolder<'a>,
-) -> JsLocal<'a, JSObject> {
+pub(crate) fn counter_of_member<'a>(_: &JsHeap<'a>, holder: &TestCounterHolder<'a>) -> JsLocal<'a> {
     let (counter, value) = holder.counter;
     counter.count.set(counter.count.get() + 1);
     value
@@ -1092,7 +1089,7 @@ pub(crate) fn present_arguments(
 
 pub(crate) fn callback_or_delay_callback(
     this_value: JsLocal<'_>,
-    callee: JsLocal<'_, JSObject>,
+    callee: JsLocal<'_>,
     callback: JsLocal<'_, Callable>,
 ) -> Vec<u8> {
     format!(
@@ -1105,7 +1102,7 @@ pub(crate) fn callback_or_delay_callback(
 
 pub(crate) fn callback_or_delay_delay(
     this_value: JsLocal<'_>,
-    _: JsLocal<'_, JSObject>,
+    _: JsLocal<'_>,
     delay: f64,
 ) -> Vec<u8> {
     format!(
@@ -1594,19 +1591,6 @@ pub(crate) fn deferred_count_or_two(
     count: Deferred<'_, i32>,
 ) -> JsResult<i32> {
     count.convert(cx.global())
-}
-
-pub(crate) fn name_or_kind(
-    cx: &mut JsScope<'_>,
-    name: TestName<'_>,
-    convert: bool,
-) -> JsResult<bun_core::String> {
-    Ok(match name {
-        TestName::Text(text) => text,
-        TestName::StringObject(text) if convert => text.convert(cx.global())?,
-        TestName::StringObject(_) => bun_core::String::static_("a String object"),
-        TestName::Other => bun_core::String::static_("other"),
-    })
 }
 
 pub(crate) fn take_number<'a>(

@@ -6,7 +6,7 @@ use bun_core::Output;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{
     JSGlobalObject, JSValue, JsError, JsResult,
-    ConsoleObject, JSFunction, JSObject, JSPropertyIterator, JSString,
+    ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_jsc::js_promise;
@@ -1438,7 +1438,7 @@ impl Expect {
     pub(crate) fn apply_custom_matcher(
         cx: &mut JsScope<'_>,
         this_value: JsLocal<'_>,
-        callee: JsLocal<'_, JSObject>,
+        callee: JsLocal<'_>,
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
@@ -1620,7 +1620,7 @@ impl Expect {
                 global_this.create_error_instance(format_args!("reached unreachable code"))
             }
             UnreachableMessage::Text(message) => message.to_error_instance(global_this),
-            UnreachableMessage::Thrown(value) => return Err(global_this.throw_value(value.to_js())),
+            UnreachableMessage::Other(value) => return Err(global_this.throw_value(value.to_js())),
         };
         error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
         Err(global_this.throw_value(error_value))

@@ -511,20 +511,6 @@ pub fn call_conversion<'a>(
 
 type ConvertFn<'a, T> = fn(&mut JsScope<'a>, JSValue) -> Result<'a, T>;
 
-/// The scope that `global` was borrowed from.
-///
-/// # Safety
-/// `'a` is a call that is still running.
-#[doc(hidden)]
-#[inline(always)]
-pub unsafe fn with_scope_of<'a, R>(
-    global: &JSGlobalObject,
-    f: impl FnOnce(&mut JsScope<'a>) -> R,
-) -> R {
-    // SAFETY: `JsScope` is zero-sized, at the address of the global object.
-    f(unsafe { &mut *global.as_mut_ptr().cast::<JsScope<'a>>() })
-}
-
 /// Runs a generated conversion of `value`, or of a member of it.
 #[doc(hidden)]
 #[inline]
@@ -566,14 +552,15 @@ impl<'a, T> Deferred<'a, T> {
     /// Throws what the conversion of an argument throws. Runs JavaScript if the type coerces.
     #[inline]
     pub fn convert(self, global: &JSGlobalObject) -> JsResult<T> {
-        // SAFETY: the call `'a` holds `self.value`.
-        unsafe { with_scope_of(global, |cx| (self.convert)(cx, self.value)) }
-            .map_err(|error| error.into_js_error(global))
+        // SAFETY: `JsScope` is zero-sized, at the address of the global object, and the call `'a`
+        // is still running: it holds `self.value`.
+        let cx = unsafe { &mut *global.as_mut_ptr().cast::<JsScope<'a>>() };
+        (self.convert)(cx, self.value).map_err(|error| error.into_js_error(global))
     }
 }
 
 impl<'a> JsLocal<'a, JSObject> {
-    /// For a [`JSValue`] read from where it was stored, like a [`crate::Strong`].
+    /// `None` for what is not an object.
     #[inline]
     pub fn from_js(_: &'a JSGlobalObject, value: JSValue) -> Option<Self> {
         value.is_object().then(|| JsLocal::from_raw(value))

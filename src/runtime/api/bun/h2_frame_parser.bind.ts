@@ -121,9 +121,6 @@ export const H2FrameParserOptions = b.dictionary(
   { deferred: true, reportedAs: "options" },
 );
 
-/** `false` if the stream cannot send. */
-export const H2WriteResult = b.union({ refused: b.bool, state: b.f64 });
-
 /** The session of `node:http2`. */
 export const H2FrameParser = b.class({
   rustPath: "crate::api::H2FrameParser",
@@ -243,7 +240,7 @@ export const H2FrameParser = b.class({
         callback: b.opaque,
         deferCallback: b.bool.loose.default(false),
       },
-      returns: H2WriteResult,
+      returns: b.opaque.returning("boolean", "number"),
       length: 3,
     },
   },

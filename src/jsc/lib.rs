@@ -1028,8 +1028,9 @@ pub use self::call_frame::CallFrame;
 
 // `FromJsEnum` impls for the `bun_http_types` Fetch* enums. Orphan rule forces
 // these here (the trait crate) — `bun_http_types` is jsc-free and `bun_http_jsc`
-// owns neither the trait nor the type. The `to_js` direction stays in
-// `bun_http_jsc::fetch_enums_jsc`.
+// owns neither the trait nor the type. Powers
+// `JSValue::get_optional_enum::<FetchRedirect>()` in `Request::construct_into`
+// / `fetch.rs`. The `to_js` direction stays in `bun_http_jsc::fetch_enums_jsc`.
 impl FromJsEnum for bun_http_types::FetchRedirect::FetchRedirect {
     fn from_js_value(
         v: JSValue,

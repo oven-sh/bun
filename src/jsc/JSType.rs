@@ -563,7 +563,7 @@ impl JSType {
 
     /// `JSType` is a
     /// newtype-const (not a Rust `enum`), so there is no derived stringifier.
-    /// Covers every typed array, `ArrayBuffer` and `DataView`.
+    /// Covers every `is_typed_array_or_array_buffer()` variant + `DataView`.
     /// The `_ => "TypedArray"` arm is unreachable for any real
     /// `ArrayBuffer.typed_array_type` (always one of the 14).
     pub fn typed_array_name(self) -> &'static [u8] {
@@ -660,6 +660,25 @@ impl JSType {
                 | JSType::SlimClosureWithProperties
                 | JSType::FunctionExecutable
                 | JSType::InternalFunction
+        )
+    }
+
+    pub fn is_typed_array_or_array_buffer(self) -> bool {
+        matches!(
+            self,
+            JSType::ArrayBuffer
+                | JSType::BigInt64Array
+                | JSType::BigUint64Array
+                | JSType::Float32Array
+                | JSType::Float16Array
+                | JSType::Float64Array
+                | JSType::Int16Array
+                | JSType::Int32Array
+                | JSType::Int8Array
+                | JSType::Uint16Array
+                | JSType::Uint32Array
+                | JSType::Uint8Array
+                | JSType::Uint8ClampedArray
         )
     }
 

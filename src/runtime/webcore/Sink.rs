@@ -457,9 +457,9 @@ impl JSSink<FileSink> {
     pub(crate) fn start(
         &self,
         cx: &mut JsScope<'_>,
-        options: &FileSinkStartOptions,
+        options: &FileSinkStartOptions<'_>,
     ) -> JsResult<()> {
-        self.start_with_config(cx, streams::Start::file_sink(&options.path, &options.fd))
+        self.start_with_config(cx, streams::Start::file_sink(&options.path, options.fd))
     }
 }
 
@@ -813,7 +813,7 @@ impl ReadableSinkController {
     pub(crate) fn start(
         &self,
         cx: &mut JsScope<'_>,
-        options: &ReadableSinkControllerStartOptions,
+        options: &ReadableSinkControllerStartOptions<'_>,
     ) -> JsResult<()> {
         let Some(sink) = self.sink_or_throw(cx.global())? else {
             return Ok(());
@@ -822,7 +822,7 @@ impl ReadableSinkController {
         let chunk_size = streams::Start::chunk_size(options.high_water_mark);
         match sink {
             AnyControlledSink::FileSink(sink) => {
-                let config = streams::Start::file_sink(&options.path, &options.fd);
+                let config = streams::Start::file_sink(&options.path, options.fd);
                 start_sink(sink, cx, config)
             }
             AnyControlledSink::RewriterPipe(sink) => {

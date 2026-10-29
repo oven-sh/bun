@@ -13,13 +13,11 @@ export const SinkChunk = b.union({
 /** `start` fails with `EINVAL` if `path` is not a string. */
 export const SinkPath = b.union({ missing: b.undefined, path: b.string.allowStringObject, other: b.ignored });
 
-/** An empty `text` is `missing`. `start` fails with `EBADF` for what is not an integer from 0 that fits an `i32`. */
-export const SinkStartFd = b.union({ none: b.null, number: b.f64, text: b.string, other: b.ignored });
-
 const highWaterMark = b.f64.otherAsNull;
 const fileMembers = {
   path: SinkPath,
-  fd: SinkStartFd,
+  /** Parsed by `Fd::from_js`. */
+  fd: b.opaque.emptyStringAsNull,
 };
 const ignoresNonObjects = { allowArray: true, nonObjectAsEmpty: true } as const;
 

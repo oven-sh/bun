@@ -20,8 +20,8 @@ const bufferIfAny = { returns: b.opaque.returning("Buffer", "undefined"), ...js 
 const objectIfAny = { returns: b.opaque.returning("object", "undefined"), ...js } as const;
 
 export const CipherInfo = b.dictionary({
-  name: b.string.local.nullable,
-  standardName: b.string.local.nullable,
+  name: b.string.nullable,
+  standardName: b.string.nullable,
   version: b.string.nullable,
 });
 
@@ -52,7 +52,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       flush: { capability: "js" },
       getAuthorizationError: { returns: b.object.returning("Error").nullable, capability: "js" },
       getCertificate: objectIfAny,
-      getCipher: { returns: CipherInfo.optional, capability: "heap", throws: true },
+      getCipher: { returns: CipherInfo.optional },
       getEphemeralKeyInfo: { returns: b.opaque.returning("object", "null"), ...js },
       getPeerCertificate: {
         ...js,

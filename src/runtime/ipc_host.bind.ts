@@ -21,7 +21,7 @@ export const MessageTarget = b.union({
  * `handle` is what `parseHandle` of `builtins/Ipc.ts` made of the descriptor.
  */
 export const emitHandleIPCMessage = b.fn({
-  args: { target: MessageTarget, message: b.opaque, handle: b.object },
+  args: { target: MessageTarget, message: b.opaque, handle: b.opaque },
   capability: "js",
   throws: true,
 });

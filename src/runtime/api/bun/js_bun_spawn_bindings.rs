@@ -2063,7 +2063,7 @@ impl CgroupTarget {
     fn from_js(global: &JSGlobalObject, value: SpawnCgroupTarget) -> JsResult<Self> {
         match value {
             SpawnCgroupTarget::Fd(fd) => {
-                // -1 is `.nanAs(-1)`.
+                // NaN converts to -1: there is no default fd.
                 if fd < 0 {
                     return Err(global.throw_range_error(
                         f64::NAN,

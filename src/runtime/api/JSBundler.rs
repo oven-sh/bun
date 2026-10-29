@@ -1067,7 +1067,7 @@ pub(crate) mod js_bundler {
 
             match config.env(global_this)? {
                 BuildEnvBehavior::Missing => {}
-                BuildEnvBehavior::Disable
+                BuildEnvBehavior::None
                 | BuildEnvBehavior::Enabled(false)
                 | BuildEnvBehavior::Number(0.0) => {
                     this.env_behavior = api::DotEnvBehavior::Disable;

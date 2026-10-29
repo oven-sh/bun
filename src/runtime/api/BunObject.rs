@@ -87,7 +87,7 @@ use crate::generated_bindgen::bun_object::{
     InspectOptionsOrDepth, MMapOptions, WhichOptions, ZlibCompressionOptions,
     ZlibDecompressionOptions, ZstdCompressionOptions,
 };
-use bun_jsc::bindgen::{self, BufferSource, Callable, JsHeap, JsLocal, JsScope, PinnedBytes};
+use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
 
 /// How to add a new property to the Bun global (a function goes in `BunObject.bind.ts`)
 ///
@@ -537,7 +537,7 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 pub(crate) fn register_macro<'a>(
     heap: &JsHeap<'a>,
     id: f64,
-    callback: Option<JsLocal<'a, Callable>>,
+    callback: JsLocal<'a>,
 ) -> bindgen::Result<'a, ()> {
     let id = id as i32;
     if id == -1 || id == 0 {
@@ -547,9 +547,9 @@ pub(crate) fn register_macro<'a>(
         ));
     }
 
-    let Some(callback) = callback else {
+    if callback.as_callable().is_none() {
         return Err(heap.error(format_args!("Macro must be a function")));
-    };
+    }
     let callback = callback.to_js();
 
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.

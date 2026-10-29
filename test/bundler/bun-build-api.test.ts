@@ -994,7 +994,7 @@ describe("Bun.build", () => {
     expect(await response.text()).toMatchSnapshot("response text");
   });
 
-  test("a BuildArtifact is taken wherever a Blob is", async () => {
+  test("ws.send, server.publish and Bun.write take a BuildArtifact", async () => {
     using dir = tempDir("buildartifact-as-blob", {});
     const entrypoints = [join(import.meta.dir, "./fixtures/trivial/index.js")];
     const [artifact] = (await Bun.build({ entrypoints })).outputs;

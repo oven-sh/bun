@@ -32,8 +32,8 @@ use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::h2_frame_parser::{
     FlagSetting, H2FrameCounters, H2FrameParserOptions, H2Handlers, H2NativeSocket, H2SessionState,
-    H2Settings, H2SettingsOption, H2StreamState, H2WriteResult, OptionalNumber,
-    RequestOptionsArgument, js_H2FrameParser as js,
+    H2Settings, H2SettingsOption, H2StreamState, OptionalNumber, RequestOptionsArgument,
+    js_H2FrameParser as js,
 };
 
 bun_output::declare_scope!(H2FrameParser, visible);
@@ -5728,7 +5728,7 @@ impl H2FrameParser {
         close: bool,
         callback: JsLocal<'_>,
         defer_callback: bool,
-    ) -> JsResult<H2WriteResult> {
+    ) -> JsResult<JSValue> {
         let global_object = cx.global();
         let data = data.to_js();
         let encoding = encoding.to_js();
@@ -5740,7 +5740,7 @@ impl H2FrameParser {
         let mut stream = self.enter_stream_dispatch(stream_ptr);
         if !stream.can_send_data() {
             self.dispatch_write_callback(callback);
-            return Ok(H2WriteResult::Refused(false));
+            return Ok(JSValue::FALSE);
         }
 
         let encoding: Encoding = 'brk: {
@@ -5798,7 +5798,7 @@ impl H2FrameParser {
         if callback_deferred {
             result |= WRITE_FLUSHED_WITHOUT_CALLBACK;
         }
-        Ok(H2WriteResult::State(result as f64))
+        Ok(JSValue::js_number(result as f64))
     }
 
     /// `set_next_stream_id` can park `last_stream_id` anywhere in the u32 range, so the step

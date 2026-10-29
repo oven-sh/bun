@@ -9,21 +9,28 @@ use crate::{JSGlobalObject, JSValue};
 /// Extension trait wiring `to_js` / `from_js` onto `bun_sys::Fd`;
 /// the `*_jsc` crate provides them as trait methods.
 pub trait FdJsc: Sized {
-    /// The `Fd` of a file descriptor number that JS passed.
-    fn from_js(fd: i32) -> Self;
+    fn from_js(value: JSValue) -> Option<Self>;
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
     fn to_number_without_making_lib_uv_owned(self) -> i64;
 }
 
 impl FdJsc for Fd {
-    #[inline]
-    fn from_js(fd: i32) -> Fd {
+    /// fd "fails" if not given an int32, returning null in that case
+    fn from_js(value: JSValue) -> Option<Fd> {
+        if !value.is_any_int() {
+            return None;
+        }
+        let fd64 = value.to_int64();
+        if fd64 < 0 || fd64 > i64::from(i32::MAX) {
+            return None;
+        }
+        let fd: i32 = i32::try_from(fd64).expect("int cast");
         // On Windows, JS-visible fds are libuv/CRT fds (see `to_js`). libuv fd
         // 0/1/2 already map to stdio, so there is no need to substitute the
         // cached `.system` HANDLE here — doing so forces every `sys_uv` call to
         // round-trip through `Fd::uv()`'s stdio-handle comparison, which panics
         // if the process std handle was swapped after startup.
-        Fd::from_uv(fd)
+        Some(Fd::from_uv(fd))
     }
 
     /// After calling, the input file descriptor is no longer valid and must not be used.

@@ -6,7 +6,7 @@ export const IdleTimeout = b.union({ missing: b.undefined, number: b.f64, other:
 export const KeepAliveOptions = b.dictionary(
   {
     idleTimeout: IdleTimeout,
-    /** `NaN` arrives as 0, which the body reports as out of range. */
+    /** `NaN` is out of range. */
     maxIdleSockets: b.u16.validateIntegerRange(1, 2 ** 16 - 1).nanAs(0).optional,
   },
   { deferred: true, reportedAs: "keepAlive" },

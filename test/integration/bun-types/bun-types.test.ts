@@ -637,8 +637,7 @@ describe("@types/bun integration test", () => {
     ).toEqual([
       // `undefined` for a Blob without a store or with bytes. What is published is a BunFile.
       "Blob.bind.ts: file().stat() is Promise<unknown> | undefined, not Promise<Stats>",
-      // bun.d.ts types the result from the argument.
-      // An `S3File` is a `Blob` to which C++ adds `bucket` and `presign`. `readable` is declared and not implemented.
+      // An S3File is a Blob with more members, which C++ adds and no schema describes.
       "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
       "S3Client.bind.ts: new S3Client().file().stat() is Promise<unknown> | undefined, not Promise<S3Stats>",
       "S3Client.bind.ts: new S3Client().file().lastModified is not published",
@@ -661,7 +660,7 @@ describe("@types/bun integration test", () => {
       "Sink.bind.ts: new NetworkSink().close is not published",
       "Sink.bind.ts: new NetworkSink()._getFd is not published",
       "Sink.bind.ts: new NetworkSink().sinkId is not published",
-      // Published, and nothing reads it.
+      // Published, and nothing has ever read it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
       // `keepalive` and `duplex` are declared on Request but not implemented.
       "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
@@ -679,7 +678,7 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new BuildMessage().notes is not published",
       "resolve_message.bind.ts: new BuildMessage().[Symbol.toPrimitive] is not published",
       "resolve_message.bind.ts: new ResolveMessage().toJSON is not published",
-      // `undefined` for a message that is not about resolving.
+      // `undefined` for a message whose metadata is not that of a resolution.
       "resolve_message.bind.ts: new ResolveMessage().code is string | undefined, not string",
       "resolve_message.bind.ts: new ResolveMessage().column is not published",
       "resolve_message.bind.ts: new ResolveMessage().line is not published",
@@ -690,7 +689,7 @@ describe("@types/bun integration test", () => {
       "response.bind.ts: constructJSONFromText is not published",
       // `keepalive` and `duplex` are declared on Request but not implemented.
       "response.bind.ts: new Request().clone() has no keepalive, duplex",
-      // `undefined` once it has closed.
+      // `undefined` once the socket is closed.
       "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
       "valkey.bind.ts: new RedisClient().psubscribe is not published",

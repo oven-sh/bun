@@ -940,6 +940,9 @@ describe(".deferred", () => {
   itAlways("is written last, on an argument, of a body that can run JavaScript", () => {
     expect(() => b.string.deferred.optional).toThrow("put .deferred last");
     expect(() => b.dictionary({ text: b.string.deferred })).toThrow("text: .deferred is only for an argument");
+    expect(() => b.union({ text: b.string.deferred, other: b.ignored })).toThrow(
+      "text: .deferred is only for an argument",
+    );
     expect(() => b.fn({ returns: b.string.deferred })).toThrow(".deferred is only for an argument");
     expect(() => b.fn({ args: { text: b.string.deferred } })).toThrow(
       'text: the body converts it, which takes capability: "js"',
@@ -1097,26 +1100,6 @@ describe(".deferred on two arguments of one name", () => {
   });
 });
 
-describe(".deferred on an alternative", () => {
-  it("is chosen with the other arguments and converted by the body", () => {
-    let calls = 0;
-    const name = new String("a");
-    name.toString = () => (calls++, "b");
-    expect(bindgen.nameOrKind("a", true)).toBe("a");
-    expect(bindgen.nameOrKind(name, false)).toBe("a String object");
-    expect(calls).toBe(0);
-    expect(bindgen.nameOrKind(name, true)).toBe("b");
-    expect(calls).toBe(1);
-    expect(bindgen.nameOrKind(1, true)).toBe("other");
-  });
-
-  itAlways("is refused on a type that takes every value", () => {
-    expect(() => b.union({ number: b.f64, other: b.i32.wrap.deferred })).toThrow(
-      "other: it takes every value, so the union has nothing to choose by",
-    );
-  });
-});
-
 describe(".deferred of undefined", () => {
   it("converts the same as without .deferred", () => {
     for (const args of [
@@ -1136,6 +1119,7 @@ describe("a value that Rust converts without C++", () => {
     const viewOfDetached = new Uint8Array(detached);
     structuredClone(detached, { transfer: [detached] });
     const resizable = new ArrayBuffer(2, { maxByteLength: 4 });
+    // `4.5 + half` is 5 boxed as a double.
     const half = 0.5;
     const values = [
       undefined,
@@ -1357,7 +1341,7 @@ describe("b.wrapped", () => {
     expect(() => bindgen.pathOf(5)).toThrow(TypeError);
   });
 
-  it(".shared is a reference on it, which a dictionary can hold", () => {
+  it(".shared is a Ref to it, which a dictionary can hold", () => {
     const controller = new AbortController();
     expect(bindgen.isAborted({})).toBe(null);
     expect(bindgen.isAborted({ signal: controller.signal })).toBe(false);
@@ -1476,13 +1460,6 @@ describe("a union as an alternative", () => {
   itAlways("refuses an alternative name that the outer union also has", () => {
     const text = b.union({ text: b.string, flag: b.bool });
     expect(() => b.union({ text: b.i32, nested: text })).toThrow("two alternatives are both text");
-  });
-
-  itAlways("refuses an inner union with a .deferred alternative", () => {
-    const text = b.union({ text: b.string.deferred, other: b.ignored });
-    expect(() => b.union({ count: b.i32, nested: text })).toThrow(
-      "nested: the union that names a .deferred alternative converts it",
-    );
   });
 });
 

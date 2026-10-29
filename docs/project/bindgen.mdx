@@ -107,8 +107,8 @@ To reach the function:
 `$bindgen` that names it. A function that only native code makes callable has no such entry and says it itself:
 `feature: "Cron"`, a name from `src/trim/features/*.def`.
 
-`passThis: true` adds `this_value: JsLocal<'a>` after the capability, and `passCallee: true` adds
-`callee: JsLocal<'a, JSObject>`, the function that was called, after it.
+`passThis: true` adds `this_value: JsLocal<'a>` after the capability, and `passCallee: true` adds `callee: JsLocal<'a>`, the
+function that was called, after it.
 
 `b.value({ returns: b.i32 })` is for what `src/js` reads once: `$bindgen` calls the Rust function and gives what it returns,
 and no JS function is made.
@@ -271,7 +271,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.dataView`                             | `JsLocal<'a, JSObject>`          | a `DataView`, as itself                                       |
 | `b.abortSignal`                          | `&'a AbortSignal`                | an `AbortSignal`                                              |
 | `b.stringObject`                         | `JsLocal<'a, JSObject>`          | a `String` object, not converted: that runs its `toString`    |
-| `b.stringLike`                           | `JsLocal<'a, StringLike>`        | either of the two, as itself                                  |
+| `b.stringLike`                           | `JsLocal<'a, StringLike>`        | a string or a `String` object, as itself                      |
 | `b.jsNumber`                             | `JsLocal<'a, Number>`            | a number, as itself; `b.f64` is its value                     |
 | `b.bigInt`                               | `JsLocal<'a, JSBigInt>`          | a BigInt, as itself                                           |
 | `b.cell(class, header, options)`         | `JsLocal<'a, T>`                 | an instance of that `JSCell` class, as itself                 |
@@ -308,8 +308,7 @@ and `tsType` is its type in the generated `.d.ts`: without it an argument is `ob
 `b.dataView` is one.
 `b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" })` gives what `wrapped()`
 of the instance returns. The argument keeps it alive, so it is an argument or an alternative of one; `.shared` is a
-`Ref` to it, `ExternalShared<T>`, which a dictionary can hold and a body can store. It also names a generated class
-whose schema imports this one. `b.abortSignal` is one.
+`Ref` to it, `ExternalShared<T>`, which a dictionary can hold and a body can store. `b.abortSignal` is one.
 
 A schema exports a type without a name for others to import: `export const Headers = b.wrapped(..).withValue`.
 
@@ -325,11 +324,10 @@ These come last, in this order:
 
 `.withValue` on an argument also gives the body the argument itself, `(T, JsLocal<'a>)`: for a body that reads the
 internal fields of an instance, or returns the argument when there is nothing to change. It comes after all of these,
-and not with `.ifPassed`. The value is as typed as the argument says: `JsLocal<'a, JSObject>` beside an instance of a
-class, `JsLocal<'a>` beside the context of a reaction.
+and not with `.ifPassed`.
 
 Beside an instance, of a class or of `b.wrapped`, the value is the object that keeps the instance alive. So
-`Blob.withValue` is also a member of a dictionary, or an alternative of a union that is one: `(&'a Blob, JsLocal<'a, JSObject>)`.
+`Blob.withValue` is also a member of a dictionary, or an alternative of a union that is one: `(&'a Blob, JsLocal<'a>)`.
 The modifiers that make an `Option` follow it: `Blob.withValue.otherAsNull`.
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>`, `b.array(T)` anything that
@@ -341,12 +339,12 @@ before them copy. `b.jsArray` as a result is what `heap.create_array(items, to_j
 
 These are results only:
 
-| Schema           | Rust                                          | JavaScript gets                                                                                                                                                                      |
-| ---------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `b.u64.asBigInt` | `u64`                                         | always a BigInt                                                                                                                                                                      |
-| `b.f64.asDate`   | `f64`                                         | a `Date` with that time value                                                                                                                                                        |
-| `b.string.local` | `JsLocal<'a, JSString>`                       | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)` or `heap.common_string(CommonString::..)` |
-| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8 and one that comes again takes the new value, `T` holds no JS value, and it is not a member or an alternative           |
+| Schema           | Rust                                          | JavaScript gets                                                                                                                                                                                                     |
+| ---------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `b.u64.asBigInt` | `u64`                                         | always a BigInt                                                                                                                                                                                                     |
+| `b.f64.asDate`   | `f64`                                         | a `Date` with that time value                                                                                                                                                                                       |
+| `b.string.local` | `JsLocal<'a, JSString>`                       | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)`, `heap.create_string(&string)` or `heap.common_string(CommonString::..)` |
+| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8 and one that comes again takes the new value, `T` holds no JS value, and it is not a member or an alternative                                          |
 
 A body that returns `b.opaque` makes the value with what the generated code calls:
 `bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module. An empty
@@ -408,7 +406,7 @@ A conversion can run JavaScript, so like everything else that can it takes the `
 `JsResult`. What Rust tells from the value's bits or its cell's type, and the type takes as it is, is answered without a
 call into C++: `undefined` for a type with a default or one that is `.optional`, a boolean, a number, a safe integer in
 range, the object of a `deferred` dictionary, and a handle of a kind that the type byte tells (a string, a BigInt, an
-array, a function that is not a proxy, a buffer with `.allowShared`). `from_js` of a union does the same.
+array, a function that is not a proxy, a buffer with `.allowShared`). `from_js` of a union that takes a closure does the same.
 
 A union of a `deferred` dictionary and handles (`b.stringLike`, `b.bufferSource`) that ends in `b.ignored` or `b.opaque`
 only tells kinds apart: it runs nothing and refuses nothing, so it is not `.deferred`. It is also `Copy`, where a union
@@ -418,10 +416,6 @@ helper takes handles and the helper converts them, as for the paths of `node:fs`
 `.deferred` is written last, on an argument, and takes `capability: "js"`. The conversion returns before the body goes on, so
 the type cannot borrow from it: a UTF-8 string is `.owned`, and in place of `b.bytes` there is `b.bufferSource`. Each
 other conversion is one more call into C++, so an argument that nothing has to come before is not deferred.
-
-It is also an alternative of a union, for a kind whose conversion JavaScript can see. The union is chosen with the other
-arguments and the body converts that one alternative:
-`b.union({ name: b.string, stringObject: b.string.allowStringObject.deferred, other: b.ignored })`.
 
 `b.rest(b.opaque)` is `&'a [JsLocal<'a>]`, the arguments where they are in the frame. `b.rest(b.string.local)` is
 `&'a [JsLocal<'a, JSString>]`, checked before the body runs, and an error names the one it is about: "paths[2]".
@@ -593,7 +587,7 @@ in play apart:
 | `JSCell::isCallable`               | a function, or a proxy of one                                                  |
 | the cell's `ClassInfo`             | an instance of a class, a `Date`                                               |
 
-An alternative is named for its role (`path`, `encoding`, `ipv4`). One without a role is named for what it is: `string` for
+An alternative is named for its role (`path`, `encoding`, `headers`). One without a role is named for what it is: `string` for
 a string as itself and `text` for its text, `number`, `buffer`, `list`, `options`, `flag`. `b.undefined` is
 `missing`, `b.null` is `none`, and a last `b.ignored` or `b.opaque` is `other`.
 

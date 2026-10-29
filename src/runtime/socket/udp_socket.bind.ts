@@ -45,9 +45,9 @@ export const UDPConnectOptions = b.dictionary(
 export const UDPSocketOptions = b.dictionary(
   {
     port: b.f64.loose.emptyStringAsNull,
-    flags: b.i32.validateInteger().reportedAs("options.flags").emptyStringAsNull,
+    flags: b.i32.validateInteger().emptyStringAsNull,
     /** An already created socket to adopt. */
-    fd: b.i32.validateInteger().reportedAs("options.fd").nullable,
+    fd: b.i32.validateInteger().nullable,
     hostname: { type: b.string.allowStringObject.emptyStringAsNull, expected: 'Expected "hostname" to be a string' },
     /** node:dgram sets it for a descriptor that cluster workers share. */
     sharedFd: { type: b.bool.loose.default(false), privateSymbol: "sharedFd" },

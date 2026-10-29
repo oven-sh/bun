@@ -17,7 +17,7 @@ use core::ffi::{CStr, c_uint, c_void};
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, host_fn};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::DuplexUpgradeContext;
@@ -795,7 +795,7 @@ impl Drop for UpgradedDuplex {
 
 pub(crate) fn on_received_data<'a>(
     cx: &mut JsScope<'a>,
-    callee: JsLocal<'a, JSObject>,
+    callee: JsLocal<'a>,
     data: DuplexChunk<'a>,
 ) {
     bun_output::scoped_log!(UpgradedDuplex, "onReceivedData");
@@ -828,7 +828,7 @@ pub(crate) fn on_received_data<'a>(
     }
 }
 
-pub(crate) fn on_end(_: &mut JsScope<'_>, callee: JsLocal<'_, JSObject>) {
+pub(crate) fn on_end(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onEnd");
 
     if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
@@ -841,7 +841,7 @@ pub(crate) fn on_end(_: &mut JsScope<'_>, callee: JsLocal<'_, JSObject>) {
     }
 }
 
-pub(crate) fn on_writable(_: &mut JsScope<'_>, callee: JsLocal<'_, JSObject>) {
+pub(crate) fn on_writable(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onWritable");
 
     if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
@@ -857,7 +857,7 @@ pub(crate) fn on_writable(_: &mut JsScope<'_>, callee: JsLocal<'_, JSObject>) {
     }
 }
 
-pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_, JSObject>) {
+pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onCloseJS");
 
     if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {

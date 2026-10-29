@@ -550,7 +550,7 @@ export const counterWithValue = b.fn({
   capability: "heap",
 });
 export const TestCounterHolder = b.dictionary({ counter: TestCounter.withValue });
-export const counterOfMember = b.fn({ args: { holder: TestCounterHolder }, returns: b.object, capability: "heap" });
+export const counterOfMember = b.fn({ args: { holder: TestCounterHolder }, returns: b.opaque, capability: "heap" });
 export const TestViewOrBuffer = b.union({
   dataView: b.cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", { rustPath: "bun_jsc::JSObject" }),
   buffer: b.bufferSource,
@@ -873,18 +873,6 @@ export const deferredCountOrOne = b.fn({
 export const deferredCountOrTwo = b.fn({
   args: { count: b.i32.default(2).deferred },
   returns: b.i32,
-  capability: "js",
-  throws: true,
-});
-/** The `toString` of a `String` object runs only if `convert`. */
-export const TestName = b.union({
-  text: b.string,
-  stringObject: b.string.allowStringObject.deferred,
-  other: b.ignored,
-});
-export const nameOrKind = b.fn({
-  args: { name: TestName, convert: b.bool },
-  returns: b.string,
   capability: "js",
   throws: true,
 });

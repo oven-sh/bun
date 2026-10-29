@@ -2146,7 +2146,7 @@ export class Conversion {
 export class DeferredType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawAny";
   readonly inner: Type;
-  /** Absent until it is the type of an argument or of an alternative, which names it. */
+  /** Absent until it is the type of an argument, which names it. */
   readonly conversion: Conversion | null;
   constructor(inner: Type, conversion: Conversion | null = null) {
     super();
@@ -2188,7 +2188,7 @@ export class DeferredType extends Type {
     return this.inner.tsType;
   }
   get refusalOutsideArgument(): string {
-    return ".deferred is only for an argument or an alternative of a union";
+    return ".deferred is only for an argument";
   }
   get returnsValueUnchanged(): boolean {
     return true;
@@ -2715,14 +2715,11 @@ export class WithValueType extends Type {
   get externStructFields(): readonly ExternField[] {
     return externWithValueFields({ layout: this.inner.layout(), rustType: scope => this.inner.rustExternType(scope) });
   }
-  get #valueType(): Type {
-    return this.#isInstance ? objectType : opaqueType;
-  }
   rustType(scope: RustScope): string {
-    return `(${this.inner.rustType(scope)}, ${this.#valueType.rustType(scope)})`;
+    return `(${this.inner.rustType(scope)}, ${opaqueType.rustType()})`;
   }
   rustFromExtern(expr: string, scope: RustScope): string {
-    return `(${this.inner.rustFromExtern(`${expr}.converted`, scope)}, ${this.#valueType.rustFromExtern(`${expr}.value`, scope)})`;
+    return `(${this.inner.rustFromExtern(`${expr}.converted`, scope)}, ${opaqueType.rustFromExtern(`${expr}.value`)})`;
   }
 }
 
@@ -3475,9 +3472,7 @@ export class UnionType extends NamedType {
     this.options = options;
     this.alternatives = Object.entries(alternatives).flatMap(([name, type]): Alternative[] => {
       const variant = pascalCase(name);
-      if (!(type instanceof UnionType))
-        return [{ name, variant, type: type instanceof DeferredType ? type.ofArgument(name, undefined) : type }];
-      assert(type.conversions.length === 0, `${name}: the union that names a .deferred alternative converts it`);
+      if (!(type instanceof UnionType)) return [{ name, variant, type }];
       return type.alternatives.map(alternative => ({
         name: alternative.name,
         variant,
@@ -3501,10 +3496,7 @@ export class UnionType extends NamedType {
         `${name}: add ${type instanceof OptionalType && type.modifier === "otherAsNull" ? "b.ignored" : "b.null"} as an alternative`,
       );
       assert(!(type instanceof DefaultType), `${name}: put .default() on the union`);
-      if (type instanceof DeferredType) {
-        assert(type.valueKinds !== "any", `${name}: it takes every value, so the union has nothing to choose by`);
-        assert(!type.inner.refuses, `${name}: ${type.inner.refuses} is known only once it is converted`);
-      } else refuseOutsideArgument(type, name);
+      refuseOutsideArgument(type, name);
       assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: an alternative is named in camelCase`);
       assert(name !== "tag", "tag: the generated struct has a member of that name");
       assert(!cppKeywords.has(name), `${name} is a C++ keyword, and JavaScript never sees the name: pick another`);
@@ -3528,10 +3520,6 @@ export class UnionType extends NamedType {
   }
   get fromJS(): boolean {
     return !!this.options.fromJS;
-  }
-  /** Those of the `.deferred` alternatives. */
-  get conversions(): readonly Conversion[] {
-    return this.alternatives.flatMap(({ type }) => (type instanceof DeferredType ? [type.conversion!] : []));
   }
   /** As for a dictionary. */
   get needsLifetime(): boolean {

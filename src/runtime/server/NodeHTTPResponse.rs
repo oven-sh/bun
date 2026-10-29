@@ -17,7 +17,7 @@ use bun_uws_sys as uws_sys;
 use crate::generated_bindgen::node_http_response::js_NodeHTTPResponse as js;
 use crate::node::{Encoding, StringOrBuffer};
 use crate::server::jsc::{
-    self, ErrorCode, JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional, VirtualMachine,
+    self, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
 use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
@@ -1667,7 +1667,7 @@ impl NodeHTTPResponse {
 pub(crate) fn on_resolve(
     cx: &mut JsScope<'_>,
     _: JsLocal<'_>,
-    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_, JSObject>),
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
 ) {
     scoped_log!(NodeHTTPResponse, "onResolve");
     let global_object = cx.global();
@@ -1708,7 +1708,7 @@ pub(crate) fn on_resolve(
 pub(crate) fn on_reject(
     cx: &mut JsScope<'_>,
     err: JsLocal<'_>,
-    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_, JSObject>),
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
 ) {
     let global_object = cx.global();
     // `promise` non-empty is the ownership token for the server-handler ref;

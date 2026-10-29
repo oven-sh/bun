@@ -60,7 +60,7 @@ export { jsNumberType as jsNumber } from "./bindgen-lib-internal.ts";
 /** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.local` for the JS string itself. */
 export const string = new StringType();
 
-/** Any JS value, as a `JsLocal<'a>`, for a function that does not depend on its type: it holds it, stores it or hands it on. `.stringObjectAsString`, `.orAbsent`. As a result, `.returning()`. */
+/** Any JS value, handed over as it is, as a `JsLocal<'a>`: the body stores it, hands it on or looks at it itself. `.stringObjectAsString`, `.orAbsent`. As a result, `.returning()`. */
 export { opaqueType as opaque } from "./bindgen-lib-internal.ts";
 
 /** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */

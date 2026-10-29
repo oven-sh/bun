@@ -9,7 +9,7 @@ const members = {
   isClosed: { getter: b.bool, pure: true },
   pull: {
     ...js,
-    args: { view: b.bufferSource.allowShared.otherAsNull, flags: b.jsArray.otherAsNull },
+    args: { view: b.opaque, flags: b.opaque },
     returns: b.opaque.returning("number", "boolean", "Promise", "Uint8Array", "undefined"),
     passThis: true,
     length: 1,

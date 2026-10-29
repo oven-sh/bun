@@ -9,8 +9,7 @@ export const unsafe = b.namespace({
     readsStateBeforeConversions: true,
   },
   arrayBufferToString: {
-    args: { buffer: b.bufferSource.allowShared },
-    expected: { buffer: "Expected an ArrayBuffer" },
+    args: { buffer: b.opaque },
     returns: b.string.local,
     capability: "js",
     throws: true,

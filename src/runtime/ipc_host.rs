@@ -9,7 +9,7 @@ use crate::ipc::{
 use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsClass, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::ipc_host::MessageTarget;
@@ -298,7 +298,7 @@ pub(crate) fn emit_handle_ipc_message<'a>(
     cx: &mut JsScope<'a>,
     target: MessageTarget<'a>,
     message: JsLocal<'a>,
-    handle: JsLocal<'a, JSObject>,
+    handle: JsLocal<'a>,
 ) -> JsResult<()> {
     let global_this = cx.global();
     let handle = handle.to_js();

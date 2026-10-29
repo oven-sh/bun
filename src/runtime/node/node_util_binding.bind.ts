@@ -19,7 +19,7 @@ export const extractedSplitNewLinesFastPathStringsOnly = b.fn({
 
 export const normalizeEncoding = b.fn({
   args: { encoding: b.string.loose },
-  returns: b.string.local.optional,
+  returns: b.opaque.returning("string", "undefined"),
   capability: "heap",
 });
 

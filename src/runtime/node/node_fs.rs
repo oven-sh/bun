@@ -150,9 +150,9 @@ use bun_jsc::AbortSignalRef;
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
-    Dirent, Encoding, FdJsc as _, FileSystemFlags, FileSystemFlagsKind, NameTooLong, Parsing,
-    PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, ThreadIsolated,
-    ThreadIsolatedArg, VectorArrayBuffer, refused_value,
+    Dirent, Encoding, FileSystemFlags, FileSystemFlagsKind, NameTooLong, Parsing, PathLike,
+    PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg,
+    VectorArrayBuffer, refused_value,
 };
 use crate::generated_bindgen::node_fs_binding as generated;
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
@@ -3173,7 +3173,7 @@ pub(crate) mod args {
                 .and_then(i52::offset_from_number)
                 .and_then(|p| u64::try_from(p).ok());
             Ok(Self {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
                 buffers,
                 position,
             })
@@ -3189,7 +3189,7 @@ pub(crate) mod args {
     impl FTruncate {
         pub(crate) fn from_js(fd: i32, len: i64) -> FTruncate {
             FTruncate {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
                 len: Some(len.max(0) as BlobSizeType),
             }
         }
@@ -3225,7 +3225,7 @@ pub(crate) mod args {
     impl Fchown {
         pub(crate) fn from_js(fd: i32, uid: i64, gid: i64) -> Fchown {
             Fchown {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
                 uid: wrap_to::<UidT>(uid),
                 gid: wrap_to::<GidT>(gid),
             }
@@ -3305,7 +3305,7 @@ pub(crate) mod args {
         ) -> JsResult<FChmod> {
             let mode = node::mode_from_js(ctx, mode)?;
             Ok(FChmod {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
                 mode,
             })
         }
@@ -3378,7 +3378,7 @@ pub(crate) mod args {
     impl Fstat {
         pub(crate) fn from_js(fd: i32, options: &generated::BigIntOptions) -> Fstat {
             Fstat {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
                 big_int: options.bigint,
             }
         }
@@ -3762,7 +3762,7 @@ pub(crate) mod args {
     impl Close {
         pub(crate) fn from_js(fd: i32) -> Close {
             Close {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
             }
         }
     }
@@ -3821,7 +3821,7 @@ pub(crate) mod args {
                 ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date"))
             })?;
             Ok(Futimes {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
                 atime,
                 mtime,
             })
@@ -3893,7 +3893,7 @@ pub(crate) mod args {
             // `Drop for StringOrBuffer`
             // on `args.buffer` releases the slice on any `?`-propagated JsError.
             let mut args = Write {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
                 buffer,
                 ..Default::default()
             };
@@ -3981,7 +3981,7 @@ pub(crate) mod args {
                 parsing.flavor,
             );
             Ok(Write {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
                 buffer,
                 position: position
                     .and_then(i52::offset_from_number)
@@ -4026,7 +4026,7 @@ pub(crate) mod args {
         ) -> JsResult<Read> {
             // About half of the normalization has already been done. The second half is done in the native code.
             // fs_binding.read(fd, buffer, offset, length, position)
-            let fd = FD::from_js(fd);
+            let fd = FD::from_uv(fd);
             let buffer_value = buffer.to_js();
 
             // length |= 0;
@@ -4434,7 +4434,7 @@ pub(crate) mod args {
     impl FdataSync {
         pub(crate) fn from_js(fd: i32) -> FdataSync {
             FdataSync {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
             }
         }
     }
@@ -4527,7 +4527,7 @@ pub(crate) mod args {
     impl Fsync {
         pub(crate) fn from_js(fd: i32) -> Fsync {
             Fsync {
-                fd: FD::from_js(fd),
+                fd: FD::from_uv(fd),
             }
         }
     }

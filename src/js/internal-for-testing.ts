@@ -372,7 +372,6 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   deferredKeyByteLength: $bindgen("bindgen_test.bind.ts", "deferredKeyByteLength"),
   deferredCountOrOne: $bindgen("bindgen_test.bind.ts", "deferredCountOrOne"),
   deferredCountOrTwo: $bindgen("bindgen_test.bind.ts", "deferredCountOrTwo"),
-  nameOrKind: $bindgen("bindgen_test.bind.ts", "nameOrKind"),
   isStringLike: $bindgen("bindgen_test.bind.ts", "isStringLike"),
   takeNumber: $bindgen("bindgen_test.bind.ts", "takeNumber"),
   countOfMaybe: $bindgen("bindgen_test.bind.ts", "countOfMaybe"),

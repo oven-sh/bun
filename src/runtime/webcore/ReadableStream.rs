@@ -3,9 +3,9 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::webcore::jsc::SysErrorJsc as _;
-use crate::webcore::jsc::bindgen::{BufferSource, JsLocal, JsScope, JsWrapper};
+use crate::webcore::jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{
-    self as jsc, JSArray, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
+    self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
 };
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
@@ -1247,8 +1247,8 @@ impl<C: SourceContext> NewSource<C> {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        view: Option<JsLocal<'_, BufferSource>>,
-        flags: Option<JsLocal<'_, JSArray>>,
+        view: JsLocal<'_>,
+        flags: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_this = cx.global();
@@ -1257,12 +1257,12 @@ impl<C: SourceContext> NewSource<C> {
         if self.abort_handle.context_stopped() {
             return Ok(jsc::JSPromise::create(global_this).to_js());
         }
-        let Some(view) = view else {
+        let view = view.to_js();
+        let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let mut buffer = view.as_array_buffer(global_this);
-        let result = self.context.on_pull(buffer.slice_mut(), view.to_js());
-        Self::process_result(this_value.to_js(), &cx, flags, result)
+        let result = self.context.on_pull(buffer.slice_mut(), view);
+        Self::process_result(this_value.to_js(), &cx, flags.to_js(), result)
     }
 
     pub fn start(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1287,7 +1287,7 @@ impl<C: SourceContext> NewSource<C> {
     fn process_result(
         this_jsvalue: JSValue,
         cx: &bun_jsc::JsThread<'_>,
-        flags: Option<JsLocal<'_, JSArray>>,
+        flags: JSValue,
         mut result: streams::Result,
     ) -> JsResult<JSValue> {
         match &result {
@@ -1305,8 +1305,8 @@ impl<C: SourceContext> NewSource<C> {
             | streams::Result::OwnedAndDone(_)
             | streams::Result::IntoArrayAndDone(_) => {
                 // `flags` is a `pull()` argument. Bun's callers pass an array, but other code can pass anything.
-                if let Some(flags) = flags {
-                    flags.to_js().put_index(cx.global(), 0, JSValue::TRUE)?;
+                if flags.is_array() {
+                    flags.put_index(cx.global(), 0, JSValue::TRUE)?;
                 }
                 result.to_js(cx)
             }

@@ -5,7 +5,7 @@ use crate::generated_bindgen::socket_body::CipherInfo;
 use bun_boringssl_sys as boringssl;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::JsClass as _;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc as _,
@@ -712,21 +712,16 @@ impl TLSSocket {
         }))
     }
 
-    pub(crate) fn get_cipher<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, Option<CipherInfo<'a>>> {
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
-            return Ok(None);
-        };
+    pub(crate) fn get_cipher(&self) -> Option<CipherInfo> {
+        let ssl_ptr = self.socket.get().ssl()?;
         let cipher = ffi::SSL_get_current_cipher(boringssl::SSL::opaque_ref(ssl_ptr));
 
         if cipher.is_null() {
-            return Ok(Some(CipherInfo {
+            return Some(CipherInfo {
                 name: None,
                 standard_name: None,
                 version: None,
-            }));
+            });
         }
         let cipher = ffi::SSL_CIPHER::opaque_ref(cipher);
 
@@ -736,7 +731,7 @@ impl TLSSocket {
         } else {
             // SAFETY: SSL_CIPHER_get_name returns a static NUL-terminated C string.
             let s = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-            Some(heap.create_utf8_string(s)?)
+            Some(BunString::from_static_bytes(s))
         };
 
         let standard_name = ffi::SSL_CIPHER_standard_name(cipher);
@@ -745,7 +740,7 @@ impl TLSSocket {
         } else {
             // SAFETY: SSL_CIPHER_standard_name returns a static NUL-terminated C string.
             let s = unsafe { bun_core::ffi::cstr(standard_name) }.to_bytes();
-            Some(heap.create_utf8_string(s)?)
+            Some(BunString::from_static_bytes(s))
         };
 
         // BoringSSL's SSL_CIPHER_get_version is a constant; these are OpenSSL's per-cipher minimum versions.
@@ -756,11 +751,11 @@ impl TLSSocket {
             _ => "SSLv3",
         };
 
-        Ok(Some(CipherInfo {
+        Some(CipherInfo {
             name,
             standard_name,
             version: Some(BunString::static_(version)),
-        }))
+        })
     }
 
     pub(crate) fn get_tls_peer_finished_message(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {

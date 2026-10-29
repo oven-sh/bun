@@ -356,14 +356,9 @@ impl HTMLRewriter {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        (handlers, handlers_value): (DocumentHandlers<'a>, JsLocal<'a>),
+        handlers: Option<DocumentHandlers<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let handler = DocumentHandler::init(
-            cx.global(),
-            this_value.to_js(),
-            handlers_value.to_js(),
-            &handlers,
-        )?;
+        let handler = DocumentHandler::init(cx.global(), this_value.to_js(), handlers)?;
         self.context
             .borrow_mut()
             .document_handlers
@@ -2074,16 +2069,24 @@ impl DocumentHandler {
     pub(crate) fn init(
         global: &JSGlobalObject,
         rewriter: JSValue,
-        this_object: JSValue,
-        handlers: &DocumentHandlers<'_>,
+        this_object: Option<DocumentHandlers<'_>>,
     ) -> JsResult<DocumentHandler> {
+        let Some(this_object) = this_object else {
+            return Err(global.throw_invalid_arguments(format_args!("Expected object")));
+        };
+
+        let doctype = this_object.doctype(global)?;
+        let comments = this_object.comments(global)?;
+        let text = this_object.text(global)?;
+        let end = this_object.end(global)?;
+
         let list = HandlerList::of_rewriter(rewriter, global)?;
         Ok(DocumentHandler {
-            this_object: list.append(global, this_object)?,
-            on_doc_type_callback: list.append_optional(global, handlers.doctype)?,
-            on_comment_callback: list.append_optional(global, handlers.comments)?,
-            on_text_callback: list.append_optional(global, handlers.text)?,
-            on_end_callback: list.append_optional(global, handlers.end)?,
+            this_object: list.append(global, this_object.object().to_js())?,
+            on_doc_type_callback: list.append_optional(global, doctype)?,
+            on_comment_callback: list.append_optional(global, comments)?,
+            on_text_callback: list.append_optional(global, text)?,
+            on_end_callback: list.append_optional(global, end)?,
             global: GlobalRef::from(global),
         })
     }
@@ -2934,17 +2937,18 @@ impl Element {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        handler: Option<JsLocal<'a, Callable>>,
+        function: JsLocal<'a>,
     ) -> bindgen::Result<'a, Option<JsWrapper<'a, Self>>> {
         let global_object = cx.global();
+        let function = function.to_js();
         let Some(el) = self.element.get_mut() else {
             return Ok(None);
         };
-        let Some(handler) = handler else {
+        if function.is_undefined_or_null() || !function.is_callable() {
             return Err(global_object
                 .throw_type_error(format_args!("Expected a function"))
                 .into());
-        };
+        }
 
         // Every matching `on()` handler gets this lol-html element: its user data keeps the slot.
         let replaced = el.user_data().downcast_ref::<EndTagSlot>().copied();
@@ -2958,7 +2962,7 @@ impl Element {
 
         // Only `invalidate()` clears `pipe`, and it detaches `element` in the same call.
         let pipe = self.pipe.get().expect("attached Element without its pipe");
-        let slot = pipe.hold_end_tag_callback(global_object, replaced, handler.to_js())?;
+        let slot = pipe.hold_end_tag_callback(global_object, replaced, function)?;
         let (Some(slot), None) = (slot, replaced) else {
             // No end tag can come, or the earlier call's handler now reads the new callback.
             return Ok(Some(this_value));

@@ -929,8 +929,7 @@ impl Writable {
                     if let StdioResult::Buffer(buf) = result {
                         // Ownership of the `Box<uv::Pipe>` transfers into the
                         // FileSink's writer.
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buf);
-                        let pipe = FileSink::create_with_pipe(event_loop, uv_pipe);
+                        let pipe = FileSink::create_with_pipe(event_loop, buf);
                         if let bun_sys::Result::Err(_err) =
                             pipe.writer.with_mut(|w| w.start_with_current_pipe())
                         {

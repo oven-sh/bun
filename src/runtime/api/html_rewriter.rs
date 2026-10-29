@@ -1242,7 +1242,7 @@ impl RewriterPipe {
             cell.protect();
         }
         self.ref_();
-        vm.as_mut().enqueue_task(bun_event_loop::Task::init(
+        vm.enqueue_task(bun_event_loop::Task::init(
             core::ptr::from_ref(self)
                 .cast_mut()
                 .cast::<RewriterPipeBackgroundPull>(),

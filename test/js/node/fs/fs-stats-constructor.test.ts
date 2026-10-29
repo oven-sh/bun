@@ -29,10 +29,81 @@ test("new Stats(...) assigns fields in Node's order", () => {
 
 test("Stats(...) without new assigns fields in Node's order", () => {
   // Regression: callJSStatsFunction used to write putDirectOffset slots in
-  // argument order, but the structure's slot layout differs, so .ino returned
+  // argument order, but the structure's slot layout differed, so .ino returned
   // the mode argument etc.
   // @ts-expect-error DEP0180
   expect({ ...Stats(...args) }).toMatchObject(expected);
+});
+
+// Node.js assigns the own keys in the order of `expected`: StatsBase the first ten, then the constructor its times.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L386-L398
+describe("new, a call, a subclass and Reflect.construct give the own keys in Node's order, each with its argument", () => {
+  const entriesOfEach = (constructed: Record<string, object>) =>
+    Object.fromEntries(Object.entries(constructed).map(([how, stats]) => [how, Object.entries(stats)]));
+
+  test("Stats", () => {
+    const AnyStats: any = Stats;
+    const Subclass: any = class extends AnyStats {};
+    const entries = Object.entries(expected);
+    expect(
+      entriesOfEach({
+        new: new AnyStats(...args),
+        call: AnyStats(...args),
+        subclass: new Subclass(...args),
+        newTarget: Reflect.construct(AnyStats, args, function () {}),
+        newTargetWithoutPrototype: Reflect.construct(AnyStats, args, function () {}.bind(null)),
+      }),
+    ).toEqual({
+      new: entries,
+      call: entries,
+      subclass: entries,
+      newTarget: entries,
+      newTargetWithoutPrototype: entries,
+    });
+    expect(Object.keys(new AnyStats())).toEqual(Object.keys(expected));
+  });
+
+  test("BigIntStats", () => {
+    const BigIntStats: any = statSync(import.meta.path, { bigint: true }).constructor;
+    const Subclass: any = class extends BigIntStats {};
+    const bigintArgs = args.map(BigInt);
+    // The last four arguments are the *Ns fields. Bun derives each *Ms field as a Number, Node.js as a BigInt (#47233), so only its place is checked.
+    const entries: [string, any][] = [
+      ["dev", 0n],
+      ["mode", 1n],
+      ["nlink", 2n],
+      ["uid", 3n],
+      ["gid", 4n],
+      ["rdev", 5n],
+      ["blksize", 6n],
+      ["ino", 7n],
+      ["size", 8n],
+      ["blocks", 9n],
+      ["atimeMs", expect.anything()],
+      ["mtimeMs", expect.anything()],
+      ["ctimeMs", expect.anything()],
+      ["birthtimeMs", expect.anything()],
+      ["atimeNs", 10n],
+      ["mtimeNs", 11n],
+      ["ctimeNs", 12n],
+      ["birthtimeNs", 13n],
+    ];
+    expect(
+      entriesOfEach({
+        new: new BigIntStats(...bigintArgs),
+        call: BigIntStats(...bigintArgs),
+        subclass: new Subclass(...bigintArgs),
+        newTarget: Reflect.construct(BigIntStats, bigintArgs, function () {}),
+        newTargetWithoutPrototype: Reflect.construct(BigIntStats, bigintArgs, function () {}.bind(null)),
+      }),
+    ).toEqual({
+      new: entries,
+      call: entries,
+      subclass: entries,
+      newTarget: entries,
+      newTargetWithoutPrototype: entries,
+    });
+  });
 });
 
 test("Stats instances share Stats.prototype", () => {

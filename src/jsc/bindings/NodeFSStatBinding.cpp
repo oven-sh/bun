@@ -545,9 +545,9 @@ private:
     }
 };
 
-// A name's index is its property offset. Only a BigIntStats has the last four.
+// Node's own-key order, and a name's index is its property offset. Only a BigIntStats has the last four. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L386-L398
 static constexpr ASCIILiteral statsFieldNames[] = {
-    "dev"_s, "ino"_s, "mode"_s, "nlink"_s, "uid"_s, "gid"_s, "rdev"_s, "size"_s, "blksize"_s, "blocks"_s,
+    "dev"_s, "mode"_s, "nlink"_s, "uid"_s, "gid"_s, "rdev"_s, "blksize"_s, "ino"_s, "size"_s, "blocks"_s,
     "atimeMs"_s, "mtimeMs"_s, "ctimeMs"_s, "birthtimeMs"_s,
     "atimeNs"_s, "mtimeNs"_s, "ctimeNs"_s, "birthtimeNs"_s
 };
@@ -869,6 +869,7 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     }
 
     JSFinalObject* object = JSC::JSFinalObject::create(vm, structure);
+    // A subclass structure has no properties yet, so these puts create its keys: keep them in the order of statsFieldNames.
     object->putDirect(vm, Identifier::fromString(vm, "dev"_s), dev, 0);
     object->putDirect(vm, Identifier::fromString(vm, "mode"_s), mode, 0);
     object->putDirect(vm, Identifier::fromString(vm, "nlink"_s), nlink, 0);

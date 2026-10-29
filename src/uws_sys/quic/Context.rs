@@ -36,35 +36,29 @@ unsafe extern "C" {
 
     safe fn us_quic_socket_context_on_hsk_done(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(&mut Socket, c_int),
+        cb: extern "C" fn(&mut Socket, c_int),
     );
-    safe fn us_quic_socket_context_on_goaway(
-        ctx: &mut Context,
-        cb: unsafe extern "C" fn(&mut Socket),
-    );
-    safe fn us_quic_socket_context_on_close(
-        ctx: &mut Context,
-        cb: unsafe extern "C" fn(&mut Socket),
-    );
+    safe fn us_quic_socket_context_on_goaway(ctx: &mut Context, cb: extern "C" fn(&mut Socket));
+    safe fn us_quic_socket_context_on_close(ctx: &mut Context, cb: extern "C" fn(&mut Socket));
     safe fn us_quic_socket_context_on_stream_open(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(&mut Stream, c_int),
+        cb: extern "C" fn(&mut Stream, c_int),
     );
     safe fn us_quic_socket_context_on_stream_headers(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(&mut Stream),
+        cb: extern "C" fn(&mut Stream),
     );
     safe fn us_quic_socket_context_on_stream_data(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(&mut Stream, *const u8, c_uint, c_int),
+        cb: extern "C" fn(&mut Stream, *const u8, c_uint, c_int),
     );
     safe fn us_quic_socket_context_on_stream_writable(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(&mut Stream),
+        cb: extern "C" fn(&mut Stream),
     );
     safe fn us_quic_socket_context_on_stream_close(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(&mut Stream),
+        cb: extern "C" fn(&mut Stream),
     );
 }
 
@@ -135,38 +129,35 @@ impl Context {
     }
 
     #[inline]
-    pub fn on_hsk_done(&mut self, cb: unsafe extern "C" fn(&mut Socket, c_int)) {
+    pub fn on_hsk_done(&mut self, cb: extern "C" fn(&mut Socket, c_int)) {
         us_quic_socket_context_on_hsk_done(self, cb)
     }
     #[inline]
-    pub fn on_goaway(&mut self, cb: unsafe extern "C" fn(&mut Socket)) {
+    pub fn on_goaway(&mut self, cb: extern "C" fn(&mut Socket)) {
         us_quic_socket_context_on_goaway(self, cb)
     }
     #[inline]
-    pub fn on_close(&mut self, cb: unsafe extern "C" fn(&mut Socket)) {
+    pub fn on_close(&mut self, cb: extern "C" fn(&mut Socket)) {
         us_quic_socket_context_on_close(self, cb)
     }
     #[inline]
-    pub fn on_stream_open(&mut self, cb: unsafe extern "C" fn(&mut Stream, c_int)) {
+    pub fn on_stream_open(&mut self, cb: extern "C" fn(&mut Stream, c_int)) {
         us_quic_socket_context_on_stream_open(self, cb)
     }
     #[inline]
-    pub fn on_stream_headers(&mut self, cb: unsafe extern "C" fn(&mut Stream)) {
+    pub fn on_stream_headers(&mut self, cb: extern "C" fn(&mut Stream)) {
         us_quic_socket_context_on_stream_headers(self, cb)
     }
     #[inline]
-    pub fn on_stream_data(
-        &mut self,
-        cb: unsafe extern "C" fn(&mut Stream, *const u8, c_uint, c_int),
-    ) {
+    pub fn on_stream_data(&mut self, cb: extern "C" fn(&mut Stream, *const u8, c_uint, c_int)) {
         us_quic_socket_context_on_stream_data(self, cb)
     }
     #[inline]
-    pub fn on_stream_writable(&mut self, cb: unsafe extern "C" fn(&mut Stream)) {
+    pub fn on_stream_writable(&mut self, cb: extern "C" fn(&mut Stream)) {
         us_quic_socket_context_on_stream_writable(self, cb)
     }
     #[inline]
-    pub fn on_stream_close(&mut self, cb: unsafe extern "C" fn(&mut Stream)) {
+    pub fn on_stream_close(&mut self, cb: extern "C" fn(&mut Stream)) {
         us_quic_socket_context_on_stream_close(self, cb)
     }
 }

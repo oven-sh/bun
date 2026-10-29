@@ -2444,16 +2444,10 @@ pub fn init(
     push_package_json(&mut original_package_json_path_buf);
 
     let path_len = original_package_json_path_buf.len() - 1;
-    // SAFETY: NUL written at `path_len` above. Not `from_buf`: this borrow is
-    // intentionally detached — `original_package_json_path_buf` is mutated and
-    // re-sliced below (the directory-walk rewrites the tail in place), and
-    // borrowck cannot see that `original_package_json_path` is reassigned
-    // before the next use after each mutation.
     let mut original_package_json_path =
-        unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
-    let original_cwd =
-        &original_package_json_path.as_bytes()[..top_level_dir_no_trailing_slash.len()];
-    let original_cwd_clone = Box::<[u8]>::from(original_cwd);
+        ZStr::from_buf(&original_package_json_path_buf[..], path_len);
+    let original_cwd_clone = Box::<[u8]>::from(top_level_dir_no_trailing_slash);
+    let original_cwd: &[u8] = &original_cwd_clone;
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
     let mut workspace_package_json_cache = WorkspacePackageJSONCache {

@@ -624,8 +624,8 @@ impl DCtx {
     }
 
     /// `ZSTD_decompressDCtx`: decompresses all the frames of `src`, which has to end with one, to the start of `dst`.
-    /// Returns how many bytes that is. As the other functions that take whole frames, it refuses with `StageWrong` from
-    /// the first call of [`Self::decompress_stream`] for a frame until that frame ends or [`Self::init_stream`].
+    /// Returns how many bytes that is. As the other functions that take whole frames, it gives up a stream that is under
+    /// way or has failed.
     pub fn decompress(&mut self, dst: &mut [u8], src: &[u8]) -> Result<usize> {
         let (size, dst) = (dst.len(), &mut OutputBuffer::Whole(dst));
         self.state
@@ -695,14 +695,13 @@ impl DCtx {
 
     /// `ZSTD_initDStream`: forgets the frame in progress and the dictionary.
     pub fn init_stream(&mut self) {
-        self.state.stream_stage = DStreamStage::Init;
-        self.state.no_forward_progress = 0;
+        self.state.reset_session();
         self.ddict = None;
     }
 
     /// `ZSTD_decompressStream`: reads from `input` and writes to `output` as much as it can, and moves their positions.
     /// Returns 0 when a frame is complete and all of it is written, else a hint of how much input to give next.
-    /// Once a frame has made it fail, it fails in the same way until [`Self::init_stream`].
+    /// Once a frame has made it fail, it fails in the same way until the stream is given up.
     pub fn decompress_stream(
         &mut self,
         output: &mut OutBuffer<'_>,
@@ -930,8 +929,14 @@ impl DState {
         Ok((op - ostart, ip))
     }
 
-    /// [`Self::decompress_multi_frame`] to the start of `dst`, unless a stream is under way: the C library then goes on
-    /// with that stream, with what this leaves.
+    /// `ZSTD_DCtx_reset` with `ZSTD_reset_session_only`
+    fn reset_session(&mut self) {
+        self.stream_stage = DStreamStage::Init;
+        self.no_forward_progress = 0;
+    }
+
+    /// [`Self::decompress_multi_frame`] to the start of `dst`. It resets the stream, as `zstd.h` says of what starts a new
+    /// job: the C library does not, and goes on with a stream that was under way, with what this leaves.
     fn decompress_frames(
         &mut self,
         dst: &mut OutputBuffer<'_>,
@@ -939,9 +944,7 @@ impl DState {
         src: &[u8],
         ddict: Option<&DDict<'_>>,
     ) -> Result<usize> {
-        if self.stream_stage != DStreamStage::Init {
-            return Err(Error::StageWrong);
-        }
+        self.reset_session();
         self.decompress_multi_frame(dst, dst_size, 0, src, ddict)
     }
 

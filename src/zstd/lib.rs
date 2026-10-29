@@ -1,5 +1,5 @@
 //! Zstandard (RFC 8878). A port of https://github.com/facebook/zstd v1.5.7 (LICENSE.md): the same bytes out for the
-//! same bytes in, in both directions, and the same errors.
+//! same bytes in, in both directions, and the same errors. Where that is not so, a comment tells what the C library does.
 #![feature(hint_prefetch, mpmc_channel, vec_push_within_capacity)]
 #![forbid(unsafe_code)]
 // Frames come from anywhere and a panic aborts the process.
@@ -448,73 +448,95 @@ mod tests {
     use super::*;
     use util::SliceExt;
 
+    fn feed(stream: &mut DCtx, output: &mut OutBuffer<'_>, src: &[u8]) -> Result<usize> {
+        stream.decompress_stream(output, &mut InBuffer { src, pos: 0 })
+    }
+
     #[test]
     fn a_stream_that_has_failed_goes_on_failing() {
         // 5 bytes are announced, and the last block has 3.
         let frame = [
             0x28, 0xB5, 0x2F, 0xFD, 0x20, 5, 0x19, 0, 0, b'a', b'b', b'c',
         ];
-        let mut stream = DCtx::new();
-        let mut decompress = |src: &[u8]| {
-            let mut dst = [0; 64];
-            let (mut output, mut input) = (
-                OutBuffer {
-                    dst: &mut dst,
-                    pos: 0,
-                },
-                InBuffer { src, pos: 0 },
-            );
-            stream.decompress_stream(&mut output, &mut input)
-        };
-        let (start, end) = frame.split_at(9);
-        assert_eq!(decompress(start), Ok(3));
-        assert_eq!(decompress(end), Err(Error::CorruptionDetected));
-        for more in [&b"x"[..], b"", &frame] {
-            assert_eq!(decompress(more), Err(Error::CorruptionDetected));
-        }
-        stream.init_stream();
-        let (mut dst, src) = ([0; 64], [&frame[..5], &[3], &frame[6..]].concat());
-        let (mut output, mut input) = (
-            OutBuffer {
+        let valid = [&frame[..5], &[3], &frame[6..]].concat();
+        for with_whole_frame in [false, true] {
+            let (mut stream, mut dst) = (DCtx::new(), [0; 64]);
+            let output = &mut OutBuffer {
                 dst: &mut dst,
                 pos: 0,
-            },
-            InBuffer { src: &src, pos: 0 },
-        );
-        assert_eq!(stream.decompress_stream(&mut output, &mut input), Ok(0));
-        assert_eq!(output.pos, 3);
+            };
+            assert_eq!(feed(&mut stream, output, &frame[..9]), Ok(3));
+            for more in [&frame[9..], b"x", b"", &valid] {
+                let result = feed(&mut stream, output, more);
+                assert_eq!(result, Err(Error::CorruptionDetected));
+            }
+            assert_eq!(stream.load_dictionary(&[]), Err(Error::StageWrong));
+            if with_whole_frame {
+                assert_eq!(stream.decompress(&mut [0; 64], &valid), Ok(3));
+            } else {
+                stream.init_stream();
+            }
+            assert_eq!(feed(&mut stream, output, &valid), Ok(0));
+            assert_eq!(output.pos, 3);
+        }
     }
 
     #[test]
-    fn a_stream_under_way_goes_on_after_what_does_not_concern_its_frame() -> Result<()> {
+    fn a_stream_goes_on_after_a_lack_of_progress_but_not_after_a_whole_frame() -> Result<()> {
         let data = Vec::from_iter((0..300u32).map(|i| (i * i % 7) as u8));
         let frame = compress_alloc(&data, 3)?;
-        let mut dst = [0; 400];
-        let mut stream = DCtx::new();
         let (start, end) = frame.split_at(frame.len() - 5);
-        let (mut output, mut input) = (
-            OutBuffer {
+        let (mut stream, mut dst) = (DCtx::new(), [0; 400]);
+        let output = &mut OutBuffer {
+            dst: &mut dst,
+            pos: 0,
+        };
+        assert_eq!(feed(&mut stream, output, start), Ok(5));
+        for _ in 0..15 {
+            assert_eq!(feed(&mut stream, output, &[]), Ok(5));
+        }
+        let result = feed(&mut stream, output, &[]);
+        assert_eq!(result, Err(Error::NoForwardProgressInputEmpty));
+        assert_eq!(feed(&mut stream, output, end), Ok(0));
+        assert_eq!(*output.dst.sub(..output.pos)?, *data);
+
+        assert_eq!(feed(&mut stream, output, start), Ok(5));
+        assert_eq!(stream.decompress(&mut [0; 400], &frame), Ok(data.len()));
+        assert_eq!(feed(&mut stream, output, end), Err(Error::PrefixUnknown));
+        Ok(())
+    }
+
+    #[test]
+    fn a_stream_that_has_failed_to_compress_goes_on_failing() -> Result<()> {
+        let data = Vec::from_iter((0..1500u32).map(|i| (i * i % 251) as u8));
+        for nb_workers in [0, 1] {
+            let mut cctx = CCtx::new();
+            cctx.set_parameter(c_param::COMPRESSION_LEVEL, 1)?;
+            cctx.set_parameter(c_param::NB_WORKERS, nb_workers)?;
+            let mut dst = vec![0; compress_bound(data.len())];
+            let output = &mut OutBuffer {
                 dst: &mut dst,
                 pos: 0,
-            },
-            InBuffer { src: start, pos: 0 },
-        );
-        assert_eq!(stream.decompress_stream(&mut output, &mut input), Ok(5));
-        assert_eq!(
-            stream.decompress(&mut [0; 400], &frame),
-            Err(Error::StageWrong)
-        );
-        let mut no_input = InBuffer { src: &[], pos: 0 };
-        for _ in 0..15 {
-            assert_eq!(stream.decompress_stream(&mut output, &mut no_input), Ok(5));
+            };
+            let mut compress = |cctx: &mut CCtx, src, end| {
+                cctx.compress_stream2(output, &mut InBuffer { src, pos: 0 }, end)
+            };
+
+            // The magic number of a dictionary, and nothing that goes with it: no frame starts.
+            cctx.load_dictionary(&[0x37, 0xA4, 0x30, 0xEC, 1, 2, 3, 4, 5])?;
+            let result = compress(&mut cctx, &data, EndDirective::Continue);
+            assert_eq!(result, Err(Error::MemoryAllocation));
+            cctx.load_dictionary(&[])?;
+
+            // Enough for the workers to be used.
+            cctx.set_pledged_src_size(1 << 20)?;
+            compress(&mut cctx, &[], EndDirective::Continue)?;
+            for end in [EndDirective::End, EndDirective::End, EndDirective::Flush] {
+                let result = compress(&mut cctx, &data, end);
+                assert_eq!(result, Err(Error::SrcSizeWrong), "{nb_workers} workers");
+            }
+            assert_eq!(cctx.set_pledged_src_size(1), Err(Error::StageWrong));
         }
-        let result = stream.decompress_stream(&mut output, &mut no_input);
-        assert_eq!(result, Err(Error::NoForwardProgressInputEmpty));
-        let mut input = InBuffer { src: end, pos: 0 };
-        assert_eq!(stream.decompress_stream(&mut output, &mut input), Ok(0));
-        assert_eq!(output.pos, data.len());
-        assert_eq!(*dst.sub(..data.len())?, *data);
-        assert_eq!(stream.decompress(&mut dst, &frame), Ok(data.len()));
         Ok(())
     }
 

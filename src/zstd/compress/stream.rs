@@ -31,6 +31,9 @@ enum StreamStage {
     Init,
     Load,
     Flush,
+    /// The frame is given up. The C library then starts another if it has workers and else goes on with this one, and
+    /// `zstd.h` calls a call after one that has failed undefined behavior.
+    Failed(Error),
 }
 
 /// `ZSTD_CCtx`
@@ -282,6 +285,7 @@ impl CCtx {
         loop {
             match self.stream_stage {
                 StreamStage::Init => return Err(Error::InitMissing),
+                StreamStage::Failed(error) => return Err(error),
 
                 StreamStage::Load => {
                     if flush_mode == EndDirective::End
@@ -413,7 +417,8 @@ impl CCtx {
     }
 
     /// `ZSTD_compressStream2`: returns the least number of bytes that are left to flush, which for
-    /// [`EndDirective::End`] is 0 once the frame is complete.
+    /// [`EndDirective::End`] is 0 once the frame is complete. Once a frame has made it fail, it fails in the same way
+    /// ever after.
     pub fn compress_stream2(
         &mut self,
         output: &mut OutBuffer<'_>,
@@ -426,7 +431,26 @@ impl CCtx {
         if input.pos > input.src.len() {
             return Err(Error::SrcSizeWrong);
         }
+        self.compress_stream2_on(output, input, end_op)
+            .inspect_err(|&error| {
+                // A frame that could not start can be tried again, as with the C library.
+                if self.stream_stage != StreamStage::Init {
+                    self.stream_stage = StreamStage::Failed(error);
+                    self.mtctx = None;
+                }
+            })
+    }
 
+    /// [`Self::compress_stream2`], but for what becomes of the stream if it fails.
+    fn compress_stream2_on(
+        &mut self,
+        output: &mut OutBuffer<'_>,
+        input: &mut InBuffer<'_>,
+        end_op: EndDirective,
+    ) -> Result<usize> {
+        if let StreamStage::Failed(error) = self.stream_stage {
+            return Err(error);
+        }
         if self.stream_stage == StreamStage::Init {
             self.init_compress_stream2(end_op, input.src.len() - input.pos)?;
         }
@@ -446,12 +470,12 @@ impl CCtx {
                 if pledged != 0 && (consumed > pledged || (is_complete && consumed != pledged)) {
                     flush_min = flush_min.and(Err(Error::SrcSizeWrong));
                 }
-                if flush_min.is_err() || (end_op == EndDirective::End && flush_min == Ok(0)) {
+                let flush_min = flush_min?;
+                if end_op == EndDirective::End && flush_min == 0 {
                     // `reset_session`, but `mtctx` is borrowed.
                     self.stream_stage = StreamStage::Init;
                     self.frame.pledged_src_size_plus_one = 0;
                 }
-                let flush_min = flush_min?;
 
                 if end_op == EndDirective::Continue {
                     // Some progress is enough. Otherwise, wait for a job to make some.

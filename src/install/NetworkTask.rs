@@ -94,15 +94,7 @@ pub struct NetworkTask {
     pub(crate) signal_store: http::signals::Store,
 }
 
-// SAFETY: `next` is the sole intrusive link and is only ever read/written via
-// these accessors by `UnboundedQueue<NetworkTask>`.
-unsafe impl bun_threading::Linked for NetworkTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(NetworkTask, next: bun_threading::Link<NetworkTask>);
 
 /// The network-backed subset of `crate::package_manager_task::Tag` (git
 /// clone/checkout run as thread-pool tasks, never as network tasks).

@@ -3,8 +3,9 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { isWindows, tempDir, tempDirWithFiles, type DirectoryTree } from "harness";
 import fs from "node:fs";
+import { sep } from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -297,5 +298,81 @@ describe("fs.globSync exclude with withFileTypes", () => {
     const inners = results.filter(d => d.name === "inner.txt");
     expect(inners).toHaveLength(1);
     expect(String(inners[0].parentPath).replaceAll("\\", "/")).toEndWith("keep");
+  });
+});
+
+// The lists in the blocks below are the ones Node.js v26.12.1 returns for the same tree and the same call.
+
+type GlobOptions = { cwd: string; followSymlinks?: boolean };
+
+/** The lists of the three entry points, sorted, with "/" as the separator. */
+async function globAll(pattern: string | string[], options: GlobOptions) {
+  const normalize = (paths: string[]) => paths.map(path => path.replaceAll(sep, "/")).sort();
+  const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+  fs.glob(pattern, options, (err, paths) => (err ? reject(err) : resolve(paths)));
+  return {
+    globSync: normalize(fs.globSync(pattern, options)),
+    glob: normalize(await promise),
+    "promises.glob": normalize(await Array.fromAsync(fs.promises.glob(pattern, options))),
+  };
+}
+
+function fromAllThree(expected: string[]) {
+  return { globSync: expected, glob: expected, "promises.glob": expected };
+}
+
+// https://github.com/nodejs/node/issues/62897
+describe("a directory that is listed after one of its children was traversed", () => {
+  const src = { src: { helpers: { "a.ts": "", "b.ts": "" }, "index.ts": "" } };
+  const cases: { name: string; tree: DirectoryTree; pattern: string | string[]; expected: string[] }[] = [
+    {
+      // "a/**" matches "a" and every directory below it. "../*" lists the parent of each one.
+      name: "'..' after '**'",
+      tree: { a: { b: { c: { d: {} } }, c: { d: { c: {} } }, x: "", z: "" } },
+      pattern: "a/**/../*",
+      expected: ["a", "a/b", "a/b/c", "a/b/c/d", "a/c", "a/c/d", "a/c/d/c", "a/x", "a/z"],
+    },
+    {
+      // "r.js" is the match in which "**" stands for no directory.
+      name: "'..' after a '**' that matches nothing",
+      tree: { "r.js": "", a: { "1.js": "", b: { "3.js": "", c: {} } } },
+      pattern: "a/**/../*.js",
+      expected: ["a/1.js", "a/b/3.js", "r.js"],
+    },
+    {
+      // The "./" pattern is traversed first, then "src/*.ts" lists "src".
+      // Entries are visited in sorted order, so "index.ts" comes after "helpers".
+      name: "a pattern array with a './' pattern",
+      tree: src,
+      pattern: ["src/*.ts", "./src/helpers/*.ts"],
+      expected: ["src/helpers/a.ts", "src/helpers/b.ts", "src/index.ts"],
+    },
+    {
+      name: "a brace group with a './' alternative",
+      tree: src,
+      pattern: "{src/*.ts,./src/helpers/*.ts}",
+      expected: ["src/helpers/a.ts", "src/helpers/b.ts", "src/index.ts"],
+    },
+  ];
+
+  it.each(cases)("$name", async ({ tree, pattern, expected }) => {
+    using dir = tempDir("fs-glob-seen", tree);
+    expect(await globAll(pattern, { cwd: String(dir) })).toEqual(fromAllThree(expected));
+  });
+
+  it("returns the list of Node.js for a pattern array whose patterns share a tail", async () => {
+    using dir = tempDir("fs-glob-seen", { src: { lib: { "c.ts": "" } } });
+    const cwd = String(dir);
+    // Node.js loses "src/lib/c.ts" in one order of these three patterns: its walker skips a queued pattern when one of
+    // its tails is already marked for that path, and it marks the other tails without a walk.
+    expect({
+      firstTwo: await globAll(["./**/*.ts", "./src/**/*.ts"], { cwd }),
+      otherOrder: await globAll(["./src/**/*.ts", "./**/*.ts", "src/*.ts"], { cwd }),
+      thisOrder: await globAll(["./**/*.ts", "./src/**/*.ts", "src/*.ts"], { cwd }),
+    }).toEqual({
+      firstTwo: fromAllThree(["src/lib/c.ts"]),
+      otherOrder: fromAllThree(["src/lib/c.ts"]),
+      thisOrder: fromAllThree([]),
+    });
   });
 });

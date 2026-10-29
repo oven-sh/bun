@@ -1565,6 +1565,19 @@ describe("concurrent terminals on one Image", () => {
       rewrite();
       `,
     ],
+    [
+      // TurboJPEG read the header twice, and asked for rows without end if the second height was the smaller one.
+      "height of a JPEG",
+      `
+      const noise = bmp(33, 143, 0);
+      for (let i = 54; i < noise.length; i++) noise[i] = (i * 37) & 255;
+      const input = new Uint8Array(await new Bun.Image(noise).jpeg().bytes());
+      let sof = 2;
+      while (input[sof + 1] !== 0xc0) sof += 2 + ((input[sof + 2] << 8) | input[sof + 3]);
+      // Between 143 and 15.
+      const rewrite = () => { input[sof + 6] ^= 0x80; };
+      `,
+    ],
   ])("doesn't crash when the %s input is rewritten while a pipeline is pending", async (_, setup) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", raceFixture(setup)],

@@ -29,11 +29,14 @@
 //! `run()` must tolerate re-entrant mutation of the map: a callback can reach user JS, which can
 //! `post_task` / `unregister_task` any entry (for example, `H2FrameParser`'s auto-flush unregisters
 //! itself and then returns `true`, and before the cork slot became self-scoped one parser's flush
-//! could unregister another's). Each pass is capped at the number of entries present when it
-//! started; that cap is a livelock bound, not a strict "no new entries this pass" frontier, because
-//! a swap-remove can pull a freshly appended entry forward. Every callback flushes its own object's
-//! buffer to its own fd or socket, so relative order within a pass has no correctness effect, and
-//! anything a pass skips runs on the next one.
+//! could unregister another's). A callback can also post a new entry: each HTTP/2 response sink's
+//! flush posts the connection's drain task, and `H2FrameParser` re-posts itself after a fatal send.
+//!
+//! One pass runs the entries that were registered when it started, once each, in registration
+//! order (several `FileSink`s on one fd rely on that order), and skips the ones a callback
+//! unregistered before their turn. An entry posted during the pass waits for the next one. The
+//! next pass comes at once: `run()` reports such a post, and the event loop wakes itself so an
+//! idle loop does not sleep on the new entry until unrelated I/O or a timer.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -49,17 +52,27 @@ pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 
 #[derive(Default)]
 pub struct DeferredTaskQueue {
-    pub(crate) map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
+    map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
+    /// The keys of the pass that is running. Kept between passes for its allocation.
+    pass: Vec<Option<NonNull<c_void>>>,
+    /// The entry whose callback is running. A post of this key from inside its own callback is
+    /// a re-registration (`H2FrameParser` uncorks and corks again while it flushes), not new
+    /// work: it waits for its own wakeup like a callback that returns `true`.
+    running: Option<NonNull<c_void>>,
+    /// Set by `post_task`, cleared and read by `run()`: whether a pass posted an entry it left
+    /// for the next pass.
+    posted: bool,
 }
 
 impl DeferredTaskQueue {
     pub fn post_task(&mut self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
-        // `ArrayHashMap` is currently aliased to std `HashMap`; the entry API
-        // gives insert-if-absent + report-existing semantics.
         match self.map.entry(ctx) {
             bun_collections::hash_map::Entry::Occupied(_) => true,
             bun_collections::hash_map::Entry::Vacant(v) => {
                 v.insert(task);
+                if ctx != self.running {
+                    self.posted = true;
+                }
                 false
             }
         }
@@ -71,33 +84,190 @@ impl DeferredTaskQueue {
         self.map.swap_remove(&ctx)
     }
 
-    pub fn run(&mut self) {
-        // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
-        // note in the file doc), so re-read `len()` every iteration and
-        // re-check slot `i` after each callback. `remaining` is a livelock bound.
-        let mut i: usize = 0;
-        let mut remaining = self.map.len();
-        while remaining > 0 && i < self.map.len() {
-            remaining -= 1;
-            let key = self.map.keys()[i];
+    /// Run one pass over the entries present when it starts. Returns whether a callback posted
+    /// another entry, which waits for the next pass. An entry that ran and stays registered,
+    /// by returning `true` or by re-posting itself, is not counted: it waits for its own
+    /// wakeup, such as a writable socket.
+    #[must_use = "an entry posted during the pass waits for the next one: run another pass or wake the loop"]
+    pub fn run(&mut self) -> bool {
+        self.posted = false;
+        if self.map.is_empty() {
+            return false;
+        }
+        // A copy of the keys, so that what callbacks post or unregister cannot move an entry
+        // past or under the cursor. A nested pass (a callback that drains microtasks) takes its
+        // own copy.
+        let mut keys = core::mem::take(&mut self.pass);
+        keys.clear();
+        keys.extend_from_slice(self.map.keys());
+        let outer = self.running;
+        for &key in &keys {
             let Some(nn) = key else {
-                self.map.swap_remove_at(i);
+                self.map.swap_remove(&key);
                 continue;
             };
-
-            let task = self.map.values()[i];
+            // Gone: a callback before it unregistered it.
+            let Some(&task) = self.map.get(&key) else {
+                continue;
+            };
+            self.running = Some(nn);
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
             // callback contract (`HasAutoFlusher::on_auto_flush`) is that
             // `task` may be invoked with exactly that pointer until it returns
             // `false` or is explicitly unregistered.
             let keep = unsafe { task(nn.as_ptr()) };
             if !keep {
-                // `key` may already be gone (callback unregistered it) or may
-                // have moved; remove by key, not index.
+                // `key` may already be gone (callback unregistered it).
                 self.map.swap_remove(&key);
-            } else if self.map.keys().get(i) == Some(&key) {
-                i += 1;
             }
         }
+        self.running = outer;
+        self.pass = keys;
+        self.posted
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A test entry: what its callback does, and the queue it acts on.
+    struct Entry {
+        queue: *mut DeferredTaskQueue,
+        /// Unregister itself and post itself again, then ask to stay.
+        repost: bool,
+        /// Post this other entry while running.
+        posts: Option<NonNull<c_void>>,
+        /// Unregister this other entry while running.
+        unregisters: Option<NonNull<c_void>>,
+        keep: bool,
+        runs: usize,
+    }
+
+    unsafe extern "C" fn callback(ctx: *mut c_void) -> bool {
+        // SAFETY: every test posts a pointer to a live `Entry`.
+        let entry = unsafe { &mut *ctx.cast::<Entry>() };
+        // SAFETY: the queue outlives the pass; this re-enters it as the
+        // event loop's callbacks do.
+        let queue = unsafe { &mut *entry.queue };
+        let me = NonNull::new(ctx);
+        entry.runs += 1;
+        RUN_ORDER.with(|o| o.borrow_mut().push(me));
+        if entry.repost {
+            queue.unregister_task(me);
+            queue.post_task(me, callback);
+        }
+        if let Some(other) = entry.posts {
+            queue.post_task(Some(other), callback);
+        }
+        if let Some(other) = entry.unregisters {
+            queue.unregister_task(Some(other));
+        }
+        entry.keep
+    }
+
+    thread_local! {
+        static RUN_ORDER: core::cell::RefCell<Vec<Option<NonNull<c_void>>>> = const { core::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn run_order() -> Vec<Option<NonNull<c_void>>> {
+        RUN_ORDER.with(|o| core::mem::take(&mut *o.borrow_mut()))
+    }
+
+    fn entry(queue: &mut DeferredTaskQueue, keep: bool) -> Entry {
+        Entry {
+            queue: core::ptr::from_mut(queue),
+            repost: false,
+            posts: None,
+            unregisters: None,
+            keep,
+            runs: 0,
+        }
+    }
+
+    fn ctx(entry: &mut Entry) -> Option<NonNull<c_void>> {
+        NonNull::new(core::ptr::from_mut(entry).cast::<c_void>())
+    }
+
+    #[test]
+    fn an_entry_that_stays_registered_is_not_reported() {
+        let mut queue = DeferredTaskQueue::default();
+        let mut entry = entry(&mut queue, true);
+        assert!(!queue.post_task(ctx(&mut entry), callback));
+        assert!(!queue.run());
+        assert_eq!(queue.map.len(), 1);
+        assert!(!queue.run());
+        assert_eq!(entry.runs, 2);
+    }
+
+    #[test]
+    fn an_entry_that_returns_false_is_removed() {
+        let mut queue = DeferredTaskQueue::default();
+        let mut entry = entry(&mut queue, false);
+        queue.post_task(ctx(&mut entry), callback);
+        assert!(!queue.run());
+        assert_eq!(queue.map.len(), 0);
+        assert!(!queue.run());
+        assert_eq!(entry.runs, 1);
+    }
+
+    #[test]
+    fn an_entry_that_reposts_itself_is_kept_and_not_reported() {
+        let mut queue = DeferredTaskQueue::default();
+        let mut entry = entry(&mut queue, true);
+        entry.repost = true;
+        queue.post_task(ctx(&mut entry), callback);
+        assert!(!queue.run());
+        assert_eq!(queue.map.len(), 1);
+        assert_eq!(entry.runs, 1);
+    }
+
+    #[test]
+    fn entries_run_in_registration_order_and_a_mid_pass_post_waits_for_the_next_pass() {
+        let mut queue = DeferredTaskQueue::default();
+        // Like the HTTP/2 server's drain: every sink posts it while it runs.
+        let mut drain = entry(&mut queue, false);
+        let drain_ctx = ctx(&mut drain);
+        let mut sinks: Vec<Entry> = (0..5).map(|_| entry(&mut queue, false)).collect();
+        let sink_ctxs: Vec<_> = sinks.iter_mut().map(ctx).collect();
+        for sink in &mut sinks {
+            sink.posts = drain_ctx;
+        }
+        for &c in &sink_ctxs {
+            queue.post_task(c, callback);
+        }
+        let _ = run_order();
+        assert!(queue.run(), "the drain waits for the next pass");
+        assert_eq!(run_order(), sink_ctxs);
+        assert_eq!(drain.runs, 0);
+        assert_eq!(queue.map.len(), 1);
+        assert!(!queue.run());
+        assert_eq!(run_order(), vec![drain_ctx]);
+        assert_eq!(queue.map.len(), 0);
+    }
+
+    #[test]
+    fn an_entry_unregistered_by_an_earlier_one_is_skipped() {
+        let mut queue = DeferredTaskQueue::default();
+        let mut a = entry(&mut queue, false);
+        let mut b = entry(&mut queue, true);
+        let mut c = entry(&mut queue, true);
+        let mut d = entry(&mut queue, false);
+        let (a_ctx, b_ctx, c_ctx, d_ctx) = (ctx(&mut a), ctx(&mut b), ctx(&mut c), ctx(&mut d));
+        // `b` unregisters `c`, and `d` posts a new entry. A swap-remove of `a` or `c` must not
+        // move `d` or the new entry under the cursor.
+        b.unregisters = c_ctx;
+        let mut e = entry(&mut queue, false);
+        d.posts = ctx(&mut e);
+        for &k in &[a_ctx, b_ctx, c_ctx, d_ctx] {
+            queue.post_task(k, callback);
+        }
+        let _ = run_order();
+        assert!(queue.run());
+        assert_eq!(run_order(), vec![a_ctx, b_ctx, d_ctx]);
+        assert_eq!((a.runs, b.runs, c.runs, d.runs, e.runs), (1, 1, 0, 1, 0));
+        assert_eq!(queue.map.len(), 2);
+        assert!(!queue.run());
+        assert_eq!((b.runs, c.runs, e.runs), (2, 0, 1));
     }
 }

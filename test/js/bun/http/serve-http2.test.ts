@@ -787,6 +787,109 @@ describe("Bun.serve http2 over a unix socket", () => {
   });
 });
 
+describe("Bun.serve http2 streaming responses on an idle server", () => {
+  // The fixture runs in its own process with no timers (the idle GC timer is
+  // off too), so its event loop sleeps between events. A write that the
+  // deferred pass leaves in a sink's buffer then waits for an unrelated
+  // wakeup that never comes. A client in the same process would wake the loop
+  // and hide that.
+  const idle = { tls: false, idleTimeout: 0, env: { BUN_GC_TIMER_DISABLE: "1" } };
+  const count = 100;
+  const deadline = () => new Promise<"never">(r => setTimeout(() => r("never"), 2000));
+
+  /** `count` open event streams on a raw h2 connection. `delivered` resolves
+   * per stream with the delay from `published()` to its `data: event` frame. */
+  async function openStreams(port: number) {
+    const raw = await RawH2.connect(port, false);
+    let published = 0;
+    const delivered: Promise<number>[] = [];
+    for (let i = 0; i < count; i++) {
+      const id = 1 + 2 * i;
+      raw.headers(id, baseHeaders("/events"));
+      delivered.push(
+        raw
+          .waitFor(f => f.type === T.DATA && f.streamId === id && f.payload.includes("data: event"))
+          .then(() => performance.now() - published),
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 + 2 * i && f.payload.includes(": open"));
+    }
+    return {
+      raw,
+      delivered,
+      publish: () => {
+        published = performance.now();
+      },
+      /** Streams that got the event after `bound` ms, or never. */
+      async late(bound: number) {
+        const delays = await Promise.all(delivered.map(p => Promise.race([p, deadline()])));
+        return delays.flatMap((ms, i) => (ms === "never" || ms > bound ? [`stream ${i}: ${ms} ms`] : []));
+      },
+    };
+  }
+
+  let fx: Fixture;
+  beforeAll(async () => {
+    fx = await startFixture(idle);
+  });
+  afterAll(async () => {
+    await fx[Symbol.asyncDispose]();
+  });
+
+  test("one enqueue on every open stream reaches each one in one socket write", async () => {
+    const streams = await openStreams(fx.port);
+    const control = await connectH2(fx.port, false);
+    try {
+      let reads = 0;
+      streams.raw.socket.on("data", () => reads++);
+      streams.publish();
+      expect((await request(control, { ":path": "/publish" })).body.toString()).toBe(`published to ${count}`);
+      // Every sink flushes in the pass after the handler, and the connection's
+      // drain writes them all at once. A sink the pass skipped waits for the
+      // loop's next wakeup, about a second or more on this idle server.
+      expect(await streams.late(500)).toEqual([]);
+      expect(reads).toBeLessThanOrEqual(2);
+    } finally {
+      streams.raw.socket.destroy();
+      control.destroy();
+    }
+  });
+
+  test.each(["timer", "immediate"])("an enqueue from a %s reaches every stream without another event", async via => {
+    // The fixture enqueues once the control request is over and the client is
+    // quiet. The pass after the callback flushes the sinks and posts the
+    // drain: the loop has to wake itself for it.
+    const streams = await openStreams(fx.port);
+    const control = await connectH2(fx.port, false);
+    try {
+      streams.publish();
+      expect((await request(control, { ":path": `/publish-later?via=${via}` })).body.toString()).toBe(
+        `publishing to ${count}`,
+      );
+      expect(await streams.late(700)).toEqual([]);
+    } finally {
+      streams.raw.socket.destroy();
+      control.destroy();
+    }
+  });
+
+  test("process.exit() right after an enqueue still delivers it to every stream", async () => {
+    await using exiting = await startFixture(idle);
+    const streams = await openStreams(exiting.port);
+    const control = await connectH2(exiting.port, false);
+    try {
+      streams.publish();
+      expect((await request(control, { ":path": "/publish-exit" })).body.toString()).toBe(`exiting with ${count}`);
+      expect(await streams.late(2000)).toEqual([]);
+      expect(await exiting.proc.exited).toBe(0);
+    } finally {
+      streams.raw.socket.destroy();
+      control.destroy();
+    }
+  });
+});
+
 describe("Bun.serve http2 in-process", () => {
   test("routes + fetch, reload, stop", async () => {
     await using server = Bun.serve({

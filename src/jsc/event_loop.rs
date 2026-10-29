@@ -450,8 +450,15 @@ impl EventLoop {
         // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
         vm.is_inside_deferred_task_queue.set(true);
-        self.deferred_tasks.run();
+        let posted = self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
+        // An entry posted during the pass waits for the next one. Not every
+        // callback gets another pass before the loop polls (an immediate does
+        // not), so wake the loop instead of sleeping on the entry until
+        // unrelated I/O or a timer.
+        if posted {
+            self.wakeup();
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT

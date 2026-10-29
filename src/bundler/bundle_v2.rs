@@ -3716,12 +3716,7 @@ pub mod bv2_impl {
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
             let runtime_parse_task: &mut ParseTask = self.arena().alloc(rt.parse_task);
-            // SAFETY: BACKREF — `self` outlives the task; lifetime erased per ParseTask::ctx convention.
-            runtime_parse_task.ctx = Some(unsafe {
-                bun_ptr::ParentRef::from_raw_mut(
-                    std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
-                )
-            });
+            runtime_parse_task.ctx = Some(bun_ptr::ParentRef::from_ref_mut(self));
             runtime_parse_task.loader = Some(Loader::Js);
             self.increment_scan_counter();
             self.graph.pool().schedule(runtime_parse_task);
@@ -4101,12 +4096,7 @@ pub mod bv2_impl {
                 self.transpiler_for_target(known_target).options.jsx.clone()
             };
             let task: &mut ParseTask = self.arena().alloc(ParseTask {
-                // SAFETY: BACKREF — `self` outlives the task; lifetime erased per ParseTask::ctx convention.
-                ctx: Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(
-                        std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
-                    )
-                }),
+                ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),
                 path: task_path,
                 contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
                 side_effects: bun_ast::SideEffects::HasSideEffects,
@@ -4172,14 +4162,7 @@ pub mod bv2_impl {
             // result posts back to the bundle thread.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
-                // SAFETY: `from_mut(self)` is the live bundle (write provenance for
-                // `on_complete`'s `assume_mut`) and outlives the task; `'a` erased to
-                // `'static` for the BACKREF.
-                ctx: Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(
-                        core::ptr::from_mut(&mut *self).cast::<BundleV2<'static>>(),
-                    )
-                }),
+                ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),
                 source: task_source,
                 // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
                 ..Default::default()
@@ -5271,14 +5254,7 @@ pub mod bv2_impl {
                                 })
                                 .expect("unreachable");
                             let task_val = ParseTask {
-                                // SAFETY: `from_mut(this)` is the live bundle (write provenance);
-                                // outlives the task.
-                                ctx: Some(unsafe {
-                                    bun_ptr::ParentRef::from_raw_mut(
-                                        std::ptr::from_mut::<BundleV2>(this)
-                                            .cast::<BundleV2<'static>>(),
-                                    )
-                                }),
+                                ctx: Some(bun_ptr::ParentRef::from_ref_mut(this)),
                                 path,
                                 // unknown at this point:
                                 contents_or_fd: parse_task::ContentsOrFd::Fd {
@@ -7180,13 +7156,7 @@ pub mod bv2_impl {
             // path map are both needed across the loop body. We (a) capture a raw self ptr for
             // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
             // borrow to the `build_graphs` field so later `self.graph.*` writes don't overlap.
-            // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
-            let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>> =
-                Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(
-                        std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
-                    )
-                });
+            let self_ptr = Some(bun_ptr::ParentRef::from_ref_mut(self));
             let dev_server_is_none = self.dev_server.is_none();
             for (key, value) in resolve_queue.iter() {
                 let value: *mut ParseTask = *value;

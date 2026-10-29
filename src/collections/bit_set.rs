@@ -1004,10 +1004,6 @@ impl Drop for DynamicBitSetList {
     }
 }
 
-// SAFETY: `buf` is a uniquely-owned heap allocation of plain `usize`s; moving
-// the owning struct between threads is as safe as moving a `Box<[usize]>`.
-unsafe impl Send for DynamicBitSetList {}
-
 // Raw allocation helpers for DynamicBitSetUnmanaged, using the size-at-[-1]
 // header convention.
 

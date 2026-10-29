@@ -129,7 +129,7 @@ pub struct LinkerContext<'a> {
 
     /// One name per binding that crosses a chunk boundary, shared by the
     /// chunk that exports it and every chunk that imports it
-    /// (`assign_cross_chunk_names`). Values live in the linker arena.
+    /// (`assign_cross_chunk_names`), or per entry tail copy it names. Values live in the linker arena.
     pub(crate) cross_chunk_names: bun_js_printer::renamer::CrossChunkNames,
     /// `renamer_rows`, for every chunk's `NumberRenamer`. `None`: a file is in several chunks.
     pub(crate) renamer_rows: Option<Box<[u32]>>,

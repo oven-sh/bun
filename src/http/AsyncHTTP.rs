@@ -55,16 +55,9 @@ pub struct AsyncHTTP<'a> {
 
 bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(AsyncHTTP, .next)`.
 // Only implemented for the lifetime-erased form — the queue is heterogeneous
 // over borrow scopes and `next` is always stored as `Link<AsyncHTTP<'static>>`.
-unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(AsyncHTTP<'static>, next: bun_threading::Link<AsyncHTTP<'static>>);
 
 pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);

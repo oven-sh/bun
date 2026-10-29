@@ -11,74 +11,42 @@ struct FrameworkRequestArgs {
 }
 
 impl DevServer {
-    /// Note: raw-pointer receiver. A previous version of this body bound
-    /// long-lived `&mut RouteBundle` / `&mut Type` from
-    /// `&mut *self_ptr` and then reborrowed `&mut *self_ptr` again — overlapping
-    /// `&mut` UB. Per docs/PORTING.md §Global mutable state we instead stay in
-    /// raw-ptr land: hold `*mut Self` / `*mut Type` and deref per-access via
-    /// place projection (`(*this).field`), never materializing a whole-struct
-    /// `&mut DevServer` while a sub-borrow is live.
-    ///
-    /// SAFETY: `this` must point to a live `DevServer`; `framework_bundle` must
-    /// point into `(*this).route_bundles[route_bundle_index].data`. Neither
-    /// `route_bundles` nor `router.types` is reallocated during this call.
-    // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
-    #[allow(clippy::needless_borrow)]
-    unsafe fn compute_arguments_for_framework_request(
-        this: *mut Self,
+    fn compute_arguments_for_framework_request(
+        &mut self,
+        global: &JSGlobalObject,
         route_bundle_index: route_bundle::Index,
-        framework_bundle: &mut route_bundle::Framework,
         params_js_value: JSValue,
     ) -> JsResult<FrameworkRequestArgs> {
-        // SAFETY: `this` is live; `vm` is a `BackRef` (safe Deref); `vm.global`
-        // is valid for VM lifetime.
-        let global = unsafe { &*(&(*this).vm).global };
-        // SAFETY: place projections off `*this` — `router` / `server_graph` /
-        // `route_bundles` are disjoint fields; each reborrow is scoped to its
-        // expression so no two `&mut` overlap. `framework_bundle` lives in
-        // `route_bundles[_].data`, disjoint from every other field touched here.
-        let route_type_idx = unsafe {
-            (*this)
-                .router
-                .route_ptr(framework_bundle.route_index)
-                .r#type
+        let route_bundle = &mut self.route_bundles[route_bundle_index.get() as usize];
+        debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
+        let client_script_generation: u32 = route_bundle.client_script_generation;
+        let route_bundle::Data::Framework(framework_bundle) = &mut route_bundle.data else {
+            unreachable!()
         };
-        // SAFETY: held raw; deref per-access. `router.types` is a `Box<[Type]>` —
-        // never reallocated for the lifetime of `DevServer`.
-        let router_type: *mut router::Type = unsafe { (*this).router.type_ptr(route_type_idx) };
-        // SAFETY: scalar copy — `route_bundles[i]` is otherwise only read (via
-        // `generate_css_js_array`, which takes `&RouteBundle`).
-        let client_script_generation: u32 = unsafe {
-            (&(*this).route_bundles)[route_bundle_index.get() as usize].client_script_generation
-        };
+        let route_index = framework_bundle.route_index;
+        let router_type = self
+            .router
+            .type_ptr(self.router.route_ptr(route_index).r#type);
+        let has_client_file = router_type.client_file.is_some();
 
         Ok(FrameworkRequestArgs {
             // routerTypeMain
-            // SAFETY: `router_type` points into `router.types`, never reallocated for `DevServer`'s lifetime.
-            router_type_main: match unsafe { (*router_type).server_file_string.get() } {
+            router_type_main: match router_type.server_file_string.get() {
                 Some(s) => s,
                 None => 'str: {
-                    // SAFETY: `server_graph` is disjoint from `router` / `route_bundles`.
-                    let name = unsafe {
-                        &(*this).server_graph.bundled_files.keys()[from_opaque_file_id::<
-                            { bake::Side::Server },
-                        >(
-                            (*router_type).server_file
-                        )
-                        .get()
-                            as usize]
-                    };
+                    let name = &self.server_graph.bundled_files.keys()[from_opaque_file_id::<
+                        { bake::Side::Server },
+                    >(
+                        router_type.server_file
+                    )
+                    .get()
+                        as usize];
                     let mut buf = paths::path_buffer_pool::get();
                     let s = bun_string_jsc::create_utf8_for_js(
                         global,
-                        // SAFETY: `relative_path(&self)` only reads `self.root`;
-                        // no `&mut` derived from `*this` is live across this call.
-                        unsafe { (*this).relative_path(&mut *buf, name) },
+                        relative_path(&self.root, &mut *buf, name),
                     )?;
-                    // SAFETY: per-access raw deref; `router.types` not reallocated.
-                    unsafe {
-                        (*router_type).server_file_string = jsc::StrongOptional::create(s, global)
-                    };
+                    router_type.server_file_string = jsc::StrongOptional::create(s, global);
                     break 'str s;
                 }
             },
@@ -86,36 +54,28 @@ impl DevServer {
             route_modules: match framework_bundle.cached_module_list.get() {
                 Some(a) => a,
                 None => 'arr: {
-                    // SAFETY: `server_graph` / `router` are disjoint from
-                    // `route_bundles`; `route` is a `&Route` reborrowed per step.
-                    let keys = unsafe { (*this).server_graph.bundled_files.keys() };
+                    let keys = self.server_graph.bundled_files.keys();
                     let mut n: usize = 1;
-                    // SAFETY: `this` is live; `router.routes` is not reallocated during this fn.
-                    let mut route =
-                        unsafe { (*this).router.route_ptr(framework_bundle.route_index) };
+                    let mut route = self.router.route_ptr(route_index);
                     loop {
                         if route.file_layout.is_some() {
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
-                        // SAFETY: `this` is live; `router.routes` is not reallocated during this fn.
-                        route = unsafe { (*this).router.route_ptr(p) };
+                        route = self.router.route_ptr(p);
                     }
                     let arr = JSValue::create_empty_array(global, n)?;
-                    // SAFETY: `this` is live; `router.routes` is not reallocated during this fn.
-                    route = unsafe { (*this).router.route_ptr(framework_bundle.route_index) };
+                    route = self.router.route_ptr(route_index);
                     {
                         let mut buf = paths::path_buffer_pool::get();
-                        // SAFETY: `relative_path(&self)` only reads `self.root`; no `&mut *this` is live.
-                        let route_name = unsafe {
-                            (*this).relative_path(
-                                &mut *buf,
-                                &keys[from_opaque_file_id::<{ bake::Side::Server }>(
-                                    route.file_page.unwrap(),
-                                )
-                                .get() as usize],
+                        let route_name = relative_path(
+                            &self.root,
+                            &mut *buf,
+                            &keys[from_opaque_file_id::<{ bake::Side::Server }>(
+                                route.file_page.unwrap(),
                             )
-                        };
+                            .get() as usize],
+                        );
                         arr.put_index(
                             global,
                             0,
@@ -126,14 +86,12 @@ impl DevServer {
                     loop {
                         if let Some(layout) = route.file_layout {
                             let mut buf = paths::path_buffer_pool::get();
-                            // SAFETY: `relative_path(&self)` only reads `self.root`; no `&mut *this` is live.
-                            let layout_name = unsafe {
-                                (*this).relative_path(
-                                    &mut *buf,
-                                    &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout)
-                                        .get() as usize],
-                                )
-                            };
+                            let layout_name = relative_path(
+                                &self.root,
+                                &mut *buf,
+                                &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout).get()
+                                    as usize],
+                            );
                             arr.put_index(
                                 global,
                                 u32::try_from(n).expect("int cast"),
@@ -142,8 +100,7 @@ impl DevServer {
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
-                        // SAFETY: `this` is live; `router.routes` is not reallocated during this fn.
-                        route = unsafe { (*this).router.route_ptr(p) };
+                        route = self.router.route_ptr(p);
                     }
                     framework_bundle.cached_module_list = jsc::StrongOptional::create(arr, global);
                     break 'arr arr;
@@ -151,8 +108,7 @@ impl DevServer {
             },
             // clientId: none when the router has no client entry, so there is no bundle to load.
             client_id: match framework_bundle.cached_client_bundle_url.get() {
-                // SAFETY: per-access raw deref; `router.types` not reallocated.
-                _ if unsafe { (*router_type).client_file }.is_none() => JSValue::NULL,
+                _ if !has_client_file => JSValue::NULL,
                 Some(s) => s,
                 None => 'str: {
                     let bundle_index: u32 = route_bundle_index.get();
@@ -177,17 +133,12 @@ impl DevServer {
             styles: match framework_bundle.cached_css_file_array.get() {
                 Some(a) => a,
                 None => 'arr: {
-                    // SAFETY: `generate_css_js_array` reads `client_graph` /
-                    // `router` and the `&RouteBundle`; it never reallocates
-                    // `route_bundles`. The `&mut *this` whole-struct reborrow
-                    // here is the *only* one in this fn — no other `&`/`&mut`
-                    // derived from `*this` is live across it (`router_type` /
-                    // `keys` / `route` were all consumed in earlier arms).
-                    let js = unsafe {
-                        (*this).generate_css_js_array(
-                            &(&(*this).route_bundles)[route_bundle_index.get() as usize],
-                        )
-                    }?;
+                    let js = self.generate_css_js_array(route_index)?;
+                    let route_bundle::Data::Framework(framework_bundle) =
+                        &mut self.route_bundles[route_bundle_index.get() as usize].data
+                    else {
+                        unreachable!()
+                    };
                     framework_bundle.cached_css_file_array =
                         jsc::StrongOptional::create(js, global);
                     break 'arr js;
@@ -204,22 +155,6 @@ impl DevServer {
         req: SavedRequestUnion,
         resp: AnyResponse,
     ) -> JsResult<()> {
-        // Note: erase the `&mut RouteBundle` to a raw pointer so subsequent
-        // `&self` accesses (vm/router/callback) don't trip borrowck.
-        let route_bundle: *mut RouteBundle = self.route_bundle_ptr(route_bundle_index);
-        debug_assert!(matches!(
-            // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in this fn.
-            unsafe { &(*route_bundle).data },
-            route_bundle::Data::Framework(_)
-        ));
-
-        // SAFETY: `route_bundle` points into `self.route_bundles`, which is not
-        // resized or dropped for the duration of this fn.
-        let framework_bundle = match unsafe { &mut (*route_bundle).data } {
-            route_bundle::Data::Framework(f) => f,
-            _ => unreachable!(),
-        };
-
         // Extract route params by re-matching the URL
         // TODO: lazy structure caching since we are making these objects a lot
         let global = self.vm().global();
@@ -248,17 +183,11 @@ impl DevServer {
             .get()
             .expect("did not initialize server code");
 
-        // SAFETY: `self` is live; `framework_bundle` points into
-        // `self.route_bundles[route_bundle_index].data`. Raw-ptr receiver — see
-        // Note on `compute_arguments_for_framework_request`.
-        let args = unsafe {
-            Self::compute_arguments_for_framework_request(
-                self,
-                route_bundle_index,
-                framework_bundle,
-                params_js_value,
-            )
-        }?;
+        let args = self.compute_arguments_for_framework_request(
+            global,
+            route_bundle_index,
+            params_js_value,
+        )?;
 
         self.server
             .as_ref()
@@ -689,14 +618,7 @@ impl DevServer {
         Ok(client_bundle)
     }
 
-    fn generate_css_js_array(&mut self, route_bundle: &RouteBundle) -> JsResult<JSValue> {
-        debug_assert!(matches!(
-            route_bundle.data,
-            route_bundle::Data::Framework(_)
-        ));
-        debug_assert!(!route_bundle.data.framework().cached_css_file_array.has());
-        debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
-
+    fn generate_css_js_array(&mut self, route_index: router::RouteIndex) -> JsResult<JSValue> {
         let _lock = self.graph_safety_lock.guard();
 
         // Prepare bitsets
@@ -704,11 +626,7 @@ impl DevServer {
 
         // Run tracing
         self.client_graph.reset();
-        self.trace_all_route_imports(
-            route_bundle.data.framework().route_index,
-            &mut gts,
-            TraceImportGoal::FindCss,
-        )?;
+        self.trace_all_route_imports(route_index, &mut gts, TraceImportGoal::FindCss)?;
 
         let names: &[u64] = &self.client_graph.current_css_files;
         let global = self.vm().global();

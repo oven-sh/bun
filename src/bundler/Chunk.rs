@@ -1375,8 +1375,7 @@ impl Drop for CssImportOrder<'_> {
         // `LinkerGraph` arena and is bulk-freed with it.
         let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.conditions));
         // `condition_import_records`: every populated value is uniquely owned
-        // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
-        // drop is a no-op). Normal drop frees the owned buffers; no
+        // (each entry starts from a clone or `Vec::new()`). Normal drop frees the buffers; no
         // double-free path exists.
     }
 }

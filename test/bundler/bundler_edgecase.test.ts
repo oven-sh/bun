@@ -2487,7 +2487,7 @@ describe("bundler", () => {
     if (false) var { e, f: [f] } = { e: 5, f: [6] };
     if (false) var g = 7;
     g = "assigned";
-    export function get() { return [a, b, c, d, e, f, g]; }
+    export function get() { return [a, b, c, d, e, f, g].map(String); }
   `;
   for (const minifySyntax of [false, true]) {
     itBundled(`edgecase/EsmWrapperVarInDeadBracelessBodyImport${minifySyntax ? "MinifySyntax" : ""}`, {
@@ -2500,7 +2500,7 @@ describe("bundler", () => {
       },
       define: { "process.env.NODE_ENV": '"production"' },
       minifySyntax,
-      run: { stdout: '[null,null,null,null,null,null,"assigned"]' },
+      run: { stdout: '["undefined","undefined","undefined","undefined","undefined","undefined","assigned"]' },
     });
     itBundled(`edgecase/EsmWrapperVarInDeadBracelessBodyRequire${minifySyntax ? "MinifySyntax" : ""}`, {
       files: {
@@ -2513,7 +2513,7 @@ describe("bundler", () => {
       define: { "process.env.NODE_ENV": '"production"' },
       format: "cjs",
       minifySyntax,
-      run: { stdout: '[null,null,null,null,null,null,"assigned"]' },
+      run: { stdout: '["undefined","undefined","undefined","undefined","undefined","undefined","assigned"]' },
     });
   }
   itBundled("edgecase/EsmWrapperVarInBracelessBodySplitting", {

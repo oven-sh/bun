@@ -1600,7 +1600,10 @@ describe.concurrent("bun run", () => {
   describe.skipIf(!isLinux || !cc)("when bun cannot read the path of its executable", () => {
     async function runGo(flags: string[]) {
       using dir = tempDir("bun-run-node-alias-no-exe-path", {
-        "package.json": JSON.stringify({ name: "alias-no-exe-path", scripts: { go: "echo PATH=$PATH" } }),
+        "package.json": JSON.stringify({
+          name: "alias-no-exe-path",
+          scripts: { go: "echo PATH=$PATH NODE=$NODE npm_node_execpath=$npm_node_execpath" },
+        }),
       });
       const pathBinDir = join(String(dir), "path-bin");
       await $`mkdir -p ${pathBinDir} && ln -sf ${bunExe()} ${pathBinDir}/bun`.quiet();
@@ -1625,7 +1628,7 @@ describe.concurrent("bun run", () => {
       expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
     });
 
-    it("without --bun the script runs, and PATH has no alias directory", async () => {
+    it("without --bun the script runs, and nothing in its environment names the alias", async () => {
       const { stdout, stderr, exitCode } = await runGo([]);
       expect(stderr).toMatch(/^warn: failed to create node alias in \S+, scripts that run node will not find it$/m);
       expect(stdout).toStartWith("PATH=");

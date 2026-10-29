@@ -118,11 +118,12 @@ describe("a spawn that fails names the file as its path", () => {
     const script = `
       const cp = require("node:child_process");
       const fs = require("node:fs");
+      const os = require("node:os");
       const fields = e => e && { code: e.code, path: e.path, syscall: e.syscall, spawnargs: e.spawnargs };
       function main() {
         const fds = [];
         try {
-          for (;;) fds.push(fs.openSync("/dev/null", "r"));
+          for (;;) fds.push(fs.openSync(os.devNull, "r"));
         } catch {}
         const sync = fields(cp.spawnSync("true", ["a"], { stdio: "pipe" }).error);
         // \`cgroup\` is an option of bun, and node ignores it. With one descriptor free again, bun opens the
@@ -142,7 +143,7 @@ describe("a spawn that fails names the file as its path", () => {
       });`;
     // The limit is low so that the loop above is short. A runtime cannot raise it again: `ulimit -n` also sets the hard limit.
     using tmp = tempDir();
-    const { stdout, status } = spawnSync("/bin/sh", ["-c", 'ulimit -n 128 && exec "$1" -e "$2"', "sh", exe, script], {
+    const { stdout, status } = spawnSync("sh", ["-c", 'ulimit -n 128 && exec "$1" -e "$2"', "sh", exe, script], {
       env: { ...env, CGROUP: tmp.dir },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "inherit"],

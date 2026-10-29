@@ -723,6 +723,18 @@ impl Value {
         }
     }
 
+    /// [`Self::to_blob_if_possible`] for a caller that hands the Blob's fd on to a child process, see [`ReadableStream::shared_blob`].
+    pub(crate) fn to_blob_for_child_stdio(&mut self) {
+        if let Value::Locked(locked) = self
+            && let Some(stream) = locked.readable.get()
+            && let Some(blob) = stream.shared_blob(locked.global())
+        {
+            *self = Value::from(blob);
+            return;
+        }
+        self.to_blob_if_possible();
+    }
+
     /// [`Self::to_blob_if_possible`], except a file-backed stream keeps streaming (a FIFO has no length).
     pub(crate) fn to_blob_if_in_memory(&mut self) {
         let Value::Locked(locked) = self else {

@@ -249,6 +249,21 @@ impl ReadableStream {
         Some(blob)
     }
 
+    /// The Blob behind an unread `FileReader::shared` stream, for a caller that hands its fd on. The stream stays unread.
+    pub(crate) fn shared_blob(&self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
+        let reader = self.ptr.file().filter(|reader| reader.shared.get())?;
+        if self.is_disturbed(global_this) || self.is_locked(global_this) {
+            return None;
+        }
+        let webcore::file_reader::Lazy::Blob(store) = reader.lazy.get() else {
+            return None;
+        };
+        Some(webcore::blob::Any::Blob(Blob::init_with_store(
+            store.clone(),
+            global_this,
+        )))
+    }
+
     pub fn done(&self) {
         // done is called when we are done consuming the stream
         // this will resolve any pending promises to done: true

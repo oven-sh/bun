@@ -17,32 +17,35 @@ console.log("child listens", p.listenerCount(name), p.connected);
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Builtin builtin=Process
-// CHECK-NEXT: PutModuleVariable v0 variable=[[g_1]]
-// CHECK-NEXT: v2 = Data data=[[d_2]]
-// CHECK-NEXT: v3 = PropGet v2 key="join"
-// CHECK-NEXT: v4 = String string=""
-// CHECK-NEXT: v5 = Call v3, v2, v4 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v7 = PropGet v0 key="on"
-// CHECK-NEXT: v8 = Convert v7 declared={type=builtin(EventEmitterPrototypeOn) flags=[IsExpected]}
-// CHECK-NEXT: v9 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v10 = Call v8, v0, v6, v9 calleeKey="on" calleeName="p.on"
-// CHECK-NEXT: v11 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v12 = PropGet v11 key="console" [isFreeName]
-// CHECK-NEXT: v13 = Convert v12 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v14 = PropGet v13 key="log"
-// CHECK-NEXT: v15 = Convert v14 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v16 = String string="child listens"
-// CHECK-NEXT: v17 = PropGet v0 key="listenerCount"
-// CHECK-NEXT: v18 = Convert v17 declared={type=builtin(EventEmitterPrototypeListenerCount) flags=[IsExpected]}
-// CHECK-NEXT: v19 = Call v18, v0, v6 calleeKey="listenerCount" calleeName="p.listenerCount"
-// CHECK-NEXT: v20 = PropGet v0 key="connected"
-// CHECK-NEXT: v21 = Call v15, v13, v16, v19, v20 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v22 = Undefined
-// CHECK-NEXT: Return v22
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
+// CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
+// CHECK-NEXT: v3 = Data data=[[d_3]]
+// CHECK-NEXT: v4 = PropGet v3 key="join"
+// CHECK-NEXT: v5 = String string=""
+// CHECK-NEXT: v6 = Call v4, v3, v5 calleeKey="join" calleeName="join"
+// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v8 = PropGet v1 key="on"
+// CHECK-NEXT: v9 = Convert v8 declared={type=builtin(EventEmitterPrototypeOn) flags=[IsExpected]}
+// CHECK-NEXT: v10 = NewClosure function=[[f_5]]
+// CHECK-NEXT: v11 = Call v9, v1, v7, v10 calleeKey="on" calleeName="p.on"
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
+// CHECK-NEXT: v13 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v14 = PropGet v13 key="console" [isFreeName]
+// CHECK-NEXT: v15 = Convert v14 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v16 = PropGet v15 key="log"
+// CHECK-NEXT: v17 = Convert v16 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v18 = String string="child listens"
+// CHECK-NEXT: v19 = PropGet v1 key="listenerCount"
+// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(EventEmitterPrototypeListenerCount) flags=[IsExpected]}
+// CHECK-NEXT: v21 = Call v20, v1, v7 calleeKey="listenerCount" calleeName="p.listenerCount"
+// CHECK-NEXT: v22 = Convert v21 declared={type=number site=[[w_6]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v23 = PropGet v1 key="connected"
+// CHECK-NEXT: v24 = Call v17, v15, v18, v22, v23 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v25 = Undefined
+// CHECK-NEXT: Return v25
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -56,26 +59,31 @@ console.log("child listens", p.listenerCount(name), p.connected);
 // CHECK-NEXT: v8 = PropGet v7 key="stringify"
 // CHECK-NEXT: v9 = Convert v8 declared={type=builtin(JSONStringify) flags=[IsExpected]}
 // CHECK-NEXT: v10 = Call v9, v7, v0 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string site=[[w_5]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v12 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v13 = PropGet v12 key="Buffer" [isFreeName]
 // CHECK-NEXT: v14 = Convert v13 declared={type=builtin(Buffer) flags=[IsExpected]}
 // CHECK-NEXT: v15 = PropGet v14 key="isBuffer"
 // CHECK-NEXT: v16 = Convert v15 declared={type=builtin(BufferIsBuffer) flags=[IsExpected]}
-// CHECK-NEXT: v17 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}
+// CHECK-NEXT: v17 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_9]] flags=[IsExpected]}
 // CHECK-NEXT: v18 = PropGet v17 key="bytes"
 // CHECK-NEXT: v19 = Call v16, v14, v18 calleeKey="isBuffer" calleeName="Buffer.isBuffer"
-// CHECK-NEXT: v20 = Builtin builtin=String
-// CHECK-NEXT: v21 = PropGet v17 key="bytes"
-// CHECK-NEXT: v22 = Call v20, -, v21 calleeName="String"
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string site=[[w_7]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v24 = Call v5, v3, v6, v11, v19, v23 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v25 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v26 = CheckInitialized v25 name="p"
-// CHECK-NEXT: v27 = PropGet v26 key="exit"
-// CHECK-NEXT: v28 = Convert v27 declared={type=builtin(ProcessExit) flags=[IsExpected]}
-// CHECK-NEXT: v29 = Integer
-// CHECK-NEXT: v30 = Call v28, v26, v29 calleeKey="exit" calleeName="p.exit"
-// CHECK-NEXT: v31 = Undefined
-// CHECK-NEXT: Return v31
+// CHECK-NEXT: v20 = Convert v19 declared={type=boolean site=[[w_10]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v21 = Builtin builtin=String
+// CHECK-NEXT: v22 = PropGet v17 key="bytes"
+// CHECK-NEXT: v23 = Call v21, -, v22 calleeName="String"
+// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v25 = Call v5, v3, v6, v11, v20, v24 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v26 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v27 = CheckInitialized v26 name="p"
+// CHECK-NEXT: v28 = PropGet v27 key="exit"
+// CHECK-NEXT: v29 = Convert v28 declared={type=builtin(ProcessExit) flags=[IsExpected]}
+// CHECK-NEXT: v30 = Integer
+// CHECK-NEXT: v31 = Call v29, v27, v30 calleeKey="exit" calleeName="p.exit"
+// CHECK-NEXT: v32 = Undefined
+// CHECK-NEXT: Return v32
 // CHECK-NEXT: }
+// CHECK: function {{*}}
+// CHECK: module=[[m_0]] role=Signature thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]]
+// CHECK: function {{*}}
+// CHECK: module=[[m_0]] role=Signature thisType={type=anything} results=[{type=anything}]

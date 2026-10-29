@@ -5,10 +5,11 @@ import net from "node:net";
  * An inspector frontend on a raw socket, for the WebSocket server and for the
  * transport that the inspected process dials.
  *
- * It can stop reading (`pause()`), so that the inspected process cannot write
- * to it, and read again one chunk at a time (`readChunk()`). It keeps only the
- * start of a large frame. It shows how the connection ended: with the server's
- * close frame or without one.
+ * It can stop reading (`pause()`): its socket then takes one more batch, fills,
+ * and the inspected process cannot write to it. It can read again one chunk at
+ * a time (`readChunk()`). It keeps only the start of a large frame. It answers
+ * a ping, as every WebSocket client does. It shows how the connection ended:
+ * with the server's close frame or without one.
  */
 export class RawFrontend {
   /** The `<n>` of each `console.log("#<n> ...")` line that arrived. */
@@ -100,19 +101,26 @@ export class RawFrontend {
    * The response only arrives while reading.
    */
   send(method: string, params: object = {}): Promise<any> {
+    if (this.ended) return Promise.reject(new Error(`the connection ended before ${method}`));
     const id = this.#nextId++;
     const payload = Buffer.from(JSON.stringify({ id, method, params }));
     if (this.#webSocket) {
-      const mask = crypto.randomBytes(4);
-      const header =
-        payload.length < 126 ? [0x81, 0x80 | payload.length] : [0x81, 0xfe, payload.length >> 8, payload.length & 255];
-      this.#socket.write(Buffer.concat([Buffer.from(header), mask, payload.map((byte, i) => byte ^ mask[i & 3])]));
+      this.#writeFrame(1, payload);
     } else {
       const header = Buffer.alloc(4);
       header.writeUInt32BE(payload.length);
       this.#socket.write(Buffer.concat([header, payload]));
     }
     return new Promise((resolve, reject) => this.#responses.set(id, { resolve, reject }));
+  }
+
+  /** Writes one WebSocket frame of less than 64 KB. A client masks what it sends. */
+  #writeFrame(opcode: number, payload: Buffer): void {
+    const mask = crypto.randomBytes(4);
+    const first = 0x80 | opcode;
+    const header =
+      payload.length < 126 ? [first, 0x80 | payload.length] : [first, 0xfe, payload.length >> 8, payload.length & 255];
+    this.#socket.write(Buffer.concat([Buffer.from(header), mask, payload.map((byte, i) => byte ^ mask[i & 3])]));
   }
 
   /** How many events with this method arrived. */
@@ -128,15 +136,31 @@ export class RawFrontend {
     this.#socket.resume();
   }
 
-  /** Reads one chunk, at most 512 KB, and stops again. */
+  /**
+   * Hands over one chunk, at most 512 KB, and stops again. A paused socket has one chunk in hand
+   * and takes the next one from the kernel afterwards. Rejects if the connection ends first.
+   */
   readChunk(): Promise<void> {
-    return new Promise(resolve => {
-      this.#socket.once("data", () => {
-        this.#socket.pause();
-        resolve();
-      });
-      this.#socket.resume();
-    });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const onData = () => {
+      this.#socket.pause();
+      this.#socket.off("close", onClose);
+      resolve();
+    };
+    const onClose = () => {
+      this.#socket.off("data", onData);
+      reject(new Error(`the connection ended before a chunk, close frame: ${JSON.stringify(this.closeFrame)}`));
+    };
+    if (this.ended) onClose();
+    else this.#socket.once("data", onData).once("close", onClose).resume();
+    return promise;
+  }
+
+  /** Hands over chunks until the socket has taken more bytes from the kernel, and stops again. */
+  async readFromKernel(): Promise<void> {
+    const before = this.#socket.bytesRead;
+    do await this.readChunk();
+    while (this.#socket.bytesRead === before);
   }
 
   close(): void {
@@ -149,8 +173,7 @@ export class RawFrontend {
 
   #read(chunk: Buffer): void {
     let offset = 0;
-    // `#payloadLeft === 0`: a frame with no payload whose header ended the chunk.
-    while (offset < chunk.length || this.#payloadLeft === 0) {
+    while (offset < chunk.length) {
       if (this.#payloadLeft === -1) {
         const header = this.#header;
         header.push(chunk[offset++]);
@@ -192,6 +215,7 @@ export class RawFrontend {
       this.closeFrame = { code: payload.readUInt16BE(0), reason: payload.toString("utf8", 2) };
       return;
     }
+    if (opcode === 9) this.#writeFrame(10, payload);
     if (opcode !== 1) return;
     if (this.#isEvent()) {
       const start = payload.toString("latin1");

@@ -4,15 +4,20 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 
-// `tick()` and `tock()` log one line each. The breakpoints of the tests go on their `console.log`.
+// Each function logs one line. The breakpoints of the tests go on their `console.log`.
 const fixture = `function tick(tag) {
   console.log("tick " + tag);
 }
 function tock(tag) {
   console.log("tock " + tag);
 }
-globalThis.tick = tick;
-globalThis.tock = tock;
+function tack(tag) {
+  console.log("tack " + tag);
+}
+function toe(tag) {
+  console.log("toe " + tag);
+}
+Object.assign(globalThis, { tick, tock, tack, toe });
 setInterval(() => {}, 1e9);
 console.log("ready");
 `;
@@ -187,7 +192,7 @@ async function enableDebugger(client: Client): Promise<void> {
 }
 
 /** Sets the breakpoint in `tick()`, or another one. */
-async function setBreakpoint(client: Client, where = breakpoint): Promise<void> {
+async function setBreakpoint(client: Client, where: object = breakpoint): Promise<void> {
   const { result } = await client.send("Debugger.setBreakpointByUrl", where);
   expect(result?.locations).toHaveLength(1);
 }
@@ -275,6 +280,10 @@ fixtureTest(
 fixtureTest(
   "the program continues when its debugger client leaves during a pause and another client stays",
   async ({ a, connect }) => {
+    // A turned the debugger on and off again, so it holds no pause.
+    await enableDebugger(a);
+    expect(await a.send("Debugger.disable")).toEqual(ok);
+
     const b = await connect(1000);
     await enableDebugger(b);
     await setBreakpoint(b);
@@ -290,10 +299,12 @@ fixtureTest(
     });
     expect(a.consoleTexts).toEqual(["ready"]);
 
-    // A did not turn the debugger on, so it does not resume the program. B leaves without a resume.
+    // A has the debugger off, so it does not resume the program. B leaves without a resume.
     await b.close();
     await evaluated;
     expect(a.consoleTexts).toEqual(["ready", "tick one"]);
+    // The debugger went off during the pause, and it said that the program runs again.
+    expect(a.count("Debugger.resumed")).toBe(1);
 
     // The debugger went with B: tick() does not stop again.
     await afterInspectedThread(a);
@@ -345,11 +356,111 @@ fixtureTest("a debugger client leaves after another client turned the debugger o
   const b = await connect(1000);
   await enableDebugger(b);
   expect(await a.send("Debugger.disable")).toEqual(ok);
+  // JSC keeps a breakpoint that is set while the debugger is off, and arms it when the debugger comes on.
+  await b.send("Debugger.setBreakpointByUrl", breakpoint);
 
-  // Nothing is left for B to take with it: JSC asserts when a debugger that is off is turned off.
+  // B has no debugger to turn off: JSC asserts when a debugger that is off is turned off. Its breakpoint goes.
   await b.close();
   await afterInspectedThread(a);
-  expect(await a.send("Debugger.enable")).toEqual(ok);
+  await enableDebugger(a);
+  expect(await pausesIn(a, "tick('x')")).toBe(false);
+});
+
+// JSC's own teardown for the last client clears the breakpoints only while the debugger is on.
+fixtureTest("a breakpoint that the last client set with the debugger off is gone with it", async ({ a, connect }) => {
+  await a.send("Debugger.setBreakpointByUrl", breakpoint);
+  await a.close();
+
+  const b = await connect(1000);
+  await enableDebugger(b);
+  expect(await pausesIn(b, "tick('x')")).toBe(false);
+  await b.close();
+});
+
+// JSC names a breakpoint after the request that set it, and Bun removes it under that name.
+fixtureTest("a debugger client that leaves takes each kind of breakpoint with it", async ({ a, connect }) => {
+  await enableDebugger(a);
+  const b = await connect(1000);
+  await enableDebugger(b);
+
+  const script = a.events("Debugger.scriptParsed").find(script => script.url.endsWith("fixture.js"));
+  await setBreakpoint(b, breakpoint);
+  await setBreakpoint(b, { lineNumber: 4, columnNumber: 2, url: script.url });
+  const location = { scriptId: script.scriptId, lineNumber: 7, columnNumber: 2 };
+  expect(await b.send("Debugger.setBreakpoint", { location })).toEqual({
+    id: expect.any(Number),
+    result: expect.objectContaining({ breakpointId: expect.any(String) }),
+  });
+  expect(await b.send("Debugger.addSymbolicBreakpoint", { symbol: "toe" })).toEqual(ok);
+
+  const pauses = async () => ({
+    byUrlRegex: await pausesIn(a, "tick('x')"),
+    byUrl: await pausesIn(a, "tock('x')"),
+    byLocation: await pausesIn(a, "tack('x')"),
+    byFunctionName: await pausesIn(a, "toe('x')"),
+  });
+  expect(await pauses()).toEqual({ byUrlRegex: true, byUrl: true, byLocation: true, byFunctionName: true });
+
+  await b.close();
+  await afterInspectedThread(a);
+  expect(await pauses()).toEqual({ byUrlRegex: false, byUrl: false, byLocation: false, byFunctionName: false });
+});
+
+// JSC refuses a breakpoint that exists. So the second client has none, and cannot remove one.
+fixtureTest("a breakpoint that two clients ask for goes with the client that got it", async ({ a, connect }) => {
+  await enableDebugger(a);
+  const b = await connect(1000);
+  await enableDebugger(b);
+  await setBreakpoint(b);
+  expect(await a.send("Debugger.setBreakpointByUrl", breakpoint)).toEqual({
+    id: expect.any(Number),
+    error: expect.objectContaining({ message: expect.stringContaining("already exists") }),
+  });
+  expect(await pausesIn(a, "tick('one')")).toBe(true);
+
+  await b.close();
+  await afterInspectedThread(a);
+  expect(await pausesIn(a, "tick('two')")).toBe(false);
+  // Now A can have it.
+  await setBreakpoint(a);
+  expect(await pausesIn(a, "tick('three')")).toBe(true);
+});
+
+fixtureTest(
+  "a client that removed its breakpoint does not take the same one of another client",
+  async ({ a, connect }) => {
+    await enableDebugger(a);
+    const b = await connect(1000);
+    await enableDebugger(b);
+    const { result } = await b.send("Debugger.setBreakpointByUrl", breakpoint);
+    expect(await b.send("Debugger.removeBreakpoint", { breakpointId: result.breakpointId })).toEqual(ok);
+    await setBreakpoint(a);
+
+    await b.close();
+    await afterInspectedThread(a);
+    expect(await pausesIn(a, "tick('x')")).toBe(true);
+  },
+);
+
+// The inspected thread runs no task while the program is paused. The breakpoint goes all the same.
+fixtureTest("a debugger client that leaves during a pause takes its breakpoint at once", async ({ a, connect }) => {
+  await enableDebugger(a);
+  const b = await connect(1000);
+  await enableDebugger(b);
+  await setBreakpoint(b);
+
+  // Three calls in one turn of the event loop.
+  const evaluated = a.send("Runtime.evaluate", { expression: "for (const tag of [1, 2, 3]) tick(tag)" });
+  await a.until(() => a.count("Debugger.paused") === 1);
+  await b.close();
+  // A has the debugger on too, so the program waits for A. It answers A during the pause.
+  await afterInspectedThread(a);
+  expect(await a.send("Debugger.resume")).toEqual(ok);
+  await evaluated;
+  expect({ pauses: a.count("Debugger.paused"), consoleTexts: a.consoleTexts }).toEqual({
+    pauses: 1,
+    consoleTexts: ["ready", "tick 1", "tick 2", "tick 3"],
+  });
 });
 
 // The inspected thread takes a command and a disconnect in the order the client sent them.

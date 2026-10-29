@@ -225,6 +225,7 @@ process.stdin.on("data", data => {
     // The steps that the program has run through.
     const done: string[] = [];
     const waiters: (() => void)[] = [];
+    let hasExited = false;
     (async () => {
       const decoder = new TextDecoder();
       let rest = "";
@@ -234,15 +235,19 @@ process.stdin.on("data", data => {
         for (const line of lines) done.push(line.slice("done ".length));
         for (const waiter of waiters.splice(0)) waiter();
       }
+      hasExited = true;
       for (const waiter of waiters.splice(0)) waiter();
     })();
-    /** Tells the program to run a step. Resolves when the program has run through its debugger statement. */
+    /**
+     * Tells the program to run a step. Resolves when the program has run through its debugger
+     * statement. Rejects if the program exits first.
+     */
     const step = (name: string) => {
       proc.stdin.write(name + "\n");
       proc.stdin.flush();
       return (async () => {
         while (!done.includes(name)) {
-          if (proc.exitCode !== null) throw new Error(`the program exited before step ${name}`);
+          if (hasExited) throw new Error(`the program exited before step ${name}`);
           await new Promise<void>(resolve => waiters.push(resolve));
         }
       })();

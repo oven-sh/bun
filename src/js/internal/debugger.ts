@@ -7,6 +7,7 @@ interface WebSocketHandler<T> {
   open(ws: ServerWebSocket<T>): void;
   message(ws: ServerWebSocket<T>, message: string | Buffer): void;
   drain(ws: ServerWebSocket<T>): void;
+  pong(ws: ServerWebSocket<T>, data: Buffer): void;
   close(ws: ServerWebSocket<T>): void;
 }
 
@@ -510,6 +511,7 @@ class Debugger {
         }
       },
       drain: ws => this.#drain(ws),
+      pong: (ws, data) => this.#pong(ws, data),
       close: ws => this.#close(ws),
     };
   }
@@ -603,12 +605,9 @@ class Debugger {
       return ws.getBufferedAmount();
     };
     const dismiss = (reason: string) => {
-      if (ws.getBufferedAmount() === 0) {
-        ws.close(1013, reason);
-        return;
-      }
-      // The close frame goes out once the frontend has read what uWS still holds.
-      data.dismiss = () => ws.close(1013, reason);
+      // The frontend answers this ping when it has read everything before it. Then it gets the close frame.
+      data.dismissed = reason;
+      ws.ping(dismissPing);
       data.dismissTimer = setTimeout(() => ws.terminate(), dismissTimeoutMs);
     };
 
@@ -667,13 +666,12 @@ class Debugger {
   }
 
   #drain(ws: ServerWebSocket<Connection>): void {
-    if (ws.getBufferedAmount() !== 0) return;
-    const { data } = ws;
-    if (data.dismiss) {
-      data.dismiss();
-    } else {
-      data.backend?.resume();
-    }
+    if (ws.getBufferedAmount() === 0) ws.data.backend?.resume();
+  }
+
+  #pong(ws: ServerWebSocket<Connection>, payload: Buffer): void {
+    const { dismissed } = ws.data;
+    if (dismissed !== undefined && payload.toString() === dismissPing) ws.close(1013, dismissed);
   }
 
   #close(connection: ConnectionOwner): void {
@@ -814,8 +812,9 @@ function nodeVersionInfo(): unknown {
 
 const noop = () => {};
 
-// How long a dismissed frontend has to read what its socket still holds.
+// How long a dismissed frontend has to read what was sent to it. A process with nothing else to do stays alive for it.
 const dismissTimeoutMs = 30_000;
+const dismissPing = "bun:dismissed";
 
 const defaultHostname = "localhost";
 const defaultPort = 6499;
@@ -957,7 +956,7 @@ type Connection = {
   backend?: Backend;
   // Present for node:inspector connections, which speak the V8 protocol.
   adapter?: InspectorCDPAdapter;
-  // Set once the backend dismissed this frontend: sends the close frame.
-  dismiss?: () => void;
+  // The reason for the close frame, once the backend dismissed this frontend.
+  dismissed?: string;
   dismissTimer?: ReturnType<typeof setTimeout>;
 };

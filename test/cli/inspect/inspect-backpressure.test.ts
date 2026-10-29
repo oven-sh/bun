@@ -177,9 +177,11 @@ class Program implements AsyncDisposable {
 // The tests move tens of megabytes through a debug build, which the default 5 s does not cover.
 const timeout = isASAN || isDebug ? 120_000 : undefined;
 
+// The reason counts what was queued since the frontend last took a byte: the limit of 4 MB, and
+// what was logged until the debugger thread looked again.
 const closedForNotReading = {
   code: 1013,
-  reason: expect.stringMatching(/^Inspector frontend read nothing while \d+ MB were queued for it$/),
+  reason: expect.stringMatching(/^Inspector frontend read nothing while [4-7] MB were queued for it$/),
 };
 
 /**
@@ -189,8 +191,8 @@ const closedForNotReading = {
 async function logUntilDropped(program: Program, stalled: RawFrontend, witness: RawFrontend): Promise<void> {
   // A socket whose frontend reads nothing still takes bytes while the kernel grows its
   // buffers, and each byte counts as a read. With the default limits it holds about 8 MB,
-  // and the frontend is dropped 4 MB later. A kernel with larger limits takes a whole round:
-  // the frontend then caught up, and the next round is long enough for buffers of 64 MB.
+  // and the frontend is dropped about 5 MB later. A kernel with larger limits takes a whole
+  // round: the frontend then caught up, and the next round is long enough for buffers of 64 MB.
   for (const megabytes of [32, 128]) {
     if (stalled.closeFrame) break;
     stalled.pause();
@@ -256,12 +258,22 @@ describe.concurrent.each(servers)("%s", (_, args, enable, debuggerOn) => {
         expect(stalled.closeFrame).toEqual(closedForNotReading);
         expect(stalled.lines.size).toBeLessThan(program.lines);
 
-        // The breakpoint went with the frontend that set it. The debugger and the domain that
-        // the witness also had on stay on: it is not paused again, and it still gets a line.
+        // The breakpoint went with the frontend that set it: the witness is not paused again.
+        // The domain that the witness also had on stays on: it still gets a line.
         const after = witness.send("Runtime.evaluate", { expression: `hit(); console.log("#1000000 after")` });
         await Promise.race([after, witness.until(() => witness.count("Debugger.paused") === 2, "").catch(() => {})]);
         expect(witness.count("Debugger.paused")).toBe(1);
         await witness.until(() => witness.lines.has(1000000), "a line logged after the stalled frontend left");
+
+        // So does the debugger: a breakpoint of the witness works.
+        expect(await witness.send("Debugger.setBreakpointByUrl", breakpoint)).toEqual({
+          id: expect.any(Number),
+          result: expect.objectContaining({ breakpointId: expect.any(String) }),
+        });
+        const own = witness.send("Runtime.evaluate", { expression: "hit()" });
+        await witness.until(() => witness.count("Debugger.paused") === 2, "the pause at its own breakpoint");
+        await witness.send("Debugger.resume");
+        await own;
         expect(witness.closeFrame).toBeUndefined();
       } finally {
         stalled.close();
@@ -273,7 +285,7 @@ describe.concurrent.each(servers)("%s", (_, args, enable, debuggerOn) => {
 });
 
 test.concurrent(
-  "keeps a frontend that reads, however far behind it is and whatever the size of one message",
+  "keeps a frontend that reads, however far behind it is",
   async () => {
     await using program = new Program(["--inspect=127.0.0.1:0"]);
     await program.until(() => program.url !== "", "the inspector URL");
@@ -282,18 +294,12 @@ test.concurrent(
       await slow.send("Console.enable");
       slow.pause();
 
-      // For each megabyte logged, the frontend takes one chunk: 512 KB at most. It ends up
-      // 16 MB or more behind. Its socket holds about 8 MB of that and the rest waits, twice
-      // the limit. But 4 MB are never queued since it last took a byte.
-      for (let i = 0; i < 16; i++) {
+      // For each megabyte logged, the frontend takes one chunk, which is less. So it falls
+      // further behind in every round, by more than the limit in the end. But it takes a byte
+      // in every round.
+      for (let i = 0; i < 32; i++) {
         await program.log(1);
         await slow.readChunk();
-      }
-      // One message of 6 MB passes the limit by itself. The frontend still reads.
-      await program.big();
-      for (let i = 0; i < 16; i++) {
-        await slow.readChunk();
-        await program.log(1);
       }
 
       slow.resume();
@@ -333,8 +339,12 @@ test.concurrent(
       await program.idle();
       witness.close();
 
-      stalled.resume();
-      await stalled.until(() => false, "").catch(() => {});
+      // The frontend catches up chunk by chunk and sends a command after each one. The program
+      // is there to take it until the frontend has read the close frame.
+      while (!stalled.ended) {
+        await stalled.readChunk().catch(() => {});
+        stalled.send("Runtime.evaluate", { expression: "0" }).catch(() => {});
+      }
       expect(stalled.closeFrame).toEqual(closedForNotReading);
       // With that socket closed the program has nothing left and exits.
       expect(await program.exited).toBe(0);
@@ -365,30 +375,38 @@ const dialed: Dialed[] = [
   ],
 ];
 
-describe.concurrent.each(dialed)("%s", (_, listen, how) => {
-  /** Starts the program, which dials the frontend. */
-  async function dial(dir: string, backlog: string | undefined) {
-    const { promise: accepted, resolve: accept } = Promise.withResolvers<net.Socket>();
-    const server = net.createServer(accept);
-    listen(server, dir);
-    await new Promise(resolve => server.once("listening", resolve));
-    const program = new Program(how(server, dir).args, { backlog, env: how(server, dir).env });
-    const frontend = RawFrontend.accept(await accepted);
-    return { server, program, frontend };
+/** Starts the program, which dials the frontend. Rejects with what the program printed if it exits first. */
+async function dial([, listen, how]: Dialed, dir: string, backlog: string | null) {
+  const { promise: accepted, resolve: accept } = Promise.withResolvers<net.Socket>();
+  const server = net.createServer(accept);
+  listen(server, dir);
+  await new Promise(resolve => server.once("listening", resolve));
+  const { args, env } = how(server, dir);
+  const program = new Program(args, { backlog, env });
+  try {
+    const socket = await Promise.race([accepted, program.until(() => false, "it dialed the frontend")]);
+    return { server, program, frontend: RawFrontend.accept(socket as net.Socket) };
+  } catch (error) {
+    server.close();
+    await program[Symbol.asyncDispose]();
+    throw error;
   }
+}
 
+describe.concurrent.each(dialed)("%s", (...transport) => {
   test(
     "disconnects a frontend that stops reading",
     async () => {
       using dir = tempDir("inspect-dialed", {});
-      const { server, program, frontend: stalled } = await dial(String(dir), "4");
+      const { server, program, frontend: stalled } = await dial(transport, String(dir), "4");
       await using _ = program;
       try {
         await stalled.send("Console.enable");
         stalled.pause();
 
-        // Its socket holds about 8 MB. The program drops it 4 MB later, when the debugger
-        // thread next looks: so that thread gets its turn after each megabyte.
+        // Its socket holds what the kernel lets it: about 8 MB on TCP, less than 1 MB on a unix
+        // socket. The program drops it about 5 MB later, when the debugger thread has looked
+        // twice: so that thread gets its turn after each megabyte.
         for (let megabyte = 0; megabyte < 128 && !stalled.ended; megabyte++) {
           await program.log(1);
           await program.afterDebuggerThread(stalled);
@@ -411,8 +429,8 @@ describe.concurrent.each(dialed)("%s", (_, listen, how) => {
     "a frontend that was away gets every line and its answers",
     async () => {
       using dir = tempDir("inspect-dialed", {});
-      // 24 MB are logged while it is away. Its socket holds about 8 MB, and the limit is out of reach.
-      const { server, program, frontend } = await dial(String(dir), "64");
+      // 24 MB are logged while it is away. Its socket holds a part, and the limit is out of reach.
+      const { server, program, frontend } = await dial(transport, String(dir), "64");
       await using _ = program;
       try {
         await frontend.send("Console.enable");
@@ -435,39 +453,75 @@ describe.concurrent.each(dialed)("%s", (_, listen, how) => {
   );
 });
 
+// A unix socket takes no more once it is full, so each step below is what the program sees.
+const unixSocket = dialed[1];
+
+test.concurrent(
+  "one message above the limit does not drop a frontend that reads after it",
+  async () => {
+    using dir = tempDir("inspect-large-message", {});
+    const { server, program, frontend } = await dial(unixSocket, String(dir), "4");
+    await using _ = program;
+    try {
+      await frontend.send("Console.enable");
+      frontend.pause();
+
+      for (let round = 0; round < 2; round++) {
+        // The socket is full, and the debugger thread has seen it take nothing. With the megabyte
+        // before, 3 MB wait now: less than the limit.
+        for (let megabyte = 0; megabyte < 2; megabyte++) {
+          await program.log(1);
+          await program.afterDebuggerThread(frontend);
+        }
+        // With one message of 6 MB the limit is passed at once. The program only notes that.
+        await program.big();
+        await program.afterDebuggerThread(frontend);
+        expect(frontend.ended).toBe(false);
+        // The frontend's socket takes bytes before the program looks again.
+        for (let megabyte = 0; megabyte < 2; megabyte++) {
+          await frontend.readFromKernel();
+          await program.log(1);
+          await program.afterDebuggerThread(frontend);
+        }
+      }
+
+      frontend.resume();
+      await frontend.until(() => frontend.lines.size === program.lines, "every line");
+      expect(frontend.ended).toBe(false);
+    } finally {
+      frontend.close();
+      server.close();
+    }
+  },
+  timeout,
+);
+
 // This test queues what the program queues by default. A debug build is too slow for that.
 test.skipIf(isASAN || isDebug)("the limit is 128 MB queued, and the memory comes back", async () => {
   using dir = tempDir("inspect-limit", {});
-  const path = join(String(dir), "frontend.sock");
-  const { promise: accepted, resolve: accept } = Promise.withResolvers<net.Socket>();
-  // A unix socket holds a fixed amount, so the megabytes below are the same in every run.
-  const server = net.createServer(accept).listen(path);
+  const { server, program, frontend: stalled } = await dial(unixSocket, String(dir), null);
+  await using _ = program;
   try {
-    await new Promise(resolve => server.once("listening", resolve));
-    await using program = new Program([], { backlog: null, env: { BUN_INSPECT_CONNECT_TO: "unix://" + path } });
-    const stalled = RawFrontend.accept(await accepted);
-    try {
-      await stalled.send("Console.enable");
-      const before = await program.rss();
-      stalled.pause();
+    await stalled.send("Console.enable");
+    const before = await program.rss();
+    stalled.pause();
 
-      let megabytes = 0;
-      for (; megabytes < 512 && !stalled.ended; megabytes++) {
-        await program.log(1);
-        await program.afterDebuggerThread(stalled);
-      }
-      // 128 MB wait with no byte taken, and the program looks once more 16 MB later.
-      expect({ dropped: stalled.ended, megabytes }).toEqual({ dropped: true, megabytes: expect.any(Number) });
-      expect(megabytes).toBeGreaterThanOrEqual(128);
-      expect(megabytes).toBeLessThan(192);
-
-      // Nothing is queued for a frontend that is gone, and what was queued is free again.
-      await program.log(64);
-      expect((await program.rss()) - before).toBeLessThan(100);
-    } finally {
-      stalled.close();
+    let megabytes = 0;
+    for (; megabytes < 512 && !stalled.ended; megabytes++) {
+      await program.log(1);
+      await program.afterDebuggerThread(stalled);
     }
+    // The program looks every 16 MB. It drops the frontend at the look after the one that found
+    // 128 MB waiting with no byte taken.
+    expect({ dropped: stalled.ended, megabytes }).toEqual({ dropped: true, megabytes: expect.any(Number) });
+    expect(megabytes).toBeGreaterThanOrEqual(144);
+    expect(megabytes).toBeLessThan(192);
+
+    // Nothing is queued for a frontend that is gone, and what was queued is free again.
+    await program.log(64);
+    expect((await program.rss()) - before).toBeLessThan(100);
   } finally {
+    stalled.close();
     server.close();
   }
 });

@@ -121,20 +121,23 @@ static constexpr bool isMethodNameCharacter(char16_t character)
     return isASCIIAlphanumeric(character) || character == '.';
 }
 
-// A command that turns off what a frontend turned on. `Debugger.removeBreakpoint` names its breakpoint.
+// A command that turns off what a frontend turned on. One that removes a breakpoint names it in `params`, as JSON text.
 struct TurnOffCommand {
     String method;
-    String breakpointId;
+    String params;
 
     friend bool operator==(const TurnOffCommand&, const TurnOffCommand&) = default;
 
+    bool removesBreakpoint() const
+    {
+        return !params.isNull();
+    }
+
     String text() const
     {
-        if (breakpointId.isNull())
+        if (params.isNull())
             return makeString("{\"id\":-1,\"method\":\""_s, method, "\"}"_s);
-        auto params = JSON::Object::create();
-        params->setString("breakpointId"_s, breakpointId);
-        return makeString("{\"id\":-1,\"method\":\""_s, method, "\",\"params\":"_s, params->toJSONString(), '}');
+        return makeString("{\"id\":-1,\"method\":\""_s, method, "\",\"params\":"_s, params, '}');
     }
 };
 
@@ -259,6 +262,7 @@ public:
                     router.disconnectFrontend(connection.get());
                 connection->turnOffWhatOnlyThisFrontendTurnedOn();
             } else {
+                connection->removeBreakpointsThatTeardownKeeps();
                 connection->inspector().disconnect(connection.get());
             }
 
@@ -339,7 +343,7 @@ public:
         }
 
         if (method.isNull() || method.contains('\\')) {
-            // A command that turns something on or off is short. The backend parses each command again.
+            // Another shape is parsed here, up to this length. The backend parses each command again.
             if (message.length() > 1024)
                 return;
             auto value = JSON::Value::parseJSON(message);
@@ -355,15 +359,15 @@ public:
             turnOn({ makeString(method.left(method.length() - 6), "disable"_s), {} });
         } else if (method.endsWith(".disable"_s)) {
             turnOffCommands.removeAll(TurnOffCommand { method.toString(), {} });
-            // It removes every breakpoint.
             if (method == "Debugger.disable"_s)
-                turnOffCommands.removeAllMatching([](auto& command) { return !command.breakpointId.isNull(); });
-        } else if (method == "Debugger.setBreakpointByUrl"_s || method == "Debugger.setBreakpoint"_s) {
-            if (auto breakpointId = breakpointIdOf(message); !breakpointId.isNull())
-                turnOn({ "Debugger.removeBreakpoint"_s, WTF::move(breakpointId) });
-        } else if (method == "Debugger.removeBreakpoint"_s) {
-            if (auto params = paramsOf(message))
-                turnOffCommands.removeAll(TurnOffCommand { "Debugger.removeBreakpoint"_s, params->getString("breakpointId"_s) });
+                forgetEveryBreakpoint();
+        } else if (method == "Debugger.setBreakpointByUrl"_s || method == "Debugger.setBreakpoint"_s || method == "Debugger.addSymbolicBreakpoint"_s) {
+            // JSC refuses a breakpoint that exists, so it stays with the frontend that has it.
+            if (auto removal = breakpointRemoval(method, message); removal && !frontendsOfThisContext().containsIf([&](auto& frontend) { return frontend->turnOffCommands.contains(*removal); }))
+                turnOn(WTF::move(*removal));
+        } else if (method == "Debugger.removeBreakpoint"_s || method == "Debugger.removeSymbolicBreakpoint"_s) {
+            if (auto removal = breakpointRemoval(method, message))
+                turnOffCommands.removeAll(*removal);
         } else {
             for (auto& [on, off] : commandsThatTurnOnAndOff) {
                 if (method == on) {
@@ -393,62 +397,106 @@ public:
         return object ? object->getObject("params"_s) : nullptr;
     }
 
-    // The id that JSC gives the breakpoint of a `Debugger.setBreakpointByUrl` or a `Debugger.setBreakpoint` command.
-    static String breakpointIdOf(const WTF::String& message)
+    // The command that removes the breakpoint that `message` sets or removes, under the identity that JSC gives it.
+    static std::optional<TurnOffCommand> breakpointRemoval(StringView method, const WTF::String& message)
     {
         auto params = paramsOf(message);
         if (!params)
-            return {};
+            return std::nullopt;
 
-        if (auto location = params->getObject("location"_s)) {
-            auto lineNumber = location->getInteger("lineNumber"_s);
-            auto scriptId = location->getString("scriptId"_s);
-            if (!lineNumber || scriptId.isNull())
-                return {};
-            auto sourceID = parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(0);
-            unsigned columnNumber = location->getInteger("columnNumber"_s).value_or(0);
-            return makeString(sourceID, ':', static_cast<unsigned>(*lineNumber), ':', columnNumber);
+        auto removal = JSON::Object::create();
+        if (method.endsWith("SymbolicBreakpoint"_s)) {
+            auto symbol = params->getString("symbol"_s);
+            if (symbol.isNull())
+                return std::nullopt;
+            removal->setString("symbol"_s, symbol);
+            removal->setBoolean("caseSensitive"_s, params->getBoolean("caseSensitive"_s).value_or(true));
+            removal->setBoolean("isRegex"_s, params->getBoolean("isRegex"_s).value_or(false));
+            return TurnOffCommand { "Debugger.removeSymbolicBreakpoint"_s, removal->toJSONString() };
         }
 
-        auto lineNumber = params->getInteger("lineNumber"_s);
-        auto url = params->getString("url"_s);
-        auto urlRegex = params->getString("urlRegex"_s);
-        if (!lineNumber || url.isNull() == urlRegex.isNull())
-            return {};
-        auto slash = url.isNull() ? "/"_s : ""_s;
-        unsigned columnNumber = params->getInteger("columnNumber"_s).value_or(0);
-        return makeString(slash, url.isNull() ? urlRegex : url, slash, ':', static_cast<unsigned>(*lineNumber), ':', columnNumber);
+        String breakpointId;
+        if (method == "Debugger.removeBreakpoint"_s) {
+            breakpointId = params->getString("breakpointId"_s);
+        } else if (method == "Debugger.setBreakpoint"_s) {
+            auto location = params->getObject("location"_s);
+            auto lineNumber = location ? location->getInteger("lineNumber"_s) : std::nullopt;
+            auto scriptId = location ? location->getString("scriptId"_s) : String();
+            if (lineNumber && !scriptId.isNull()) {
+                auto sourceID = parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(0);
+                unsigned columnNumber = location->getInteger("columnNumber"_s).value_or(0);
+                breakpointId = makeString(sourceID, ':', static_cast<unsigned>(*lineNumber), ':', columnNumber);
+            }
+        } else {
+            auto lineNumber = params->getInteger("lineNumber"_s);
+            auto url = params->getString("url"_s);
+            auto urlRegex = params->getString("urlRegex"_s);
+            if (lineNumber && url.isNull() != urlRegex.isNull()) {
+                auto slash = url.isNull() ? "/"_s : ""_s;
+                unsigned columnNumber = params->getInteger("columnNumber"_s).value_or(0);
+                breakpointId = makeString(slash, url.isNull() ? urlRegex : url, slash, ':', static_cast<unsigned>(*lineNumber), ':', columnNumber);
+            }
+        }
+        if (breakpointId.isNull())
+            return std::nullopt;
+        removal->setString("breakpointId"_s, breakpointId);
+        return TurnOffCommand { "Debugger.removeBreakpoint"_s, removal->toJSONString() };
+    }
+
+    // Inspected thread. Every frontend of this context, this one too.
+    Vector<RefPtr<BunInspectorConnection>, 8> frontendsOfThisContext() const
+    {
+        Locker<Lock> locker(inspectorConnectionsLock);
+        return inspectorConnections->get(scriptExecutionContextIdentifier);
+    }
+
+    // Inspected thread. `Debugger.disable` removed the breakpoints of every frontend.
+    void forgetEveryBreakpoint()
+    {
+        for (auto& frontend : frontendsOfThisContext())
+            frontend->turnOffCommands.removeAllMatching([](auto& command) { return command.removesBreakpoint(); });
     }
 
     // Inspected thread. JSC keeps one state for every frontend, so what only this frontend turned on goes off with it.
     void turnOffWhatOnlyThisFrontendTurnedOn()
     {
-        Vector<RefPtr<BunInspectorConnection>, 8> connections;
-        {
-            Locker<Lock> locker(inspectorConnectionsLock);
-            connections.appendVector(inspectorConnections->get(scriptExecutionContextIdentifier));
-        }
+        if (turnOffCommands.isEmpty())
+            return;
 
+        auto frontends = frontendsOfThisContext();
         // What the in-process `inspector.Session` turned on does not stay on for it: it has no client.
         auto anotherFrontendTurnedOn = [&](const TurnOffCommand& command) {
-            return connections.containsIf([&](auto& other) {
+            return frontends.containsIf([&](auto& other) {
                 return other.get() != this && other->hasTransport && other->status != ConnectionStatus::Disconnected && other->turnOffCommands.contains(command);
             });
         };
 
         auto commands = std::exchange(turnOffCommands, {});
         TurnOffCommand disableDebugger { "Debugger.disable"_s, {} };
-        bool debuggerGoesOff = commands.contains(disableDebugger) && !anotherFrontendTurnedOn(disableDebugger);
+        // JSC asserts when a frontend disables a debugger that is not attached.
+        bool debuggerGoesOff = globalObject->debugger() && commands.contains(disableDebugger) && !anotherFrontendTurnedOn(disableDebugger);
         for (auto& command : commands) {
-            // `Debugger.disable` removes every breakpoint.
-            if (anotherFrontendTurnedOn(command) || (debuggerGoesOff && !command.breakpointId.isNull()))
+            if (command == disableDebugger ? !debuggerGoesOff : anotherFrontendTurnedOn(command))
                 continue;
-            // JSC asserts when a frontend disables a debugger that is not attached.
-            if (command == disableDebugger && !globalObject->debugger())
+            // `Debugger.disable` removes every breakpoint.
+            if (debuggerGoesOff && command.removesBreakpoint())
                 continue;
             if (recordsProfileSamples && command.method == "ScriptProfiler.stopTracking"_s)
                 discardProfileSamples();
             inspector().dispatchMessageFromRemote(command.text());
+        }
+        if (debuggerGoesOff)
+            forgetEveryBreakpoint();
+    }
+
+    // Inspected thread. JSC's teardown for the last frontend keeps the breakpoints that were set while the debugger was off.
+    void removeBreakpointsThatTeardownKeeps()
+    {
+        if (globalObject->debugger())
+            return;
+        for (auto& command : std::exchange(turnOffCommands, {})) {
+            if (command.removesBreakpoint())
+                inspector().dispatchMessageFromRemote(command.text());
         }
     }
 
@@ -469,8 +517,8 @@ public:
         if (message.length() == 0)
             return;
 
-        // The debugger thread dropped this frontend and hands it nothing more.
-        if (this->status.load(std::memory_order_relaxed) == ConnectionStatus::Disconnecting)
+        // A frontend that left gets nothing more.
+        if (this->status.load(std::memory_order_relaxed) >= ConnectionStatus::Disconnecting)
             return;
 
         this->sendMessageToDebuggerThread(message.isolatedCopy());
@@ -498,9 +546,11 @@ public:
 
         while (!isDoneProcessingEvents) {
             for (auto& connection : connections) {
+                // The thread runs no disconnect task during the pause, and the breakpoints of a frontend that left would pause it again.
                 if (connection->hasLeft())
-                    continue;
-                connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
+                    connection->turnOffWhatOnlyThisFrontendTurnedOn();
+                else
+                    connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
                 if (isDoneProcessingEvents)
                     break;
             }

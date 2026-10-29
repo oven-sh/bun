@@ -162,8 +162,26 @@ pub(crate) struct Manifest {
     pub(crate) escaped: Vec<u8>,
 }
 
-/// What orders a listing: a rank, the file's source path, its isolated hash, and then its index.
-type ListingKey<'a> = (u8, &'a [u8], u64, u32);
+/// What a manifest lists, in the order it lists them.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Kind {
+    PageScript,
+    Page,
+    Script,
+    Stylesheet,
+    Asset,
+}
+
+/// A file that a manifest lists, before it is written.
+struct Listed {
+    kind: Kind,
+    /// Its `input`: a range of the buffer that holds the `input` of every listed file.
+    input: core::ops::Range<usize>,
+    /// Of its contents. Orders the files that have one `input`, or none.
+    hash: u64,
+    /// Of the chunk, or of the asset in `additional_output_files`.
+    index: u32,
+}
 
 /// Where an entry's path and etag come from.
 #[derive(Clone, Copy)]
@@ -279,7 +297,6 @@ pub(crate) fn emit(
     // Use the server-side public path here.
     let public_path: &[u8] = &options.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();
-    let mut input_buffer: Vec<u8> = Vec::new();
 
     for (chunk_index, ch) in chunks.iter().enumerate() {
         if ch.entry_point.source_index() == browser_source_index && ch.entry_point.is_entry_point()
@@ -324,111 +341,109 @@ pub(crate) fn emit(
 
     writer.write_all(b"\"files\":[")?;
 
-    let mut first = true;
-
     let additional_output_files = &graph.additional_output_files;
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
 
-    // Chunk index and the order of copied files follow the scan order, so neither orders the listing.
-    let mut listed: Vec<ListingKey<'_>> = Vec::new();
+    // Chunk index and the order of the assets follow the scan order, so the printed `input` orders the listing.
+    let mut inputs: Vec<u8> = Vec::new();
+    let mut listed: Vec<Listed> = Vec::new();
     for (chunk_index, ch) in chunks.iter().enumerate() {
         if !chunks_to_write.is_set(chunk_index) {
             continue;
         }
-        let is_page = ch.is_entry_point_file(browser_source_index);
-        let rank = match ch.content {
-            Content::Javascript(_) if is_page => 0,
-            Content::Html => 1,
-            Content::Javascript(_) => 2,
-            Content::Css(_) => 3,
+        let kind = match ch.content {
+            Content::Javascript(_) if ch.is_entry_point_file(browser_source_index) => {
+                Kind::PageScript
+            }
+            Content::Html => Kind::Page,
+            Content::Javascript(_) => Kind::Script,
+            Content::Css(_) => Kind::Stylesheet,
         };
-        let source_path: &[u8] = if ch.entry_point.is_entry_point() {
-            sources[ch.entry_point.source_index() as usize].path.text
-        } else {
-            b""
-        };
-        listed.push((rank, source_path, ch.isolated_hash, chunk_index as u32));
-    }
-    listed.sort_unstable();
-
-    for (_, _, _, chunk_index) in listed {
-        let ch = &chunks[chunk_index as usize];
-        if !first {
-            writer.write_all(b",")?;
+        let start = inputs.len();
+        if ch.entry_point.is_entry_point() {
+            let source = &sources[ch.entry_point.source_index() as usize];
+            append_input(&mut inputs, root_dir, source.path.text);
         }
-        first = false;
-
-        let input: &[u8] = if !ch.entry_point.is_entry_point() {
-            b""
-        } else {
-            source_path_relative_to_root(
-                &mut input_buffer,
-                root_dir,
-                sources[ch.entry_point.source_index() as usize].path.text,
-            )
-        };
-
-        write_entry_item(
-            writer,
-            &mut refs,
-            input,
-            Entry::Chunk(chunk_index),
-            ch.content.loader(),
-            if ch.entry_point.is_entry_point() {
-                OutputKind::EntryPoint
-            } else {
-                OutputKind::Chunk
-            },
-        )?;
+        listed.push(Listed {
+            kind,
+            input: start..inputs.len(),
+            hash: ch.isolated_hash,
+            index: chunk_index as u32,
+        });
     }
-
-    let mut assets: Vec<ListingKey<'_>> = Vec::new();
     for (i, output_file) in additional_output_files.iter().enumerate() {
         if let Some(source_index) = output_file.source_index.unwrap() {
             if source_index.get() != server_source_index
                 && file_entry_bits[source_index.get() as usize].has_intersection(&entry_point_bits)
             {
-                assets.push((
-                    0,
-                    sources[source_index.get() as usize].path.text,
-                    0,
-                    i as u32,
-                ));
+                let start = inputs.len();
+                let source = &sources[source_index.get() as usize];
+                append_input(&mut inputs, root_dir, source.path.text);
+                listed.push(Listed {
+                    kind: Kind::Asset,
+                    input: start..inputs.len(),
+                    hash: output_file.hash.value,
+                    index: i as u32,
+                });
             }
         }
     }
-    assets.sort_unstable();
+    listed.sort_unstable_by(|a, b| {
+        let key = |file: &Listed| {
+            (
+                file.kind,
+                &inputs[file.input.clone()],
+                file.hash,
+                file.index,
+            )
+        };
+        key(a).cmp(&key(b))
+    });
 
-    for (_, source_path, _, i) in assets {
-        let output_file = &additional_output_files[i as usize];
-        if !first {
+    for (position, file) in listed.iter().enumerate() {
+        if position > 0 {
             writer.write_all(b",")?;
         }
-        first = false;
+        let input = &inputs[file.input.clone()];
 
-        let path_for_key = source_path_relative_to_root(&mut input_buffer, root_dir, source_path);
+        if file.kind == Kind::Asset {
+            let output_file = &additional_output_files[file.index as usize];
+            let path: &[u8] = if inject_compiler_filesystem_prefix {
+                temp_buffer.clear();
+                temp_buffer.extend_from_slice(public_path);
+                temp_buffer
+                    .extend_from_slice(strings::remove_leading_dot_slash(&output_file.dest_path));
+                &temp_buffer[..]
+            } else {
+                &output_file.dest_path[..]
+            };
 
-        let path: &[u8] = if inject_compiler_filesystem_prefix {
-            temp_buffer.clear();
-            temp_buffer.extend_from_slice(public_path);
-            temp_buffer
-                .extend_from_slice(strings::remove_leading_dot_slash(&output_file.dest_path));
-            &temp_buffer[..]
+            write_entry_item(
+                writer,
+                &mut refs,
+                input,
+                Entry::Asset {
+                    path,
+                    hash: output_file.hash.value,
+                },
+                output_file.loader,
+                output_file.output_kind,
+            )?;
         } else {
-            &output_file.dest_path[..]
-        };
-
-        write_entry_item(
-            writer,
-            &mut refs,
-            path_for_key,
-            Entry::Asset {
-                path,
-                hash: output_file.hash.value,
-            },
-            output_file.loader,
-            output_file.output_kind,
-        )?;
+            let ch = &chunks[file.index as usize];
+            write_entry_item(
+                writer,
+                &mut refs,
+                input,
+                Entry::Chunk(file.index),
+                ch.content.loader(),
+                if ch.entry_point.is_entry_point() {
+                    OutputKind::EntryPoint
+                } else {
+                    OutputKind::Chunk
+                },
+            )?;
+        }
     }
 
     writer.write_all(b"]}")?;
@@ -439,17 +454,12 @@ pub(crate) fn emit(
     })
 }
 
-/// The manifest's `input` / asset-key form of a source path: root-relative, `/`-separated.
-fn source_path_relative_to_root<'b>(
-    buf: &'b mut Vec<u8>,
-    root_dir: &[u8],
-    path: &[u8],
-) -> &'b [u8] {
-    buf.clear();
-    buf.extend_from_slice(strings::remove_leading_dot_slash(relative_normalized::<
+/// Appends the manifest's `input` / asset-key form of a source path: root-relative, `/`-separated.
+fn append_input(inputs: &mut Vec<u8>, root_dir: &[u8], path: &[u8]) {
+    let start = inputs.len();
+    inputs.extend_from_slice(strings::remove_leading_dot_slash(relative_normalized::<
         platform::Auto,
         false,
     >(root_dir, path)));
-    platform_to_posix_in_place(&mut buf[..]);
-    buf
+    platform_to_posix_in_place(&mut inputs[start..]);
 }

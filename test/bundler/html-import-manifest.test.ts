@@ -631,6 +631,7 @@ console.log("About manifest:", aboutHtml);
       entrypoints?: string[];
       splitting?: boolean;
       minify?: boolean;
+      chunkNaming?: string;
       assetNaming?: string;
       plugins?: BunPlugin[];
     }
@@ -638,7 +639,7 @@ console.log("About manifest:", aboutHtml);
     /** Every output of one build, sorted by path. */
     async function build(
       dir: string,
-      { entrypoints = ["server.js"], splitting, minify, assetNaming, plugins }: Options = {},
+      { entrypoints = ["server.js"], splitting, minify, chunkNaming, assetNaming, plugins }: Options = {},
     ) {
       const result = await Bun.build({
         entrypoints: entrypoints.map(entrypoint => join(dir, entrypoint)),
@@ -646,7 +647,7 @@ console.log("About manifest:", aboutHtml);
         target: "bun",
         splitting,
         minify,
-        naming: { entry: "[name]-[hash].[ext]", asset: assetNaming },
+        naming: { entry: "[name]-[hash].[ext]", chunk: chunkNaming, asset: assetNaming },
         plugins,
       });
       expect(result.logs).toBeEmpty();
@@ -657,8 +658,15 @@ console.log("About manifest:", aboutHtml);
           text: await output.text(),
         })),
       );
+      // Every file that a manifest lists is a file of this build.
+      const written = new Set(outputs.map(output => "./" + output.path));
+      const listed = outputs.flatMap(output => parseManifests(output.text)).flatMap(listedPaths);
+      expect(listed.filter(path => !written.has(path))).toEqual([]);
       return outputs.sort((a, b) => (a.path < b.path ? -1 : 1));
     }
+
+    /** The page and the files that a manifest lists, in print order. */
+    const listedPaths = (manifest: Manifest) => [manifest.index, ...manifest.files.map(file => file.path)];
 
     /** An output's name without its hash. */
     const label = (output: Output) => output.path.replace(/-[^-.]+(?=\.[a-z]+$)/, "");
@@ -780,6 +788,30 @@ console.log("About manifest:", aboutHtml);
 
     test.each(cases)("when $changes changes", async ({ renames, ...options }) => {
       await expectRenames({ files, ...options }, renames);
+    });
+
+    // `server.js` and `other.js` import a chunk, and that chunk imports the chunk that prints the manifest.
+    test("when client JS changes two imports below an entry point", async () => {
+      using dir = tempDir("html-import-hash-two-levels", {
+        ...files,
+        "page.js": `import page from "./index.html"; export { page };`,
+        "mid.js": `import { page } from "./page.js"; export const mid = ["mid", page];`,
+        "server.js": `import { mid } from "./mid.js"; console.log(mid);`,
+        "other.js": `import { mid } from "./mid.js"; console.log("other", mid);`,
+        "third.js": `import { page } from "./page.js"; console.log("third", page);`,
+      });
+      const options = { entrypoints: ["server.js", "other.js", "third.js"], splitting: true };
+      const before = await build(String(dir), options);
+      write(String(dir), { "client.js": `import("./lazy.js"); console.log("changed");` });
+      const after = await build(String(dir), options);
+
+      const kept = new Set(after.map(output => output.path));
+      const serverSide = before.filter(
+        output => /^(server|other|third)-/.test(output.path) || printers(before).includes(output),
+      );
+      expect(serverSide.map(label).sort()).toEqual(["chunk.js", "chunk.js", "other.js", "server.js", "third.js"]);
+      expect(serverSide.filter(output => kept.has(output.path)).map(label)).toEqual([]);
+      expect(mismatches(before, after)).toEqual(none);
     });
 
     // Each page has its own stylesheet, script and image, and both show one logo.
@@ -942,7 +974,96 @@ console.log("About manifest:", aboutHtml);
         await build(String(dir), { splitting: true, plugins: [findLast("a.js")] }),
         await build(String(dir), { splitting: true, plugins: [findLast("b.js")] }),
       ];
+      const listed = (outputs: Output[]) => parseManifests(printers(outputs)[0].text).map(listedPaths);
+      expect(listed(second)).not.toEqual(listed(first));
       expect(mismatches(first, second).oneNameTwoContents).toEqual([]);
+    });
+
+    // No entry point owns the chunks of `x.js` and `y.js`, so a manifest gives
+    // them no `input`. The scan order decides which has the lower index.
+    test("when the scan order trades the indexes of two chunks with no input", async () => {
+      const route = (name: string, shared: string) =>
+        `import { ${shared} } from "./${shared}.js"; console.log("${name}", ${shared});`;
+      using dir = tempDir("html-import-hash-no-input", {
+        ...routes,
+        "a.client.js": `import("./a.route1.js"); import("./a.route2.js");`,
+        "b.client.js": `import("./b.route1.js"); import("./b.route2.js");`,
+        "a.route1.js": route("a", "x"),
+        "a.route2.js": route("a", "y"),
+        "b.route1.js": route("b", "y"),
+        "b.route2.js": route("b", "x"),
+        "x.js": `export const x = "x";`,
+        "y.js": `export const y = "y";`,
+      });
+      /** The text of each chunk that the first manifest lists with no `input`, in print order. */
+      async function withoutInput(held: string) {
+        const outputs = await build(String(dir), { splitting: true, plugins: [findLast(held)] });
+        const [manifest] = parseManifests(printers(outputs)[0].text);
+        return manifest.files
+          .filter(file => file.input === undefined)
+          .map(file => outputs.find(output => "./" + output.path === file.path)!.text);
+      }
+      const [first, second] = [await withoutInput("a.js"), await withoutInput("b.js")];
+      expect(first).toHaveLength(2);
+      expect(second).toEqual(first);
+    });
+
+    // With `[hash1]` a hash prints one character, and more when two chunks
+    // would print the same one. The page reaches none of the 128 chunks that
+    // the second build adds, so they change the names of its 32 lazy chunks
+    // only through the widths of their hashes.
+    test("when other chunks make the hashes of listed chunks wider", async () => {
+      const lazy = Array.from({ length: 32 }, (_, i) => `lazy${i}.js`);
+      const others = Array.from({ length: 128 }, (_, i) => `x${i}.js`);
+      using dir = tempDir("html-import-hash-width", {
+        "server.js": files["server.js"],
+        "index.html": `<!doctype html><html><body><script type="module" src="./client.js"></script></body></html>`,
+        "client.js": lazy.map(file => `import("./${file}");`).join(""),
+        "other.js": `console.log("other");`,
+        ...Object.fromEntries([...lazy, ...others].map(file => [file, `console.log("${file}");`])),
+      });
+      const options = { entrypoints: ["server.js", "other.js"], splitting: true, chunkNaming: "c[hash1].[ext]" };
+      const narrow = await build(String(dir), options);
+      write(String(dir), { "other.js": others.map(file => `import("./${file}");`).join("") });
+      const wide = await build(String(dir), options);
+
+      const manifest = (outputs: Output[]) => parseManifests(printers(outputs)[0].text)[0];
+      const inputs = (outputs: Output[]) => manifest(outputs).files.map(file => [file.loader, file.input]);
+      expect(inputs(wide)).toEqual(inputs(narrow));
+      expect(listedPaths(manifest(wide))).not.toEqual(listedPaths(manifest(narrow)));
+      expect(changes(narrow, wide)).toEqual({ "server.js": renamed });
+    });
+
+    // Not by chunk index, which follows the scan order. Not by a native path
+    // either: `lazy/x.js` is before `lazy0.js` only with `/`.
+    test("the manifest lists files by kind, then by input", async () => {
+      using dir = tempDir("html-import-hash-listing", {
+        "server.js": files["server.js"],
+        "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body><img src="./b.png"><img src="./a0.png"><img src="./a/c.png"><script type="module" src="./client.js"></script></body></html>`,
+        "client.js": `import("./lazy0.js"); import("./lazy/x.js"); console.log("client");`,
+        "lazy0.js": `import "./lazy0.css"; console.log("lazy 0");`,
+        "lazy/x.js": `import "./x.css"; console.log("x");`,
+        "lazy0.css": `.lazy0 { color: red; }`,
+        "lazy/x.css": `.x { color: blue; }`,
+        "style.css": `body { color: green; }`,
+        "b.png": "b",
+        "a0.png": "a0",
+        "a/c.png": "c",
+      });
+      const [server] = printers(await build(String(dir), { splitting: true }));
+      const [manifest] = parseManifests(server.text);
+      expect(manifest.files.map(file => [file.loader, file.input])).toEqual([
+        ["js", "index.html"],
+        ["html", "index.html"],
+        ["js", "lazy/x.js"],
+        ["js", "lazy0.js"],
+        ["css", "index.html"],
+        ["css", "lazy/x.js"],
+        ["css", "lazy0.js"],
+        ["file", "a/c.png"],
+        ["file", "a0.png"],
+        ["file", "b.png"],
+      ]);
     });
 
     // `bun build` writes the chunks to disk itself.

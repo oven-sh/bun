@@ -1,20 +1,20 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
 const js = { capability: "js", throws: true } as const;
-const read = { returns: b.any.returning("Promise"), ...js } as const;
+const read = { returns: b.promise, ...js } as const;
 
 const members = {
   cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
-  drain: { returns: b.any.returning("Uint8Array", "undefined"), ...js, length: 1 },
+  drain: { returns: b.opaque.returning("Uint8Array", "undefined"), ...js, length: 1 },
   isClosed: { getter: b.bool, pure: true },
   pull: {
     ...js,
-    args: { view: b.any, flags: b.any },
-    returns: b.any.returning("number", "boolean", "Promise", "Uint8Array", "undefined"),
+    args: { view: b.opaque, flags: b.opaque },
+    returns: b.opaque.returning("number", "boolean", "Promise", "Uint8Array", "undefined"),
     passThis: true,
     length: 1,
   },
-  start: { returns: b.any.returning("number", "Uint8Array", "undefined"), ...js, length: 1 },
+  start: { returns: b.opaque.returning("number", "Uint8Array", "undefined"), ...js, length: 1 },
   updateRef: { args: { enable: b.bool.loose } },
 } as const;
 
@@ -67,8 +67,9 @@ export const FileInternalReadableStreamSource = b.class({
     drain: members.drain,
     isClosed: members.isClosed,
     pull: members.pull,
-    setFlowing: { args: { flag: b.any }, capability: "js" },
-    setRawMode: { args: { flag: b.any }, returns: b.any.returning("object", "undefined"), capability: "js" },
+    setFlowing: { args: { flag: b.bool.otherAsNull }, capability: "js" },
+    /** Returns the error of a failure. */
+    setRawMode: { args: { flag: b.bool.otherAsNull }, returns: b.object.optional, capability: "js" },
     start: members.start,
     updateRef: members.updateRef,
   },

@@ -2918,15 +2918,14 @@ pub(crate) fn create_shell_interpreter<'a>(
     cx: &mut JsScope<'a>,
     resolve: JsLocal<'a>,
     reject: JsLocal<'a>,
-    parsed_shell_script: JsLocal<'a>,
+    (parsed_shell_script, parsed_shell_script_js): (
+        &crate::shell::ParsedShellScript,
+        JsLocal<'a, crate::jsc::JSObject>,
+    ),
 ) -> crate::jsc::JsResult<JsWrapper<'a, Interpreter>> {
-    use crate::shell::parsed_shell_script::{self, ParsedShellScript};
+    use crate::shell::parsed_shell_script;
 
     let global = cx.global();
-    let parsed_shell_script_js = parsed_shell_script.to_js();
-    let parsed_shell_script = parsed_shell_script_js
-        .as_class_ref::<ParsedShellScript>()
-        .ok_or_else(|| global.throw(format_args!("shell: expected a ParsedShellScript")))?;
 
     if parsed_shell_script.args.get().is_none() {
         return Err(global.throw(format_args!(
@@ -2968,7 +2967,8 @@ pub(crate) fn create_shell_interpreter<'a>(
     let global = cx.global();
     js::resolve_set_cached(js_value, global, resolve.to_js());
     js::reject_set_cached(js_value, global, reject.to_js());
-    if let Some(jsobjs) = parsed_shell_script::js::jsobjs_get_cached(parsed_shell_script_js) {
+    if let Some(jsobjs) = parsed_shell_script::js::jsobjs_get_cached(parsed_shell_script_js.to_js())
+    {
         js::jsobjs_set_cached(js_value, global, jsobjs);
     }
     // SAFETY: the payload of `this_value`.

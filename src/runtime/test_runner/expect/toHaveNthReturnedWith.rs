@@ -12,7 +12,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         nth: JsLocal<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         bun_jsc::mark_binding!();
         let nth = nth.to_js();
@@ -68,7 +68,7 @@ impl Expect {
         }
 
         if pass != this.flags.get().not() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // Handle failure

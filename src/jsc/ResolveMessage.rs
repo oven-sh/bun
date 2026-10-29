@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bun_ast::ImportKind;
 use bun_core::strings;
 
-use crate::bindgen::{JsLocal, JsScope};
+use crate::bindgen::JsScope;
 use crate::build_message::LogKindJsc as _;
 use crate::bun_string_jsc;
 use crate::{JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
@@ -235,19 +235,17 @@ impl ResolveMessage {
         self.to_string_fn(cx.global())
     }
 
-    pub fn to_primitive(&self, cx: &mut JsScope<'_>, hint: JsLocal<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        let hint = hint.to_js();
-        if !hint.is_string() {
-            return Ok(JSValue::NULL);
+    pub fn to_primitive(
+        &self,
+        cx: &mut JsScope<'_>,
+        hint: Option<bun_core::String>,
+    ) -> JsResult<Option<JSValue>> {
+        match hint {
+            Some(hint) if hint.eq_ascii(b"default") || hint.eq_ascii(b"string") => {
+                self.to_string_fn(cx.global()).map(Some)
+            }
+            _ => Ok(None),
         }
-
-        let str = hint.to_bun_string(global)?;
-        if str.eq_ascii(b"default") || str.eq_ascii(b"string") {
-            return self.to_string_fn(global);
-        }
-
-        Ok(JSValue::NULL)
     }
 
     pub fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {

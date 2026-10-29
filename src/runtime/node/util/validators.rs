@@ -47,76 +47,6 @@ fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> 
     global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
 }
 
-#[inline]
-fn throw_range_error_msg(
-    global_this: &JSGlobalObject,
-    value: f64,
-    name: &str,
-    msg: &[u8],
-) -> JsError {
-    global_this.throw_range_error(
-        bun_core::fmt::NodeNumber(value),
-        jsc::RangeErrorOptions {
-            field_name: name.as_bytes(),
-            msg,
-            ..Default::default()
-        },
-    )
-}
-
-// `Option<i64>` is not a valid const-generic type on stable, so the bounds
-// are runtime params + debug_assert.
-pub(crate) fn validate_integer(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    name: &str,
-    min_value: Option<i64>,
-    max_value: Option<i64>,
-) -> JsResult<i64> {
-    if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
-    }
-
-    if !value.is_integer() {
-        return Err(throw_range_error_msg(
-            global_this,
-            value.as_number(),
-            name,
-            b"an integer",
-        ));
-    }
-
-    if let Some(min) = min_value {
-        debug_assert!(
-            min >= jsc::MIN_SAFE_INTEGER,
-            "min_value must be greater than or equal to jsc::MIN_SAFE_INTEGER"
-        );
-    }
-    if let Some(max) = max_value {
-        debug_assert!(
-            max <= jsc::MAX_SAFE_INTEGER,
-            "max_value must be less than or equal to jsc::MAX_SAFE_INTEGER"
-        );
-    }
-
-    let min: f64 = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER) as f64;
-    let max: f64 = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER) as f64;
-
-    let num = value.as_number();
-
-    if num < min || num > max {
-        let range = format!(">= {min} && <= {max}");
-        return Err(throw_range_error_msg(
-            global_this,
-            num,
-            name,
-            range.as_bytes(),
-        ));
-    }
-
-    Ok(num as i64)
-}
-
 pub(crate) fn validate_int32(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -390,17 +320,6 @@ pub(crate) fn validate_boolean_array(
         i += 1;
     }
     Ok(i)
-}
-
-pub(crate) fn validate_function(
-    global: &JSGlobalObject,
-    name: &str,
-    value: JSValue,
-) -> JsResult<JSValue> {
-    if !value.is_function() {
-        return Err(global.throw_invalid_argument_type_value(name, "function", value));
-    }
-    Ok(value)
 }
 
 /// Rust has no field reflection; enums opt in via this trait.

@@ -56,7 +56,7 @@ export const TestOptions = b.dictionary({
   name: b.string.utf8.optional,
   color: TestColor.default("red"),
   ratio: b.f64.nullable,
-  payload: b.any,
+  payload: b.opaque,
   renamed: { type: b.u8.optional, altNames: ["oldName"] },
 });
 export const TestOptionsEcho = b.dictionary({
@@ -65,7 +65,7 @@ export const TestOptionsEcho = b.dictionary({
   name: b.string.utf8.optional,
   color: TestColor,
   ratio: b.f64.nullable,
-  payload: b.any,
+  payload: b.opaque,
   renamed: b.u8.optional,
 });
 export const optionsEcho = b.fn({ args: { options: TestOptions }, returns: TestOptionsEcho, capability: "heap" });
@@ -86,10 +86,10 @@ export const latin1 = b.fn({
   returns: b.string.local,
   capability: "heap",
 });
-export const TestTextOrBytes = b.union({ text: b.string.utf8, bytes: b.bufferSource, nothing: b.null });
+export const TestTextOrBuffer = b.union({ text: b.string.utf8, buffer: b.bufferSource, none: b.null });
 export const textOrBytes = b.fn({
   args: { text: b.string.utf8, as: b.u8 },
-  returns: TestTextOrBytes,
+  returns: TestTextOrBuffer,
   capability: "heap",
   throws: true,
 });
@@ -123,8 +123,8 @@ export const sumBeforeAndAfterCallback = b.fn({
 
 /** What `callback` returns, or `fallback` if there is no `callback`. */
 export const callOr = b.fn({
-  args: { callback: b.callable.nullable, fallback: b.any },
-  returns: b.any,
+  args: { callback: b.callable.nullable, fallback: b.opaque },
+  returns: b.opaque,
   capability: "js",
   throws: true,
 });
@@ -211,13 +211,13 @@ export const stringAsIsOrBytesIfAny = b.fn({
 });
 /** Which of the two are present. */
 export const presentUnlessEmptyString = b.fn({
-  args: { number: b.f64.emptyStringAsNull, value: b.any.emptyStringAsNull },
+  args: { number: b.f64.emptyStringAsNull, value: b.opaque.emptyStringAsNull },
   returns: b.array(b.bool),
 });
 export const asBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.u64.asBigInt });
 
 export const TestFailure = b.enumeration(["type", "range", "plain", "code", "syscall", "outOfMemory", "value"]);
-export const fail = b.fn({ args: { how: TestFailure, value: b.any }, capability: "heap", throws: true });
+export const fail = b.fn({ args: { how: TestFailure, value: b.opaque }, capability: "heap", throws: true });
 
 export const TestCounter = b.class({
   rustPath: "crate::bindgen_test::TestCounter",
@@ -227,8 +227,8 @@ export const TestCounter = b.class({
   proto: {
     count: { getter: b.i32 },
     label: { getter: b.string.utf8, setter: true },
-    tag: { getter: b.any, cache: true, capability: "heap", throws: true },
-    sameTag: { getter: b.any, cache: "tag", capability: "heap", throws: true },
+    tag: { getter: b.opaque, cache: true, capability: "heap", throws: true },
+    sameTag: { getter: b.opaque, cache: "tag", capability: "heap", throws: true },
     increment: { args: { by: b.i32.default(1) }, returns: b.i32 },
     /** By a number, or by the length of a string, as many times. */
     add: [
@@ -236,7 +236,7 @@ export const TestCounter = b.class({
       { args: { by: b.i32 }, returns: b.i32, rustName: "add_number" },
     ],
     forgetTag: { capability: "heap", passThis: true },
-    listen: { args: { listener: b.any }, capability: "heap", passThis: true, requiredArguments: 1 },
+    listen: { args: { listener: b.opaque }, capability: "heap", passThis: true, requiredArguments: 1 },
     /** Calls the listener, which may call back into this object, then returns the count. */
     notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
     /** `other` may be `this`. */
@@ -244,10 +244,11 @@ export const TestCounter = b.class({
   },
   static: {
     starting: { args: { at: b.i32 }, returns: b.self, capability: "heap" },
+    isCounter: { args: { value: b.self.otherAsNull }, returns: b.bool, length: 1 },
     alive: { returns: b.usize },
     /** How many are alive. The prototype has a `count` too. */
     count: { getter: b.usize, rustName: "static_count" },
-    limit: { getter: b.any, capability: "heap", throws: true },
+    limit: { getter: b.opaque, capability: "heap", throws: true },
   },
 });
 
@@ -272,7 +273,7 @@ export const TestRefCounted = b.class({
   internalFields: ["listener"],
   proto: {
     value: { getter: b.i32, setter: true },
-    listener: { getter: b.any, setter: { capability: "js" }, passThis: true },
+    listener: { getter: b.opaque, setter: { capability: "js" }, passThis: true },
     sameListener: { setter: true, internalField: "listener" },
     readOnlyListener: { internalField: "listener" },
     /** Calls the listener, which may call back into this object, then returns the value. */
@@ -293,7 +294,7 @@ export const TestRefCounted = b.class({
     release: {},
     alive: { returns: b.usize },
     /** `object.value` read through `from_js`, or `null` if `object` is not an instance. */
-    valueFromJS: { args: { object: b.any }, returns: b.i32.nullable },
+    valueFromJS: { args: { object: b.opaque }, returns: b.i32.nullable },
   },
 });
 
@@ -314,17 +315,17 @@ export const TestError = b.class({
   enumerable: false,
   construct: { args: { code: b.i32 } },
   /** An instance whose code is the sum. */
-  call: { args: { codes: b.any.variadic }, returns: b.self, capability: "heap" },
+  call: { args: { codes: b.rest(b.opaque) }, returns: b.self, capability: "heap" },
   proto: {
     code: { getter: b.i32 },
     nonConfigurableCode: { getter: b.i32, configurable: false },
     enumerableCode: { getter: b.i32, enumerable: true },
     describe: { returns: b.string.utf8 },
-    countArguments: { args: { args: b.any.variadic }, returns: b.usize },
+    countArguments: { args: { args: b.rest(b.opaque) }, returns: b.usize },
     /** Computed once. Assigning replaces it without calling Rust. */
     message: { getter: b.string.utf8, cache: true, writable: true },
     /** Computed once. Assigning a number stores its double. */
-    detail: { getter: b.any, setter: true, cache: true, capability: "heap", passThis: true },
+    detail: { getter: b.opaque, setter: { type: b.f64 }, cache: true, capability: "heap", passThis: true },
   },
   static: {
     /** Process-wide. */
@@ -349,15 +350,15 @@ export const TestReadOnly = b.class({
 export const TestMemberFunctions = b.class({
   rustPath: "crate::bindgen_test::TestMemberFunctions",
   construct: {},
-  internalFields: { note: b.any, promise: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
+  internalFields: { note: b.opaque, promise: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
   proto: {
     twice: { args: { n: b.i32 }, returns: b.i32, calledFromCpp: true },
-    run: { args: { n: b.any, fail: b.bool }, returns: b.any, capability: "js", throws: true, passThis: true },
+    run: { args: { n: b.opaque, fail: b.bool }, returns: b.opaque, capability: "js", throws: true, passThis: true },
     /** Returns what the field holds afterwards. */
-    setNote: { args: { value: b.any }, returns: b.any, capability: "heap", passThis: true },
+    setNote: { args: { value: b.opaque }, returns: b.opaque, capability: "heap", passThis: true },
     fail: { capability: "js", throws: true, passThis: true },
     /** The same promise on every call. */
-    promise: { returns: b.any, capability: "js", passThis: true },
+    promise: { returns: b.opaque, capability: "js", passThis: true },
   },
   calledFromCpp: {
     callCount: { returns: b.u32 },
@@ -365,11 +366,11 @@ export const TestMemberFunctions = b.class({
     failInRust: { capability: "heap", throws: true },
   },
   calledFromRust: {
-    runInCpp: { args: { n: b.any, fail: b.bool }, returns: b.any, throws: true },
-    setNoteInCpp: { args: { value: b.any } },
-    noteInCpp: { returns: b.any },
+    runInCpp: { args: { n: b.opaque, fail: b.bool }, returns: b.opaque, throws: true },
+    setNoteInCpp: { args: { value: b.opaque } },
+    noteInCpp: { returns: b.opaque },
     failInCpp: { throws: true },
-    promiseInCpp: { capability: "heap", returns: b.any },
+    promiseInCpp: { capability: "heap", returns: b.opaque },
   },
 });
 
@@ -377,7 +378,7 @@ const note = {
   estimatedSize: true,
   construct: {
     passStructure: true,
-    args: { text: b.any, size: b.usize.default(0) },
+    args: { text: b.opaque.optional, size: b.usize.default(0) },
     capability: "heap",
     throws: true,
   },
@@ -414,7 +415,7 @@ export const TestNonFinal = b.class({
   rustTraits: ["crate::bindgen_test::TestNonFinalExt"],
   construct: { args: { value: b.i32 } },
   proto: { value: { getter: b.i32 } },
-  static: { doubled: { args: { value: b.i32 }, returns: b.any, capability: "heap" } },
+  static: { doubled: { args: { value: b.i32 }, returns: b.opaque, capability: "heap" } },
 });
 
 /** `final: false` of a class whose struct is in the object. The internal field comes before the struct. */
@@ -444,21 +445,21 @@ export const TestSquare = b.class({
 export const makeShape = b.fn({ args: { sides: b.u32 }, returns: TestShape, capability: "heap" });
 export const makeSquare = b.fn({ args: { side: b.u32 }, returns: TestSquare, capability: "heap" });
 /** Made with the global object alone. */
-export const makeSquareWrapper = b.fn({ args: { side: b.u32 }, returns: b.any, capability: "js" });
+export const makeSquareWrapper = b.fn({ args: { side: b.u32 }, returns: b.opaque, capability: "js" });
 /** `[from_js of TestShape, from_js of TestSquare, from_js_direct of TestShape]`: whether each takes the value. */
-export const shapeFromJS = b.fn({ args: { shape: b.any }, returns: b.array(b.bool) });
+export const shapeFromJS = b.fn({ args: { shape: b.opaque }, returns: b.array(b.bool) });
 /** How many were dropped. */
 export const droppedShapes = b.fn({ returns: b.usize });
 
 /** `token.id` read through `from_js`, or `null` if `token` is not an instance. */
-export const tokenIdFromJS = b.fn({ args: { token: b.any }, returns: b.u32.nullable });
+export const tokenIdFromJS = b.fn({ args: { token: b.opaque }, returns: b.u32.nullable });
 /** Whether `from_js_direct` takes the value as a `TestNote` or a `TestRefCountedNote`. */
-export const isNoteFromJSDirect = b.fn({ args: { note: b.any }, returns: b.bool });
-export const errorConstructor = b.fn({ returns: b.any, capability: "js" });
+export const isNoteFromJSDirect = b.fn({ args: { note: b.opaque }, returns: b.bool });
+export const errorConstructor = b.fn({ returns: b.opaque, capability: "js" });
 /** The arguments after the first, as an array. */
 export const afterFirst = b.fn({
-  args: { first: b.any, rest: b.any.variadic },
-  returns: b.any,
+  args: { first: b.opaque, rest: b.rest(b.opaque) },
+  returns: b.opaque,
   capability: "heap",
   throws: true,
 });
@@ -467,22 +468,22 @@ export const afterFirst = b.fn({
 export const thisAndCallee = b.fn({
   passThis: true,
   passCallee: true,
-  args: { value: b.any },
-  returns: b.any,
+  args: { value: b.opaque },
+  returns: b.opaque,
   capability: "heap",
   throws: true,
 });
 export const doubled = b.fn({ export: "Bun__BindgenTest__doubled", args: { value: b.i32 }, returns: b.i32 });
 /** A new function, made in Rust, that runs `doubled`. */
-export const makeDoubled = b.fn({ returns: b.any, capability: "js" });
+export const makeDoubled = b.fn({ returns: b.opaque, capability: "js" });
 /** What `JSValue::then` gives a reaction as its context, for a static that holds 42. */
-export const promisePtrContext = b.value({ returns: b.any, capability: "heap" });
+export const promisePtrContext = b.value({ returns: b.opaque, capability: "heap" });
 export const readPromisePtr = b.fn({
   args: { context: b.promisePtr("core::sync::atomic::AtomicI32") },
   returns: b.i32,
 });
 /** A new `NativePromiseContext` cell with a pointer to the same static. */
-export const makeNativePromiseContext = b.fn({ returns: b.any, capability: "js" });
+export const makeNativePromiseContext = b.fn({ returns: b.opaque, capability: "js" });
 export const readNativePromiseContext = b.fn({
   args: { context: b.nativePromiseContext("core::sync::atomic::AtomicI32") },
   returns: b.i32.nullable,
@@ -509,9 +510,9 @@ export const bareOptionsSize = b.fn({ args: { options: TestBareOptions }, return
 export const timeValue = b.fn({ args: { time: b.f64.allowDate }, returns: b.f64 });
 /** "none" without the argument. `undefined` is converted, to "undefined". */
 export const textIfPassed = b.fn({ args: { text: b.string.loose.utf8.ifPassed }, returns: b.string.utf8 });
-export const isPassed = b.fn({ args: { first: b.any, second: b.any.ifPassed }, returns: b.bool });
+export const isPassed = b.fn({ args: { first: b.opaque, second: b.opaque.ifPassed }, returns: b.bool });
 export const isPassedAfterRequired = b.fn({
-  args: { first: b.any, second: b.any.ifPassed },
+  args: { first: b.opaque, second: b.opaque.ifPassed },
   returns: b.bool,
   requiredArguments: 1,
   rustPath: "crate::bindgen_test::is_passed",
@@ -539,11 +540,23 @@ export const requiredOverloaded = b.overloads(
 /** `[the text's length, the argument]`. */
 export const lengthWithValue = b.fn({
   args: { text: b.string.loose.utf8.withValue },
-  returns: b.any,
+  returns: b.opaque,
   capability: "heap",
   throws: true,
 });
-export const counterWithValue = b.fn({ args: { counter: TestCounter.withValue }, returns: b.any, capability: "heap" });
+export const counterWithValue = b.fn({
+  args: { counter: TestCounter.withValue },
+  returns: b.opaque,
+  capability: "heap",
+});
+export const TestCounterHolder = b.dictionary({ counter: TestCounter.withValue });
+export const counterOfMember = b.fn({ args: { holder: TestCounterHolder }, returns: b.opaque, capability: "heap" });
+export const TestViewOrBuffer = b.union({
+  dataView: b.cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", { rustPath: "bun_jsc::JSObject" }),
+  buffer: b.bufferSource,
+  other: b.ignored,
+});
+export const describeViewOrBuffer = b.fn({ args: { value: TestViewOrBuffer }, returns: b.string });
 export const keptString = b.fn({ args: { text: b.string.owned }, returns: b.string });
 
 export const TestBracket = b.enumeration({ Plain: "rgb", Square: "[rgb]", Curly: ["{rgb}", "{RGB}"] });
@@ -553,17 +566,17 @@ export const TestPoint = b.dictionary({ x: b.f64 });
 /** `point` gets objects only, so `text` gets every other value that no alternative before it takes. */
 export const TestHandle = b.union({
   missing: b.undefined,
-  nothing: b.null,
+  none: b.null,
   callback: b.callable,
   list: b.jsArray,
   point: TestPoint,
   text: b.string.loose.utf8,
 });
 export const describeHandle = b.fn({ args: { value: TestHandle }, returns: b.string.utf8 });
-export const TestObjectOrRest = b.union({ object: b.object, rest: b.any });
-export const isObject = b.fn({ args: { value: TestObjectOrRest }, returns: b.bool });
+export const TestObjectOrOther = b.union({ object: b.object, other: b.opaque });
+export const isObject = b.fn({ args: { value: TestObjectOrOther }, returns: b.bool });
 export const objectEcho = b.fn({ args: { value: b.object }, returns: b.object, capability: "heap" });
-export const TestAbsence = b.union({ missing: b.undefined, nothing: b.null, number: b.f64 });
+export const TestAbsence = b.union({ missing: b.undefined, none: b.null, number: b.f64 });
 export const absenceEcho = b.fn({ args: { value: TestAbsence }, returns: TestAbsence });
 
 export const TestOtherAsNullOptions = b.dictionary(
@@ -599,14 +612,14 @@ export const callbackOrDelay = b.overloads(
 /** A promise for the number. One that is not finite, and an argument that is not a number, reject it. */
 export const finiteLater = b.fn({
   args: { value: b.f64 },
-  returns: b.any,
+  returns: b.opaque,
   capability: "js",
   throws: true,
   rejects: true,
 });
 export const requiredFiniteLater = b.fn({
   args: { value: b.f64 },
-  returns: b.any,
+  returns: b.opaque,
   capability: "js",
   throws: true,
   rejects: true,
@@ -623,7 +636,7 @@ export const wideIntegerOrBigInt = b.fn({ args: { value: b.u64.allowBigInt }, re
 
 /** An alternative for each kind of value. What `bytes` and `blob` refuse, and everything else, goes to `options`. */
 export const TestAnything = b.union({
-  nothing: b.null,
+  none: b.null,
   flag: b.bool,
   integer: b.i32.allowBigInt,
   text: b.string,
@@ -668,17 +681,238 @@ export const TestInner = b.dictionary({
   name: b.string.utf8.default("inner"),
 });
 export const TestChoice = b.union({ none: b.null, flag: b.bool });
-/** A string is a color. What `bytes` refuses, and everything else, is kept as it is. */
-export const TestColorOrRest = b.union({ color: TestColor, bytes: b.bufferSource, rest: b.any });
+/** A string is a color. What `buffer` refuses, and everything else, is kept as it is. */
+export const TestColorOrOther = b.union({
+  color: TestColor,
+  buffer: b.bufferSource,
+  missing: b.undefined,
+  other: b.opaque,
+});
 export const TestOuter = b.dictionary({
   inner: TestInner.nullable,
-  value: b.any,
+  value: b.opaque.optional,
   choice: TestChoice,
-  rest: TestColorOrRest,
+  rest: TestColorOrOther,
 });
 /** What a default written in the schema gives each member, the nested ones included. */
 export const describeDefaults = b.fn({
   args: { options: TestOuter.default({ inner: {} }) },
   returns: b.string.utf8,
   capability: "heap",
+});
+
+/** `second` is converted before `first`, and neither if `skip`. */
+export const joinSecondFirst = b.fn({
+  args: { skip: b.bool, first: b.string.loose.deferred, second: b.string.loose.deferred },
+  returns: b.string.utf8,
+  capability: "js",
+  throws: true,
+});
+export const TestTextOrOther = b.union({ text: b.string, other: b.ignored });
+export const textOrNull = b.fn({ args: { value: TestTextOrOther }, returns: b.string.nullable });
+export const isPromise = b.fn({ args: { value: b.promise.otherAsNull }, returns: b.bool });
+export const takePromise = b.fn({ args: { promise: b.promise }, returns: b.promise, capability: "heap" });
+/** `value`, or `fallback` if that is `null` or `undefined`. */
+export const opaqueOr = b.fn({
+  args: { value: b.opaque.nullable, fallback: b.opaque },
+  returns: b.opaque,
+  capability: "heap",
+});
+
+/** What `kindOf` tells apart in a value it was given as `b.opaque`. */
+export const TestKind = b.union(
+  { text: b.string, number: b.f64, list: b.jsArray, callback: b.callable, other: b.ignored },
+  { fromJS: true },
+);
+export const kindOf = b.fn({ args: { value: b.opaque }, returns: b.string.utf8, capability: "js", throws: true });
+export const negateWide = b.fn({ args: { value: b.i64 }, returns: b.i64 });
+
+const URL = b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" });
+const AbortSignal = b.wrapped("WebCore::JSAbortSignal", "JSAbortSignal.h", { rustPath: "bun_jsc::AbortSignal" });
+/** The path of a `file:` URL, or `null` for another. */
+export const fileSystemPath = b.fn({ args: { url: URL }, returns: b.string.nullable });
+export const TestPathOrURL = b.union({ path: b.string, url: URL });
+export const pathOf = b.fn({ args: { value: TestPathOrURL }, returns: b.string.nullable });
+export const TestSignalOptions = b.dictionary({ signal: AbortSignal.shared.optional });
+/** `null` without a signal. */
+export const isAborted = b.fn({ args: { options: TestSignalOptions }, returns: b.bool.nullable });
+
+export const countInRange = b.fn({
+  args: { count: b.i32.validateIntegerRange(0, 10).nanAs(-1).default(3) },
+  returns: b.i32,
+});
+export const TestRangeOptions = b.dictionary({ timeout: b.u64.validateIntegerRange().optional });
+export const timeoutOf = b.fn({ args: { options: TestRangeOptions }, returns: b.u64.nullable });
+
+export const TestOwnOptions = b.dictionary({ own: { type: b.i32.optional, own: true }, any: b.i32.optional });
+export const ownAndInherited = b.fn({ args: { options: TestOwnOptions }, returns: b.array(b.i32.nullable) });
+
+export const TestPathOrFd = b.union({
+  fd: b.i32.validateInteger(0, 2 ** 31 - 1).reportedAs("fd"),
+  path: b.string,
+  mode: b.bool,
+});
+export const describePathOrFd = b.fn({ args: { path: TestPathOrFd }, returns: b.string });
+export const TestCountOrText = b.union({ count: b.i32.validateInteger(0, 10), text: b.string });
+/** -1 for text. */
+export const countOrText = b.fn({ args: { value: TestCountOrText }, returns: b.i32 });
+
+export const TestLength = b.union({ number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
+export const lengthOf = b.fn({ args: { length: TestLength }, returns: b.f64.nullable });
+
+export const TestLenientOptions = b.dictionary(
+  { strict: b.bool.default(true), level: b.i32.default(4) },
+  { nonObjectAsEmpty: true },
+);
+export const TestX = b.dictionary({ x: b.i32 });
+export const TestTextOrOptions = b.union({ text: b.string, options: TestX, other: b.ignored });
+const absentArguments = {
+  count: b.i32.default(7),
+  flag: b.bool.optional,
+  options: TestLenientOptions,
+  choice: TestTextOrOptions,
+};
+/** What each argument converts to. */
+export const describeAbsent = b.fn({ args: absentArguments, returns: b.string });
+export const describeAbsentDeferred = b.fn({
+  args: Object.fromEntries(Object.entries(absentArguments).map(([name, type]) => [name, type.deferred])),
+  returns: b.string,
+  capability: "js",
+  throws: true,
+});
+
+/** Each member is read when the body asks for it. */
+export const TestDeferredOptions = b.dictionary(
+  {
+    name: b.string,
+    level: { type: b.i32.validateIntegerRange(0, 9).default(1), altNames: ["lvl"] },
+    callback: b.callable.optional,
+    mine: { type: b.bool.default(false), own: true },
+    nested: TestX.optional,
+  },
+  { deferred: true, reportedAs: "options" },
+);
+export const TestPosition = b.union({
+  none: b.null,
+  number: b.i64.validateInteger(-1),
+  bigInt: b.bigInt,
+  other: b.ignored,
+});
+const convertedArguments = {
+  int: b.i32.optional,
+  loose: b.i32.loose.optional,
+  wrapped: b.u8.wrap.optional,
+  ranged: b.i64.validateInteger(-1, 2 ** 32 - 1).optional,
+  digit: b.i32.validateIntegerRange(0, 9).optional,
+  double: b.f64.optional,
+  position: TestPosition,
+  callback: b.callable.optional,
+  buffer: b.bufferSource.allowShared.optional,
+  unshared: b.bufferSource.optional,
+  object: b.object.optional,
+  list: b.jsArray.optional,
+  number: b.jsNumber.optional,
+  text: b.stringLike.optional,
+  string: b.string.local.optional,
+  options: TestDeferredOptions.optional,
+};
+/** What each argument converts to. Of a JS value, whether there is one. */
+export const describeConverted = b.fn({ args: convertedArguments, returns: b.string });
+export const describeConvertedDeferred = b.fn({
+  args: Object.fromEntries(Object.entries(convertedArguments).map(([name, type]) => [name, type.deferred])),
+  returns: b.string,
+  capability: "js",
+  throws: true,
+});
+
+/** Reads `name`, refuses an empty one itself, and only then reads the others. */
+export const describeDeferred = b.fn({
+  args: { options: TestDeferredOptions },
+  returns: b.string,
+  capability: "js",
+  throws: true,
+});
+/** A deferred dictionary as a member of a dictionary, of a deferred one, and as an alternative of a union. */
+export const TestDeferredOrText = b.union({ text: b.string, options: TestDeferredOptions });
+export const TestDeferredHolder = b.dictionary({
+  options: TestDeferredOptions.optional,
+  either: TestDeferredOrText.optional,
+});
+export const TestOuterDeferred = b.dictionary({ inner: TestDeferredOptions.nullable }, { deferred: true });
+export const namesOfDeferred = b.fn({
+  args: { lenient: TestDeferredOptions.otherAsNull, holder: TestDeferredHolder, outer: TestOuterDeferred.optional },
+  returns: b.string,
+  capability: "js",
+  throws: true,
+});
+/** The length of a string that is only looked at, or -1 for another value. */
+export const viewLengthOrNone = b.fn({
+  args: { text: b.string.allowStringObject.view.otherAsNull, id: b.i64.validateInteger(-1, 2 ** 32 - 1).default(0) },
+  returns: b.i64,
+});
+/** Two deferred arguments of one name whose types differ only in what Rust gets. */
+export const deferredKeyLength = b.fn({
+  args: { key: b.string.loose.deferred },
+  returns: b.u32,
+  capability: "js",
+  throws: true,
+});
+export const deferredKeyByteLength = b.fn({
+  args: { key: b.string.loose.utf8.owned.deferred },
+  returns: b.u32,
+  capability: "js",
+  throws: true,
+});
+/** Two deferred arguments of one name and one type whose defaults differ. */
+export const deferredCountOrOne = b.fn({
+  args: { count: b.i32.default(1).deferred },
+  returns: b.i32,
+  capability: "js",
+  throws: true,
+});
+export const deferredCountOrTwo = b.fn({
+  args: { count: b.i32.default(2).deferred },
+  returns: b.i32,
+  capability: "js",
+  throws: true,
+});
+export const isStringLike = b.fn({ args: { value: b.stringLike.otherAsNull }, returns: b.bool });
+export const takeNumber = b.fn({ args: { number: b.jsNumber }, returns: b.jsNumber, capability: "heap" });
+export const TestMaybeCounter = b.dictionary({ counter: TestCounter.withValue.otherAsNull });
+/** -1 without a counter. */
+export const countOfMaybe = b.fn({ args: { options: TestMaybeCounter }, returns: b.i32 });
+export const TestTextOrFlag = b.union({ text: b.string, flag: b.bool });
+export const TestCountOrNested = b.union({ count: b.i32, nested: TestTextOrFlag, other: b.ignored });
+export const describeNested = b.fn({ args: { value: TestCountOrNested }, returns: b.string.utf8 });
+export const echoNested = b.fn({ args: { value: TestCountOrNested }, returns: TestCountOrNested });
+export const wrapToInt32 = b.fn({ args: { value: b.i32.allowBigInt.wrap }, returns: b.i32 });
+/** A member only Bun's own JavaScript can set, in a dictionary and in a deferred one. */
+export const TestPrivateMember = b.dictionary({
+  name: b.string.optional,
+  sharedFd: { type: b.bool.loose.default(false), privateSymbol: "sharedFd" },
+});
+export const TestDeferredPrivateMember = b.dictionary(
+  { name: b.string.optional, sharedFd: { type: b.bool.loose.default(false), privateSymbol: "sharedFd" } },
+  { deferred: true },
+);
+export const readsPrivateMember = b.fn({
+  args: { options: TestPrivateMember, deferred: TestDeferredPrivateMember },
+  returns: b.bool,
+  capability: "js",
+  throws: true,
+});
+/** `""`, `null` and `undefined` are absent. Every other value goes to an alternative. */
+export const TestFlagOrOther = b.union({ enabled: b.bool, options: TestDeferredOptions, other: b.opaque });
+export const describeFlagOrOther = b.fn({ args: { value: TestFlagOrOther.emptyStringAsNull }, returns: b.string.utf8 });
+/** An own `undefined` is converted, and refused. Only a property the object does not have is absent. */
+export const TestOwnIfPassed = b.dictionary({ recursive: { type: b.bool.ifPassed, own: true } });
+export const TestDeferredOwnIfPassed = b.dictionary(
+  { recursive: { type: b.bool.ifPassed, own: true } },
+  { deferred: true },
+);
+export const describeOwnIfPassed = b.fn({
+  args: { options: TestOwnIfPassed, deferred: TestDeferredOwnIfPassed },
+  returns: b.string.utf8,
+  capability: "js",
+  throws: true,
 });

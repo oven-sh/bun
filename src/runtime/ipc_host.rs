@@ -12,7 +12,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
-use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
+use crate::generated_bindgen::ipc_host::MessageTarget;
 use crate::socket::Listener;
 
 bun_core::define_scoped_log!(log, IPC, visible);
@@ -297,26 +297,23 @@ pub(crate) fn do_send(
 pub(crate) fn emit_handle_ipc_message<'a>(
     cx: &mut JsScope<'a>,
     target: MessageTarget<'a>,
-    message: ReceivedMessage<'a>,
+    message: JsLocal<'a>,
     handle: JsLocal<'a>,
 ) -> JsResult<()> {
     let global_this = cx.global();
     let handle = handle.to_js();
-    let (message, is_object) = match message {
-        ReceivedMessage::Object(object) => (object.to_js(), true),
-        ReceivedMessage::Primitive(primitive) => (primitive.to_js(), false),
-    };
+    let message = message.to_js();
     match target {
         MessageTarget::Subprocess(subprocess) => {
             subprocess.handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
         }
-        MessageTarget::Missing | MessageTarget::Ignored(_) => {}
+        MessageTarget::Missing | MessageTarget::Other => {}
         MessageTarget::ThisProcess => {
             // Cluster-internal replies that carried a descriptor (shared dgram
             // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
             // the cluster's internal-message dispatcher instead of emitting a
             // process 'message' event, mirroring Node's NODE_-prefix routing.
-            if is_object {
+            if message.is_object() {
                 if let Some(cmd) = message.get(global_this, "cmd")? {
                     if cmd.is_string() {
                         let cmd_str = cmd.to_bun_string(global_this)?;

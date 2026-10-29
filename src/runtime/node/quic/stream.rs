@@ -656,15 +656,10 @@ impl QuicStream {
         this_value
     }
 
-    pub(crate) fn set_wakeup(&self, cx: &mut JsScope<'_>, callback: JsLocal<'_>) {
+    pub(crate) fn set_wakeup(&self, cx: &mut JsScope<'_>, callback: Option<JsLocal<'_>>) {
         let global = cx.global();
-        let cb = callback.to_js();
-
-        if cb.is_undefined_or_null() {
-            self.wakeup.set(None);
-        } else {
-            self.wakeup.set(Some(Strong::create(cb, global)));
-        }
+        self.wakeup
+            .set(callback.map(|cb| Strong::create(cb.to_js(), global)));
     }
 
     pub(crate) fn pull(&self, cx: &mut JsScope<'_>, callback: JsLocal<'_>) -> JsResult<()> {
@@ -935,9 +930,8 @@ impl QuicStream {
         self.kick_write();
     }
 
-    pub(crate) fn set_priority(&self, cx: &mut JsScope<'_>, priority: JsLocal<'_>) -> JsResult<()> {
-        let global = cx.global();
-        let packed = priority.to_js().coerce_to_i32(global)? as u32;
+    pub(crate) fn set_priority(&self, priority: i32) {
+        let packed = priority as u32;
         let (urgency, incremental) = ((packed >> 1) as u8, packed & 1 != 0);
         let previous = self.priority.replace((urgency, incremental));
         // Only an actual change goes on the wire: set_http_prio writes a
@@ -948,7 +942,6 @@ impl QuicStream {
                 let _ = s.set_http_prio(urgency, incremental);
             }
         }
-        Ok(())
     }
     pub(crate) fn get_priority(&self) -> u32 {
         let (urgency, incremental) = self
@@ -963,10 +956,10 @@ impl QuicStream {
         kind: JsLocal<'_>,
         headers: JsLocal<'_>,
         flags: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<bool> {
         let global = cx.global();
         if self.destroyed.get() {
-            return Ok(JSValue::js_boolean(false));
+            return Ok(false);
         }
         let kind = kind.to_js();
         let headers = headers.to_js();
@@ -986,7 +979,7 @@ impl QuicStream {
             self.pending_headers
                 .with_mut(|q| q.push((bytes, header_count, eos)));
             self.with_state(|s| s.has_outbound = 1);
-            return Ok(JSValue::js_boolean(true));
+            return Ok(true);
         };
         let rv = s.send_headers(&bytes, header_count, eos);
         if rv == 0 {
@@ -1004,9 +997,9 @@ impl QuicStream {
             } else {
                 self.kick_write();
             }
-            Ok(JSValue::js_boolean(true))
+            Ok(true)
         } else {
-            Ok(JSValue::js_boolean(false))
+            Ok(false)
         }
     }
 }

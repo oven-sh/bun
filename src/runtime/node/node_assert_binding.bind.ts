@@ -17,14 +17,14 @@ export const myersDiff = b.fn({
     checkCommaDisparity: b.bool.loose.default(false),
     lines: b.bool.loose.default(false),
   },
-  returns: b.any,
+  returns: b.jsArray,
   capability: "js",
   throws: true,
 });
 
 export const printSimpleMyersDiff = b.fn({
   args: { actual: b.string.allowStringObject, expected: b.string.allowStringObject, colors: Colors },
-  returns: b.any,
+  returns: b.string.local,
   capability: "js",
   throws: true,
 });
@@ -36,7 +36,7 @@ export const printMyersDiff = b.fn({
     checkCommaDisparity: b.bool.loose,
     colors: Colors,
   },
-  returns: b.any,
+  returns: b.object,
   capability: "js",
   throws: true,
 });

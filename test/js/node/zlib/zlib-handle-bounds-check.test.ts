@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import zlib from "node:zlib";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
 // These verify that user-controlled offset/length parameters are validated
@@ -144,6 +145,27 @@ describe("zlib native handle writeState", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("still works");
     expect(exitCode).toBe(0);
+  });
+
+  test("init takes a callable Proxy as the write callback", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const callback = new Proxy(() => resolve(), {});
+
+    // A stream has called `init` on its handle already, so each of these is a new handle of the same class.
+    const deflate = new (zlib.createDeflate()._handle.constructor)(zlib.constants.DEFLATE);
+    deflate.init(15, 6, 8, 0, new Uint32Array(2), callback, undefined);
+    const input = Buffer.from("hello");
+    deflate.write(zlib.constants.Z_FINISH, input, 0, input.length, Buffer.alloc(64), 0, 64);
+    await promise;
+    deflate.close();
+
+    const brotli = new (zlib.createBrotliCompress()._handle.constructor)(zlib.constants.BROTLI_ENCODE);
+    brotli.init(new Uint32Array(10).fill(-1), new Uint32Array(2), callback);
+    brotli.close();
+
+    const zstd = new (zlib.createZstdCompress()._handle.constructor)(zlib.constants.ZSTD_COMPRESS);
+    zstd.init(new Uint32Array(0), undefined, new Uint32Array(2), callback);
+    zstd.close();
   });
 });
 

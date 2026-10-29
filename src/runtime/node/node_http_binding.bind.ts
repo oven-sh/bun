@@ -1,7 +1,14 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { webSocketDataCell } from "../../codegen/builtins/host/native-cells.ts";
 import { NodeHTTPResponse } from "../server/NodeHTTPResponse.bind.ts";
-import { DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket } from "../server/server.bind.ts";
+import {
+  DebugHTTPSServer,
+  DebugHTTPServer,
+  HTTPSServer,
+  HTTPServer,
+  ServerWebSocket,
+  WebSocketMessage,
+} from "../server/server.bind.ts";
 
 export default b.module({ rustPath: "crate::node::node_http_binding" });
 
@@ -19,7 +26,7 @@ export const BunServer = b.union({
   debugHttp: DebugHTTPServer,
   debugHttps: DebugHTTPSServer,
 });
-export const getBunServerAllClosedPromise = b.fn({ args: { server: BunServer }, returns: b.any, capability: "js" });
+export const getBunServerAllClosedPromise = b.fn({ args: { server: BunServer }, returns: b.promise, capability: "js" });
 export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });
 
 export const DeflateParams = b.dictionary({
@@ -32,14 +39,14 @@ export const upgradeNodeHTTPResponseToWebSocket = b.fn({
   args: {
     /** `kInternalSocketData` of the socket given to `handleUpgrade()` of `ws`, which can be any `Duplex`. */
     response: NodeHTTPResponse.otherAsNull,
-    websocket: b.any,
-    handlers: b.any,
+    websocket: b.opaque,
+    handlers: b.opaque,
     handshake: b.string.utf8,
     maxPayload: b.u32,
     flags: b.i32,
     deflate: DeflateParams.optional,
   },
-  returns: b.any,
+  returns: ServerWebSocket.optional,
   capability: "js",
   throws: true,
   // `data` of the new ServerWebSocket.
@@ -51,12 +58,12 @@ export const upgradeNodeHTTPResponseToWebSocket = b.fn({
 export const sendWebSocketFrame = b.fn({
   args: {
     handle: ServerWebSocket,
-    data: b.any,
+    data: WebSocketMessage,
     opcode: b.i32.validateInteger(0, 2),
     fin: b.bool,
     compress: b.bool,
   },
-  returns: b.any,
+  returns: b.opaque,
   capability: "js",
   throws: true,
 });

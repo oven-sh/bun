@@ -530,9 +530,15 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
     if (never.length > 0) broken.push(`${path} has no ${never.join(", ")}`);
     const calls = schema.getCallSignatures();
     const constructs = schema.getConstructSignatures();
+    const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
+    const present = checker.getNonNullableType(schema);
+    if (absent.length > 0 && isGenerated(present)) {
+      if (absent.some(part => !checker.isTypeAssignableTo(part, published)))
+        broken.push(`${path} is ${show(schema)}, not ${show(published)}`);
+      return compare(path, checker.getNonNullableType(published), present);
+    }
     if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
       const promisesNothing = published.flags & ts.TypeFlags.Void;
-      const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
       if (
         !promisesNothing &&
         (!checker.isTypeAssignableTo(published, schema) ||
@@ -601,7 +607,9 @@ describe("@types/bun integration test", () => {
       pairs,
       `export type Published = {\n${Object.entries(PUBLISHED_AS)
         .map(([file, type]) => `  ${JSON.stringify(file)}: ${type};\n`)
-        .join("")}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (): T; prototype: T };\n`,
+        .join(
+          "",
+        )}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (...args: any): T; prototype: T };\n`,
     );
     const program = ts.createProgram({
       rootNames: [join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"), join(dir, "Bindgen.d.ts"), pairs],
@@ -656,6 +664,13 @@ describe("@types/bun integration test", () => {
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
       // `keepalive` and `duplex` are declared on Request but not implemented.
       "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
+      // bun.d.ts does not declare `connected` and `writable`, in either overload.
+      "js_bun_spawn_bindings.bind.ts: spawn().connected is not published",
+      "js_bun_spawn_bindings.bind.ts: spawn().writable is not published",
+      // `undefined` once the process has exited.
+      "js_bun_spawn_bindings.bind.ts: spawn().[Symbol.asyncDispose]() is Promise<unknown> | undefined, not PromiseLike<void>",
+      "js_bun_spawn_bindings.bind.ts: spawn().connected is not published",
+      "js_bun_spawn_bindings.bind.ts: spawn().writable is not published",
       // globals.d.ts does not declare these.
       "resolve_message.bind.ts: new BuildMessage().toJSON is not published",
       "resolve_message.bind.ts: new BuildMessage().column is not published",
@@ -672,7 +687,7 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
       // Only compiled code calls it.
       "response.bind.ts: constructJSONFromText is not published",
-      // As for `match` of FileSystemRouter.
+      // `keepalive` and `duplex` are declared on Request but not implemented.
       "response.bind.ts: new Request().clone() has no keepalive, duplex",
       // `undefined` once the socket is closed.
       "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",

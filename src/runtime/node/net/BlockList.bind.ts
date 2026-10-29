@@ -11,13 +11,13 @@ export const BlockList = b.class({
   types: [table.exactType("$Node.BlockList"), table.exactType("$Bindgen.BlockList")],
   construct: {},
   proto: {
-    addAddress: { ...js, args: { address: b.any, family: b.any }, length: 1 },
-    addRange: { ...js, args: { start: b.any, end: b.any, family: b.any }, length: 2 },
-    addSubnet: { ...js, args: { network: b.any, prefix: b.any, family: b.any }, length: 2 },
-    check: { ...js, args: { address: b.any, family: b.any }, returns: b.bool, length: 1 },
-    rules: { ...js, getter: b.any.returning("Array") },
+    addAddress: { ...js, args: { address: b.opaque, family: b.opaque }, length: 1 },
+    addRange: { ...js, args: { start: b.opaque, end: b.opaque, family: b.opaque }, length: 2 },
+    addSubnet: { ...js, args: { network: b.opaque, prefix: b.opaque, family: b.opaque }, length: 2 },
+    check: { ...js, args: { address: b.opaque, family: b.opaque }, returns: b.bool, length: 1 },
+    rules: { ...js, getter: b.jsArray },
   },
   static: {
-    isBlockList: { args: { value: b.any }, returns: b.bool },
+    isBlockList: { args: { value: b.self.otherAsNull }, returns: b.bool, length: 1 },
   },
 });

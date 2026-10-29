@@ -33,7 +33,7 @@ unsafe extern "C" {
         arg3: *mut c_void,
         arg4: &EncodedSlice,
     ) -> bool;
-    safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
+    safe fn WebCore__DOMFormData__count(arg0: &DOMFormData) -> usize;
 }
 
 impl DOMFormData {
@@ -90,7 +90,7 @@ impl DOMFormData {
         })
     }
 
-    pub fn count(&mut self) -> usize {
+    pub fn count(&self) -> usize {
         WebCore__DOMFormData__count(self)
     }
 }

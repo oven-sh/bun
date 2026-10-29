@@ -4,7 +4,6 @@ use core::fmt;
 
 use bun_core::Output;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
@@ -22,9 +21,9 @@ use super::jest::Jest;
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
-    Bun__Expect__applyCustomMatcher, js_ExpectAny, js_ExpectArrayContaining, js_ExpectCloseTo,
-    js_ExpectCustomAsymmetricMatcher, js_ExpectObjectContaining, js_ExpectStringContaining,
-    js_ExpectStringMatching,
+    Bun__Expect__applyCustomMatcher, UnreachableMessage, js_ExpectAny,
+    js_ExpectArrayContaining, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher,
+    js_ExpectObjectContaining, js_ExpectStringContaining, js_ExpectStringMatching,
 };
 
 use bun_jsc::js_error_to_write_error;
@@ -726,12 +725,12 @@ impl Expect {
     /// user data and is emitted verbatim. `signature` is the pre-processed
     /// header returned by `get_signature` (ANSI or stripped, per stderr
     /// colour state). Nothing here scans bytes for `<…>` markers.
-    pub(crate) fn throw_rendered(
+    pub(crate) fn throw_rendered<T>(
         &self,
         global_this: &JSGlobalObject,
         signature: &'static str,
         args: fmt::Arguments<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<T> {
         Err(if self.custom_label.is_empty() {
             global_this.throw(format_args!("{signature}{args}"))
         } else {
@@ -744,49 +743,29 @@ impl Expect {
         Err(heap.error(format_args!("expect() cannot be called with new")))
     }
 
-    pub(crate) fn pass(&self, cx: &mut JsScope<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn pass(&self, cx: &mut JsScope<'_>, message: Option<bun_core::String>) -> JsResult<()> {
         let global_this = cx.global();
         let this = self.post_match_guard(global_this);
 
-        let value = message.to_js();
-
-        let message: bun_core::String = if !value.is_undefined() {
-            if !value.is_string() {
-                return Err(global_this.throw_invalid_argument_type("pass", "message", "string"));
-            }
-
-            value.to_bun_string(global_this)?
-        } else {
-            bun_core::String::static_("passes by .pass() assertion")
-        };
+        let message = message.unwrap_or_else(|| bun_core::String::static_("passes by .pass() assertion"));
 
         this.increment_expect_call_counter();
 
-        if !this.flags.get().not() { return Ok(JSValue::UNDEFINED); }
+        if !this.flags.get().not() { return Ok(()); }
 
         let signature = Self::get_signature("pass", "", true);
         throw!(this, global_this, signature, "\n\n{}\n", message)
     }
 
-    pub(crate) fn fail(&self, cx: &mut JsScope<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn fail(&self, cx: &mut JsScope<'_>, message: Option<bun_core::String>) -> JsResult<()> {
         let global_this = cx.global();
         let this = self.post_match_guard(global_this);
 
-        let value = message.to_js();
-
-        let message: bun_core::String = if !value.is_undefined() {
-            if !value.is_string() {
-                return Err(global_this.throw_invalid_argument_type("fail", "message", "string"));
-            }
-
-            value.to_bun_string(global_this)?
-        } else {
-            bun_core::String::static_("fails by .fail() assertion")
-        };
+        let message = message.unwrap_or_else(|| bun_core::String::static_("fails by .fail() assertion"));
 
         this.increment_expect_call_counter();
 
-        if this.flags.get().not() { return Ok(JSValue::UNDEFINED); }
+        if this.flags.get().not() { return Ok(()); }
 
         let signature = Self::get_signature("fail", "", true);
         throw!(this, global_this, signature, "\n\n{}\n", message)
@@ -995,7 +974,7 @@ impl Expect {
         property_matchers: Option<JSValue>,
         result: Option<&[u8]>,
         fn_name: &'static str,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let this = self;
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else {
@@ -1025,7 +1004,7 @@ impl Expect {
 
             if strings::eql_long(&pretty_value, trim_res.trimmed, true) {
                 runner.snapshots.passed += 1;
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             } else if update {
                 runner.snapshots.passed += 1;
                 needs_write = true;
@@ -1091,7 +1070,7 @@ impl Expect {
             })?;
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn match_and_fmt_snapshot(
@@ -1105,7 +1084,7 @@ impl Expect {
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(drop);
+                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n");
             }
 
             let prop_matchers = _prop_matchers;
@@ -1118,7 +1097,7 @@ impl Expect {
                     self, global_this, signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
                     value.to_fmt(&mut formatter),
-                ).map(drop);
+                );
             }
         }
 
@@ -1132,7 +1111,7 @@ impl Expect {
         property_matchers: Option<JSValue>,
         hint: &[u8],
         fn_name: &'static str,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let this = self;
         let mut pretty_value: Vec<u8> = Vec::new();
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
@@ -1196,7 +1175,7 @@ impl Expect {
             let saved_value: Vec<u8> = saved_value.to_vec();
             if strings::eql_long(&pretty_value, &saved_value, true) {
                 runner.snapshots.passed += 1;
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             runner.snapshots.failed += 1;
@@ -1205,7 +1184,7 @@ impl Expect {
             return throw!(self, global_this, signature, "\n\n{}\n", diff_format);
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn get_static_not<'a>(heap: &JsHeap<'a>) -> JsWrapper<'a, ExpectStatic> {
@@ -1633,23 +1612,18 @@ impl Expect {
         Ok((this, value, not))
     }
 
-    pub(crate) fn unreachable(cx: &mut JsScope<'_>, message: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn unreachable(cx: &mut JsScope<'_>, message: UnreachableMessage<'_>) -> JsResult<()> {
         let global_this = cx.global();
-        let arg = message.to_js();
 
-        if arg.is_undefined_or_null() {
-            let error_value = global_this.create_error_instance(format_args!("reached unreachable code"));
-            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
-            return Err(global_this.throw_value(error_value));
-        }
-
-        if arg.is_string() {
-            let error_value = arg.to_bun_string(global_this)?.to_error_instance(global_this);
-            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
-            return Err(global_this.throw_value(error_value));
-        }
-
-        Err(global_this.throw_value(arg))
+        let error_value = match message {
+            UnreachableMessage::None => {
+                global_this.create_error_instance(format_args!("reached unreachable code"))
+            }
+            UnreachableMessage::Text(message) => message.to_error_instance(global_this),
+            UnreachableMessage::Other(value) => return Err(global_this.throw_value(value.to_js())),
+        };
+        error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
+        Err(global_this.throw_value(error_value))
     }
 }
 
@@ -1816,10 +1790,10 @@ impl Expect {
         this_value: JSValue,
         matcher_name: &'static str,
         pred: impl FnOnce(JSValue) -> bool,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let (this, value, not) = self.matcher_prelude(global, this_value, matcher_name, "")?;
         if pred(value) != not {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let mut formatter = make_formatter(global);
         let signature = Self::get_signature(matcher_name, "", not);
@@ -1853,7 +1827,7 @@ impl Expect {
         matcher_name: &'static str,
         verb: &'static str,
         pred: fn(&[u8], &[u8]) -> bool,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let this = self.post_match_guard(global);
 
         if !expected.is_string() {
@@ -1878,7 +1852,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let mut f1 = make_formatter(global);
@@ -2419,7 +2393,7 @@ impl ExpectMatcherUtils {
         global_this: &JSGlobalObject,
         value: JSValue,
         color_or_null: Option<&'static str>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Vec<u8>> {
         let mut mutable_string = bun_core::MutableString::init_2048()?;
 
         if let Some(color) = color_or_null {
@@ -2437,18 +2411,18 @@ impl ExpectMatcherUtils {
             }
         }
 
-        bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
+        Ok(mutable_string.list)
     }
 
-    pub(crate) fn stringify(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn stringify(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<Vec<u8>> {
         Self::print_value(cx.global(), value.to_js(), None)
     }
 
-    pub(crate) fn print_expected(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn print_expected(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<Vec<u8>> {
         Self::print_value(cx.global(), value.to_js(), Some("<green>"))
     }
 
-    pub(crate) fn print_received(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn print_received(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<Vec<u8>> {
         Self::print_value(cx.global(), value.to_js(), Some("<red>"))
     }
 
@@ -2457,7 +2431,7 @@ impl ExpectMatcherUtils {
         cx: &mut JsScope<'_>,
         matcher_name: JsLocal<'_>,
         rest: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<String> {
         let global_this = cx.global();
         let matcher_name = matcher_name.to_js();
         let rest = JsLocal::to_js_slice(rest);
@@ -2535,8 +2509,7 @@ impl ExpectMatcherUtils {
         } else {
             bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
         };
-        let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
-        bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+        Ok(format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n"))
     }
 }
 
@@ -2609,19 +2582,18 @@ pub(crate) mod mock {
             };
             if !arr.js_type().is_array() {
                 let mut formatter = make_formatter(global);
-                return Err(match kind {
+                return match kind {
                     MockKind::CallsWithSig => throw!(
                         this, global,
                         Self::get_signature(matcher_name, matcher_params, false),
                         "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {}",
                         value.to_fmt(&mut formatter),
-                    )
-                    .unwrap_err(),
-                    MockKind::Calls | MockKind::Returns => global.throw(format_args!(
+                    ),
+                    MockKind::Calls | MockKind::Returns => Err(global.throw(format_args!(
                         "Expected value must be a mock function: {}",
                         value.to_fmt(&mut formatter),
-                    )),
-                });
+                    ))),
+                };
             }
             Ok((this, arr, value))
         }

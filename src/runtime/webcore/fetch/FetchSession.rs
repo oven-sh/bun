@@ -20,6 +20,7 @@ use crate::webcore::FetchHeaders;
 use crate::webcore::response::HeadersRef;
 
 pub(crate) use crate::generated_bindgen::fetch_session::js_FetchSession as js;
+use crate::generated_bindgen::fetch_session::{FetchKeepAlive, FetchSessionInit, IdleTimeout};
 
 /// `proxy` as given to `fetch()` or to a session. Absent means "inherit".
 #[derive(Clone)]
@@ -251,7 +252,7 @@ impl FetchSession {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        init: JsLocal<'a>,
+        init: Option<FetchSessionInit<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let mut this = Box::new(FetchSession {
             pool: http::PoolOptions {
@@ -274,7 +275,7 @@ impl FetchSession {
         unsafe {
             bun_jsc::AbortHandle::arm_owner(&raw mut *this, cx.js_thread().context());
         }
-        let check_server_identity = Self::parse_options(&mut this, cx.global(), init.to_js())?;
+        let check_server_identity = Self::parse_options(&mut this, cx.global(), init)?;
 
         // SAFETY: the allocation's one ref, which the wrapper adopts.
         let session = unsafe { RefPtr::from_raw(bun_core::heap::into_raw(this)) };
@@ -291,32 +292,22 @@ impl FetchSession {
     fn parse_options(
         this: &mut Self,
         global: &JSGlobalObject,
-        options: JSValue,
+        options: Option<FetchSessionInit<'_>>,
     ) -> JsResult<Option<JSValue>> {
         let vm = global.bun_vm();
         let mut check_server_identity = None;
-        if options.is_undefined_or_null() {
+        let Some(options) = options else {
             return Ok(None);
-        }
-        if !options.is_object() {
-            return Err(global
-                .throw_invalid_arguments(format_args!("FetchSession: options must be an object")));
+        };
+
+        if let Some(tls) = options.tls(global)? {
+            let parsed = parse_tls(vm, global, tls.to_js())?;
+            this.ssl_config = parsed.ssl_config;
+            this.reject_unauthorized = parsed.reject_unauthorized;
+            check_server_identity = parsed.check_server_identity;
         }
 
-        if let Some(tls) = options.get(global, "tls")? {
-            if tls.is_object() {
-                let parsed = parse_tls(vm, global, tls)?;
-                this.ssl_config = parsed.ssl_config;
-                this.reject_unauthorized = parsed.reject_unauthorized;
-                check_server_identity = parsed.check_server_identity;
-            } else if !tls.is_undefined_or_null() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "FetchSession: 'tls' must be an object"
-                )));
-            }
-        }
-
-        if let Some(proxy) = options.get(global, "proxy")? {
+        if let Some(proxy) = options.proxy(global)?.map(JsLocal::to_js) {
             match parse_proxy(global, proxy)? {
                 ProxyArg::Policy(policy) => this.proxy = Some(policy),
                 ProxyArg::Absent => {}
@@ -324,7 +315,7 @@ impl FetchSession {
             }
         }
 
-        if let Some(unix) = options.get(global, "unix")? {
+        if let Some(unix) = options.unix(global)?.map(JsLocal::to_js) {
             if let Some(path) = super::parse_unix(vm, global, unix)? {
                 this.unix = path;
             } else if !unix.is_undefined_or_null() {
@@ -339,43 +330,31 @@ impl FetchSession {
             )));
         }
 
-        if let Some(keep_alive) = options.get(global, "keepAlive")? {
-            if keep_alive.is_boolean() {
-                this.keep_alive = keep_alive.as_boolean();
-            } else if keep_alive.is_object() {
-                if let Some(seconds) = positive_number(global, keep_alive, "idleTimeout")? {
+        match options.keep_alive(global)? {
+            FetchKeepAlive::None => {}
+            FetchKeepAlive::Flag(keep_alive) => this.keep_alive = keep_alive,
+            FetchKeepAlive::Options(keep_alive) => {
+                if let Some(seconds) =
+                    positive_number(global, keep_alive.idle_timeout(global)?, "idleTimeout")?
+                {
                     // The pool timer has the same wheel limits as the request idle timeout.
                     this.pool.idle_timeout_seconds =
                         http::normalize_idle_timeout_seconds(seconds.ceil() as u64);
                 }
-                if let Some(count) = keep_alive.get(global, "maxIdleSockets")? {
-                    const FIELD_NAME: &[u8] = b"keepAlive.maxIdleSockets";
-                    // `validate_integer_range` takes NaN for the default.
-                    if count.is_number() && count.as_number().is_nan() {
+                if let Some(count) = keep_alive.max_idle_sockets(global)? {
+                    if count == 0 {
                         return Err(global.throw_range_error(
                             f64::NAN,
                             jsc::RangeErrorOptions {
-                                field_name: FIELD_NAME,
+                                field_name: b"keepAlive.maxIdleSockets",
                                 min: 1,
                                 max: i64::from(u16::MAX),
                                 ..Default::default()
                             },
                         ));
                     }
-                    this.pool.max_idle_sockets = global.validate_integer_range::<u16>(
-                        count,
-                        this.pool.max_idle_sockets,
-                        bun_jsc::IntegerRange {
-                            min: 1,
-                            max: i128::from(u16::MAX),
-                            field_name: FIELD_NAME,
-                        },
-                    )?;
+                    this.pool.max_idle_sockets = count;
                 }
-            } else if !keep_alive.is_undefined_or_null() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "FetchSession: 'keepAlive' must be a boolean or an object"
-                )));
             }
         }
 
@@ -423,19 +402,13 @@ impl FetchSession {
 /// `keepAlive[name]` as a finite number above zero; `undefined` is absent.
 fn positive_number(
     global: &JSGlobalObject,
-    keep_alive: JSValue,
+    value: IdleTimeout,
     name: &'static str,
 ) -> JsResult<Option<f64>> {
-    let Some(value) = keep_alive.get(global, name)? else {
-        return Ok(None);
-    };
-    if value.is_undefined() {
-        return Ok(None);
-    }
-    let number = if value.is_number() {
-        value.as_number()
-    } else {
-        f64::NAN
+    let number = match value {
+        IdleTimeout::Missing => return Ok(None),
+        IdleTimeout::Number(number) => number,
+        IdleTimeout::Other => f64::NAN,
     };
     if !(number.is_finite() && number > 0.0) {
         return Err(global.throw_invalid_arguments(format_args!(

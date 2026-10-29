@@ -7,7 +7,9 @@ use crate::api::js_bundler::PluginJscExt as _;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
-use crate::generated_bindgen::server::ServerProtocol;
+use crate::generated_bindgen::server::{
+    ServerProtocol, UpgradeHeaders, UpgradeInit, WebSocketMessage,
+};
 use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
 };
@@ -26,7 +28,7 @@ use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
@@ -1224,7 +1226,10 @@ struct UpgradeOptions {
 }
 
 impl UpgradeOptions {
-    fn from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Self> {
+    fn from_js(
+        global: &JSGlobalObject,
+        options: Deferred<'_, Option<UpgradeInit<'_>>>,
+    ) -> JsResult<Self> {
         let mut this = Self {
             data: JSValue::ZERO,
             headers: None,
@@ -1232,37 +1237,27 @@ impl UpgradeOptions {
             _headers_object: jsc::EnsureStillAlive(JSValue::UNDEFINED),
             _headers_converted: None,
         };
-        if options.is_undefined_or_null() {
-            return Ok(this);
-        }
-        if !options.is_object() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("upgrade options must be an object"))
-            );
-        }
-        if let Some(data) = options.fast_get(global, jsc::BuiltinName::Data)? {
-            this.data = data;
-        }
-        let Some(headers_value) = options
-            .fast_get(global, jsc::BuiltinName::Headers)?
-            .filter(|headers| !headers.is_empty_or_undefined_or_null())
-        else {
+        let Some(options) = options.convert(global)? else {
             return Ok(this);
         };
-        if let Some(headers) = FetchHeaders::cast_(headers_value, global.vm()) {
-            this.headers = Some(headers);
-            this._headers_object = jsc::EnsureStillAlive(headers_value);
-        } else if headers_value.is_object() {
-            // `None` for an empty HeadersInit.
-            this._headers_converted = HeadersRef::create_from_js(global, headers_value)?;
-            this.headers = this
-                ._headers_converted
-                .as_ref()
-                .and_then(|headers| NonNull::new(headers.as_ptr()));
-        } else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "upgrade options.headers must be a Headers or an object"
-            )));
+        if let Some(data) = options.data(global)? {
+            this.data = data.to_js();
+        }
+        match options.headers(global)? {
+            UpgradeHeaders::None => return Ok(this),
+            UpgradeHeaders::Headers((headers, headers_value)) => {
+                this.headers = Some(NonNull::from(headers));
+                this._headers_object = jsc::EnsureStillAlive(headers_value.to_js());
+            }
+            UpgradeHeaders::Init(headers_value) => {
+                // `None` for an empty HeadersInit.
+                this._headers_converted =
+                    HeadersRef::create_from_js(global, headers_value.to_js())?;
+                this.headers = this
+                    ._headers_converted
+                    .as_ref()
+                    .and_then(|headers| NonNull::new(headers.as_ptr()));
+            }
         }
         if let Some(headers) = this.headers()
             && headers.fast_has(jsc::HTTPHeaderName::SecWebSocketProtocol)
@@ -1494,59 +1489,37 @@ where
         GetOrStartLoadResult::Ready(None)
     }
 
-    pub(crate) fn subscriber_count(
-        &self,
-        cx: &mut JsScope<'_>,
-        topic: JsLocal<'_>,
-    ) -> JsResult<u32> {
-        let global = cx.global();
-        let topic = topic.to_js();
-
-        if topic.is_undefined_or_null() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "subscriberCount requires a topic name as a string"
-            )));
+    pub(crate) fn subscriber_count(&self, topic: &[u8]) -> u32 {
+        if topic.is_empty() {
+            return 0;
         }
 
-        let topic_view = topic.to_js_string_view(global)?;
-        let topic = topic_view.to_utf8();
-
-        if topic.slice().is_empty() {
-            return Ok(0);
-        }
-
-        Ok(self.app_mut().num_subscribers(topic.slice()))
+        self.app_mut().num_subscribers(topic)
     }
 
     pub(crate) fn publish(
         &self,
         cx: &mut JsScope<'_>,
-        topic: JsLocal<'_>,
-        rest: &[JsLocal<'_>],
+        topic: Option<&[u8]>,
+        data: Option<WebSocketMessage<'_>>,
+        compress: bool,
     ) -> JsResult<JSValue> {
         use super::server_web_socket::{Accept, payload_from_js, send_status_to_js};
 
         let global = cx.global();
-        let topic = topic.to_js();
-        if topic.is_undefined_or_null() {
+        let Some(topic) = topic else {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
-        }
-        let topic_view = topic.to_js_string_view(global)?;
-        let topic = topic_view.to_utf8();
-        let Some((data, rest)) = rest.split_first() else {
+        };
+        let Some(data) = data else {
             return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
         };
-        let compress = rest
-            .first()
-            .map_or(JSValue::UNDEFINED, |compress| compress.to_js());
-        let compress = compress.is_undefined() || compress.to_boolean();
-        let payload = payload_from_js(global, "publish", data.to_js(), Accept::AnyOrNullish)?;
+        let payload = payload_from_js(global, "publish", data, Accept::AnyOrNullish)?;
         let bytes = payload.bytes();
 
         if self.config.get().websocket.is_none() {
             return Ok(JSValue::js_number(0.0));
         }
-        if topic.slice().is_empty() {
+        if topic.is_empty() {
             return Err(global.throw(format_args!("publish requires a topic string")));
         }
         let Some(app) = self.app.get() else {
@@ -1555,7 +1528,7 @@ where
         let status = AnyWebSocket::publish_with_options(
             SSL,
             app.cast::<c_void>(),
-            topic.slice(),
+            topic,
             bytes.slice(),
             payload.opcode(),
             compress,
@@ -1563,15 +1536,7 @@ where
         Ok(send_status_to_js(status, bytes.len(), "publish"))
     }
 
-    pub(crate) fn request_ip(
-        &self,
-        cx: &mut JsScope<'_>,
-        request: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
-        let request = request.to_js().as_class_ref::<Request>().ok_or_else(|| {
-            cx.global()
-                .throw_invalid_arguments(format_args!("Expected Request object"))
-        })?;
+    pub(crate) fn request_ip(&self, _: &mut JsScope<'_>, request: &Request) -> JsResult<JSValue> {
         if self.config.get().address.is_unix() {
             return Ok(JSValue::NULL);
         }
@@ -1599,7 +1564,7 @@ where
         &self,
         cx: &mut JsScope<'_>,
         request: JsLocal<'_>,
-        options: JsLocal<'_>,
+        options: Deferred<'_, Option<UpgradeInit<'_>>>,
     ) -> JsResult<bool> {
         use bun_core::Utf8Bytes;
         use bun_jsc::HTTPHeaderName;
@@ -1718,7 +1683,7 @@ where
             return Ok(false);
         }
 
-        let options = UpgradeOptions::from_js(global, options.to_js())?;
+        let options = UpgradeOptions::from_js(global, options)?;
         let sec_websocket_protocol = options.protocol.as_deref().unwrap_or(&offered_protocols);
 
         // The option getters may have already upgraded, responded to, or closed the request.
@@ -2158,12 +2123,11 @@ where
     pub(crate) fn do_stop(
         &self,
         cx: &mut JsScope<'_>,
-        close_active_connections: JsLocal<'_>,
+        close_active_connections: Option<bool>,
     ) -> JSValue {
         let rc = self.get_all_closed_promise(cx.global());
 
-        let close_active_connections = close_active_connections.to_js();
-        let abrupt = close_active_connections.is_boolean() && close_active_connections.to_boolean();
+        let abrupt = close_active_connections.unwrap_or(false);
         // `!deinit_running`: a `server.stop()` reached from a close callback
         // that an outer `stop()`'s drain fired would re-enter `stop_listening`
         // under the outer frame.

@@ -19,12 +19,12 @@ export const extractedSplitNewLinesFastPathStringsOnly = b.fn({
 
 export const normalizeEncoding = b.fn({
   args: { encoding: b.string.loose },
-  returns: b.any,
+  returns: b.opaque.returning("string", "undefined"),
   capability: "heap",
 });
 
 export const assertEncodingValid = b.fn({
-  args: { encoding: b.any },
+  args: { encoding: b.opaque },
   capability: "js",
   throws: true,
   rustPath: "crate::node::types::assert_encoding_valid",
@@ -33,7 +33,7 @@ export const assertEncodingValid = b.fn({
 export const parseEnv = b.fn({
   args: { content: b.string.utf8 },
   expected: { content: ["string"] },
-  returns: b.any,
+  returns: b.object,
   capability: "heap",
   throws: true,
 });

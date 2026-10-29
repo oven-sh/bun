@@ -5,7 +5,7 @@ export default b.module({ rustPath: "crate::dns_jsc::cares_jsc" });
 /** An address that is already canonical is returned as it was given. */
 export const canonicalizeIP = b.fn({
   args: { address: b.string.loose.utf8.withValue },
-  returns: b.any,
+  returns: b.opaque,
   capability: "js",
   throws: true,
 });

@@ -14,7 +14,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) =
             self.matcher_prelude(global, this_value.to_js(), "toContain", "<green>expected<r>")?;
@@ -91,7 +91,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // handle failure

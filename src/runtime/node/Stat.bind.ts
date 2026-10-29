@@ -6,7 +6,7 @@ export default b.module({ rustPath: "crate::node::stat" });
 export const Ino = b.union({ number: b.f64, bigint: b.u64.allowBigInt });
 export const createStatsForIno = b.fn({
   args: { ino: Ino, big: b.bool.loose },
-  returns: b.any,
+  returns: b.object,
   capability: "js",
   throws: true,
 });

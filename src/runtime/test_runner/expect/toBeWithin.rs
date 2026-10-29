@@ -1,5 +1,5 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::JsResult;
 
 use super::{throw, Expect};
 
@@ -10,7 +10,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         start: JsLocal<'_>,
         end: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) = self.matcher_prelude(
             global,
@@ -46,7 +46,7 @@ impl Expect {
         }
 
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // `to_fmt` takes `&mut Formatter` and the adapter holds the borrow, so three

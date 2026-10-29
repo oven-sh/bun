@@ -16,26 +16,27 @@ use bun_jsc::{
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_collections::ByteVecExt;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
 use crate::generated_bindgen::html_rewriter::{
-    AttributeIteratorResult, ContentOptions, js_HTMLRewriter, js_HTMLRewriterTransform,
+    AttributeIteratorResult, ContentOptions, DocumentHandlers, ElementHandlers, RewriterInput,
+    js_HTMLRewriter, js_HTMLRewriterTransform,
 };
 use crate::generated_bindgen::html_rewriter_internals::{
     Bun__HTMLRewriter__onHandlerReject, Bun__HTMLRewriter__onHandlerResolve,
     Bun__HTMLRewriter__onRejectInputStream, Bun__HTMLRewriter__onResolveInputStream,
 };
-use crate::generated_bindgen::response::js_Response;
+use crate::generated_bindgen::response::{BodyInit, js_Response};
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::streams::{
     self, SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
 };
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
-use bun_core::{EncodedSlice, String as BunString};
+use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
 use bun_jsc::EncodedSliceJsc as _;
 use lol_html::html_content::UserData as _;
 
@@ -156,9 +157,11 @@ impl HandlerList {
     fn append_optional(
         self,
         global: &JSGlobalObject,
-        value: Option<JSValue>,
+        value: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<Option<HandlerSlot>> {
-        value.map(|value| self.append(global, value)).transpose()
+        value
+            .map(|value| self.append(global, value.to_js()))
+            .transpose()
     }
 
     /// `Err` while an exception (a termination) is pending.
@@ -321,14 +324,13 @@ impl HTMLRewriter {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        selector: JsLocal<'a>,
-        handlers: JsLocal<'a>,
+        selector: Option<Utf8Bytes<'static>>,
+        handlers: Option<ElementHandlers<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        if selector.to_js().is_undefined_or_null() {
+        let Some(selector_name) = selector else {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
-        }
-        let selector_name = selector.to_js().to_utf8(global)?;
+        };
         let selector_source = utf8_or_throw(global, &selector_name)?;
         if selector_nesting(&selector_name) > MAX_SELECTOR_NESTING {
             return Err(global.throw_value(create_lolhtml_error(
@@ -341,7 +343,7 @@ impl HTMLRewriter {
             Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
         };
 
-        let handler = ElementHandler::init(global, this_value.to_js(), handlers.to_js())?;
+        let handler = ElementHandler::init(global, this_value.to_js(), handlers)?;
         let handler = Box::new(handler);
         self.context
             .borrow_mut()
@@ -354,9 +356,9 @@ impl HTMLRewriter {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        handlers: JsLocal<'a>,
+        handlers: Option<DocumentHandlers<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let handler = DocumentHandler::init(cx.global(), this_value.to_js(), handlers.to_js())?;
+        let handler = DocumentHandler::init(cx.global(), this_value.to_js(), handlers)?;
         self.context
             .borrow_mut()
             .document_handlers
@@ -383,11 +385,11 @@ impl HTMLRewriter {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        input: JsLocal<'_>,
+        input: RewriterInput<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let (this_value, input) = (this_value.to_js(), input.to_js());
-        if let Some(response) = js_Response::from_js(input).map(BackRef::<Response>::from) {
+        let this_value = this_value.to_js();
+        if let RewriterInput::Response(response) = input {
             // An already-failed body surfaces its stored upstream error (abort
             // reason, connection error) instead of a generic "body already used"
             // — the error is the useful bit, and `wire_input` would otherwise
@@ -401,7 +403,7 @@ impl HTMLRewriter {
                     .global()
                     .throw_invalid_arguments(format_args!("Response body already used")));
             }
-            let out = self.begin_transform(&cx, this_value, &response, None)?;
+            let out = self.begin_transform(&cx, this_value, response, None)?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out.to_error() {
                 return Err(cx.global().throw_value(err));
@@ -409,22 +411,11 @@ impl HTMLRewriter {
             return Ok(out);
         }
 
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        enum ResponseKind {
-            String,
-            ArrayBuffer,
-            Other,
-        }
-        let kind = if input.is_string() {
-            ResponseKind::String
-        } else if input.js_type().is_array_buffer_like() {
-            ResponseKind::ArrayBuffer
-        } else {
-            ResponseKind::Other
-        };
-
-        if kind != ResponseKind::Other {
-            let body_value = webcore::body::extract(cx.global(), input)?;
+        if let RewriterInput::Body(
+            body @ (BodyInit::String(_) | BodyInit::DataView(_) | BodyInit::Buffer(_)),
+        ) = input
+        {
+            let body_value = webcore::body::extract(cx.global(), body)?;
             let resp = RefPtr::new(Response::init(
                 webcore::response::Init {
                     status_code: 200,
@@ -436,7 +427,7 @@ impl HTMLRewriter {
             ));
 
             // Carries its own article: "an ArrayBuffer", not "a ArrayBuffer".
-            let noun = if kind == ResponseKind::String {
+            let noun = if matches!(body, BodyInit::String(_)) {
                 "a string"
             } else {
                 "an ArrayBuffer"
@@ -460,10 +451,9 @@ impl HTMLRewriter {
                 .get_body_value()
                 .use_as_any_blob_allow_non_utf8_string();
 
-            return match kind {
-                ResponseKind::String => blob.to_string(&cx, webcore::Lifetime::Transfer),
-                ResponseKind::ArrayBuffer => blob.to_array_buffer(&cx, webcore::Lifetime::Transfer),
-                ResponseKind::Other => unreachable!(),
+            return match body {
+                BodyInit::String(_) => blob.to_string(&cx, webcore::Lifetime::Transfer),
+                _ => blob.to_array_buffer(&cx, webcore::Lifetime::Transfer),
             };
         }
 
@@ -2079,20 +2069,20 @@ impl DocumentHandler {
     pub(crate) fn init(
         global: &JSGlobalObject,
         rewriter: JSValue,
-        this_object: JSValue,
+        this_object: Option<DocumentHandlers<'_>>,
     ) -> JsResult<DocumentHandler> {
-        if !this_object.is_object() {
+        let Some(this_object) = this_object else {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
-        }
+        };
 
-        let doctype = callback_property(global, this_object, "doctype")?;
-        let comments = callback_property(global, this_object, "comments")?;
-        let text = callback_property(global, this_object, "text")?;
-        let end = callback_property(global, this_object, "end")?;
+        let doctype = this_object.doctype(global)?;
+        let comments = this_object.comments(global)?;
+        let text = this_object.text(global)?;
+        let end = this_object.end(global)?;
 
         let list = HandlerList::of_rewriter(rewriter, global)?;
         Ok(DocumentHandler {
-            this_object: list.append(global, this_object)?,
+            this_object: list.append(global, this_object.object().to_js())?,
             on_doc_type_callback: list.append_optional(global, doctype)?,
             on_comment_callback: list.append_optional(global, comments)?,
             on_text_callback: list.append_optional(global, text)?,
@@ -2100,21 +2090,6 @@ impl DocumentHandler {
             global: GlobalRef::from(global),
         })
     }
-}
-
-/// `handler[name]`, which has to be a function when it is present.
-fn callback_property(
-    global: &JSGlobalObject,
-    handler: JSValue,
-    name: &'static str,
-) -> JsResult<Option<JSValue>> {
-    let Some(val) = handler.get(global, name)? else {
-        return Ok(None);
-    };
-    if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-        return Err(global.throw_invalid_arguments(format_args!("{name} must be a function")));
-    }
-    Ok(Some(val))
 }
 
 // ───────────────────────── HandlerCallback ───────────────────────────────
@@ -2416,19 +2391,19 @@ impl ElementHandler {
     pub(crate) fn init(
         global: &JSGlobalObject,
         rewriter: JSValue,
-        this_object: JSValue,
+        this_object: Option<ElementHandlers<'_>>,
     ) -> JsResult<ElementHandler> {
-        if !this_object.is_object() {
+        let Some(this_object) = this_object else {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
-        }
+        };
 
-        let element = callback_property(global, this_object, "element")?;
-        let comments = callback_property(global, this_object, "comments")?;
-        let text = callback_property(global, this_object, "text")?;
+        let element = this_object.element(global)?;
+        let comments = this_object.comments(global)?;
+        let text = this_object.text(global)?;
 
         let list = HandlerList::of_rewriter(rewriter, global)?;
         Ok(ElementHandler {
-            this_object: list.append(global, this_object)?,
+            this_object: list.append(global, this_object.object().to_js())?,
             on_element_callback: list.append_optional(global, element)?,
             on_comment_callback: list.append_optional(global, comments)?,
             on_text_callback: list.append_optional(global, text)?,
@@ -2558,17 +2533,13 @@ fn setter_utf8_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<String> 
     Ok(utf8_or_throw(global, slice.slice())?.to_owned())
 }
 
-fn string_to_js(s: &str, global: &JSGlobalObject) -> JsResult<JSValue> {
-    bun_string_jsc::create_utf8_for_js(global, s.as_bytes())
-}
-
 /// lol-html's optional getters (`get_attribute`, `Doctype` name/ids) return
 /// `None` for "absent" and `Some("")` for present-but-empty. Map only the
 /// former to `null` so `<div a="">` reads as `""`, not `null`.
 fn opt_string_to_js_or_null(s: Option<String>, global: &JSGlobalObject) -> JsResult<JSValue> {
     match s {
         None => Ok(JSValue::NULL),
-        Some(s) => string_to_js(&s, global),
+        Some(s) => bun_string_jsc::create_utf8_for_js(global, s.as_bytes()),
     }
 }
 
@@ -2743,11 +2714,8 @@ impl Comment {
         Some(this_value)
     }
 
-    pub(crate) fn get_text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let Some(comment) = self.comment.get_mut() else {
-            return Ok(JSValue::NULL);
-        };
-        string_to_js(&comment.text(), cx.global())
+    pub(crate) fn get_text(&self) -> JsResult<Option<String>> {
+        Ok(self.comment.get_mut().map(|comment| comment.text()))
     }
 
     pub(crate) fn set_text(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
@@ -2820,11 +2788,8 @@ impl EndTag {
         Some(this_value)
     }
 
-    pub(crate) fn get_name(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let Some(end_tag) = self.end_tag.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        string_to_js(&end_tag.name(), cx.global())
+    pub(crate) fn get_name(&self) -> JsResult<Option<String>> {
+        Ok(self.end_tag.get_mut().map(|end_tag| end_tag.name()))
     }
 
     pub(crate) fn set_name(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
@@ -3123,11 +3088,8 @@ impl Element {
         Some(this_value)
     }
 
-    pub(crate) fn get_tag_name(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        string_to_js(&el.tag_name(), cx.global())
+    pub(crate) fn get_tag_name(&self) -> JsResult<Option<String>> {
+        Ok(self.element.get_mut().map(|el| el.tag_name()))
     }
 
     pub(crate) fn set_tag_name(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {

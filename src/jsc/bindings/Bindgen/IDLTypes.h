@@ -1,4 +1,5 @@
 #pragma once
+#include "Bindgen/ExternTraits.h"
 #include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 // WebCore's. In quotes it would be this file.
@@ -32,6 +33,8 @@ struct IDLVariadicArguments : WebCore::IDLType<JSC::ArgList> {};
 // For use in unions, to represent a nullable union.
 struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
 struct IDLStrictUndefined : WebCore::IDLType<std::nullptr_t> {};
+// The last alternative of a union that takes every value.
+struct IDLIgnored : WebCore::IDLType<std::nullptr_t> {};
 
 // Treats all falsy values as null.
 template<typename IDL>
@@ -56,6 +59,11 @@ enum class AllowBigInt : bool {
 
 template<std::integral T, AllowBigInt = AllowBigInt::No>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
+// `BigInt.asIntN(64, value)` of a BigInt.
+struct IDLBigIntAsInt64 : WebCore::IDLInteger<int64_t> {};
+// `IDL` wraps a number modulo its width. This wraps a BigInt too.
+template<typename IDL>
+struct IDLWrapOrBigInt : IDL {};
 struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
 // A Date is its time value.
 struct IDLStrictDoubleOrDate : WebCore::IDLUnrestrictedDouble {};
@@ -181,16 +189,21 @@ struct IDLRawObject : IDLRawAny {};
 // An array as the `JSValue` itself. See IDLRawAny.
 struct IDLRawArray : IDLRawAny {};
 
-// An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
-template<typename JSClass>
-struct IDLRawInterface : WebCore::IDLType<JSClass*> {
-    using SequenceStorageType = void;
-    using NullableType = JSClass*;
-    using NullableInnerParameterType = JSClass*;
-    static JSClass* nullValue() { return nullptr; }
-};
+// A string or a `String` object as the `JSValue` itself. See IDLRawAny.
+struct IDLRawStringLike : IDLRawAny {};
 
-// An instance of a `refCounted` class, as what it wraps. The caller's frame keeps the cell alive.
+// A number as the `JSValue` itself. See IDLRawAny.
+struct IDLRawNumber : IDLRawAny {};
+
+// An instance of a `JSCell` subclass as the `JSValue` itself. See IDLRawAny.
+template<typename JSClass, auto name>
+struct IDLRawCell : IDLRawAny {};
+
+// An instance of a wrapper class, as a `Ref` to what it wraps.
+template<typename JSClass, auto name>
+struct IDLWrappedRef : IDLRef<typename JSClass::DOMWrapped> {};
+
+// An instance of a generated class or of a wrapper class, as what it wraps. The caller's frame keeps the cell alive.
 template<typename JSClass, auto name>
 struct IDLWrappedInterface : WebCore::IDLType<void*> {
     using SequenceStorageType = void;
@@ -198,5 +211,9 @@ struct IDLWrappedInterface : WebCore::IDLType<void*> {
     using NullableInnerParameterType = void*;
     static void* nullValue() { return nullptr; }
 };
+
+// An instance and its cell, which keeps the instance alive where no argument does.
+template<typename IDL>
+struct IDLWithValue : WebCore::IDLType<WithValue<typename IDL::ImplementationType>> {};
 
 }

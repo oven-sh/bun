@@ -6,9 +6,9 @@ export default b.module({ rustPath: "crate::crypto::password_object" });
 export const PasswordHashOptions = b.dictionary(
   {
     algorithm: b.string.utf8.nullable,
-    cost: b.any,
-    timeCost: b.any,
-    memoryCost: b.any,
+    cost: b.opaque,
+    timeCost: b.opaque,
+    memoryCost: b.opaque,
   },
   { allowArray: true },
 );
@@ -26,7 +26,7 @@ const copied = b.bytes({ from: ["string", "buffer"], otherwise: "toString", refu
 export const password = b.namespace({
   hash: {
     args: { password: copied, algorithm: PasswordHashAlgorithm },
-    returns: b.any,
+    returns: b.promise,
     capability: "js",
     throws: true,
   },
@@ -38,7 +38,7 @@ export const password = b.namespace({
   },
   verify: {
     args: { password: copied, hash: copied, algorithm: b.string.utf8.nullable },
-    returns: b.any,
+    returns: b.promise,
     capability: "js",
     throws: true,
   },

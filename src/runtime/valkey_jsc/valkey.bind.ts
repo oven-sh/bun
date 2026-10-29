@@ -211,13 +211,15 @@ const commands: Record<string, readonly [args: readonly string[], length: number
 };
 
 const args = (names: readonly string[]): Record<string, b.Type> =>
-  Object.fromEntries(names.map(name => (name.startsWith("...") ? [name.slice(3), b.any.variadic] : [name, b.any])));
+  Object.fromEntries(
+    names.map(name => (name.startsWith("...") ? [name.slice(3), b.rest(b.opaque)] : [name, b.opaque])),
+  );
 
-const promise = b.any.returning("Promise");
+const promise = b.opaque.returning("Promise");
 /** A command that cannot be sent answers the error and does not throw it. */
-const promiseOrError = b.any.returning("Promise", "Error");
+const promiseOrError = b.opaque.returning("Promise", "Error");
 
-const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
+const eventHandler = { getter: b.opaque, setter: { capability: "js" }, passThis: true } as const;
 
 export const RedisClient = b.class({
   rustPath: "crate::valkey_jsc::JSValkeyClient",
@@ -226,7 +228,7 @@ export const RedisClient = b.class({
   memoryCost: true,
   construct: {
     passStructure: true,
-    args: { url: b.any, options: b.any },
+    args: { url: b.opaque, options: b.opaque },
     capability: "js",
     throws: true,
     length: 0,

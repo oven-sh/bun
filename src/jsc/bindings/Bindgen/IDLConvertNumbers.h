@@ -200,3 +200,37 @@ struct WebCore::Converter<Bun::Bindgen::IDLLooseInteger<T, allowBigInt>>
         RELEASE_AND_RETURN(scope, Bun::convertIDL<Strict>(globalObject, numeric, ctx));
     }
 };
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLWrapOrBigInt<IDL>>
+    : Bun::DefaultContextConverter<Bun::Bindgen::IDLWrapOrBigInt<IDL>> {
+
+    template<Bun::IDLConversionContext Ctx>
+    static typename IDL::ImplementationType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (value.isBigInt())
+            return static_cast<typename IDL::ImplementationType>(JSC::JSBigInt::toBigInt64(value));
+        return Bun::convertIDL<IDL>(globalObject, value, ctx);
+    }
+};
+
+template<>
+struct WebCore::Converter<Bun::Bindgen::IDLBigIntAsInt64>
+    : Bun::DefaultTryConverter<Bun::Bindgen::IDLBigIntAsInt64> {
+
+    static constexpr bool conversionHasSideEffects = false;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<int64_t> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!value.isBigInt())
+            return std::nullopt;
+        return JSC::JSBigInt::toBigInt64(value);
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "a bigint"_s);
+    }
+};

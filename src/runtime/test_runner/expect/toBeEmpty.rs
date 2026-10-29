@@ -10,7 +10,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) = self.matcher_prelude(global, this_value.to_js(), "toBeEmpty", "")?;
         let mut pass;
@@ -98,7 +98,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         if not {

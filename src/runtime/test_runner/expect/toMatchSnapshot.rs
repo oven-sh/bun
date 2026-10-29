@@ -12,7 +12,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         property_matchers: JsLocal<'_>,
         hint: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 

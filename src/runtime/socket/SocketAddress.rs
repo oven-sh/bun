@@ -10,12 +10,14 @@ use core::mem;
 
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CommonString, JSGlobalObject, JSString, JSValue, JsClass, JsError, JsResult, StringJsc,
 };
 use bun_ptr::JsCell;
+
+use crate::generated_bindgen::socket_address::{SocketAddressJSON, SocketAddressOptions};
 
 pub(crate) struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
@@ -56,33 +58,22 @@ impl Default for Options {
 
 impl Options {
     /// NOTE: assumes options object has been normalized and validated by JS code.
-    pub(crate) fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
-        if !obj.is_object() {
-            return Err(global.throw_invalid_argument_type_value(b"options", b"object", obj));
-        }
+    pub(crate) fn from_js(
+        global: &JSGlobalObject,
+        obj: SocketAddressOptions<'_>,
+    ) -> JsResult<Options> {
+        let address_str: Option<BunString> = obj.address(global)?;
 
-        let address_str: Option<BunString> = if let Some(a) = obj.get(global, "address")? {
-            if !a.is_string() {
-                return Err(global.throw_invalid_argument_type_value(
-                    b"options.address",
-                    b"string",
-                    a,
-                ));
-            }
-            Some(BunString::from_js(a, global)?)
-        } else {
-            None
-        };
-
-        let _family: AF = if let Some(fam) = obj.get(global, "family")? {
+        let _family: AF = if let Some(fam) = obj.family(global)? {
             // "ipv4" or "ipv6", ignoring case
-            AF::from_js(global, fam)?
+            AF::from_js(global, fam.to_js())?
         } else {
             AF::INET
         };
 
         // required. Validated by `validatePort`.
-        let _port: u16 = if let Some(p) = obj.get(global, "port")? {
+        let _port: u16 = if let Some(p) = obj.port(global)? {
+            let p = p.to_js();
             // Note: shim until `JSValue::is_finite` lands in bun_jsc.
             if !(p.is_number() && p.as_number().is_finite()) {
                 return Err(Self::throw_bad_port(global, p));
@@ -96,7 +87,8 @@ impl Options {
             0
         };
 
-        let _flowlabel = if let Some(fl) = obj.get(global, "flowlabel")? {
+        let _flowlabel = if let Some(fl) = obj.flowlabel(global)? {
+            let fl = fl.to_js();
             if !fl.is_number() {
                 return Err(global.throw_invalid_argument_type_value(
                     b"options.flowlabel",
@@ -262,17 +254,20 @@ impl SocketAddress {
     ///
     /// ## References
     /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)
-    pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
+    pub(crate) fn constructor(
+        cx: &mut JsScope<'_>,
+        options: Option<SocketAddressOptions<'_>>,
+    ) -> JsResult<Self> {
         let global = cx.global();
-        if options.is_undefined() {
+        let Some(options) = options else {
             return Ok(SocketAddress {
                 _addr: sockaddr::LOOPBACK_V4,
                 _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::loopback_v4(),
             });
-        }
+        };
 
-        let options = Options::from_js(global, options.to_js())?;
+        let options = Options::from_js(global, options)?;
 
         // fast path for { family: 'ipv6' }
         if options.family == AF::INET6
@@ -504,17 +499,19 @@ unsafe extern "C" {
 // =============================================================================
 
 impl SocketAddress {
-    pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
+    pub(crate) fn get_address<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
         // toJS increments ref count
         let addr_ = self.address();
         Ok(match addr_.tag() {
             bun_core::Tag::Dead => unreachable!(),
-            bun_core::Tag::Empty => match self.family() {
-                AF::INET => global.common_strings().in4_loopback(),
-                AF::INET6 => global.common_strings().in6_any(),
-            },
-            _ => addr_.to_js(global)?,
+            bun_core::Tag::Empty => heap.common_string(match self.family() {
+                AF::INET => CommonString::IN4Loopback,
+                AF::INET6 => CommonString::IN6Any,
+            }),
+            _ => heap.create_string(addr_)?,
         })
     }
 
@@ -607,39 +604,16 @@ impl SocketAddress {
         }
     }
 
-    pub(crate) fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        // `jsc.JSObject.create` requires a `PojoFields` impl, so use a local
-        // struct.
-        struct ToJson {
-            address: JSValue,
-            family: JSValue,
-            port: JSValue,
-            flowlabel: JSValue,
-        }
-        impl bun_jsc::js_object::PojoFields for ToJson {
-            const FIELD_COUNT: usize = 4;
-            fn put_fields(
-                &self,
-                _global: &JSGlobalObject,
-                mut put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
-            ) -> JsResult<()> {
-                put(b"address", self.address)?;
-                put(b"family", self.family)?;
-                put(b"port", self.port)?;
-                put(b"flowlabel", self.flowlabel)?;
-                Ok(())
-            }
-        }
-        let family = self.get_family(&cx.heap).to_js();
-        let address = self.get_address(cx)?;
-        let global = cx.global();
-        let pojo = ToJson {
-            address,
-            family,
-            port: JSValue::js_number(f64::from(self.port())),
-            flowlabel: JSValue::js_number(f64::from(self.get_flowlabel())),
-        };
-        Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
+    pub(crate) fn to_json<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, SocketAddressJSON<'a>> {
+        Ok(SocketAddressJSON {
+            address: self.get_address(heap)?,
+            family: self.get_family(heap),
+            port: self.port(),
+            flowlabel: self.get_flowlabel(),
+        })
     }
 }
 

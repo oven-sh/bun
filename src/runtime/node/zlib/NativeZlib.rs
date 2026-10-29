@@ -8,12 +8,11 @@ mod _impl {
     use super::*;
     use core::cell::Cell;
 
-    use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper};
     use bun_jsc::{JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
 
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive};
-    use crate::node::util::validators;
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
     /// (see `CompressionStreamImpl::write` in node_zlib_binding.rs).
@@ -86,8 +85,8 @@ mod _impl {
             mem_level: i32,
             strategy: i32,
             write_state: JsLocal<'_>,
-            process_callback: JsLocal<'_>,
-            dictionary: JsLocal<'_>,
+            write_callback: Deferred<'_, JsLocal<'_, Callable>>,
+            dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
         ) -> JsResult<()> {
             let global = cx.global();
             let this_value = this_value.to_js();
@@ -121,39 +120,25 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_callback =
-                validators::validate_function(global, "writeCallback", process_callback.to_js())?;
+            let write_callback = write_callback.convert(global)?.to_js();
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
             // the call to `stream.init` below (E0716 otherwise).
-            let dictionary_buf;
-            let dictionary = if dictionary.is_undefined() {
-                None
-            } else {
-                let dictionary_value = dictionary.to_js();
-                dictionary_buf = match dictionary_value.as_array_buffer(global) {
-                    Some(buf) => buf,
-                    None => {
-                        return Err(global.throw_invalid_argument_type_value(
-                            "dictionary",
-                            "Buffer, TypedArray, or DataView",
-                            dictionary_value,
-                        ));
-                    }
-                };
-                // `deflateSetDictionary`/`inflateSetDictionary` take a `uInt`
-                // length; reject anything larger before `Context::init` copies it.
-                if dictionary_buf.byte_len > u32::MAX as usize {
-                    return Err(global.throw_range_error(
-                        dictionary_buf.byte_len as i64,
-                        bun_jsc::RangeErrorOptions {
-                            field_name: b"dictionary.byteLength",
-                            max: i64::from(u32::MAX),
-                            ..Default::default()
-                        },
-                    ));
-                }
-                Some(dictionary_buf.byte_slice())
-            };
+            let dictionary_buf = dictionary
+                .convert(global)?
+                .map(|buffer| buffer.as_array_buffer(global));
+            let dictionary = dictionary_buf.as_ref().map(|buf| buf.byte_slice());
+            // `deflateSetDictionary`/`inflateSetDictionary` take a `uInt`
+            // length; reject anything larger before `Context::init` copies it.
+            if let Some(dictionary) = dictionary.filter(|bytes| bytes.len() > u32::MAX as usize) {
+                return Err(global.throw_range_error(
+                    dictionary.len() as i64,
+                    bun_jsc::RangeErrorOptions {
+                        field_name: b"dictionary.byteLength",
+                        max: i64::from(u32::MAX),
+                        ..Default::default()
+                    },
+                ));
+            }
 
             js::write_result_set_cached(this_value, global, write_result_value);
             js::write_callback_set_cached(

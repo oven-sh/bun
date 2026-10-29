@@ -4,8 +4,8 @@
 //! `bun_jsc` tier because every variant payload (`Buffer` =
 //! `PinnedArrayBuffer`, `Utf8WithString`, `Utf8Bytes`, `Fd`)
 //! is already reachable from this crate. `bun_runtime::node::types`
-//! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
-//! `from_js_with_allocator`) on top via inherent impls in that crate.
+//! `pub use`s these and layers the JS-argument-parsing helpers on top via
+//! inherent impls in that crate.
 
 use bun_core::{Utf8Bytes, Utf8WithString};
 use bun_sys::Fd;

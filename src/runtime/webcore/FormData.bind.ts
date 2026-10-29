@@ -4,7 +4,7 @@ import { BlobOrBuildArtifact } from "./Blob.bind.ts";
 export default b.module({ rustPath: "crate::webcore::form_data" });
 
 const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
-const parse = { returns: b.any, capability: "heap", throws: true } as const;
+const parse = { returns: b.object, capability: "heap", throws: true } as const;
 
 /** Without a boundary, or with an empty one, the input is URL-encoded. A `Blob` that is a file is empty. */
 export const from = b.overloads(

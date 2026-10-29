@@ -240,20 +240,6 @@ impl JSValue {
     pub fn is_any_int(self) -> bool {
         JSC__JSValue__isAnyInt(self)
     }
-    /// ECMA-262 20.1.2.3 `Number.isInteger`.
-    #[inline]
-    pub fn is_integer(self) -> bool {
-        if self.is_int32() {
-            return true;
-        }
-        if self.is_double() {
-            let num = self.as_double();
-            if num.is_finite() && num.trunc() == num {
-                return true;
-            }
-        }
-        false
-    }
     #[inline]
     pub fn is_string(self) -> bool {
         self.is_cell() && self.js_type().is_string_like()
@@ -1030,22 +1016,6 @@ impl JSValue {
         }
     }
 
-    /// `get` for a key that is one of `BunCommonStrings.h`'s, without the
-    /// per-call `StringImpl` and atom-table probe.
-    pub fn get_common_string(
-        self,
-        global: &JSGlobalObject,
-        key: crate::CommonString,
-    ) -> JsResult<Option<JSValue>> {
-        debug_assert!(self.is_object());
-        let v = host_fn::from_js_host_call_generic(global, || key.get_property(self, global))?;
-        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
-            Ok(None)
-        } else {
-            Ok(Some(v))
-        }
-    }
-
     /// Safe to use on any JSValue.
     /// Returns true iff the value is an object whose `toString` property is a callable cell.
     pub fn implements_to_string(self, global: &JSGlobalObject) -> JsResult<bool> {
@@ -1104,19 +1074,6 @@ impl JSValue {
         // Filters undef/null AND empty strings.
         Ok(self
             .get(global, property)?
-            .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
-    }
-    /// `fast_get` (precached `JSC::Identifier`,
-    /// no StringImpl alloc / atom-table probe) followed by the same `truthyPropertyValue`
-    /// filter as `get_truthy`. Use this when the property name is a `BuiltinName`.
-    pub fn fast_get_truthy(
-        self,
-        global: &JSGlobalObject,
-        builtin_name: BuiltinName,
-    ) -> JsResult<Option<JSValue>> {
-        // Filters undef/null AND empty strings.
-        Ok(self
-            .fast_get(global, builtin_name)?
             .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
     }
     /// Missing/undefined → `None`; otherwise
@@ -2304,25 +2261,6 @@ impl JSValue {
         match self.get_own(global, &name)? {
             Some(prop) if !prop.is_undefined() => Ok(Some(prop)),
             _ => Ok(None),
-        }
-    }
-    /// `JSValue.getOwnObject` — own-property lookup; throws "{prop} must be an
-    /// object" when the own-truthy value is not an object.
-    pub fn get_own_object(
-        self,
-        global: &JSGlobalObject,
-        property_name: impl AsRef<[u8]>,
-    ) -> JsResult<Option<*mut JSObject>> {
-        let property_name = property_name.as_ref();
-        match self.get_own_truthy(global, property_name)? {
-            Some(v) => match v.get_object() {
-                Some(obj) => Ok(Some(obj)),
-                None => Err(global.throw_invalid_arguments(format_args!(
-                    "{} must be an object",
-                    bstr::BStr::new(property_name),
-                ))),
-            },
-            None => Ok(None),
         }
     }
     /// `JSValue.getOwnArray` — own-property lookup (no prototype walk) routed

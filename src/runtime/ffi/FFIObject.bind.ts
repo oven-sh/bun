@@ -5,13 +5,13 @@ export default b.module({ rustPath: "crate::ffi::ffi_object_draft" });
 /** With four arguments the last is the deallocator. */
 const view = {
   args: {
-    ptr: b.any,
-    byteOffset: b.any.ifPassed,
-    byteLength: b.any.ifPassed,
-    deallocatorContext: b.any.ifPassed,
-    deallocator: b.any.ifPassed,
+    ptr: b.opaque,
+    byteOffset: b.opaque.ifPassed,
+    byteLength: b.opaque.ifPassed,
+    deallocatorContext: b.opaque.ifPassed,
+    deallocator: b.opaque.ifPassed,
   },
-  returns: b.any,
+  returns: b.bufferSource,
   feature: "Ffi",
   capability: "js",
   throws: true,

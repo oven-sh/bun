@@ -7,8 +7,7 @@ use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
-    BuiltinName, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef, JsResult,
-    StringJsc as _,
+    HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef, JsResult, StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{String as BunString, StringView, Utf8Bytes};
@@ -17,7 +16,7 @@ use bun_http_types::Method::Method;
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
 use super::{FetchHeaders, ReadableStream, Request};
 
-use super::blob::Blob;
+use crate::api::js_bundler::BuildArtifact;
 use bun_ptr::weak_ptr::WeakPtrData;
 
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
@@ -159,7 +158,9 @@ impl BodyAbortListener {
     }
 }
 
-use crate::generated_bindgen::response::js_Response as js;
+use crate::generated_bindgen::response::{
+    BodyInit, ResponseInit, ResponseInitArgument, ResponseInitOrStatus, js_Response as js,
+};
 
 #[inline]
 pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
@@ -829,14 +830,18 @@ impl Response {
         self.js_ref.with_mut(|r| r.finalize());
     }
 
-    pub(crate) fn construct_json(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
-        let args = JsLocal::to_js_slice(args);
-        Self::construct_json_response(cx.global(), args, JsonArgument::Value)
+    pub(crate) fn construct_json(
+        cx: &mut JsScope<'_>,
+        data: Option<JsLocal<'_>>,
+        init: ResponseInitOrStatus<'_>,
+    ) -> JsResult<JSValue> {
+        Self::construct_json_response(cx.global(), data, init, JsonArgument::Value)
     }
 
     fn construct_json_response(
         global_this: &JSGlobalObject,
-        args: &[JSValue],
+        data: Option<JsLocal<'_>>,
+        init: ResponseInitOrStatus<'_>,
         argument: JsonArgument,
     ) -> JsResult<JSValue> {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
@@ -857,8 +862,8 @@ impl Response {
             |r| r.body.get().reset(),
         );
 
-        if let Some(&json_value) = args.first() {
-            let str = Self::json_text_of(global_this, json_value, argument)?;
+        if let Some(json_value) = data {
+            let str = Self::json_text_of(global_this, json_value.to_js(), argument)?;
 
             if !str.is_empty() {
                 debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
@@ -868,18 +873,16 @@ impl Response {
             }
         }
 
-        if let Some(&arg_init) = args.get(1) {
-            if arg_init.is_undefined_or_null() {
-                // no-op
-            } else if arg_init.is_number() {
+        match init {
+            ResponseInitOrStatus::Other => {}
+            ResponseInitOrStatus::Status(status) => {
                 response.init.with_mut(|i| {
                     i.status_code =
-                        u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
+                        u16::try_from(0.max(status as i32).min(i32::from(u16::MAX))).unwrap();
                 });
-            } else {
-                if let Some(init) = Init::init(global_this, arg_init)? {
-                    response.init.set(init);
-                }
+            }
+            ResponseInitOrStatus::Init(init) => {
+                response.init.set(Init::init(global_this, init)?);
             }
         }
 
@@ -945,15 +948,15 @@ impl Response {
         }
     }
 
-    pub(crate) fn redirect(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    pub(crate) fn redirect(
+        cx: &mut JsScope<'_>,
+        url: Option<BunString>,
+        init: ResponseInitOrStatus<'_>,
+    ) -> JsResult<JSValue> {
         let global_this = cx.global();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        let args = JsLocal::to_js_slice(args);
 
-        let url_string = match args.first() {
-            Some(url) => url.to_bun_string(global_this)?,
-            None => BunString::EMPTY,
-        };
+        let url_string = url.unwrap_or(BunString::EMPTY);
         let response = Response {
             init: JsCell::new(Init {
                 status_code: 302,
@@ -963,15 +966,15 @@ impl Response {
             ..Default::default()
         };
 
-        if let Some(&arg_init) = args.get(1) {
-            if arg_init.is_undefined_or_null() {
-                // no-op
-            } else if arg_init.is_number() {
-                let status = Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
+        match init {
+            ResponseInitOrStatus::Other => {}
+            ResponseInitOrStatus::Status(status) => {
+                let status = Self::validate_redirect_status_code(global_this, status as i32)?;
                 response.init.with_mut(|i| i.status_code = status);
-            } else if let Some(init) = Init::init(global_this, arg_init)? {
+            }
+            ResponseInitOrStatus::Init(init) => {
                 // cleanup is handled by Init's drop glue on `?` below
-                response.init.set(init);
+                response.init.set(Init::init(global_this, init)?);
 
                 let status = response.init.get().status_code;
                 if status != 200 {
@@ -1014,10 +1017,10 @@ impl Response {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        body: JsLocal<'a>,
-        init: JsLocal<'a>,
+        body: BodyInit<'a>,
+        init: ResponseInitArgument<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
+        let response = Self::construct_into(cx.global(), body, init)?;
         let this = response.this_ptr();
         let this_value = structure.create(&cx.heap, response);
         this.js_ref.set(JsRef::init_weak(this_value.to_js()));
@@ -1027,82 +1030,77 @@ impl Response {
 
     fn construct_into(
         global_this: &JSGlobalObject,
-        body: JSValue,
-        init: JSValue,
+        body: BodyInit<'_>,
+        init: ResponseInitArgument<'_>,
     ) -> JsResult<RefPtr<Response>> {
-        if body.is_object() {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); only `&self` accessors (`is_s3`, `store`)
-            // are touched on this path.
-            if let Some(blob) = body.as_class_ref::<Blob>() {
-                if blob.is_s3() {
-                    if !init.is_undefined_or_null() {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "new Response(s3File) do not support ResponseInit options",
-                        )));
-                    }
-                    let response = RefPtr::new(Response {
-                        init: JsCell::new(Init {
-                            status_code: 302,
-                            ..Default::default()
-                        }),
-                        body: JsCell::new(Body::new(BodyValue::Null)),
-                        ..Default::default()
-                    });
-
-                    let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
-                    let credentials = s3.get_credentials();
-
-                    let result = match credentials.sign_request::<false>(
-                        &bun_s3_signing::SignOptions {
-                            path: s3.path(),
-                            method: Method::GET,
-                            content_hash: None,
-                            content_md5: None,
-                            search_params: None,
-                            content_disposition: None,
-                            content_type: None,
-                            content_encoding: None,
-                            acl: None,
-                            storage_class: None,
-                            request_payer: false,
-                        },
-                        Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
-                    ) {
-                        Ok(r) => r,
-                        Err(sign_err) => {
-                            return Err(crate::webcore::s3::client::throw_sign_error(
-                                sign_err.into(),
-                                global_this,
-                            ));
-                        }
-                    };
-                    // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
-                    response.redirected.set(true);
-                    let headers = response.get_or_create_headers(global_this)?;
-                    headers.put(
-                        HTTPHeaderName::Location,
-                        &StringView::ascii(&result.url),
-                        global_this,
-                    )?;
-                    return Ok(response);
+        if let BodyInit::Blob((blob, _))
+        | BodyInit::BuildArtifact((BuildArtifact { blob, .. }, _)) = body
+        {
+            if blob.is_s3() {
+                if !matches!(init, ResponseInitArgument::None) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "new Response(s3File) do not support ResponseInit options",
+                    )));
                 }
+                let response = RefPtr::new(Response {
+                    init: JsCell::new(Init {
+                        status_code: 302,
+                        ..Default::default()
+                    }),
+                    body: JsCell::new(Body::new(BodyValue::Null)),
+                    ..Default::default()
+                });
+
+                let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
+                let credentials = s3.get_credentials();
+
+                let result = match credentials.sign_request::<false>(
+                    &bun_s3_signing::SignOptions {
+                        path: s3.path(),
+                        method: Method::GET,
+                        content_hash: None,
+                        content_md5: None,
+                        search_params: None,
+                        content_disposition: None,
+                        content_type: None,
+                        content_encoding: None,
+                        acl: None,
+                        storage_class: None,
+                        request_payer: false,
+                    },
+                    Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
+                ) {
+                    Ok(r) => r,
+                    Err(sign_err) => {
+                        return Err(crate::webcore::s3::client::throw_sign_error(
+                            sign_err.into(),
+                            global_this,
+                        ));
+                    }
+                };
+                // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
+                response.redirected.set(true);
+                let headers = response.get_or_create_headers(global_this)?;
+                headers.put(
+                    HTTPHeaderName::Location,
+                    &StringView::ascii(&result.url),
+                    global_this,
+                )?;
+                return Ok(response);
             }
         }
-        let init: Init = 'brk: {
-            if init.is_undefined_or_null() {
-                break 'brk Init {
-                    status_code: 200,
-                    headers: None,
-                    ..Default::default()
-                };
+        let init: Init = match init {
+            ResponseInitArgument::None => Init {
+                status_code: 200,
+                headers: None,
+                ..Default::default()
+            },
+            ResponseInitArgument::Init(init) => Init::init(global_this, init)?,
+            ResponseInitArgument::Other => {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
+                )));
             }
-            if init.is_object() {
-                break 'brk Init::init(global_this, init)?.expect("unreachable");
-            }
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
-            )));
         };
 
         Self::from_body_and_init(global_this, body, init)
@@ -1111,11 +1109,11 @@ impl Response {
     #[inline(always)]
     fn from_body_and_init(
         global_this: &JSGlobalObject,
-        body: JSValue,
+        body: BodyInit<'_>,
         mut init: Init,
     ) -> JsResult<RefPtr<Response>> {
         let body: Body = 'brk: {
-            if body.is_undefined_or_null() {
+            if matches!(body, BodyInit::Missing | BodyInit::None) {
                 break 'brk Body::new(BodyValue::Null);
             }
             // `Body::extract` is a free fn re-exported as `body::extract`.
@@ -1162,15 +1160,20 @@ impl Response {
         body: JSValue,
         parts: &InitParts,
     ) -> JsResult<JSValue> {
-        if body.is_object() && body.as_class_ref::<Blob>().is_some_and(|blob| blob.is_s3()) {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "new Response(s3File) do not support ResponseInit options",
-            )));
-        }
-        let init = Init::from_parts(global_this, parts)?;
-        let response = Self::from_body_and_init(global_this, body, init)?;
-        // SAFETY: the wrapper adopts the new response's only ref.
-        Ok(unsafe { Response::to_js(response.into_raw(), global_this) })
+        BodyInit::from_js(global_this, body, |body| {
+            if let BodyInit::Blob((blob, _))
+            | BodyInit::BuildArtifact((BuildArtifact { blob, .. }, _)) = body
+                && blob.is_s3()
+            {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "new Response(s3File) do not support ResponseInit options",
+                )));
+            }
+            let init = Init::from_parts(global_this, parts)?;
+            let response = Self::from_body_and_init(global_this, body, init)?;
+            // SAFETY: the wrapper adopts the new response's only ref.
+            Ok(unsafe { Response::to_js(response.into_raw(), global_this) })
+        })
     }
 }
 
@@ -1212,10 +1215,10 @@ enum JsonArgument {
 /// `Response.json(value, init)` for compiled code that has already serialized `value`: argument 0 is the JSON text (`jsonTextForm`).
 pub(crate) fn construct_json_from_text(
     cx: &mut JsScope<'_>,
-    args: &[JsLocal<'_>],
+    data: Option<JsLocal<'_>>,
+    init: ResponseInitOrStatus<'_>,
 ) -> JsResult<JSValue> {
-    let args = JsLocal::to_js_slice(args);
-    Response::construct_json_response(cx.global(), args, JsonArgument::Text)
+    Response::construct_json_response(cx.global(), data, init, JsonArgument::Text)
 }
 
 // We deliberately do NOT `impl Drop for Init` so struct-update
@@ -1312,27 +1315,19 @@ impl Init {
 
     pub(crate) fn init(
         global_this: &JSGlobalObject,
-        response_init: JSValue,
-    ) -> JsResult<Option<Init>> {
+        response_init: ResponseInit<'_>,
+    ) -> JsResult<Init> {
         let mut result = Init {
             status_code: 200,
             ..Default::default()
         };
 
-        if !response_init.is_cell() {
-            return Ok(None);
-        }
+        let object = response_init.object().to_js();
 
-        let js_type = response_init.js_type();
-
-        if !js_type.is_object() {
-            return Ok(None);
-        }
-
-        if js_type == JSType::DOMWrapper {
+        if object.js_type() == JSType::DOMWrapper {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
-            if let Some(req) = response_init.as_direct::<Request>() {
+            if let Some(req) = object.as_direct::<Request>() {
                 // SAFETY: `as_direct` returned a live `*mut Request` owned by the
                 // JS wrapper cell; the wrapper is rooted by `response_init` for
                 // the duration of this call, so no GC can finalize it here.
@@ -1343,40 +1338,36 @@ impl Init {
                 }
 
                 result.method = req.method;
-                return Ok(Some(result));
+                return Ok(result);
             }
 
-            if let Some(resp) = response_init.as_direct::<Response>() {
+            if let Some(resp) = object.as_direct::<Response>() {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                return resp.init.get().clone(global_this);
             }
         }
 
-        if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
-            result.set_headers(global_this, headers)?;
+        if let Some(headers) = response_init.headers(global_this)? {
+            result.set_headers(global_this, headers.to_js())?;
         }
 
-        if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
-            result.set_status(global_this, status_value)?;
+        if let Some(status_value) = response_init.status(global_this)? {
+            result.set_status(global_this, status_value.to_js())?;
         }
 
-        if let Some(status_text) =
-            response_init.fast_get_truthy(global_this, BuiltinName::statusText)?
-        {
-            result.status_text = status_text.to_bun_string(global_this)?;
+        if let Some(status_text) = response_init.status_text(global_this)? {
+            result.status_text = status_text;
         }
 
-        if let Some(method_value) =
-            response_init.fast_get_truthy(global_this, BuiltinName::method)?
-        {
-            if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
+        if let Some(method_value) = response_init.method(global_this)? {
+            if let Some(method) = Method::which(method_value.to_utf8().slice()) {
                 result.method = method;
             }
         }
 
-        Ok(Some(result))
+        Ok(result)
     }
 }
 

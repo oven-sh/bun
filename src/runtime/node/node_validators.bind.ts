@@ -10,7 +10,7 @@ const describedInMessage = [table.printedByFormatter("constructor")];
 /** The name is described after a bound is converted and before the value is, so no conversion can be moved in front of the call. */
 const convertedToNumber = [table.runs("ToPrimitive")];
 
-const operand = b.any.orAbsent;
+const operand = b.opaque.orAbsent;
 
 const validator = (name: string, args: Operands, uses: Uses, returns?: b.Type, length = 0) =>
   b.fn({
@@ -47,7 +47,7 @@ export const checkRangesOrGetDefault = validator(
   "checkRangesOrGetDefault",
   { ...valueAndName, lower: operand, upper: operand, fallback: operand },
   { ...usesOfValueAndName, lower: convertedToNumber, upper: convertedToNumber, fallback: [table.returned] },
-  b.any,
+  b.opaque,
 );
 
 /** A string counts for the number that it converts to. */

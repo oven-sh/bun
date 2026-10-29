@@ -15,7 +15,6 @@ use bun_jsc::{
 };
 use bun_ptr::BackRef;
 
-use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
 #[cfg(windows)]
 use bun_libuv_sys::sockaddr_storage;
@@ -27,7 +26,7 @@ use libc::sockaddr_storage;
 use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
 
 use crate::api::SocketAddress;
-use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
+use crate::generated_bindgen::udp_socket::{UDPSocketOptions, js_UDPSocket as js};
 use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, sockaddr_in6};
 
 bun_output::declare_scope!(UdpSocket, visible);
@@ -352,17 +351,16 @@ impl Default for UDPSocketConfig {
 impl UDPSocketConfig {
     fn from_js(
         global_this: &JSGlobalObject,
-        options: JSValue,
+        options: Option<UDPSocketOptions<'_>>,
         this_value: JSValue,
     ) -> JsResult<Self> {
-        if options.is_empty_or_undefined_or_null() || !options.is_object() {
+        let Some(options) = options else {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected an object")));
-        }
+        };
 
         let port: u16 = 'brk: {
-            if let Some(value) = options.get_truthy(global_this, "port")? {
+            if let Some(number) = options.port(global_this)? {
                 // Range-check as f64: ToInt32 would wrap e.g. 4294967377 to 81.
-                let number = value.coerce_f64(global_this)?;
                 if number.fract() != 0.0 || !(0.0..=65535.0).contains(&number) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected \"port\" to be an integer between 0 and 65535"
@@ -374,17 +372,12 @@ impl UDPSocketConfig {
             }
         };
 
-        let flags: i32 = if let Some(value) = options.get_truthy(global_this, "flags")? {
-            validators::validate_int32(global_this, value, "flags", None, None)?
-        } else {
-            0
-        };
+        let flags: i32 = options.flags(global_this)?.unwrap_or(0);
 
         // Presence, not truthiness: `fd: 0` is a valid descriptor. Non-integer
         // values are rejected instead of coercing to 0.
-        let fd: Option<i32> = match options.get(global_this, "fd")? {
-            Some(value) if !value.is_undefined_or_null() => {
-                let number = validators::validate_int32(global_this, value, "fd", None, None)?;
+        let fd: Option<i32> = match options.fd(global_this)? {
+            Some(number) => {
                 if number < 0 {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected \"fd\" to be a non-negative integer"
@@ -392,25 +385,14 @@ impl UDPSocketConfig {
                 }
                 Some(number)
             }
-            _ => None,
+            None => None,
         };
 
-        let hostname = 'brk: {
-            if let Some(value) = options.get_truthy(global_this, "hostname")? {
-                if !value.is_string() {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "Expected \"hostname\" to be a string"
-                    )));
-                }
-                break 'brk value.to_bun_string(global_this)?;
-            } else {
-                break 'brk BunString::static_("0.0.0.0");
-            }
-        };
+        let hostname = options
+            .hostname(global_this)?
+            .unwrap_or_else(|| BunString::static_("0.0.0.0"));
 
-        let shared_fd = options
-            .fast_get(global_this, bun_jsc::BuiltinName::sharedFd)?
-            .is_some_and(|v| v.to_boolean());
+        let shared_fd = options.shared_fd(global_this)?;
 
         let mut config = Self {
             hostname,
@@ -421,20 +403,9 @@ impl UDPSocketConfig {
             ..Default::default()
         };
 
-        if let Some(socket) = options.get_truthy(global_this, "socket")? {
-            if !socket.is_object() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("Expected \"socket\" to be an object")));
-            }
-
-            if let Some(value) = options.get_truthy(global_this, "binaryType")? {
-                if !value.is_string() {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "Expected \"socket.binaryType\" to be a string"
-                    )));
-                }
-
-                config.binary_type = match BinaryType::from_js_value(global_this, value)? {
+        if let Some(socket) = options.socket(global_this)? {
+            if let Some(value) = options.binary_type(global_this)? {
+                config.binary_type = match BinaryType::from_bun_string(&value) {
                     Some(bt) => bt,
                     None => {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -445,55 +416,37 @@ impl UDPSocketConfig {
             }
 
             macro_rules! handler {
-                ($name:literal, $set:path) => {
-                    if let Some(value) = socket.get_truthy(global_this, $name)? {
-                        if !value.is_cell() || !value.is_callable() {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                concat!("Expected \"socket.", $name, "\" to be a function")
-                            )));
-                        }
-                        let callback = value.with_async_context_if_needed(global_this);
+                ($name:ident, $set:path) => {
+                    if let Some(value) = socket.$name(global_this)? {
+                        let callback = value.to_js().with_async_context_if_needed(global_this);
                         $set(this_value, global_this, callback);
                     }
                 };
             }
-            handler!("data", js::on_data_set_cached);
-            handler!("drain", js::on_drain_set_cached);
-            handler!("error", js::on_error_set_cached);
+            handler!(data, js::on_data_set_cached);
+            handler!(drain, js::on_drain_set_cached);
+            handler!(error, js::on_error_set_cached);
         }
 
-        if let Some(connect) = options.get_truthy(global_this, "connect")? {
-            if !connect.is_object() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected \"connect\" to be an object"
-                )));
-            }
-
-            let Some(connect_host_js) = connect.get_truthy(global_this, "hostname")? else {
+        if let Some(connect) = options.connect(global_this)? {
+            let Some(connect_host_js) = connect.hostname(global_this)? else {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected \"connect.hostname\" to be a string"
                 )));
             };
 
-            if !connect_host_js.is_string() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected \"connect.hostname\" to be a string"
-                )));
-            }
-
-            let Some(connect_port_js) = connect.get_truthy(global_this, "port")? else {
+            let Some(connect_port) = connect.port(global_this)? else {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected \"connect.port\" to be an integer"
                 )));
             };
-            let connect_port = connect_port_js.coerce_f64(global_this)?;
             if connect_port.fract() != 0.0 || !(1.0..=65535.0).contains(&connect_port) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected \"connect.port\" to be an integer between 1 and 65535"
                 )));
             }
 
-            let connect_host = connect_host_js.to_bun_string(global_this)?;
+            let connect_host = connect_host_js.to_js().to_bun_string(global_this)?;
 
             config.connect = Some(ConnectConfig {
                 port: connect_port as u16,
@@ -565,10 +518,12 @@ impl UDPSocket {
         unsafe { &*user.cast::<UDPSocket>() }
     }
 
-    pub(crate) fn udp_socket(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn udp_socket(
+        cx: &mut JsScope<'_>,
+        options: Option<UDPSocketOptions<'_>>,
+    ) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
         let cx = &cx.js_thread();
-        let options = options.to_js();
 
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
         // A socket that is closed from the queue can send before that: it is not bound at all.
@@ -1542,11 +1497,11 @@ impl UDPSocket {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        options: JsLocal<'_>,
+        options: Option<UDPSocketOptions<'_>>,
     ) -> JsResult<()> {
         self.config.set(UDPSocketConfig::from_js(
             cx.global(),
-            options.to_js(),
+            options,
             this_value.to_js(),
         )?);
         Ok(())
@@ -1569,8 +1524,8 @@ impl UDPSocket {
         uws::udp::Socket::opaque_mut(socket).fd()
     }
 
-    pub(crate) fn get_hostname(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.config.get().hostname.to_js(cx.global())
+    pub(crate) fn get_hostname(&self) -> BunString {
+        self.config.get().hostname.clone()
     }
 
     pub(crate) fn get_port(&self) -> Option<i32> {

@@ -9,7 +9,7 @@ use enumset::EnumSet;
 
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
-use crate::generated_bindgen::response::js_Request as js;
+use crate::generated_bindgen::response::{BodyInit, ResponseInit, js_Request as js};
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
@@ -1189,20 +1189,19 @@ impl Request {
                 match value.fast_get(cx.global(), bun_jsc::BuiltinName::Body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
-                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
-                        // body throws before body extraction (Node's message is "keepalive").
-                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
-                            match value.get(cx.global(), "keepalive") {
-                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(cx
-                                        .global()
-                                        .throw_type_error(format_args!("keepalive"))));
-                                }
-                                Ok(_) => {}
-                                Err(e) => bail!(Err(e)),
+                        match BodyInit::from_js(cx.global(), body_, |body_| {
+                            // fetch spec Request(init): `keepalive: true` with a ReadableStream
+                            // body throws before body extraction (Node's message is "keepalive").
+                            if matches!(body_, BodyInit::ReadableStream(_))
+                                && let Some(keepalive) = value.get(cx.global(), "keepalive")?
+                                && keepalive.to_boolean()
+                            {
+                                return Err(cx
+                                    .global()
+                                    .throw_type_error(format_args!("keepalive")));
                             }
-                        }
-                        match BodyValue::from_js(cx.global(), body_) {
+                            BodyValue::from_js(cx.global(), body_)
+                        }) {
                             Ok(v) => {
                                 *req.body_value_mut() = v;
                             }
@@ -1286,8 +1285,9 @@ impl Request {
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(cx.global(), value) {
-                    Ok(Some(response_init)) => {
+                let object = JsLocal::<bun_jsc::JSObject>::from_js(cx.global(), value).unwrap();
+                match crate::webcore::response::Init::init(cx.global(), ResponseInit::new(object)) {
+                    Ok(response_init) => {
                         let header_check = !explicit_check
                             || (explicit_check
                                 && match value.fast_get(cx.global(), bun_jsc::BuiltinName::Headers)
@@ -1319,7 +1319,6 @@ impl Request {
                             }
                         }
                     }
-                    Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
             }

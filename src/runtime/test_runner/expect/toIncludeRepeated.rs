@@ -1,5 +1,5 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::JsResult;
 
 use super::{Expect, get_signature, throw};
 
@@ -10,7 +10,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         substring: JsLocal<'_>,
         count: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         // toIncludeRepeated bypasses get_value (reads `captured_value_get_cached` directly,
         // no `.resolves`/`.rejects` handling), so cannot use the full `matcher_prelude`.
@@ -72,7 +72,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // `to_fmt` takes `&mut Formatter` and the returned adapter holds that borrow live, so

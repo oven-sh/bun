@@ -429,7 +429,7 @@ fn print_table(
 pub(crate) fn inspect<'a>(
     cx: &mut JsScope<'a>,
     arg: Option<JsLocal<'a>>,
-    options: InspectOptionsOrDepth<'a>,
+    options: InspectOptionsOrDepth,
     colors: Option<bool>,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
@@ -455,7 +455,7 @@ pub(crate) fn inspect<'a>(
             format_options.set_depth(global_this, depth)?;
             format_options.enable_colors = colors.unwrap_or(false);
         }
-        InspectOptionsOrDepth::Ignored(_) => format_options.enable_colors = colors.unwrap_or(false),
+        InspectOptionsOrDepth::Other => format_options.enable_colors = colors.unwrap_or(false),
     }
 
     // very stable memory address

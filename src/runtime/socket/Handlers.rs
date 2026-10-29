@@ -7,6 +7,7 @@ use crate::generated_bindgen::socket_config::{
 };
 use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
+use bun_jsc::bindgen::JsLocal;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
@@ -519,11 +520,7 @@ impl SocketConfig {
                 }),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
-                default_data: if generated.data.is_undefined() {
-                    JSValue::ZERO
-                } else {
-                    generated.data.to_js()
-                },
+                default_data: generated.data.map_or(JSValue::ZERO, JsLocal::to_js),
                 exclusive: false,
                 allow_half_open: false,
                 reuse_port: false,

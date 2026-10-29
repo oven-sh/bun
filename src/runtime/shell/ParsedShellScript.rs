@@ -4,8 +4,8 @@ use core::sync::atomic::Ordering;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
-    JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsClass as _,
-    JsResult, MarkedArgumentBuffer,
+    JSArray, JSGlobalObject, JSObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
+    JsCell, JsClass as _, JsResult, MarkedArgumentBuffer,
 };
 
 use super::env_map::EnvMap;
@@ -74,15 +74,11 @@ impl ParsedShellScript {
         self.quiet.set(quiet);
     }
 
-    pub(crate) fn set_env(&self, cx: &mut JsScope<'_>, env: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn set_env(&self, cx: &mut JsScope<'_>, env: JsLocal<'_, JSObject>) -> JsResult<()> {
         let global = cx.global();
-        let Some(value1) = env.to_js().get_object() else {
-            return Err(global.throw_invalid_arguments(format_args!("env must be an object")));
-        };
-
         let object_iter = JSPropertyIterator::init(
             global,
-            value1,
+            env,
             JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,
@@ -153,7 +149,7 @@ fn env_bytes(global: &JSGlobalObject, name: &str, str: &BunString) -> JsResult<B
 pub(crate) fn create_parsed_shell_script<'a>(
     cx: &mut JsScope<'a>,
     strings: JsLocal<'a>,
-    template_args: JsLocal<'a>,
+    template_args: JsLocal<'a, JSArray>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     MarkedArgumentBuffer::new(|buf| {

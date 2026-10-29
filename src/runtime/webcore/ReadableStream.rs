@@ -132,7 +132,6 @@ unsafe extern "C" {
         possible_readable_stream: &mut JSValue,
         ptr: &mut *mut c_void,
     ) -> Tag;
-    safe fn ReadableStream__is(value: JSValue) -> bool;
     safe fn ReadableStream__isDisturbed(
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
@@ -430,11 +429,6 @@ impl ReadableStream {
     /// Fetch's "body is unusable" (<https://fetch.spec.whatwg.org/#body-unusable>).
     pub fn is_disturbed_or_locked(&self, global_object: &JSGlobalObject) -> bool {
         self.is_disturbed(global_object) || self.is_locked(global_object)
-    }
-
-    /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
-    pub fn is_readable_stream(value: JSValue) -> bool {
-        ReadableStream__is(value)
     }
 
     /// As [`from_js`](Self::from_js), but only matches a value that already is a `ReadableStream`

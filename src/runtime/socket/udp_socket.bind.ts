@@ -10,18 +10,57 @@ export const dgramBindFd = b.fn({
   args: { fd: b.i32, address: b.string.loose.utf8, port: b.i32.wrap, flags: b.i32.wrap },
   throws: true,
 });
-export const dgramGetSockNameFd = b.fn({ args: { fd: b.i32 }, returns: b.any, capability: "js", throws: true });
+export const dgramGetSockNameFd = b.fn({ args: { fd: b.i32 }, returns: b.opaque, capability: "js", throws: true });
 export const dgramGuessHandleType = b.fn({ args: { fd: b.i32 }, returns: b.string });
 export const dgramListenFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramCloseFd = b.fn({ args: { fd: b.i32 }, throws: true });
 
 const js = { capability: "js", throws: true } as const;
-const membership = { ...js, args: { multicastAddress: b.any, interfaceAddress: b.any }, returns: b.bool } as const;
-const sourceSpecificMembership = {
+const membership = {
   ...js,
-  args: { sourceAddress: b.any, groupAddress: b.any, interfaceAddress: b.any },
+  args: { multicastAddress: b.opaque, interfaceAddress: b.opaque },
   returns: b.bool,
 } as const;
+const sourceSpecificMembership = {
+  ...js,
+  args: { sourceAddress: b.opaque, groupAddress: b.opaque, interfaceAddress: b.opaque },
+  returns: b.bool,
+} as const;
+
+const callback = (name: string) => ({
+  type: b.callable.emptyStringAsNull,
+  expected: `Expected "socket.${name}" to be a function`,
+});
+export const UDPSocketHandler = b.dictionary(
+  { data: callback("data"), drain: callback("drain"), error: callback("error") },
+  { deferred: true },
+);
+export const UDPConnectOptions = b.dictionary(
+  {
+    hostname: { type: b.stringLike.emptyStringAsNull, expected: 'Expected "connect.hostname" to be a string' },
+    port: b.f64.loose.emptyStringAsNull,
+  },
+  { deferred: true },
+);
+export const UDPSocketOptions = b.dictionary(
+  {
+    port: b.f64.loose.emptyStringAsNull,
+    flags: b.i32.validateInteger().emptyStringAsNull,
+    /** An already created socket to adopt. */
+    fd: b.i32.validateInteger().nullable,
+    hostname: { type: b.string.allowStringObject.emptyStringAsNull, expected: 'Expected "hostname" to be a string' },
+    /** node:dgram sets it for a descriptor that cluster workers share. */
+    sharedFd: { type: b.bool.loose.default(false), privateSymbol: "sharedFd" },
+    socket: { type: UDPSocketHandler.emptyStringAsNull, expected: 'Expected "socket" to be an object' },
+    /** Read when there is a `socket`. */
+    binaryType: {
+      type: b.string.allowStringObject.emptyStringAsNull,
+      expected: 'Expected "socket.binaryType" to be a string',
+    },
+    connect: { type: UDPConnectOptions.emptyStringAsNull, expected: 'Expected "connect" to be an object' },
+  },
+  { deferred: true, reportedAs: "" },
+);
 
 /** What `Bun.udpSocket()` resolves to. */
 export const UDPSocket = b.class({
@@ -30,37 +69,38 @@ export const UDPSocket = b.class({
   internalFields: ["onData", "onDrain", "onError"],
   proto: {
     addMembership: membership,
-    address: { ...js, getter: b.any.returning("object", "undefined"), cache: true },
+    address: { ...js, getter: b.opaque.returning("object", "undefined"), cache: true },
     addSourceSpecificMembership: sourceSpecificMembership,
-    binaryType: { ...js, getter: b.any.returning("string"), cache: true },
+    binaryType: { ...js, getter: b.string.local, cache: true },
     close: {},
     closed: { getter: b.bool, pure: true },
     dropMembership: membership,
     dropSourceSpecificMembership: sourceSpecificMembership,
     fd: { getter: b.i32 },
-    hostname: { ...js, getter: b.any.returning("string"), cache: true },
+    hostname: { getter: b.string, cache: true },
     port: { getter: b.i32.optional, cache: true },
     ref: {},
-    reload: { ...js, passThis: true, args: { options: b.any } },
-    remoteAddress: { ...js, getter: b.any.returning("object", "undefined"), cache: true },
+    reload: { ...js, passThis: true, args: { options: UDPSocketOptions.otherAsNull }, length: 1 },
+    remoteAddress: { ...js, getter: b.opaque.returning("object", "undefined"), cache: true },
     /** `(data)` when connected, `(data, port, address)` when not. */
-    send: { ...js, args: { data: b.any, port: b.any, address: b.any }, returns: b.bool },
-    sendMany: { ...js, args: { packets: b.any }, returns: b.i32, length: 3 },
-    setBroadcast: { ...js, args: { enabled: b.any }, returns: b.any },
-    setMulticastInterface: { ...js, args: { interfaceAddress: b.any }, returns: b.bool },
-    setMulticastLoopback: { ...js, args: { enabled: b.any }, returns: b.any },
-    setMulticastTTL: { ...js, args: { ttl: b.any }, returns: b.i32 },
-    setTTL: { ...js, args: { ttl: b.any }, returns: b.i32 },
+    send: { ...js, args: { data: b.opaque, port: b.opaque, address: b.opaque }, returns: b.bool },
+    sendMany: { ...js, args: { packets: b.opaque }, returns: b.i32, length: 3 },
+    setBroadcast: { ...js, args: { enabled: b.opaque }, returns: b.opaque },
+    setMulticastInterface: { ...js, args: { interfaceAddress: b.opaque }, returns: b.bool },
+    setMulticastLoopback: { ...js, args: { enabled: b.opaque }, returns: b.opaque },
+    setMulticastTTL: { ...js, args: { ttl: b.opaque }, returns: b.i32 },
+    setTTL: { ...js, args: { ttl: b.opaque }, returns: b.i32 },
     unref: {},
     "@@dispose": { rustName: "close" },
   },
 });
 
-/** `options` is what `UDPSocketConfig` takes. Returns a promise of the socket. */
+/** Resolves to the socket. */
 export const udpSocket = b.fn({
   ...js,
-  args: { options: b.any },
-  returns: b.any,
+  args: { options: UDPSocketOptions.otherAsNull },
+  returns: b.promise,
+  length: 1,
   rustPath: "crate::socket::udp_socket::UDPSocket::udp_socket",
 });
 

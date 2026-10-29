@@ -9,8 +9,8 @@ export const unsafe = b.namespace({
     readsStateBeforeConversions: true,
   },
   arrayBufferToString: {
-    args: { buffer: b.any },
-    returns: b.any,
+    args: { buffer: b.opaque },
+    returns: b.string.local,
     capability: "js",
     throws: true,
   },

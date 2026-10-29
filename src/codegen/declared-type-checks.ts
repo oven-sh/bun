@@ -13,7 +13,7 @@ export type DeclaredAlternative =
   | "this" /* the receiver itself */
   | { instance: string /* a class */ };
 
-/** What `b.any.returning` takes as a word. */
+/** What `.returning` takes as a word. */
 export function parseDeclaredAlternative(word: string): DeclaredAlternative {
   switch (word) {
     case "string":

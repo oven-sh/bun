@@ -655,6 +655,7 @@ impl<'a> ShellSrcBuilder<'a> {
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub(crate) mod testing_apis {
     use super::*;
+    use bun_jsc::JSArray;
     use bun_jsc::bindgen::{JsLocal, JsScope};
 
     pub(crate) fn disabled_on_this_platform(builtin: &[u8]) -> bool {
@@ -676,7 +677,7 @@ pub(crate) mod testing_apis {
     pub(crate) fn shell_lex<'a>(
         cx: &mut JsScope<'a>,
         strings: JsLocal<'a>,
-        template_args: JsLocal<'a>,
+        template_args: JsLocal<'a, JSArray>,
     ) -> JsResult<String> {
         let global = cx.global();
         MarkedArgumentBuffer::new(|buf| {
@@ -741,7 +742,7 @@ pub(crate) mod testing_apis {
     pub(crate) fn shell_parse<'a>(
         cx: &mut JsScope<'a>,
         strings: JsLocal<'a>,
-        template_args: JsLocal<'a>,
+        template_args: JsLocal<'a, JSArray>,
     ) -> JsResult<String> {
         let global = cx.global();
         MarkedArgumentBuffer::new(|buf| {

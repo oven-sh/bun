@@ -2,20 +2,25 @@
 
 import assert from "node:assert";
 import {
-  AnyType,
   asciiLiteral,
+  BufferSourceType,
   Builtin,
   ByteSpanType,
   type CalledFromRustFunction,
   type Capability,
+  CellType,
   type ClassMember,
   ClassType,
   Constant,
+  Conversion,
   cppEmplace,
   cppReturnIfFailed,
   DefaultType,
+  DeferredDictionaryType,
+  DeferredType,
   DictionaryType,
   EnumerationType,
+  type ExternField,
   FunctionDefinition,
   Getter,
   indent,
@@ -23,11 +28,15 @@ import {
   isIfPassed,
   kindTests,
   LocalStringType,
+  LocalType,
+  type Member,
   memberIdentifier,
+  mergeViewTests,
   type Method,
   type ModuleDefinition,
   NamedType,
   type NamespaceDefinition,
+  OpaqueType,
   OptionalType,
   type Origin,
   type OverloadDispatch,
@@ -43,7 +52,6 @@ import {
   UnionType,
   UnitType,
   type ValueKind,
-  VariadicType,
   wellKnownSymbol,
 } from "./bindgen-lib-internal.ts";
 import {
@@ -54,7 +62,6 @@ import {
   textOfNativeSymbol,
   textOfStaticTableEntry,
 } from "./builtins/guards.ts";
-import { typeScriptOf } from "./declared-type-checks.ts";
 import { cap, low } from "./helpers.ts";
 import {
   guardedCall,
@@ -120,6 +127,53 @@ function walk(type: Type, visit: (type: Type) => void, seen = new Set<Type>()): 
   for (const dependency of type.dependencies) walk(dependency, visit, seen);
 }
 
+const signaturesOf = (file: SchemaFile): Signature[] => [
+  ...file.types.flatMap(type =>
+    type instanceof ClassType ? [...(type.construct ? [type.construct] : []), ...type.methods] : [],
+  ),
+  ...file.functions.flatMap(fn => fn.signatures),
+];
+
+/** The conversions the file's Rust calls. Each function that has an argument has its own for it. */
+const conversionsOf = (file: SchemaFile): Conversion[] => [
+  ...file.types.flatMap(type => (type instanceof DeferredDictionaryType && type.accepted ? type.conversions : [])),
+  ...signaturesOf(file).flatMap(({ args }) =>
+    args.flatMap(({ type }) => (type instanceof DeferredType && type.conversion ? [type.conversion] : [])),
+  ),
+];
+
+/** One conversion for each C++ function and the Rust function that calls it. */
+const conversionFunctionsOf = (file: SchemaFile) => [
+  ...new Map(conversionsOf(file).map(conversion => [conversion.symbol, conversion])).values(),
+];
+
+/**
+ * Names the two functions of each conversion. Conversions of the same source have the same two.
+ * Functions of one name are numbered from the second on.
+ */
+function nameConversions(file: SchemaFile): void {
+  const owners = new Map(
+    file.types.flatMap(type =>
+      type instanceof DeferredDictionaryType ? type.conversions.map(conversion => [conversion, type] as const) : [],
+    ),
+  );
+  const bySource = new Map<string, Pick<Conversion, "symbol" | "rustName">>();
+  const functionsNamed = new Map<string, number>();
+  for (const conversion of conversionsOf(file)) {
+    Object.assign(conversion, { symbol: "", rustName: "" });
+    const source = cppSourceForConversion(conversion) + rustForConversion(conversion, file.origin);
+    if (!bySource.has(source)) {
+      const owner = owners.get(conversion);
+      const base = `convert_${snakeCase(owner ? `${owner.name}_${conversion.name}` : conversion.name)}`;
+      const count = (functionsNamed.get(base) ?? 0) + 1;
+      functionsNamed.set(base, count);
+      const rustName = count > 1 ? `${base}_${count}` : base;
+      bySource.set(source, { rustName, symbol: `Bun__Bindgen__${file.origin.namespace}__${rustName}` });
+    }
+    Object.assign(conversion, bySource.get(source));
+  }
+}
+
 /** The classes of every schema: what a word of `.returning` names. Set by `analyze`. */
 const classesByName = new Map<string, ClassType>();
 
@@ -131,7 +185,8 @@ export function analyze(files: readonly SchemaFile[]): Tables {
   const markReturned = (type: Type) => walk(type, t => void (t instanceof NamedType && (t.returned = true)));
   for (const file of files) {
     for (const type of file.types) {
-      if (type instanceof DictionaryType && type.fromJS) markAccepted(type);
+      // `Name::new` wraps an object that Rust found, so no signature has to name it.
+      if (type.fromJS || type instanceof DeferredDictionaryType) markAccepted(type);
       if (!(type instanceof ClassType)) continue;
       type.classIndex = tables.classes.push(type) - 1;
       classesByName.set(type.name, type);
@@ -142,7 +197,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
       }
       for (const getter of [...type.getters, ...type.staticGetters]) {
         markReturned(getter.type);
-        if (getter.hasSetter) markAccepted(getter.type);
+        if (getter.hasSetter) markAccepted(getter.setterType);
       }
     }
     for (const fn of file.functions) {
@@ -165,12 +220,18 @@ export function analyze(files: readonly SchemaFile[]): Tables {
         if (!type.returned) continue;
         type.firstEnumerationValueIndex = tables.enumerationValues.length;
         tables.enumerationValues.push(...type.spellings.map(([canonical]) => canonical));
+      } else if (type instanceof DeferredDictionaryType) {
+        assert(!type.returned, `${type.name}: a dictionary that is returned is not deferred`);
+        if (!type.accepted) continue;
+        type.firstMemberNameIndex = tables.memberNames.length;
+        tables.memberNames.push(...type.names);
       } else if (type instanceof DictionaryType) {
         if (type.accepted) {
           type.firstMemberNameIndex = tables.memberNames.length;
           tables.memberNames.push(...type.names);
         }
         if (type.returned) {
+          assert(!type.members.some(member => member.privateSymbol), `${type.name}: a privateSymbol is only read`);
           type.returnedIndex = tables.returnedDictionaries.push(type) - 1;
           type.firstReturnedMemberNameIndex = tables.memberNames.length;
           tables.memberNames.push(...type.members.map(member => member.name));
@@ -185,9 +246,11 @@ export function analyze(files: readonly SchemaFile[]): Tables {
       }
     }
   }
+  files.forEach(nameConversions);
   const symbols = files.flatMap(file => [
     ...file.functions.flatMap(fn => fn.signatures.map(signature => thunkSymbol(fn, signature))),
     ...file.types.flatMap(type => (type instanceof ClassType ? classSymbols(type) : [])),
+    ...conversionFunctionsOf(file).map(conversion => conversion.symbol!),
   ]);
   const repeated = symbols.filter((symbol, i) => symbols.indexOf(symbol) !== i);
   assert(repeated.length === 0, `two bindings make the same symbol: ${repeated.join(", ")}`);
@@ -197,12 +260,10 @@ export function analyze(files: readonly SchemaFile[]): Tables {
 // ───────────────────────────── C++ ─────────────────────────────
 
 const implementationType = (type: Type) => `${type.idlType}::ImplementationType`;
-export const externType = (type: Type): string =>
-  type instanceof RestType
-    ? "const JSC::EncodedJSValue*, size_t"
-    : type.passesValue
-      ? `Bun::Bindgen::ExternWithValue<Bun::Bindgen::ExternOf<${type.idlType}>>`
-      : `Bun::Bindgen::ExternOf<${type.idlType}>`;
+const externType = (type: Type): string =>
+  type.passesValue
+    ? `Bun::Bindgen::ExternWithValue<Bun::Bindgen::ExternOf<${type.idlType}>>`
+    : `Bun::Bindgen::ExternOf<${type.idlType}>`;
 const toExtern = (variable: string) => `Bun::Bindgen::toExtern(${variable})`;
 
 /**
@@ -234,7 +295,7 @@ function cppChooseByKind<T>(value: string, byKind: ReadonlyMap<ValueKind | "othe
       .map(([outcome, conditions]) => {
         const merged = nullish.every(test => conditions.includes(test))
           ? [`${value}.isUndefinedOrNull()`, ...conditions.filter(test => !nullish.includes(test))]
-          : conditions;
+          : mergeViewTests(conditions);
         return { condition: merged.join(" || "), index: outcomes.indexOf(outcome) };
       });
   const cppChain = (...tests: Map<T, string[]>[]) =>
@@ -272,19 +333,40 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
     .map(i => {
       const { name, type: alternative } = type.alternatives[i];
       const member = `result.${name}`;
-      const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "", "false");
-      if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn true;`;
-      const take = `result.tag = ${i};
-${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
-return true;`;
+      const returnSuccess = type.conversionThrows ? "return true;" : "return result;";
+      if (alternative instanceof UnitType) return `result.tag = ${i};\n${returnSuccess}`;
       // As the last, its own conversion reports what is not an object.
+      const reportsNonObjects = refusesNonObjects(alternative) && i === candidates.at(-1);
+      // Choosing by kind has already run the only test `tryConvert` makes.
+      const isKnownToConvert =
+        alternative.conversionThrows &&
+        !alternative.tryConvertThrows &&
+        (refusesNonObjects(alternative)
+          ? !reportsNonObjects
+          : alternative.valueKinds !== "any" && !alternative.refuses);
+      const convert = (target: string) =>
+        !isKnownToConvert
+          ? alternative.cppConvertInto(target, "value", "ctx", "", "false")
+          : alternative.returnsValueUnchanged
+            ? `${target} = ${alternative.cppOfUnchangedValue("value")};`
+            : `${target} = Bun::uncheckedConvertIDL<${alternative.idlType}>(*globalObject, value, ctx);`;
+      const take = `result.tag = ${i};
+${
+  type.cppStoresAsBits(alternative)
+    ? `${implementationType(alternative)} converted;
+${convert("converted")}
+result.bits = Bun::Bindgen::toBits(converted);`
+    : `std::construct_at(&${member});
+${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}`
+}
+${returnSuccess}`;
       if (refusesNonObjects(alternative))
-        return i === candidates.at(-1) ? take : `if (value.isObject()) {\n${indent(take, 4)}\n}`;
+        return reportsNonObjects ? take : `if (value.isObject()) {\n${indent(take, 4)}\n}`;
       if (alternative.refuses)
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
-    ${member} = WTF::move(*converted);
+    std::construct_at(&${member}, WTF::move(*converted));
     result.tag = ${i};
-    return true;
+    ${returnSuccess}
 }${alternative.tryConvertThrows ? "\nRETURN_IF_EXCEPTION(scope, false);" : ""}`;
       return take;
     })
@@ -299,36 +381,110 @@ function cppHeaderForUnion(type: UnionType): string {
     .map(a => a.type.idlType)
     .join(", ");
   const { outcomes, code } = cppChooseByKind("value", type.alternativesByKind);
-  const mayMatchNone = (candidates: readonly number[]) => {
-    const last = alternatives[candidates.at(-1) ?? -1]?.type;
-    return !last || (!!last.refuses && !refusesNonObjects(last));
-  };
   const cases = outcomes.flatMap((candidates, index) =>
     candidates.length === 0
       ? []
-      : `case ${index}: {\n${indent(cppConvertToAlternative(type, candidates), 4)}${mayMatchNone(candidates) ? "\n    break;" : ""}\n}`,
+      : `case ${index}: {\n${indent(cppConvertToAlternative(type, candidates), 4)}${type.mayMatchNone(candidates) ? "\n    break;" : ""}\n}`,
   );
-  const held = alternatives.filter(a => !(a.type instanceof UnitType));
+  const held = type.heldAlternatives;
+  const switchOnHeld = (statement: (name: string) => string) =>
+    held.length === 0
+      ? ""
+      : `switch (tag) {
+${held.map(a => `        case ${alternatives.indexOf(a)}:\n            ${statement(a.name)};\n            break;`).join("\n")}
+        }`;
+  const chooseAlternative = `${indent(code, 8)}
+        switch (choice) {
+${indent(cases.join("\n"), 8)}
+        }`;
+  const converter = type.conversionThrows
+    ? `template<> struct WebCore::Converter<${type.idlType}> : Bun::DefaultContextConverter<${type.idlType}> {${
+        type.needsLifetime
+          ? ""
+          : `
+    template<Bun::IDLConversionContext Ctx>
+    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        ReturnType result;
+        convertInto(globalObject, value, ctx, result);
+        return result;
+    }
+`
+      }
+    template<Bun::IDLConversionContext Ctx>
+    static bool convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
+    {
+        auto* globalObject = &lexicalGlobalObject;
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+${chooseAlternative}
+        ${outcomes.some(candidates => type.mayMatchNone(candidates)) ? `ctx.template throwNoMatchInUnion<${idlTypes}>(*globalObject, scope);\n        return false;` : "RELEASE_ASSERT_NOT_REACHED();"}
+    }
+};`
+    : `template<> struct WebCore::Converter<${type.idlType}> : WebCore::DefaultConverter<${type.idlType}> {
+    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        [[maybe_unused]] auto* globalObject = &lexicalGlobalObject;
+        [[maybe_unused]] Bun::DefaultConversionContext ctx;
+        ReturnType result;
+${chooseAlternative}
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+};`;
   return `
 namespace Bun::Bindgen::Generated {
+// Only the alternative that \`tag\` names is constructed.
 struct ${name} {
-${cppDefaultConstructor(type)}
-${held.map(a => `    ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}> ${a.name}` : `${implementationType(a.type)} ${a.name} {}`};`).join("\n")}
-    uint8_t tag;
-};
+${cppDefaultConstructor(type)}${
+    type.needsLifetime || type.cppCanBitCastToExtern
+      ? ""
+      : `
+    ${name}(${name}&& other)
+        : tag(other.tag)
+    {
+        ${switchOnHeld(member => `std::construct_at(&this->${member}, WTF::move(other.${member}))`)}
+    }
+    ${name}& operator=(${name}&& other)
+    {
+        std::destroy_at(this);
+        std::construct_at(this, WTF::move(other));
+        return *this;
+    }`
+  }${
+    type.cppCanBitCastToExtern
+      ? ""
+      : `
+    ~${name}()
+    {
+        ${switchOnHeld(member => `std::destroy_at(&${member})`)}
+    }`
+  }
+    uint8_t tag${type.cppCanBitCastToExtern ? "" : ` { ${alternatives.length} }`};
+${
+  held.length === 0
+    ? ""
+    : `    union {
+${held.some(a => type.cppStoresAsBits(a.type)) ? "        uint64_t bits;\n" : ""}${held.map(a => `        ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}>` : implementationType(a.type)} ${a.name};`).join("\n")}
+    };
+`
+}};
 struct Extern${name} {
-    union {
-${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
-    } data;
     uint8_t tag;
+    union {
+${type.externParameterFields ? "        uint64_t bits;\n" : ""}${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
+    } data;
 };
 ${layoutAssert(`Extern${name}`, type)}
 }
-template<> struct Bun::Bindgen::ExternTraits<${type.cpp}> {
+${type.cppCanBitCastToExtern ? `template<> inline constexpr bool Bun::Bindgen::canBitCastToExtern<${type.cpp}> = true;\n` : ""}template<> struct Bun::Bindgen::ExternTraits<${type.cpp}> {
     using ExternType = Bun::Bindgen::Generated::Extern${name};
     static ExternType convertToExtern(${type.cpp}&& value)
     {
-        ExternType result;
+${
+  type.cppCanBitCastToExtern
+    ? `${held.map(a => `        static_assert(Bun::Bindgen::canBitCastToExtern<decltype(value.${a.name})>);`).join("\n")}
+        return std::bit_cast<ExternType>(value);`
+    : `        ExternType result;
         result.tag = value.tag;
         switch (value.tag) {
 ${held
@@ -339,36 +495,12 @@ ${held
   )
   .join("\n")}
         }
-        return result;
+        return result;`
+}
     }
 };
 template<> struct Bun::IDLHumanReadableName<${type.idlType}> : Bun::IDLHumanReadableName<Bun::IDLAlternatives<${idlTypes}>> {};
-template<> struct WebCore::Converter<${type.idlType}> : Bun::DefaultContextConverter<${type.idlType}> {${
-    type.needsLifetime
-      ? ""
-      : `
-    template<Bun::IDLConversionContext Ctx>
-    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
-    {
-        ReturnType result;
-        convertInto(globalObject, value, ctx, result);
-        return result;
-    }
-`
-  }
-    template<Bun::IDLConversionContext Ctx>
-    static bool convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
-    {
-        auto* globalObject = &lexicalGlobalObject;
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-${indent(code, 8)}
-        switch (choice) {
-${indent(cases.join("\n"), 8)}
-        }
-        ${outcomes.some(mayMatchNone) ? `ctx.template throwNoMatchInUnion<${idlTypes}>(*globalObject, scope);\n        return false;` : "RELEASE_ASSERT_NOT_REACHED();"}
-    }
-};
+${converter}
 `;
 }
 
@@ -391,6 +523,7 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC
 `;
   }
   if (type instanceof UnionType) return type.accepted ? cppHeaderForUnion(type) : "";
+  if (type instanceof DeferredDictionaryType) return "";
   assert(type instanceof DictionaryType);
   if (!type.accepted) return "";
   return `
@@ -580,25 +713,43 @@ function cppContext(
   return `ctx${i}`;
 }
 
+const qualifiedName = (type: DictionaryType | DeferredDictionaryType, member: Member) =>
+  member.reportedAs ?? (type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name);
+
+/** Declares `value`, read through `members` from the names of `member`, the first of which is at `nameIndex`. */
+function cppReadMember(member: Member, value: string, nameIndex: number, ctx: string): string[] {
+  const reads = member.privateSymbol
+    ? [`members.get(WebCore::builtinNames(vm).${member.privateSymbol}PrivateName())`]
+    : member.names.map((_, i) => `members.${member.own ? "getOwn" : "get"}(${nameIndex + i})`);
+  if (isIfPassed(member.type))
+    return [
+      `JSC::JSValue ${value} = members.getOwnIfPropertyExists(${nameIndex});`,
+      "RETURN_IF_EXCEPTION(scope, false);",
+    ];
+  const [first, ...others] = reads.map(read => `${read};\n${cppReturnIfFailed(`!!${value}`, "false")}`);
+  return [
+    `JSC::JSValue ${value} = ${first}`,
+    ...others.map(read => `if (${value}.isUndefined()) {\n${indent(`${value} = ${read}`, 4)}\n}`),
+    ...(member.type.takesUndefined
+      ? []
+      : [
+          `if (${value}.isUndefined()) [[unlikely]] {
+    ${ctx}.throwRequired(*globalObject, scope);
+    return false;
+}`,
+        ]),
+  ];
+}
+
 function cppSourceForDictionary(type: DictionaryType): string {
   if (!type.accepted) return "";
   let nameIndex = 0;
   const members = type.members.map((member, i) => {
-    const [first, ...others] = member.names.map(
-      () => `members.get(${nameIndex++});\n${cppReturnIfFailed(`!!value${i}`, "false")}`,
-    );
-    const qualified = type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name;
+    const qualified = qualifiedName(type, member);
     const lines: string[] = [];
     const ctx = cppContext(lines, i, qualified, member.expected, `value${i}`);
-    lines.push(
-      `JSC::JSValue value${i} = ${first}`,
-      ...others.map(read => `if (value${i}.isUndefined()) {\n${indent(`value${i} = ${read}`, 4)}\n}`),
-    );
-    if (!member.type.takesUndefined)
-      lines.push(`if (value${i}.isUndefined()) [[unlikely]] {
-    ${ctx}.throwRequired(*globalObject, scope);
-    return false;
-}`);
+    lines.push(...cppReadMember(member, `value${i}`, nameIndex, ctx));
+    nameIndex += member.names.length;
     lines.push(member.type.cppConvertInto(`result.${member.fieldName}`, `value${i}`, ctx, qualified, "false"));
     return `    {\n${indent(lines.join("\n"), 8)}\n    }`;
   });
@@ -650,7 +801,7 @@ template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObje
 }${
     type.fromJS
       ? `
-extern "C" bool Bun__Bindgen__${type.name}__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value, Bun::Bindgen::Generated::Extern${type.name}* result)
+extern "C" bool ${fromJSSymbol(type)}(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value, Bun::Bindgen::Generated::Extern${type.name}* result)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -687,14 +838,49 @@ function cppDeclareConverted(
   ];
 }
 
-/** EnsureStillAliveScope is for a pointer a conversion takes out of the value. A Rust type with no lifetime has none. */
 const cppHeldValue = (type: Type, variable: string) =>
-  type.returnsValueUnchanged || !(type.needsLifetime || type.borrowsCell || type.passesValue)
-    ? { holder: "JSC::JSValue", value: variable }
-    : { holder: "JSC::EnsureStillAliveScope", value: `${variable}.value()` };
+  type.pointsIntoValue
+    ? { holder: "JSC::EnsureStillAliveScope", value: `${variable}.value()` }
+    : { holder: "JSC::JSValue", value: variable };
 
-/** The C ABI copies an argument that does not fit two registers. */
-const isPassedByPointer = (type: Type) => type.layout().size > 16;
+/**
+ * Whether each argument goes by pointer: one that the C ABI would copy to the stack, because it does not fit two
+ * registers or because the six of x86-64 have run out.
+ * `leading`: how many parameters sit between the global object and the arguments.
+ */
+export function passedByPointer(args: readonly { type: Type }[], leading: number): boolean[] {
+  let registers = 6 - 1 - leading;
+  return args.map(({ type }) => {
+    const needed = Math.ceil(type.layout().size / 8);
+    const byPointer = needed > 2 || (needed === 2 && registers < 2);
+    registers -= byPointer ? 1 : needed;
+    return byPointer;
+  });
+}
+
+/** The types of the parameters that take an extern value of `type`. */
+const cppExternParameters = (type: Type, byPointer: boolean): string[] =>
+  byPointer
+    ? [`${externType(type)}*`]
+    : (type.externParameterFields?.map(field => `decltype(${externType(type)}::${field.name})`) ?? [externType(type)]);
+
+/**
+ * The arguments for `cppExternParameters`. `converted`: the C++ value. `extern`: the expression that makes its extern value.
+ * `lines` gets a declaration of `variable` if the arguments read it.
+ */
+function cppExternArguments(
+  type: Type,
+  byPointer: boolean,
+  converted: string,
+  extern: string,
+  variable: string,
+  lines: string[],
+): string[] {
+  if (byPointer && type.cppCanBitCastToExtern) return [`Bun::Bindgen::asExtern(${converted})`];
+  if (!byPointer && !type.externParameterFields) return [extern];
+  lines.push(`auto ${variable} = ${extern};`);
+  return byPointer ? [`&${variable}`] : type.externParameterFields!.map(field => `${variable}.${field.name}`);
+}
 
 type Argument = Signature["args"][number];
 
@@ -704,13 +890,16 @@ const cppHeldArgument = (type: Type, i: number) =>
     ? cppHeldValue(type, `argument${i}`)
     : { holder: "JSC::EnsureStillAliveScope", value: `argument${i}.value()` };
 
+/** The host function looks at each argument of the rest. */
+const cppGoesThroughRest = (type: RestType) => type.element instanceof LocalStringType || type.cppPrepare("") !== null;
+
 /** Lines that declare `argument${i}`, which holds what is converted. `fromParameters`: as for `cppCallBody`. */
 function cppDeclareArgument({ type }: Argument, i: number, fromParameters?: { failure: string }): string[] {
-  if (type instanceof VariadicType) return [];
   if (type instanceof RestType) {
+    if (!cppGoesThroughRest(type)) return [];
     return [
       `Bun::Bindgen::RestArguments argument${i} { *callFrame, ${i} };`,
-      ...(type.element.cppPrepare("") === null
+      ...(type.cppPrepare("") === null
         ? []
         : [`argument${i}.convertStringObjects(*globalObject);`, "RETURN_IF_EXCEPTION(scope, {});"]),
     ];
@@ -741,18 +930,21 @@ function cppArgumentContext(
   return `Bun::Bindgen::asLvalue(Bun::Bindgen::ValidatorArgumentContext { ${fields.join(", ")} })`;
 }
 
-/** What a result is only declared to be: the words of `.returning`, and a class or a JS string, for which Rust may hand back any JS value. */
+/** What a result is only declared to be: the words of `.returning`, and a class, a cell or a JS string, for which Rust may hand back any JS value. */
 export function checkedWordsOf(type: Type): readonly string[] | null {
-  if (type instanceof AnyType) return type.checkedResult;
   if (type instanceof ClassType) return [type.name];
+  if (type instanceof CellType) return [type.cpp];
+  if (type instanceof OpaqueType || type instanceof LocalType || type instanceof BufferSourceType) {
+    return type.checkedResult;
+  }
   if (type instanceof LocalStringType) return ["string"];
   if (!(type instanceof OptionalType)) return null;
-  const words = type.inner instanceof AnyType ? null : checkedWordsOf(type.inner);
+  const words = type.inner instanceof OpaqueType ? null : checkedWordsOf(type.inner);
   return words && [...words, type.modifier === "optional" ? "undefined" : "null"];
 }
 
 /**
- * Converts the arguments, then ends with the lines `finish` makes from `symbol(globalObject, ...leading, ...converted)`.
+ * Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns, or ends with the lines `finish` makes from that call.
  * `fromParameters`: the arguments are the function's `JSValue` parameters `parameter0`.., not the call frame's, and a failed conversion returns `failure`.
  */
 function cppCallBody(
@@ -772,9 +964,9 @@ function cppCallBody(
   const readLast: string[] = [];
   const convert = (argument: Argument, i: number): string[] => {
     const { name, type } = argument;
-    if (type instanceof VariadicType) return [`auto converted${i} = Bun::Bindgen::variadicArguments(callFrame, ${i});`];
     const lines: string[] = [];
     if (type instanceof RestType) {
+      if (!cppGoesThroughRest(type)) return [`auto converted${i} = Bun::Bindgen::variadicArguments(callFrame, ${i});`];
       if (!(type.element instanceof LocalStringType)) return [];
       const ctx = cppArgumentContext(lines, argument, i, `argument${i}.at(index)`, "index");
       return [
@@ -797,14 +989,15 @@ function cppCallBody(
     ...signature.conversionOrder.flatMap(i => convert(signature.args[i], i)),
     ...readLast,
   ];
-  const args = signature.args.map(({ type }, i) => {
-    if (type instanceof RestType) return `argument${i}.data(), argument${i}.size()`;
-    const extern = type.passesValue
-      ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`
-      : toExtern(`converted${i}`);
-    if (!isPassedByPointer(type)) return extern;
-    lines.push(`auto extern${i} = ${extern};`);
-    return `&extern${i}`;
+  const byPointer = passedByPointer(signature.args, leading.length);
+  const args = signature.args.flatMap(({ type }, i) => {
+    const extern =
+      type instanceof RestType && cppGoesThroughRest(type)
+        ? `${externType(type)} { argument${i}.data(), argument${i}.size() }`
+        : type.passesValue
+          ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(${cppHeldArgument(type, i).value}) }`
+          : toExtern(`converted${i}`);
+    return cppExternArguments(type, byPointer[i], `converted${i}`, extern, `extern${i}`, lines);
   });
   lines.push(...finish(`${symbol}(${["globalObject", ...leading, ...args].join(", ")})`));
   return indented(lines);
@@ -813,13 +1006,57 @@ function cppCallBody(
 const cppPrologue = `    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);`;
 
+const fromJSSymbol = (type: NamedType) => `Bun__Bindgen__${type.name}__fromJS`;
+
+/** `Name::from_js` of a union. */
+function cppSourceForFromJS(type: UnionType): string {
+  if (!type.fromJS) return "";
+  const conversion = new Conversion(type, type.name, undefined);
+  conversion.symbol = fromJSSymbol(type);
+  return cppSourceForConversion(conversion);
+}
+
+function cppSourceForConversion({ symbol, type, name, expected, member }: Conversion): string {
+  const { holder, value } = cppHeldValue(type, "argument");
+  const lines: string[] = [];
+  let ctx: string;
+  if (member) {
+    const { firstMemberNameIndex, members } = member.of;
+    const read = members[member.index];
+    const nameIndex = firstMemberNameIndex + members.slice(0, member.index).flatMap(({ names }) => names).length;
+    ctx = cppContext(lines, 0, qualifiedName(member.of, read), expected, "read");
+    lines.push(
+      `Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, JSC::asObject(JSC::JSValue::decode(encodedValue)), ${nameIndex}, ${read.names.length});`,
+      ...cppReadMember(read, "read", 0, ctx),
+      `${holder} argument = read;`,
+    );
+  } else {
+    lines.push(`${holder} argument = JSC::JSValue::decode(encodedValue);`);
+    ctx = cppContext(lines, 0, name, expected, value);
+  }
+  lines.push(
+    ...cppDeclareConverted(type, "converted", value, ctx, "", "false"),
+    `*result = ${toExtern("converted")};`,
+    "return true;",
+  );
+  return `
+extern "C" bool ${symbol}(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, ${externType(type)}* result)
+{
+${cppPrologue}
+${indent(lines.join("\n"), 4)}
+}
+`;
+}
+
 export const cppExtern = (
   symbol: string,
-  signature: Signature,
+  signature: { args: readonly { type: Type }[] },
   leading: readonly string[] = [],
   returns = "JSC::EncodedJSValue",
-) =>
-  `extern "C" SYSV_ABI ${returns} ${symbol}(${["JSC::JSGlobalObject*", ...leading, ...signature.args.map(arg => externType(arg.type) + (isPassedByPointer(arg.type) ? "*" : ""))].join(", ")});`;
+) => {
+  const byPointer = passedByPointer(signature.args, leading.length);
+  return `extern "C" SYSV_ABI ${returns} ${symbol}(${["JSC::JSGlobalObject*", ...leading, ...signature.args.flatMap((arg, i) => cppExternParameters(arg.type, byPointer[i]))].join(", ")});`;
+};
 
 // ───────────────────────────── C++: classes ─────────────────────────────
 
@@ -1010,15 +1247,7 @@ ${type.final ? "private" : "protected"}:
 ${type.base ? "" : `\n    ${refCounted && type.estimatedSize ? "void finishCreation(JSC::VM&);" : "DECLARE_DEFAULT_FINISH_CREATION;"}\n`}${refCounted ? `\n${type.final ? "" : "private:\n"}    void* const m_wrapped;\n` : ""}};
 void setup${name}ClassStructure(JSC::LazyClassStructure::Initializer&);
 }
-${type.final ? `template<> struct JSC::JSCastingHelpers::InheritsTraits<${type.cpp}> : Bun::Bindgen::InheritsTraits<${type.cpp}> {};\n` : ""}template<> struct Bun::Bindgen::ExternTraits<${type.cpp}*> : Bun::Bindgen::TrivialExtern<${type.cpp}*> {};
-${
-  refCounted
-    ? ""
-    : `template<> struct Bun::IDLHumanReadableName<${type.idlType}> : Bun::BaseIDLHumanReadableName {
-    static constexpr auto humanReadableName = std::to_array("${name}");
-};
-`
-}`;
+${type.final ? `template<> struct JSC::JSCastingHelpers::InheritsTraits<${type.cpp}> : Bun::Bindgen::InheritsTraits<${type.cpp}> {};\n` : ""}`;
 }
 
 /** What the cell's ClassInfo points at, and \`create\`. */
@@ -1147,17 +1376,21 @@ ${cppCallBody(
 }
 `;
   const isPrimitive = method.returns instanceof PrimitiveType;
+  assert(!passedByPointer(method.args, 1).includes(true), `${type.name}.${method.name}: its arguments go in registers`);
+  const lines: string[] = [];
   const call = `${symbol}(${[
     signature.takesGlobalObject ? "globalObject" : "globalObject()",
     "this",
-    ...method.args.map((arg, i) => toExtern(`parameter${i}`)),
+    ...method.args.flatMap((arg, i) =>
+      cppExternArguments(arg.type, false, `parameter${i}`, toExtern(`parameter${i}`), `extern${i}`, lines),
+    ),
   ].join(", ")})`;
   return `
 ${cppExtern(symbol, method, ["JSC::JSCell*"], isPrimitive ? signature.returns : undefined)}
 ${cppMemberFunction(signature, type)}
 {
     JSC::EnsureStillAliveScope ensureThisStillAlive { this };
-    ${returnsNothing ? call : `return ${isPrimitive ? call : `JSC::JSValue::decode(${call})`}`};
+    ${[...lines, `${returnsNothing ? call : `return ${isPrimitive ? call : `JSC::JSValue::decode(${call})`}`};`].join("\n    ")}
 }
 `;
 }
@@ -1166,7 +1399,7 @@ function cppCalledFromRust(type: ClassType, member: CalledFromRustFunction): str
   const call = `thisObject->${member.name}(${[
     ...(member.takesGlobalObject ? ["globalObject"] : []),
     ...member.args.map(({ type }, i) =>
-      type instanceof AnyType ? `JSC::JSValue::decode(parameter${i})` : `parameter${i}`,
+      type instanceof OpaqueType ? `JSC::JSValue::decode(parameter${i})` : `parameter${i}`,
     ),
   ].join(", ")})`;
   const result = member.returnsValue ? `JSC::JSValue::encode(${call})` : call;
@@ -1237,12 +1470,14 @@ ${accessor.hasSetter ? cppInternalFieldSetter(type, accessor) : ""}`;
 
 /** The setter written in Rust. */
 function cppSetter(type: ClassType, getter: Getter): string {
-  assert(!isPassedByPointer(getter.type), `${type.name}.${getter.name}: a setter takes what fits two registers`);
+  assert(getter.setterType.layout().size <= 16, `${type.name}.${getter.name}: a setter takes what fits two registers`);
   const set = setterHostFunctionName(type, getter);
   const setSymbol = setterSymbolName(type, getter);
-  const { holder, value } = cppHeldValue(getter.type, "assigned");
+  const { holder, value } = cppHeldValue(getter.setterType, "assigned");
+  const lines = cppDeclareConverted(getter.setterType, "value", value, "ctx", getter.name, "false");
+  const args = cppExternArguments(getter.setterType, false, "value", toExtern("value"), "externValue", lines);
   return `
-extern "C" SYSV_ABI bool ${setSymbol}(JSC::JSGlobalObject*, ${getter.isStatic ? "" : "JSC::JSCell*, "}${externType(getter.type)});
+${cppExtern(setSymbol, { args: [{ type: getter.setterType }] }, getter.isStatic ? [] : ["JSC::JSCell*"], "bool")}
 static JSC_DECLARE_CUSTOM_SETTER(${set});
 JSC_DEFINE_CUSTOM_SETTER(${set}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue${getter.isStatic ? "" : " thisValue"}, JSC::EncodedJSValue encodedValue, JSC::PropertyName${getter.isStatic ? "" : " attributeName"}))
 {
@@ -1254,8 +1489,8 @@ ${
 }
     ${holder} assigned { JSC::JSValue::decode(encodedValue) };
     ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
-    ${cppDeclareConverted(getter.type, "value", value, "ctx", getter.name, "false").join("\n    ")}
-    RELEASE_AND_RETURN(scope, ${setSymbol}(globalObject, ${getter.isStatic ? "" : "thisObject, "}${toExtern("value")}));
+    ${lines.join("\n    ")}
+    RELEASE_AND_RETURN(scope, ${setSymbol}(${["globalObject", ...(getter.isStatic ? [] : ["thisObject"]), ...args].join(", ")}));
 }
 `;
 }
@@ -1664,7 +1899,8 @@ export function cppSource(file: SchemaFile, guards: Guards): string {
   }
   headers.delete(`Generated${file.origin.namespace}.h`);
   const accepted = file.types.filter(type => type instanceof DictionaryType && type.accepted) as DictionaryType[];
-  if (accepted.length > 0) headers.add("Bindgen/DictionaryMemberReader.h");
+  if (accepted.length > 0 || file.types.some(type => type instanceof DeferredDictionaryType && type.accepted))
+    headers.add("Bindgen/DictionaryMemberReader.h");
   const systemHeaders = ["JavaScriptCore/JSFunction.h"];
   const functions = [
     ...file.functions,
@@ -1681,13 +1917,15 @@ ${[...headers].map(header => `#include "${header}"\n`).join("")}${systemHeaders.
     .map(type =>
       type instanceof EnumerationType
         ? cppSourceForEnum(type)
-        : type instanceof DictionaryType
-          ? cppSourceForDictionary(type)
-          : type instanceof ClassType
-            ? cppSourceForClass(type, guards)
-            : "",
+        : type instanceof UnionType
+          ? cppSourceForFromJS(type)
+          : type instanceof DictionaryType
+            ? cppSourceForDictionary(type)
+            : type instanceof ClassType
+              ? cppSourceForClass(type, guards)
+              : "",
     )
-    .join("")}${file.functions
+    .join("")}${conversionFunctionsOf(file).map(cppSourceForConversion).join("")}${file.functions
     .map(fn => cppSourceForFunction(fn, guardOfFunction(fn, namespaceOf.get(fn), guards)))
     .join("")}${file.namespaces.map(namespace => cppSourceForNamespace(namespace, file.origin)).join("")}`;
 }
@@ -1760,29 +1998,47 @@ function rustArgumentName(arg: { name: string }): string {
   return rustIdent(name);
 }
 
-const rustExternParameters = (signature: Signature, scope: RustScope) =>
-  signature.args.flatMap(arg =>
-    arg.type instanceof RestType
-      ? [`${rustArgumentName(arg)}: *const JSValue`, `${rustArgumentName(arg)}_count: usize`]
-      : [`${rustArgumentName(arg)}: ${isPassedByPointer(arg.type) ? "*mut " : ""}${arg.type.rustExternType(scope)}`],
-  );
 const rustArguments = (signature: Signature) => signature.args.map(arg => arg.type.rustArgument(rustArgumentName(arg)));
-/** Each argument gets the call's lifetime here: left to inference in the call, a body could ask for `'static`. */
-function rustTakeArguments(args: readonly { name: string; type: Type }[], scope: RustScope): string {
+/**
+ * `parameters`: those of a thunk after the global object, `leading` first. `take`: the lines that make the arguments of them.
+ * Each argument gets the call's lifetime there: left to inference in the call, a body could ask for `'static`.
+ */
+function rustThunkArguments(
+  args: readonly { name: string; type: Type }[],
+  scope: RustScope,
+  leading: readonly string[],
+): { parameters: string[]; take: string } {
+  const byPointer = passedByPointer(args, leading.length);
+  const fieldName = (arg: { name: string }, field: ExternField) => `${rustArgumentName(arg)}_${field.name}`;
+  const parameters = args.flatMap((arg, i) =>
+    byPointer[i]
+      ? [`${rustArgumentName(arg)}: *mut ${arg.type.rustExternType(scope)}`]
+      : (arg.type.externParameterFields?.map(field => `${fieldName(arg, field)}: ${field.rustType(scope)}`) ?? [
+          `${rustArgumentName(arg)}: ${arg.type.rustExternType(scope)}`,
+        ]),
+  );
   // What can return early comes last: by then Rust owns whatever the other arguments hand over.
   const taken = args
-    .toSorted((a, b) => +a.type.rustFromExternThrows - +b.type.rustFromExternThrows)
-    .flatMap(arg => {
+    .map((arg, i) => ({ arg, byPointer: byPointer[i] }))
+    .toSorted((a, b) => +a.arg.type.rustFromExternThrows - +b.arg.type.rustFromExternThrows)
+    .flatMap(({ arg, byPointer }) => {
       const name = rustArgumentName(arg);
-      const converted = arg.type.rustFromExtern(isPassedByPointer(arg.type) ? `${name}.read()` : name, scope);
+      const fields = byPointer ? null : arg.type.externParameterFields;
+      const rebuilt = fields
+        ? [
+            `let ${name} = ${arg.type.rustExternType(scope).replace("<", "::<")} { ${fields.map(field => `${field.name}: ${fieldName(arg, field)}`).join(", ")} };\n`,
+          ]
+        : [];
+      const converted = arg.type.rustFromExtern(byPointer ? `${name}.read()` : name, scope);
       if (arg.type.rustFromExternThrows)
         return [
+          ...rebuilt,
           `let ${name} = match ${converted} {\n    Ok(value) => value,\n    Err(error) => return error.into_host_fn_return(cx),\n};\n`,
         ];
-      return converted === name ? [] : [`let ${name} = ${converted};\n`];
+      return converted === name ? rebuilt : [...rebuilt, `let ${name} = ${converted};\n`];
     });
   if (taken.some(line => /\bheap\b/.test(line))) taken.unshift("let heap = &cx.heap;\n");
-  return taken.join("");
+  return { parameters: [...leading, ...parameters], take: taken.join("") };
 }
 
 const capabilityArgument = { none: [], heap: ["&cx.heap"], js: ["cx"] };
@@ -1808,6 +2064,43 @@ ${indent(body, 12)}
     }
 }
 `;
+
+/** Leaves with what `value` converts to, for the kinds that Rust tells by itself and `type` needs no C++ to convert. */
+function rustConversionWithoutCpp(
+  type: Type,
+  scope: RustScope,
+  leave = (converted: string) => `return Ok(${converted});`,
+): string {
+  const tests = new Map<string, string[]>();
+  const kinds = { ...kindTests, object: { inRust: (value: string) => `${value}.is_object()` } };
+  for (const kind of Object.keys(kinds) as (keyof typeof kinds)[]) {
+    const { inRust } = kinds[kind];
+    const ofKind = inRust && type.rustOfKind(kind, "value", scope);
+    if (!ofKind) continue;
+    tests.set(ofKind.converted, [...(tests.get(ofKind.converted) ?? []), ofKind.test ?? inRust("value")]);
+  }
+  const statements = [...tests].map(([converted, of]) => `if ${of.join(" || ")} {\n    ${leave(converted)}\n}\n`);
+  if (!statements.some(statement => /\bheap\b/.test(statement))) return statements.join("");
+  return `{\n    let heap = &cx.heap;\n${indent(statements.join(""), 4)}}\n`;
+}
+
+function rustForConversion({ symbol, rustName, type, member }: Conversion, scope: RustScope): string {
+  const converted = type.rustFromExtern("result.assume_init()", scope);
+  const withoutCpp = member ? "" : rustConversionWithoutCpp(type, scope);
+  return `
+unsafe extern "C" {
+    fn ${symbol}(global: *mut JSGlobalObject, value: JSValue, result: *mut ${type.rustExternType(scope)}) -> bool;
+}
+fn ${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue) -> bindgen::Result<'a, ${type.rustType(scope)}> {
+    let mut result = core::mem::MaybeUninit::<${type.rustExternType(scope)}>::uninit();
+    // SAFETY: C++ fills \`result\` exactly when it returns true, and the call \`cx\` belongs to holds \`value\`.
+    unsafe {
+${indent(withoutCpp, 8)}        bindgen::call_conversion(cx, |global| ${symbol}(global, value, result.as_mut_ptr()))?;
+${/\bheap\b/.test(converted) ? "        let heap = &cx.heap;\n" : ""}        ${type.rustFromExternThrows ? converted : `Ok(${converted})`}
+    }
+}
+`;
+}
 
 /** Rust that ends a thunk with `returned`. */
 function rustReturnKeepingStringsAlive(signature: Signature, returned: string): string {
@@ -1849,43 +2142,54 @@ function rustFieldType(owner: DictionaryType | UnionType, type: Type, scope: Rus
 
 function rustForUnion(type: UnionType, scope: RustScope): string {
   const lifetime = type.needsLifetime ? "<'a>" : "";
+  const variants = type.alternatives
+    .filter((a, i, all) => all.findIndex(other => other.variant === a.variant) === i)
+    .map(a => ({ variant: a.variant, type: a.nested?.union ?? a.type }));
   let text = `
-${type.accepted && type.rustIsCopy ? "#[derive(Clone, Copy)]\n" : ""}pub enum ${type.name}${lifetime} {
-${type.alternatives.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a.variant}(${rustFieldType(type, a.type, scope)}),`)).join("\n")}
+${type.accepted && type.rustIsCopy ? "#[derive(Clone, Copy)]\n" : ""}${type.accepted && type.rustFromExternIsTransmute ? "#[repr(C, u8)]\n" : ""}pub enum ${type.name}${lifetime} {
+${variants.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a.variant}(${rustFieldType(type, a.type, scope)}),`)).join("\n")}
 }
 `;
   if (type.accepted) {
     text += `#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Extern${type.name} {
-    data: Extern${type.name}Data,
-    tag: u8,
+    pub tag: u8,
+    pub data: Extern${type.name}Data,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-union Extern${type.name}Data {
-${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
+pub union Extern${type.name}Data {
+${type.externParameterFields ? "    bits: u64,\n" : ""}${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
 }
 ${rustLayoutAssert(`Extern${type.name}`, type)}
 impl${lifetime} ${type.name}${lifetime} {
     /// # Safety
     /// \`value\` was just filled in by generated C++${lifetime && " for the call `heap` belongs to"} and is read once.
     #[doc(hidden)]
-    pub unsafe fn from_extern(value: &Extern${type.name}${lifetime && ", heap: &bindgen::JsHeap<'a>"}) -> Self {
+${
+  type.rustFromExternIsTransmute
+    ? `    #[inline(always)]
+    pub unsafe fn from_extern(value: &Extern${type.name}${lifetime && ", _: &bindgen::JsHeap<'a>"}) -> Self {
+        // SAFETY: C++ initialized the alternative \`tag\` names, and each is laid out as the variant of that index.
+        unsafe { core::mem::transmute(*value) }
+    }`
+    : `    pub unsafe fn from_extern(value: &Extern${type.name}${lifetime && ", heap: &bindgen::JsHeap<'a>"}) -> Self {
         // SAFETY: C++ initialized the alternative \`tag\` names.
         unsafe {
             match value.tag {
 ${type.alternatives
-  .map((a, i) =>
-    a.type instanceof UnitType
-      ? `                ${i} => Self::${a.variant},`
-      : `                ${i} => Self::${a.variant}(${a.type.rustFromExtern(`value.data.${rustIdent(snakeCase(a.name))}`, scope)}),`,
-  )
+  .map((a, i) => {
+    const held =
+      a.type instanceof UnitType ? "" : a.type.rustFromExtern(`value.data.${rustIdent(snakeCase(a.name))}`, scope);
+    return `                ${i} => ${type.rustAlternative(a, held, scope)},`;
+  })
   .join("\n")}
                 _ => core::hint::unreachable_unchecked(),
             }
         }
-    }
+    }`
+}
 }
 `;
   }
@@ -1893,7 +2197,7 @@ ${type.alternatives
     text += `impl${lifetime} ${type.name}${lifetime} {
     pub fn into_js${lifetime ? "" : "<'a>"}(self, heap: &bindgen::JsHeap<'a>) -> ${jsValueResult} {
         match self {
-${type.alternatives
+${variants
   .map(a =>
     a.type instanceof UnitType
       ? `            Self::${a.variant} => Ok(bindgen::JsLocal::${a.type.unit === "null" ? "NULL" : "UNDEFINED"}),`
@@ -1905,7 +2209,87 @@ ${type.alternatives
 }
 `;
   }
-  return text;
+  return text + rustFromJS(type, scope);
+}
+
+function rustFromJS(type: NamedType, scope: RustScope): string {
+  if (!type.fromJS) return "";
+  const extern = type.rustExternType(scope);
+  const symbol = fromJSSymbol(type);
+  const converted = type.rustFromExtern("result", scope);
+  const convert = `${snakeCase(type.name)}_from_js`;
+  const declaration = `unsafe extern "C" {
+    fn ${symbol}(global: *mut JSGlobalObject, value: JSValue, result: *mut ${extern}) -> bool;
+}
+#[inline]
+fn ${convert}(global: &JSGlobalObject, value: JSValue) -> bun_jsc::JsResult<${extern}> {
+    let mut result = core::mem::MaybeUninit::<${extern}>::uninit();
+    // SAFETY: C++ fills \`result\` exactly when it returns true.
+    bun_jsc::call_false_is_throw(global, || unsafe { ${symbol}(global.as_mut_ptr(), value, result.as_mut_ptr()) })?;
+    // SAFETY: as above.
+    Ok(unsafe { result.assume_init() })
+}
+`;
+  if (!type.needsLifetime)
+    return `${declaration}impl ${type.name} {
+    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> bun_jsc::JsResult<Self> {
+        let result = ${convert}(global, value)?;
+        // SAFETY: C++ made it.
+        Ok(unsafe { ${converted} })
+    }
+}
+`;
+  const withoutCpp = rustConversionWithoutCpp(type, scope, converted => `break 'converted ${converted};`);
+  return `${declaration}impl ${type.name}<'_> {
+    /// Converts \`value\` and lends it to \`f\`.
+    pub fn from_js<R>(
+        global: &JSGlobalObject,
+        value: JSValue,
+        f: impl for<'call> FnOnce(${type.name}<'call>) -> bun_jsc::JsResult<R>,
+    ) -> bun_jsc::JsResult<R> {
+        // SAFETY: C++ made \`result\`; the scope only names the time until \`f\` returns.
+        let returned = unsafe {
+            bindgen::JsScope::with(global.as_mut_ptr(), |cx| {
+                f(${withoutCpp && "'converted: "}{
+${indent(withoutCpp, 20)}                    let result = ${convert}(global, value)?;
+                    let heap = &cx.heap;
+                    ${converted}
+                })
+            })
+        };
+        value.ensure_still_alive();
+        returned
+    }
+}
+`;
+}
+
+function rustForDeferredDictionary(type: DeferredDictionaryType, scope: RustScope): string {
+  if (!type.accepted) return "";
+  return `
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct ${type.name}<'a>(bindgen::JsLocal<'a, bun_jsc::JSObject>);
+impl<'a> ${type.name}<'a> {
+    #[inline(always)]
+    pub fn new(object: bindgen::JsLocal<'a, bun_jsc::JSObject>) -> Self {
+        Self(object)
+    }
+    #[inline(always)]
+    pub fn object(self) -> bindgen::JsLocal<'a, bun_jsc::JSObject> {
+        self.0
+    }
+${type.members
+  .map(
+    (member, i) => `    /// Reads \`${member.name}\` and converts it.
+    #[inline]
+    pub fn ${member.rustName}(self, global: &JSGlobalObject) -> bun_jsc::JsResult<${member.type.rustType(scope)}> {
+        bindgen::convert_with(global, self.0, ${type.conversions[i].rustName})
+    }`,
+  )
+  .join("\n")}
+}
+`;
 }
 
 function rustForDictionary(type: DictionaryType, scope: RustScope): string {
@@ -1948,34 +2332,7 @@ ${type.members.map(member => `                ${member.rustName}: ${member.type.
 }
 `;
   }
-  if (type.fromJS) {
-    text += `unsafe extern "C" {
-    fn Bun__Bindgen__${type.name}__fromJS(global: *mut JSGlobalObject, value: JSValue, result: *mut Extern${type.name}) -> bool;
-}
-impl ${type.name}${lifetime ? "<'_>" : ""} {
-    ${
-      lifetime
-        ? `/// Converts \`value\` and lends it to \`f\`.
-    pub fn from_js<R>(
-        global: &JSGlobalObject,
-        value: JSValue,
-        f: impl for<'call> FnOnce(${type.name}<'call>) -> bun_jsc::JsResult<R>,
-    ) -> bun_jsc::JsResult<R> {`
-        : `pub fn from_js(global: &JSGlobalObject, value: JSValue) -> bun_jsc::JsResult<Self> {`
-    }
-        let mut result = core::mem::MaybeUninit::<Extern${type.name}>::uninit();
-        // SAFETY: C++ fills \`result\` exactly when it returns true.
-        bun_jsc::call_false_is_throw(global, || unsafe { Bun__Bindgen__${type.name}__fromJS(global.as_mut_ptr(), value, result.as_mut_ptr()) })?;
-        // SAFETY: as above${lifetime && "; the scope only names the time until `f` returns"}.
-        ${
-          lifetime
-            ? `unsafe { bindgen::JsScope::with(global.as_mut_ptr(), |cx| f(${type.name}::from_extern(result.assume_init_ref(), &cx.heap))) }`
-            : `Ok(unsafe { ${type.name}::from_extern(result.assume_init_ref()) })`
-        }
-    }
-}
-`;
-  }
+  text += rustFromJS(type, scope);
   if (type.returned) {
     const isLeftOutWhenAbsent = (member: Type): member is OptionalType =>
       member instanceof OptionalType && member.modifier === "optional";
@@ -2046,11 +2403,16 @@ function rustForClass(type: ClassType, scope: RustScope): string {
       ...(type.passStructure ? ["bindgen::JsStructure::from_extern(structure, &cx.heap)"] : []),
       ...rustArguments(signature),
     ].join(", ")})`;
+    const { parameters, take } = rustThunkArguments(
+      signature.args,
+      scope,
+      returnsPointer ? [] : ["structure: *mut core::ffi::c_void"],
+    );
     thunks += rustThunk(
       classSymbolName(type, "construct"),
-      [...(returnsPointer ? [] : ["structure: *mut core::ffi::c_void"]), ...rustExternParameters(signature, scope)],
+      parameters,
       returnsPointer ? "*mut core::ffi::c_void" : "JSValue",
-      `${rustTakeArguments(signature.args, scope)}let result = ${infallible(call, signature.throws)};
+      `${take}let result = ${infallible(call, signature.throws)};
 ${
   returnsPointer
     ? "bindgen::host_fn_construct_return(cx, result)"
@@ -2067,17 +2429,19 @@ ${
       ...leading(method.receiver, method.passThis, method.capability),
       ...rustArguments(method),
     ].join(", ")})`;
+    const { parameters, take } = rustThunkArguments(
+      method.args,
+      scope,
+      isStatic ? [] : ["this: *mut core::ffi::c_void"],
+    );
     thunks += rustThunk(
       methodSymbolName(type, method),
-      [...(isStatic ? [] : ["this: *mut core::ffi::c_void"]), ...rustExternParameters(method, scope)],
+      parameters,
       ...((!method.isProperty && method.returns instanceof PrimitiveType
-        ? [
-            method.returns.rustType(),
-            `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope)}${call}`,
-          ]
+        ? [method.returns.rustType(), `${takeThis(method.receiver, method.passThis)}${take}${call}`]
         : [
             "JSValue",
-            `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope)}let result = ${infallible(call, method.throws, method.returns)};
+            `${takeThis(method.receiver, method.passThis)}${take}let result = ${infallible(call, method.throws, method.returns)};
 ${rustReturnKeepingStringsAlive(method, `bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("value", scope)})`)}`,
           ]) as [string, string]),
     );
@@ -2096,11 +2460,16 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
     );
     if (!getter.hasSetter) continue;
     const set = `<${rustPath}>::${getter.setterRustName}(${[...leading(getter.setterReceiver, getter.passThis, getter.setterCapability), "value"].join(", ")})`;
+    const { parameters, take } = rustThunkArguments(
+      [{ name: "value", type: getter.setterType }],
+      scope,
+      getter.isStatic ? [] : ["this: *mut core::ffi::c_void"],
+    );
     thunks += rustThunk(
       setterSymbolName(type, getter),
-      [...(getter.isStatic ? [] : ["this: *mut core::ffi::c_void"]), `value: ${getter.type.rustExternType(scope)}`],
+      parameters,
       "bool",
-      `${takeThis(getter.setterReceiver, getter.passThis)}${rustTakeArguments([{ name: "value", type: getter.type }], scope)}let result = ${infallible(set, getter.throws, unit)};
+      `${takeThis(getter.setterReceiver, getter.passThis)}${take}let result = ${infallible(set, getter.throws, unit)};
 !bindgen::host_fn_return(cx, result, bindgen::to_js::undefined).is_empty()`,
     );
   }
@@ -2225,7 +2594,7 @@ function rustForModule(type: ClassType, scope: RustScope): string {
   const fromJS = symbolName(type, "fromJS");
   const rustParameters = (member: CalledFromRustFunction) =>
     member.args.map(
-      arg => `${rustArgumentName(arg)}: ${arg.type instanceof AnyType ? "JSValue" : arg.type.rustType(scope)}`,
+      arg => `${rustArgumentName(arg)}: ${arg.type instanceof OpaqueType ? "JSValue" : arg.type.rustType(scope)}`,
     );
   const safety = `// SAFETY: \`this_value\` is an instance, which has ${type.internalFields.length} internal fields.`;
   return `
@@ -2369,11 +2738,16 @@ bun_jsc::jsc_abi_extern! {
           path = `${file.moduleDefinition.rustPath}::${rustIdent(snakeCase(fn.name.replace(/^_+/, "")))}`;
         }
         const call = `${path}(${[...capabilityArgument[signature.capability], ...leading, ...rustArguments(signature)].join(", ")})`;
+        const { parameters, take } = rustThunkArguments(
+          signature.args,
+          scope,
+          leading.map(name => `${name}: JSValue`),
+        );
         return rustThunk(
           thunkSymbol(fn, signature),
-          [...leading.map(name => `${name}: JSValue`), ...rustExternParameters(signature, scope)],
+          parameters,
           "JSValue",
-          `${leading.map(name => `let ${name} = bindgen::JsLocal::new(&cx.heap, ${name});\n`).join("")}${rustTakeArguments(signature.args, scope)}let result = ${infallible(call, signature.throws, signature.returns)};
+          `${leading.map(name => `let ${name} = bindgen::JsLocal::from_extern(${name}, &cx.heap);\n`).join("")}${take}let result = ${infallible(call, signature.throws, signature.returns)};
 ${rustReturnKeepingStringsAlive(signature, `bindgen::host_fn_return(cx, result, |heap, value| ${signature.returns.rustToJS("value", scope)})`)}`,
         );
       })
@@ -2387,6 +2761,25 @@ const rustTraitImports = (file: SchemaFile) =>
     .map(path => `\n    use ${path} as _;`)
     .join("");
 
+const rustForFile = (file: SchemaFile) =>
+  file.types
+    .map(type =>
+      type instanceof EnumerationType
+        ? rustForEnumeration(type)
+        : type instanceof UnionType
+          ? rustForUnion(type, file.origin)
+          : type instanceof ClassType
+            ? rustForClass(type, file.origin)
+            : type instanceof DeferredDictionaryType
+              ? rustForDeferredDictionary(type, file.origin)
+              : rustForDictionary(type as DictionaryType, file.origin),
+    )
+    .join("") +
+  conversionFunctionsOf(file)
+    .map(conversion => rustForConversion(conversion, file.origin))
+    .join("") +
+  file.functions.map(fn => rustForFunction(fn, file)).join("");
+
 /** Not a file whose functions all have their bodies in C++. */
 const hasRust = (file: SchemaFile) =>
   file.types.length > 0 || file.functions.some(fn => fn.signatures.some(signature => !signature.cppSymbol));
@@ -2396,14 +2789,16 @@ export function rustForCrate(files: readonly SchemaFile[]): string {
     banner(null) +
     files
       .filter(hasRust)
+      .map(file => [file, rustForFile(file)] as const)
       .map(
-        file => `
+        ([file, text]) => `
 /// \`${file.origin.stem}.bind.ts\`
 #[allow(
     non_snake_case,
     non_upper_case_globals,
     unreachable_pub,
     dead_code,
+    unused_imports,
     unused_unsafe,
     clippy::missing_safety_doc,
     clippy::identity_op,
@@ -2414,20 +2809,7 @@ export function rustForCrate(files: readonly SchemaFile[]): string {
 )]
 pub mod ${file.origin.rustModule} {
     use bun_jsc::{JSGlobalObject, JSValue, bindgen};${rustTraitImports(file)}
-${indent(
-  file.types
-    .map(type =>
-      type instanceof EnumerationType
-        ? rustForEnumeration(type)
-        : type instanceof UnionType
-          ? rustForUnion(type, file.origin)
-          : type instanceof ClassType
-            ? rustForClass(type, file.origin)
-            : rustForDictionary(type as DictionaryType, file.origin),
-    )
-    .join("") + file.functions.map(fn => rustForFunction(fn, file)).join(""),
-  4,
-)}}
+${indent(text, 4)}}
 `,
       )
       .join("")
@@ -2444,19 +2826,13 @@ export function dts(files: readonly SchemaFile[]): string {
     );
     return signature.args
       .map((arg, i) =>
-        arg.type instanceof VariadicType || arg.type instanceof RestType
+        arg.type instanceof RestType
           ? `...${arg.name}: ${arg.type.tsType}`
           : `${arg.name}${i <= lastRequired ? "" : "?"}: ${arg.type.tsType}`,
       )
       .join(", ");
   };
-  /** A result that is absent is `null`, never `undefined` too. */
-  const resultType = (type: Type) => {
-    const words = type instanceof AnyType ? type.checkedResult : null;
-    if (words !== null) return typeScriptOf(words);
-    return type instanceof OptionalType && type.modifier === "nullable" ? `${type.inner.tsType} | null` : type.tsType;
-  };
-  const signatureType = (signature: Signature) => `(${parameters(signature)}) => ${resultType(signature.returns)}`;
+  const signatureType = (signature: Signature) => `(${parameters(signature)}) => ${signature.returns.tsResultType}`;
   const member = (name: string, optional: boolean, type: string) =>
     `    ${JSON.stringify(name)}${optional ? "?" : ""}: ${type};`;
   const overloadsType = (fn: FunctionDefinition) => fn.signatures.map(s => `(${signatureType(s)})`).join(" & ");
@@ -2466,14 +2842,18 @@ export function dts(files: readonly SchemaFile[]): string {
       : member(fn.name, false, overloadsType(fn));
   /** `Symbol.for(..)` is not a key that an interface can declare. */
   const isDeclarable = (member: { name: string }) => member.name !== "@@inspectCustom";
-  const getterMember = (getter: Getter) =>
-    getter.writable
-      ? member(getter.name, false, "any")
-      : `    ${getter.hasSetter ? "" : "readonly "}${JSON.stringify(getter.name)}: ${getter.hasSetter ? getter.type.tsType : resultType(getter.type)};`;
+  const getterMember = (getter: Getter) => {
+    if (getter.writable) return member(getter.name, false, "any");
+    const name = JSON.stringify(getter.name);
+    if (!getter.hasSetter) return `    readonly ${name}: ${getter.type.tsResultType};`;
+    if (getter.setterType === getter.type) return `    ${name}: ${getter.type.tsType};`;
+    return `    get ${name}(): ${getter.type.tsResultType};\n    set ${name}(value: ${getter.setterType.tsType});`;
+  };
   const declarations = files.flatMap(file =>
     file.types.map(type => {
-      if (type instanceof DictionaryType) {
-        return `  interface ${type.name} {\n${type.members.map(m => member(m.name, m.type.takesUndefined, m.type.tsType)).join("\n")}\n  }`;
+      if (type instanceof DictionaryType || type instanceof DeferredDictionaryType) {
+        const published = type.members.filter(m => !m.privateSymbol);
+        return `  interface ${type.name} {\n${published.map(m => member(m.name, m.type.takesUndefined, m.type.tsType)).join("\n")}\n  }`;
       }
       if (!(type instanceof ClassType)) return "";
       return `  interface ${type.name}${type.base ? ` extends ${type.base.name}` : ""} {
@@ -2498,7 +2878,7 @@ ${[
       ? `
   interface ${type.name}Constructor {
 ${[
-  ...(type.call ? type.call.signatures.map(call => `    (${parameters(call)}): ${resultType(call.returns)};`) : []),
+  ...(type.call ? type.call.signatures.map(call => `    (${parameters(call)}): ${call.returns.tsResultType};`) : []),
   `    new (${parameters(type.construct)}): ${type.name};`,
   `    readonly prototype: ${type.name};`,
   ...type.staticFunctions.map(functionMember),
@@ -2512,7 +2892,7 @@ ${[
   const exported = (file: SchemaFile) => [
     ...file.functions.map(
       fn =>
-        `      ${JSON.stringify(fn.name)}: ${fn.isValue ? resultType(fn.signatures[0].returns) : overloadsType(fn)};`,
+        `      ${JSON.stringify(fn.name)}: ${fn.isValue ? fn.signatures[0].returns.tsResultType : overloadsType(fn)};`,
     ),
     ...file.types
       .filter(type => type instanceof ClassType && type.construct)

@@ -17,10 +17,11 @@ export const setDefaultAutoSelectFamilyAttemptTimeout = b.fn({
   returns: b.u32,
 });
 
-export const newDetachedSocket = b.fn({ args: { isSSL: b.bool }, returns: b.any, capability: "js" });
+/** Returns a `TCPSocket` or a `TLSSocket`. */
+export const newDetachedSocket = b.fn({ args: { isSSL: b.bool }, returns: b.object, capability: "js" });
 export const doConnect = b.fn({
-  args: { socket: SocketHandle, options: b.any },
-  returns: b.any,
+  args: { socket: SocketHandle, options: b.opaque },
+  returns: b.promise,
   capability: "js",
   throws: true,
 });

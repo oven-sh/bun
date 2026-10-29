@@ -92,6 +92,11 @@ struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
         derived().throwTypeMustBe(global, scope, "a Blob"_s);
     }
 
+    void throwNotInstanceOf(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, WTF::ASCIILiteral className) const
+    {
+        derived().throwTypeMustBe(global, scope, WTF::makeString("an instance of "_s, className));
+    }
+
     template<typename IDLElement = void>
     void throwNotArray(JSC::JSGlobalObject& global, JSC::ThrowScope& scope) const
     {

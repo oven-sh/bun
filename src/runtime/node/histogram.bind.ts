@@ -21,7 +21,7 @@ export const HistogramJSON = b.dictionary({
   mean: b.f64,
   exceeds: b.u64,
   stddev: b.f64,
-  percentiles: b.any,
+  percentiles: b.opaque,
 });
 
 /** https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js */
@@ -44,19 +44,31 @@ export const Histogram = b.class({
     percentile: { ...percentile, returns: b.u64 },
     percentileBigInt: { ...percentile, returns: b.u64.asBigInt, rustName: "percentile" },
     /** A `Map`. */
-    percentiles: { getter: b.any, capability: "js", throws: true },
-    percentilesBigInt: { getter: b.any, capability: "js", throws: true },
+    percentiles: { getter: b.opaque, capability: "js", throws: true },
+    percentilesBigInt: { getter: b.opaque, capability: "js", throws: true },
     reset: {},
     toJSON: { returns: HistogramJSON, capability: "heap", throws: true },
     "@@inspectCustom": { builtin: true, length: 2 },
   },
 });
 
+export const RecordedValue = b.union({
+  bigInt: b.bigInt,
+  number: b.u64.validateInteger(1, Number.MAX_SAFE_INTEGER),
+});
+
 export const RecordableHistogram = b.class({
   ...nodeClass,
   extends: Histogram,
   proto: {
-    record: { args: { val: b.any }, length: 1, passThis: true, capability: "js", throws: true },
+    record: {
+      args: { val: RecordedValue },
+      expected: { val: ["number"] },
+      length: 1,
+      passThis: true,
+      capability: "js",
+      throws: true,
+    },
     recordDelta: grows,
     add: { ...grows, args: { other: b.self }, expected: { other: ["RecordableHistogram"] } },
   },
@@ -82,4 +94,4 @@ export const createRecordable = b.fn({
   capability: "heap",
 });
 export const createInterval = b.fn({ args: { resolution: b.f64 }, returns: ELDHistogram, capability: "heap" });
-export const isHistogram = b.fn({ args: { value: b.any }, returns: b.bool });
+export const isHistogram = b.fn({ args: { value: Histogram.otherAsNull }, returns: b.bool });

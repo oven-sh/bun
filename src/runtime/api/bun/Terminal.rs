@@ -39,6 +39,7 @@ use bun_sys::windows;
 
 bun_output::declare_scope!(Terminal, hidden);
 
+use crate::generated_bindgen::terminal::TerminalOptions;
 pub(crate) use crate::generated_bindgen::terminal::js_Terminal as js;
 
 /// Reference counting for Terminal.
@@ -166,30 +167,6 @@ impl Default for Options {
     }
 }
 
-// Local extension shims for typed optional property reads. Typed
-// `getOptional` is not yet a single inherent generic on `bun_jsc::JSValue`;
-// these wrap `get` + the per-type coercion. `withAsyncContextIfNeeded` is the
-// inherent `JSValue::with_async_context_if_needed` in `bun_jsc` — call sites
-// resolve to that directly, no shim here.
-trait JSValueTerminalExt {
-    fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>>;
-    fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>>;
-}
-impl JSValueTerminalExt for JSValue {
-    fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>> {
-        match self.get(global, name)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.coerce::<i32>(global)?)),
-            _ => Ok(None),
-        }
-    }
-    fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>> {
-        match self.get(global, name)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v)),
-            _ => Ok(None),
-        }
-    }
-}
-
 impl Options {
     /// Maximum length for terminal name (e.g., "xterm-256color")
     /// Longest known terminfo names are ~23 chars; 128 allows for custom terminals
@@ -198,17 +175,19 @@ impl Options {
     /// Parse terminal options from a JS object
     pub(crate) fn parse_from_js(
         global_object: &JSGlobalObject,
-        js_options: JSValue,
+        js_options: TerminalOptions<'_>,
     ) -> JsResult<Options> {
         let mut options = Options::default();
 
-        if let Some(n) = js_options.get_optional_i32(global_object, b"cols")? {
+        if let Some(n) = js_options.cols(global_object)? {
+            let n = n.to_js().coerce::<i32>(global_object)?;
             if n > 0 && n <= 65535 {
                 options.cols = u16::try_from(n).expect("int cast");
             }
         }
 
-        if let Some(n) = js_options.get_optional_i32(global_object, b"rows")? {
+        if let Some(n) = js_options.rows(global_object)? {
+            let n = n.to_js().coerce::<i32>(global_object)?;
             if n > 0 && n <= 65535 {
                 options.rows = u16::try_from(n).expect("int cast");
             }
@@ -216,7 +195,7 @@ impl Options {
 
         // `name` is a documented option (bun.d.ts) that nothing consumes yet;
         // it is still type- and length-checked.
-        if let Some(name) = js_options.get_optional_slice(global_object, b"name")? {
+        if let Some(name) = js_options.name(global_object)? {
             if name.slice().len() > Self::MAX_TERM_NAME_LEN {
                 return Err(global_object.throw(format_args!(
                     "Terminal name too long (max {} characters)",
@@ -225,22 +204,16 @@ impl Options {
             }
         }
 
-        if let Some(v) = js_options.get_optional_value(global_object, b"data")? {
-            if v.is_cell() && v.is_callable() {
-                options.data_callback = Some(v.with_async_context_if_needed(global_object));
-            }
+        if let Some(v) = js_options.data(global_object)? {
+            options.data_callback = Some(v.to_js().with_async_context_if_needed(global_object));
         }
 
-        if let Some(v) = js_options.get_optional_value(global_object, b"exit")? {
-            if v.is_cell() && v.is_callable() {
-                options.exit_callback = Some(v.with_async_context_if_needed(global_object));
-            }
+        if let Some(v) = js_options.exit(global_object)? {
+            options.exit_callback = Some(v.to_js().with_async_context_if_needed(global_object));
         }
 
-        if let Some(v) = js_options.get_optional_value(global_object, b"drain")? {
-            if v.is_cell() && v.is_callable() {
-                options.drain_callback = Some(v.with_async_context_if_needed(global_object));
-            }
+        if let Some(v) = js_options.drain(global_object)? {
+            options.drain_callback = Some(v.to_js().with_async_context_if_needed(global_object));
         }
 
         Ok(options)
@@ -521,16 +494,15 @@ impl Terminal {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        options: JsLocal<'a>,
+        options: Option<TerminalOptions<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global_object = cx.global();
-        let options = options.to_js();
 
-        if !options.is_object() {
+        let Some(options) = options else {
             return Err(global_object.throw(format_args!(
                 "Terminal constructor requires an options object"
             )));
-        }
+        };
 
         let options = Options::parse_from_js(global_object, options)?;
 
@@ -1282,21 +1254,18 @@ impl Terminal {
         self.is_closed()
     }
 
-    fn get_termios_flag<'a, const FIELD: TermiosField>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
+    fn get_termios_flag<const FIELD: TermiosField>(&self) -> JsResult<f64> {
         #[cfg(not(unix))]
         {
-            return bindgen::to_js::f64(heap, 0.0);
+            return Ok(0.0);
         }
         #[cfg(unix)]
         {
             if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
-                return bindgen::to_js::f64(heap, 0.0);
+                return Ok(0.0);
             }
             let Some(termios_data) = get_termios(self.master_fd.get()) else {
-                return bindgen::to_js::f64(heap, 0.0);
+                return Ok(0.0);
             };
             let raw: u64 = match FIELD {
                 TermiosField::Iflag => termios_data.c_iflag as u64,
@@ -1304,7 +1273,7 @@ impl Terminal {
                 TermiosField::Lflag => termios_data.c_lflag as u64,
                 TermiosField::Cflag => termios_data.c_cflag as u64,
             };
-            bindgen::to_js::f64(heap, raw as f64)
+            Ok(raw as f64)
         }
     }
 
@@ -1343,20 +1312,14 @@ impl Terminal {
         }
     }
 
-    pub(crate) fn get_input_flags<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
-        self.get_termios_flag::<{ TermiosField::Iflag }>(heap)
+    pub(crate) fn get_input_flags(&self) -> JsResult<f64> {
+        self.get_termios_flag::<{ TermiosField::Iflag }>()
     }
     pub(crate) fn set_input_flags(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
         self.set_termios_flag::<{ TermiosField::Iflag }>(cx, value)
     }
-    pub(crate) fn get_output_flags<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
-        self.get_termios_flag::<{ TermiosField::Oflag }>(heap)
+    pub(crate) fn get_output_flags(&self) -> JsResult<f64> {
+        self.get_termios_flag::<{ TermiosField::Oflag }>()
     }
     pub(crate) fn set_output_flags(
         &self,
@@ -1365,20 +1328,14 @@ impl Terminal {
     ) -> JsResult<()> {
         self.set_termios_flag::<{ TermiosField::Oflag }>(cx, value)
     }
-    pub(crate) fn get_local_flags<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
-        self.get_termios_flag::<{ TermiosField::Lflag }>(heap)
+    pub(crate) fn get_local_flags(&self) -> JsResult<f64> {
+        self.get_termios_flag::<{ TermiosField::Lflag }>()
     }
     pub(crate) fn set_local_flags(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
         self.set_termios_flag::<{ TermiosField::Lflag }>(cx, value)
     }
-    pub(crate) fn get_control_flags<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
-        self.get_termios_flag::<{ TermiosField::Cflag }>(heap)
+    pub(crate) fn get_control_flags(&self) -> JsResult<f64> {
+        self.get_termios_flag::<{ TermiosField::Cflag }>()
     }
     pub(crate) fn set_control_flags(
         &self,
@@ -1464,16 +1421,16 @@ impl Terminal {
     pub(crate) fn resize<'a>(
         &self,
         heap: &JsHeap<'a>,
-        cols: JsLocal<'a>,
-        rows: JsLocal<'a>,
+        cols: Option<f64>,
+        rows: Option<f64>,
     ) -> bindgen::Result<'a, ()> {
         if self.flags.get().contains(Flags::CLOSED) {
             return Err(heap.error(format_args!("Terminal is closed")));
         }
 
         let new_cols: u16 = 'blk: {
-            if cols.to_js().is_number() {
-                let n = cols.to_js().to_int32();
+            if let Some(cols) = cols {
+                let n = cols as i32;
                 if n > 0 && n <= 65535 {
                     break 'blk u16::try_from(n).expect("int cast");
                 }
@@ -1482,8 +1439,8 @@ impl Terminal {
         };
 
         let new_rows: u16 = 'blk: {
-            if rows.to_js().is_number() {
-                let n = rows.to_js().to_int32();
+            if let Some(rows) = rows {
+                let n = rows as i32;
                 if n > 0 && n <= 65535 {
                     break 'blk u16::try_from(n).expect("int cast");
                 }

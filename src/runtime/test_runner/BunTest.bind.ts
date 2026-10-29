@@ -26,7 +26,7 @@ export const onTestFinished = hook("onTestFinished");
 
 /** The reactions to the promise that a test or a hook returns. */
 const reaction = {
-  args: { value: b.any, context: b.promisePtr("crate::test_runner::bun_test::RefData") },
+  args: { value: b.opaque, context: b.promisePtr("crate::test_runner::bun_test::RefData") },
   ...js,
 } as const;
 export const bunTestThen = b.fn({
@@ -45,6 +45,6 @@ export const bunTestDoneCallback = b.fn({
   export: "Bun__BunTest__bunTestDoneCallback",
   rustPath: "crate::test_runner::bun_test::BunTest::bun_test_done_callback",
   passThis: true,
-  args: { error: b.any },
+  args: { error: b.opaque.nullable },
   ...js,
 });

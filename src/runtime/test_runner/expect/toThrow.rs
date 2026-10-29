@@ -18,7 +18,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 
@@ -70,7 +70,7 @@ impl Expect {
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
 
             if !did_throw {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             let result: JSValue = result_.unwrap();
@@ -119,7 +119,7 @@ impl Expect {
                     let expected_slice = expected_value.to_utf8(global)?;
                     let received_slice = received_message.to_utf8(global)?;
                     if !strings::contains(received_slice.slice(), expected_slice.slice()) {
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(());
                     }
                 }
 
@@ -146,7 +146,7 @@ impl Expect {
                 if let Some(test_fn) = expected_value.get(global, "test")? {
                     let matches = test_fn.call(global, expected_value, &[received_message])?;
                     if !matches.to_boolean() {
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(());
                     }
                 }
 
@@ -171,7 +171,7 @@ impl Expect {
 
                 // no partial match for this case
                 if !expected_message.is_same_value(received_message, global)? {
-                    return Ok(JSValue::UNDEFINED);
+                    return Ok(());
                 }
 
                 return throw!(
@@ -184,7 +184,7 @@ impl Expect {
             }
 
             if !result.is_instance_of(global, expected_value)? {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             let expected_class = expected_value.get_class_name(global)?;
@@ -216,7 +216,7 @@ impl Expect {
 
         if did_throw {
             if expected_value.is_empty() || expected_value.is_undefined() {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             let result: JSValue = if let Some(r) = result_.unwrap().to_error() {
@@ -237,7 +237,7 @@ impl Expect {
                     let expected_slice = expected_value.to_utf8(global)?;
                     let received_slice = received_message.to_utf8(global)?;
                     if strings::contains(received_slice.slice(), expected_slice.slice()) {
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(());
                     }
                 }
 
@@ -274,7 +274,7 @@ impl Expect {
                     if let Some(test_fn) = expected_value.get(global, "test")? {
                         let matches = test_fn.call(global, expected_value, &[received_message])?;
                         if matches.to_boolean() {
-                            return Ok(JSValue::UNDEFINED);
+                            return Ok(());
                         }
                     }
                 }
@@ -311,7 +311,7 @@ impl Expect {
                 let is_equal = result.jest_strict_deep_equals(expected_value, global)?;
 
                 if is_equal {
-                    return Ok(JSValue::UNDEFINED);
+                    return Ok(());
                 }
 
                 let mut formatter = Formatter::new(global).with_quote_strings(true);
@@ -334,7 +334,7 @@ impl Expect {
 
                 if let Some(received_message) = received_message_opt {
                     if received_message.is_same_value(expected_message, global)? {
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(());
                     }
                 }
 
@@ -364,7 +364,7 @@ impl Expect {
             }
 
             if result.is_instance_of(global, expected_value)? {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             // error: received error not instance of received error constructor

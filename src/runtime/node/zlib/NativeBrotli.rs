@@ -60,12 +60,11 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::c_uint;
 
-    use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper};
     use bun_jsc::{ErrorCode, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
 
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
-    use crate::node::util::validators;
 
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
@@ -153,8 +152,8 @@ mod _impl {
             cx: &mut JsScope<'_>,
             init_params_array: JsLocal<'_>,
             write_state: JsLocal<'_>,
-            process_callback: JsLocal<'_>,
-            dictionary: JsLocal<'_>,
+            write_callback: Deferred<'_, JsLocal<'_, Callable>>,
+            dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
         ) -> JsResult<bool> {
             let global_this = cx.global();
             let this_value = this_value.to_js();
@@ -199,11 +198,7 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_callback = validators::validate_function(
-                global_this,
-                "writeCallback",
-                process_callback.to_js(),
-            )?;
+            let write_callback = write_callback.convert(global_this)?.to_js();
 
             // Validate `params` before any native state is initialized so the
             // error path needs no cleanup. `as_u32` reinterprets the view's
@@ -226,23 +221,10 @@ mod _impl {
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
-            let dictionary_buf;
-            let dictionary = if dictionary.is_undefined() {
-                None
-            } else {
-                let dictionary_value = dictionary.to_js();
-                dictionary_buf = match dictionary_value.as_array_buffer(global_this) {
-                    Some(buf) => buf,
-                    None => {
-                        return Err(global_this.throw_invalid_argument_type_value(
-                            "dictionary",
-                            "Buffer, TypedArray, or DataView",
-                            dictionary_value,
-                        ));
-                    }
-                };
-                Some(dictionary_buf.byte_slice())
-            };
+            let dictionary_buf = dictionary
+                .convert(global_this)?
+                .map(|buffer| buffer.as_array_buffer(global_this));
+            let dictionary = dictionary_buf.as_ref().map(|buf| buf.byte_slice());
 
             js::write_result_set_cached(this_value, global_this, write_result_value);
 

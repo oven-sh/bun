@@ -10,6 +10,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
 use bun_paths as paths;
 
 use super::*;
+use crate::generated_bindgen::filesystem_router::FrameworkRouterOptions;
 use crate::generated_bindgen::framework_router::{RoutePattern, RoutePatternKind};
 
 /// This binding is currently only intended for testing FrameworkRouter, and not
@@ -28,24 +29,18 @@ pub(crate) struct StoredParseError {
 }
 
 impl JSFrameworkRouter {
-    pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
+    pub(crate) fn constructor(
+        cx: &mut JsScope<'_>,
+        options: FrameworkRouterOptions<'_>,
+    ) -> JsResult<Self> {
         let global = cx.global();
-        let options = options.to_js();
-        if !options.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "FrameworkRouter needs an object as it's first argument",
-            )));
-        }
 
-        let root: bun_core::Utf8Bytes = match options.get(global, "root")? {
-            Some(v) if !v.is_undefined_or_null() => v.to_utf8(global)?,
+        let root: bun_core::Utf8Bytes = match options.root(global)? {
+            Some(v) => v,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
-        let style = Style::from_js(
-            options.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
-            global,
-        )?;
+        let style = Style::from_js(options.style(global)?.to_js(), global)?;
 
         let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
             paths::platform::Auto,

@@ -128,11 +128,6 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
     return true;
 }
 
-extern "C" bool ReadableStream__is(JSC::EncodedJSValue value)
-{
-    return !!dynamicDowncast<JSReadableStream>(JSValue::decode(value));
-}
-
 extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));

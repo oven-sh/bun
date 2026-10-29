@@ -5,6 +5,9 @@ const temporary =
 const served = 'const server = Bun.serve({ port: 0, fetch: () => new Response("[1.5]") });';
 
 const internals = 'import { privateGlobalFunctions } from "bun:internal-for-testing";';
+const http2Session =
+  'import { connect, createServer } from "node:http2";\nimport { once } from "node:events";\nconst server = createServer().listen(0);\nawait once(server, "listening");\nconst client = connect(`http://localhost:${server.address().port}`);\nawait once(client, "connect");';
+const http2Closes = "client.destroy();\nserver.close();";
 
 /** What a handler of a server is handed. `more` are options of the server, `asked` is what the client does with `server`. */
 const handedToServer = (more: string, asked: string, start = "Bun.serve") => [
@@ -269,6 +272,10 @@ export const calls: Record<string, string[]> = {
     'import { createZstdCompress } from "node:zlib";\nnew (createZstdCompress()._handle.constructor)(10)',
   ],
   "%SecureContext%": ['import { createSecureContext } from "node:tls";\ncreateSecureContext().context'],
+  "%H2FrameParser%.prototype.getCurrentState": [`${http2Session}\nconst state = client.state;\n${http2Closes}\nstate`],
+  "%H2FrameParser%.prototype.getStreamState": [
+    `${http2Session}\nconst state = client.request({ ":path": "/" }).state;\n${http2Closes}\nstate`,
+  ],
   "%TypedArray%": ["new Uint8Array(2)"],
   CompressionStream: ['new CompressionStream("gzip")'],
   DecompressionStream: ['new DecompressionStream("gzip")'],
@@ -424,6 +431,7 @@ const ofOneModule = (module: string) => `only ${module} holds it, and hands it t
 const withCertificate =
   "it takes a server with a certificate; the native code that makes the object is the one of a server without";
 const withAssertions = "no server is of this class in a build without assertions";
+const afterHandshake = "it answers nothing before a handshake, which takes a server with a certificate";
 const alwaysThrows = "the constructor throws whatever it is given";
 
 /** Rows that are not called, by what their paths look like. */
@@ -469,6 +477,11 @@ export const notCalled: Record<string, string> = {
   ),
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": ofOneModule("node:tls"),
   "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties": ofOneModule("internal/util/inspect"),
+  "%H2FrameParser%.prototype.getFrameCounters": ofOneModule("node:http2"),
+  "%TCPSocket%.prototype.getCipher": "it answers undefined: a socket of this class has no cipher",
+  "%TLSSocket%.prototype.getCipher": "a socket of this class takes a server with a certificate",
+  "%TLSSocket%.prototype.getSharedSigalgs": afterHandshake,
+  "%QuicSession%.prototype.getEphemeralKey": afterHandshake,
   "%NpmJscNpmManifestTestHelpers%.parseManifest": "it reads a manifest that `bun install` has stored",
   "node:module.findSourceMap": "it answers undefined for every file that was tried",
   "Bun.secrets.delete": "it writes to the store of secrets of the operating system",

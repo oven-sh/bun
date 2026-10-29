@@ -45,7 +45,7 @@ impl DOMURL {
         )
     }
 
-    pub fn file_system_path(&mut self) -> Result<bstr::String, ToFileSystemPathError> {
+    pub fn file_system_path(&self) -> Result<bstr::String, ToFileSystemPathError> {
         let mut error_code: c_int = 0;
         let path = WebCore__DOMURL__fileSystemPath(self, &mut error_code);
         match error_code {

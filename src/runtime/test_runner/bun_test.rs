@@ -800,7 +800,7 @@ impl BunTest {
     pub(crate) fn bun_test_done_callback(
         cx: &mut JsScope<'_>,
         this_value: JsLocal<'_>,
-        error: JsLocal<'_>,
+        error: Option<JsLocal<'_>>,
     ) -> JsResult<()> {
         let _g = group_begin!();
 
@@ -809,17 +809,15 @@ impl BunTest {
             return Err(global_this.throw(format_args!("Expected callee to be DoneCallback")));
         };
 
-        let value = error.to_js();
-
-        let was_error = !value.is_empty_or_undefined_or_null();
+        let was_error = error.is_some();
         if this.called.get() {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
         } else {
             // error is only reported for the first done() call
-            if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+            if let Some(error) = error {
+                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error.to_js(), false);
             }
         }
         this.called.set(true);

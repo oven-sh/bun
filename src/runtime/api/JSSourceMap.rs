@@ -6,7 +6,7 @@ use std::sync::Arc;
 use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
-use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{Deferred, JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
@@ -24,7 +24,7 @@ static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn find_source_map<'a>(
     cx: &mut JsScope<'a>,
-    path: JsLocal<'a>,
+    path: Deferred<'a, Option<bun_core::String>>,
 ) -> JsResult<Option<JsWrapper<'a, JSSourceMap>>> {
     // Node.js doesn't enable source maps by default.
     // In Bun, we do use them for almost all files since we transpile almost all files
@@ -36,12 +36,10 @@ pub(crate) fn find_source_map<'a>(
     }
 
     let global = cx.global();
-    let source_url_value = path.to_js();
-    if !source_url_value.is_string() {
+    let Some(mut source_url_string) = path.convert(global)? else {
         return Ok(None);
-    }
+    };
 
-    let mut source_url_string = bun_core::String::from_js(source_url_value, global)?;
     let mut source_url_slice = source_url_string.to_utf8();
 
     {
@@ -219,11 +217,10 @@ impl JSSourceMap {
     pub(crate) fn find_origin(
         &self,
         cx: &mut JsScope<'_>,
-        line_number: JsLocal<'_>,
-        column_number: JsLocal<'_>,
+        line_number: i32,
+        column_number: i32,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let [line_number, column_number] = get_line_column(global, line_number, column_number)?;
         if line_number < 0 || column_number < 0 {
             return Ok(JSValue::create_empty_object(global, 0));
         }
@@ -248,11 +245,10 @@ impl JSSourceMap {
     pub(crate) fn find_entry(
         &self,
         cx: &mut JsScope<'_>,
-        line_offset: JsLocal<'_>,
-        column_offset: JsLocal<'_>,
+        line_offset: i32,
+        column_offset: i32,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let [line_offset, column_offset] = get_line_column(global, line_offset, column_offset)?;
         if line_offset < 0 || column_offset < 0 {
             return Ok(JSValue::create_empty_object(global, 0));
         }
@@ -276,18 +272,6 @@ impl JSSourceMap {
             name,
         ))
     }
-}
-
-fn get_line_column(
-    global: &JSGlobalObject,
-    line_number: JsLocal<'_>,
-    column_number: JsLocal<'_>,
-) -> JsResult<[i32; 2]> {
-    Ok([
-        // Node.js does no validations.
-        line_number.to_js().coerce_to_i32(global)?,
-        column_number.to_js().coerce_to_i32(global)?,
-    ])
 }
 
 // Hand-written in `src/jsc/modules/NodeModuleModule.cpp`.

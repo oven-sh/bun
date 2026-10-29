@@ -12,7 +12,7 @@ impl Expect {
         cx: &mut JsScope<'_>,
         key_path: JsLocal<'_>,
         value: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 
@@ -54,7 +54,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let mut formatter = super::make_formatter(global);

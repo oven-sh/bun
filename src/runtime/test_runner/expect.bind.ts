@@ -2,17 +2,24 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 const js = { capability: "js", throws: true } as const;
 
+/** `undefined` is 2 digits. */
+export const ExpectPrecision = b.union({ missing: b.undefined, digits: b.f64, other: b.ignored });
+
 /** `expect(received).toBeTrue()` */
-const matcher = { returns: b.any.returning("undefined"), passThis: true, ...js } as const;
+const matcher = { passThis: true, ...js } as const;
 /** `expect(received).toBe(expected)` */
-const matcherWithExpected = { ...matcher, args: { expected: b.any } } as const;
+const matcherWithExpected = { ...matcher, args: { expected: b.opaque } } as const;
 /** `expect(mock).toHaveBeenCalledWith(...expected)` */
-const matcherWithCallArguments = { ...matcher, args: { expected: b.any.variadic } } as const;
-const matcherWithNthCallArguments = { ...matcher, args: { nth: b.any, expected: b.any.variadic }, length: 0 } as const;
-const matcherWithNthExpected = { ...matcher, args: { nth: b.any, expected: b.any }, length: 1 } as const;
+const matcherWithCallArguments = { ...matcher, args: { expected: b.rest(b.opaque) } } as const;
+const matcherWithNthCallArguments = {
+  ...matcher,
+  args: { nth: b.opaque, expected: b.rest(b.opaque) },
+  length: 0,
+} as const;
+const matcherWithNthExpected = { ...matcher, args: { nth: b.opaque, expected: b.opaque }, length: 1 } as const;
 /** These return `this`. */
-const chainable = { ...matcher, returns: b.any.returning("this") } as const;
-const chainableWithExpected = { ...chainable, args: { expected: b.any } } as const;
+const chainable = { ...matcher, returns: b.self } as const;
+const chainableWithExpected = { ...chainable, args: { expected: b.opaque } } as const;
 
 export const ExpectAnything = b.class({ rustPath: "crate::test_runner::ExpectAnything" });
 
@@ -48,13 +55,13 @@ export const ExpectStringMatching = b.class({
 
 /** `expect.any(Number)`, and the same after `expect.not`. */
 const asymmetricMatchers = {
-  any: { args: { constructor: b.any }, returns: ExpectAny, ...js },
+  any: { args: { constructor: b.opaque }, returns: ExpectAny, ...js },
   anything: { returns: ExpectAnything, capability: "js", length: 1 },
-  arrayContaining: { args: { array: b.any }, returns: ExpectArrayContaining, ...js },
-  closeTo: { args: { number: b.any, precision: b.any }, returns: ExpectCloseTo, ...js, length: 1 },
-  objectContaining: { args: { object: b.any }, returns: ExpectObjectContaining, ...js },
-  stringContaining: { args: { string: b.any }, returns: ExpectStringContaining, ...js },
-  stringMatching: { args: { test: b.any }, returns: ExpectStringMatching, ...js },
+  arrayContaining: { args: { array: b.opaque }, returns: ExpectArrayContaining, ...js },
+  closeTo: { args: { number: b.opaque, precision: b.opaque }, returns: ExpectCloseTo, ...js, length: 1 },
+  objectContaining: { args: { object: b.opaque }, returns: ExpectObjectContaining, ...js },
+  stringContaining: { args: { string: b.opaque }, returns: ExpectStringContaining, ...js },
+  stringMatching: { args: { test: b.opaque }, returns: ExpectStringMatching, ...js },
 } as const;
 
 /** `expect.not`, `expect.resolvesTo` and `expect.rejectsTo` */
@@ -74,29 +81,42 @@ export const ExpectStatic = b.class({
   },
 });
 
+/** `null` and `undefined` are the default message. What is not a string is thrown as it is. */
+export const UnreachableMessage = b.union({ none: b.null, text: b.string.allowStringObject, other: b.opaque });
+
 export const Expect = b.class({
   rustPath: "crate::test_runner::Expect",
   construct: { capability: "heap", throws: true },
-  call: { args: { value: b.any, message: b.any }, returns: b.self, ...js },
+  call: { args: { value: b.opaque, message: b.opaque }, returns: b.self, ...js },
   internalFields: ["capturedValue"],
   proto: {
-    fail: { args: { message: b.any }, returns: b.any.returning("undefined"), ...js },
+    fail: {
+      args: { message: b.string.allowStringObject.optional },
+      expected: { message: "Expected message to be a string for 'fail'." },
+      ...js,
+      length: 1,
+    },
     lastCalledWith: { ...matcherWithCallArguments, rustName: "to_have_been_last_called_with" },
     lastReturnedWith: { ...matcherWithExpected, rustName: "to_have_last_returned_with" },
     not: { getter: b.self, passThis: true },
     nthCalledWith: { ...matcherWithNthCallArguments, rustName: "to_have_been_nth_called_with" },
     nthReturnedWith: { ...matcherWithNthExpected, rustName: "to_have_nth_returned_with" },
-    pass: { args: { message: b.any }, returns: b.any.returning("undefined"), ...js },
+    pass: {
+      args: { message: b.string.allowStringObject.optional },
+      expected: { message: "Expected message to be a string for 'pass'." },
+      ...js,
+      length: 1,
+    },
     rejects: { getter: b.self, capability: "heap", throws: true, passThis: true },
     resolves: { getter: b.self, capability: "heap", throws: true, passThis: true },
     toBe: matcherWithExpected,
     toBeArray: matcher,
-    toBeArrayOfSize: { ...matcher, args: { size: b.any } },
+    toBeArrayOfSize: { ...matcher, args: { size: b.opaque } },
     toBeBoolean: matcher,
     toBeCalled: { ...matcherWithExpected, rustName: "to_have_been_called", length: 0 },
     toBeCalledTimes: { ...matcherWithExpected, rustName: "to_have_been_called_times" },
     toBeCalledWith: { ...matcherWithCallArguments, rustName: "to_have_been_called_with" },
-    toBeCloseTo: { ...matcher, args: { expected: b.any, precision: b.any }, length: 1 },
+    toBeCloseTo: { ...matcher, args: { expected: b.opaque, precision: ExpectPrecision }, length: 1 },
     toBeDate: matcher,
     toBeDefined: matcher,
     toBeEmpty: matcher,
@@ -128,7 +148,7 @@ export const Expect = b.class({
     toBeTypeOf: matcherWithExpected,
     toBeUndefined: matcher,
     toBeValidDate: chainable,
-    toBeWithin: { ...matcher, args: { start: b.any, end: b.any } },
+    toBeWithin: { ...matcher, args: { start: b.opaque, end: b.opaque } },
     toContain: matcherWithExpected,
     toContainAllKeys: chainableWithExpected,
     toContainAllValues: chainableWithExpected,
@@ -153,35 +173,35 @@ export const Expect = b.class({
     toHaveLength: matcherWithExpected,
     toHaveNthReturnedWith: matcherWithNthExpected,
     /** `toHaveProperty("a", undefined)` compares the value, `toHaveProperty("a")` does not. */
-    toHaveProperty: { ...matcher, args: { keyPath: b.any, value: b.any.variadic }, length: 2 },
+    toHaveProperty: { ...matcher, args: { keyPath: b.opaque, value: b.rest(b.opaque) }, length: 2 },
     toHaveReturned: matcherWithExpected,
     toHaveReturnedTimes: matcherWithExpected,
     toHaveReturnedWith: matcherWithExpected,
     toInclude: matcherWithExpected,
-    toIncludeRepeated: { ...matcher, args: { substring: b.any, count: b.any } },
+    toIncludeRepeated: { ...matcher, args: { substring: b.opaque, count: b.opaque } },
     toMatch: matcherWithExpected,
     /** The snapshot is written over the call's arguments in the source, where `(undefined)` is not `()`. */
-    toMatchInlineSnapshot: { ...matcher, args: { args: b.any.variadic }, length: 1 },
+    toMatchInlineSnapshot: { ...matcher, args: { args: b.rest(b.opaque) }, length: 1 },
     toMatchObject: matcherWithExpected,
-    toMatchSnapshot: { ...matcher, args: { propertyMatchers: b.any, hint: b.any }, length: 1 },
+    toMatchSnapshot: { ...matcher, args: { propertyMatchers: b.opaque, hint: b.opaque }, length: 1 },
     toReturn: { ...matcherWithExpected, rustName: "to_have_returned" },
-    toSatisfy: { ...matcher, args: { predicate: b.any } },
+    toSatisfy: { ...matcher, args: { predicate: b.opaque } },
     toStartWith: matcherWithExpected,
     toStrictEqual: matcherWithExpected,
     toThrow: matcherWithExpected,
     toThrowError: { ...matcherWithExpected, rustName: "to_throw" },
     /** As `toMatchInlineSnapshot`. */
-    toThrowErrorMatchingInlineSnapshot: { ...matcher, args: { args: b.any.variadic }, length: 1 },
-    toThrowErrorMatchingSnapshot: { ...matcher, args: { hint: b.any } },
+    toThrowErrorMatchingInlineSnapshot: { ...matcher, args: { args: b.rest(b.opaque) }, length: 1 },
+    toThrowErrorMatchingSnapshot: { ...matcher, args: { hint: b.opaque } },
   },
   static: {
     addSnapshotSerializer: { capability: "heap", throws: true, length: 1 },
     any: asymmetricMatchers.any,
     anything: asymmetricMatchers.anything,
     arrayContaining: asymmetricMatchers.arrayContaining,
-    assertions: { args: { expected: b.any }, ...js },
+    assertions: { args: { expected: b.opaque }, ...js },
     closeTo: asymmetricMatchers.closeTo,
-    extend: { args: { matchers: b.any }, ...js },
+    extend: { args: { matchers: b.opaque }, ...js },
     hasAssertions: { ...js, length: 1 },
     not: { getter: ExpectStatic, capability: "heap", rustName: "static_not" },
     objectContaining: asymmetricMatchers.objectContaining,
@@ -189,7 +209,7 @@ export const Expect = b.class({
     resolvesTo: { getter: ExpectStatic, capability: "heap", rustName: "static_resolves_to" },
     stringContaining: asymmetricMatchers.stringContaining,
     stringMatching: asymmetricMatchers.stringMatching,
-    unreachable: { args: { message: b.any }, ...js },
+    unreachable: { args: { message: UnreachableMessage }, ...js },
   },
 });
 
@@ -199,8 +219,8 @@ export const applyCustomMatcher = b.fn({
   rustPath: "crate::test_runner::Expect::apply_custom_matcher",
   passThis: true,
   passCallee: true,
-  args: { args: b.any.variadic },
-  returns: b.any,
+  args: { args: b.rest(b.opaque) },
+  returns: b.object,
   ...js,
 });
 
@@ -209,7 +229,7 @@ export const ExpectCustomAsymmetricMatcher = b.class({
   rustPath: "crate::test_runner::ExpectCustomAsymmetricMatcher",
   internalFields: ["matcherFn", "capturedArgs"],
   proto: {
-    asymmetricMatch: { args: { received: b.any }, returns: b.bool, passThis: true, ...js },
+    asymmetricMatch: { args: { received: b.opaque }, returns: b.bool, passThis: true, ...js },
   },
 });
 
@@ -217,15 +237,15 @@ export const ExpectCustomAsymmetricMatcher = b.class({
 export const ExpectMatcherContext = b.class({
   rustPath: "crate::test_runner::ExpectMatcherContext",
   proto: {
-    equals: { args: { a: b.any, b: b.any }, returns: b.bool, ...js, length: 3 },
+    equals: { args: { a: b.opaque, b: b.opaque }, returns: b.bool, ...js, length: 3 },
     expand: { getter: b.bool, pure: true },
     isNot: { getter: b.bool, pure: true },
     promise: { getter: b.string },
-    utils: { getter: b.any.returning("ExpectMatcherUtils"), capability: "js" },
+    utils: { getter: b.opaque.returning("ExpectMatcherUtils"), capability: "js" },
   },
 });
 
-const printer = { args: { value: b.any }, returns: b.any.returning("string"), ...js } as const;
+const printer = { args: { value: b.opaque }, returns: b.string.utf8, ...js } as const;
 
 /** `this.utils` in a matcher of `expect.extend()`. */
 export const ExpectMatcherUtils = b.class({
@@ -233,7 +253,7 @@ export const ExpectMatcherUtils = b.class({
   proto: {
     EXPECTED_COLOR: { ...printer, rustName: "print_expected" },
     /** `matcherHint("toBe", undefined)` prints no "received", `matcherHint("toBe")` does. */
-    matcherHint: { args: { matcherName: b.any, rest: b.any.variadic }, returns: b.any.returning("string"), ...js },
+    matcherHint: { args: { matcherName: b.opaque, rest: b.rest(b.opaque) }, returns: b.string.utf8, ...js },
     printExpected: printer,
     printReceived: printer,
     RECEIVED_COLOR: { ...printer, rustName: "print_received" },

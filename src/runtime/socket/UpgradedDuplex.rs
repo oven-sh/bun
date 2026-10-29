@@ -811,7 +811,7 @@ pub(crate) fn on_received_data<'a>(
                 DuplexChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, |payload| {
                     this.on_internal_receive_data(payload);
                 }),
-                DuplexChunk::Other(_) => {
+                DuplexChunk::Other => {
                     // node.js errors in this case with the same error, lets keep it consistent
                     let error_value = cx
                         .global()

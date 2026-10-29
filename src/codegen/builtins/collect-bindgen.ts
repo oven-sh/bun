@@ -6,18 +6,17 @@ import {
   cppExtern,
   cppFunctionSymbol,
   cppNamespaceSymbol,
-  externType,
   getterHostFunctionName,
   getterSymbolName,
   methodHostFunctionName,
   methodSymbolName,
+  passedByPointer,
   pathOfBoundNamespace,
   setterSymbolName,
   thunkSymbol,
   type SchemaFile,
 } from "../bindgen-emit.ts";
 import {
-  AnyType,
   ArrayType,
   ClassType,
   Constant,
@@ -25,15 +24,19 @@ import {
   FunctionDefinition,
   Getter,
   InternalFieldAccessor,
+  LocalType,
   Method,
+  OpaqueType,
+  OptionalType,
   RefType,
-  RestType,
   Signature,
   Type,
   memberIdentifier,
   symbolDescription,
+  typeOfKind as typeOfBindgenKind,
   type Builtin,
   type ClassMember,
+  type JSClass,
   type NamespaceDefinition,
   type OverloadDispatch,
   type ValueKind,
@@ -159,54 +162,50 @@ export function cppSymbolOf(fn: FunctionDefinition): string {
 }
 
 function getKindType(kind: Kind): b.TableType {
-  if (kind instanceof Type) return createStrictType(kind.parameterType.accepted);
-  if (typeof kind === "object" && kind.cpp === "JSC::DateInstance") return b.instance("Date");
-  if (typeof kind === "object") throw new GeneratorError(`the class of ${kind.cpp} is unknown: the kind is not a type`);
-  switch (kind) {
-    case "undefined":
-      return b.union(b.undefined, b.notPassed);
-    case "null":
-      return b.strictNull;
-    case "boolean":
-      return b.bool;
-    case "number":
-      return b.f64;
-    case "bigint":
-      return b.bigint;
-    case "string":
-      return b.string;
-    case "stringObject":
-      return b.instance("String");
-    case "array":
-      return b.instance("Array");
-    case "arrayBuffer":
-      return b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
-    case "arrayBufferView":
-      return b.union(b.instance("TypedArray"), b.instance("DataView"));
-    case "callable":
-      return createStrictType({ type: "Function" });
-    case "other":
-      return b.any;
-  }
+  if (kind === "undefined") return b.union(b.undefined, b.notPassed);
+  if (kind === "other") return b.any;
+  const type = typeOfBindgenKind(kind);
+  if (type !== null) return createStrictType(type);
+  throw new GeneratorError(`the class of ${(kind as JSClass).cpp} is unknown: the kind is not a type`);
 }
 
 export function typeOfKind(kind: ValueKind | "other"): TypeSpec {
   return getKindType(kind).spec;
 }
 
+const hasWord = (kind: Kind): boolean => typeof kind !== "object" || typeOfBindgenKind(kind) !== null;
+
+type DispatchNode = Exclude<OverloadDispatch, Signature>;
+
+// The objects of a class that the table has no word for go another way than the objects that nothing tests.
+const testsClassWithoutWord = ({ byKind }: DispatchNode): boolean =>
+  [...byKind].some(([kind, target]) => !hasWord(kind) && target !== byKind.get("other"));
+
+function collectDispatchNodes(dispatch: OverloadDispatch, nodes = new Set<DispatchNode>()): Set<DispatchNode> {
+  if (dispatch instanceof Signature || nodes.has(dispatch)) return nodes;
+  nodes.add(dispatch);
+  for (const target of dispatch.byKind.values()) collectDispatchNodes(target, nodes);
+  return nodes;
+}
+
+/** `undeclared`: where an argument goes of which the table cannot say which signature takes it. */
 export function dispatchOfBindgen(
   fn: FunctionDefinition,
-  dispatchWithin = (signature: Signature): DispatchDeclaration => ({ signature: fn.signatures.indexOf(signature) }),
+  dispatchWithin: (signature: Signature) => DispatchDeclaration,
+  undeclared: DispatchDeclaration,
 ): DispatchDeclaration {
   const converted = new Map<OverloadDispatch, DispatchDeclaration>();
-  const convertNode = ({ argument, byKind }: Exclude<OverloadDispatch, Signature>): DispatchDeclaration => {
+  const convertNode = (node: DispatchNode): DispatchDeclaration => {
     const groups = Array.from(
-      Map.groupBy(byKind, ([, target]) => target),
+      Map.groupBy(
+        [...node.byKind].filter(([kind]) => hasWord(kind)),
+        ([, target]) => target,
+      ),
       ([target, entries]) => ({ target, kinds: entries.map(([kind]) => kind) }),
     );
     const isFallback = ({ kinds }: { kinds: readonly Kind[] }) => kinds.includes("other");
     return {
-      argument,
+      argument: node.argument,
       branches: [
         ...groups
           .filter(group => !isFallback(group))
@@ -214,6 +213,7 @@ export function dispatchOfBindgen(
             tested: b.union(getKindType(first), ...others.map(getKindType)).spec,
             then: convert(target),
           })),
+        ...(testsClassWithoutWord(node) ? [{ tested: b.object.spec, then: undeclared }] : []),
         ...groups.filter(isFallback).map(({ target }) => ({ tested: typeOfKind("other"), then: convert(target) })),
       ],
     };
@@ -267,7 +267,7 @@ function computeContentProtocols(containers: readonly Type[]): ProtocolSpec[] {
 
 /** The wrapper hands the argument to `stringOfStringObject`, which runs the `toString` of a `String` object, whatever else the type accepts. */
 function convertsStringObject(type: Type): boolean {
-  return (type instanceof RestType ? type.element : type).cppPrepare("") !== null;
+  return type.cppPrepare("") !== null;
 }
 
 function computeConversionUses(type: Type): UseSpec[] {
@@ -285,7 +285,11 @@ function computeConversionUses(type: Type): UseSpec[] {
 }
 
 // Whoever says what a member of a class answers has read it, its setter too, and writes `uses` for an operand that it changes.
-const saysResult = (type: Type): boolean => !(type instanceof AnyType) || type.isDeclaredResult;
+const saysResult = (type: Type): boolean => !(type instanceof OpaqueType) || type.isDeclaredResult;
+
+/** Rust may hand back any JS value for it, so compiled code tests the value where it arrives. */
+const isDeclaredOnly = (type: Type): boolean =>
+  checkedWordsOf(type) !== null || (type instanceof OptionalType ? type.inner : type) instanceof LocalType;
 
 function computeBodyUses(type: Type, capability: Capability, isRead: boolean): readonly UseSpec[] {
   const sharesNativeObject = () => [...collectParts([type])].some(part => part instanceof RefType);
@@ -404,7 +408,7 @@ function createField(
       }),
     ),
     returns: createStrictType(result),
-    resultIsDeclaredOnly: checkedWordsOf(signature.returns) !== null || undefined,
+    resultIsDeclaredOnly: isDeclaredOnly(signature.returns) || undefined,
     capability: capabilityOf(
       signature,
       result,
@@ -456,6 +460,7 @@ function declareLayoutsOfResults(functions: readonly FunctionDefinition[]): Decl
 
 function findDirectForms({ args }: Signature, leadingCount: number): DirectForm[] | null {
   if (leadingCount + args.length > maximumDirectParameterCount) return null;
+  if (passedByPointer(args, leadingCount - 1).includes(true)) return null;
   const forms = args.flatMap(({ type }) => type.directForm ?? []);
   const registerCount = forms.reduce(
     (count, { value }) => count + (value === "RestOfValues" ? 2 : value === "Double" ? 0 : 1),
@@ -573,11 +578,14 @@ function collectFunction(
     );
   };
   const isUnderPrototype = parsePath(path).at(-2) === "prototype";
-  const written = isUnread ? [...fields, b.otherwiseBy(b.hostCall)] : fields;
+  const hasUndeclared = isUnread || [...collectDispatchNodes(fn.dispatch)].some(testsClassWithoutWord);
+  const written = hasUndeclared ? [...fields, b.otherwiseBy(b.hostCall)] : fields;
   return setMemberParts(isUnderPrototype ? b.method(path, written) : b.fn(path, written), {
     length: fn.length,
     // The last overload of a member that nobody has read is for the receivers that are no instances, which no argument tells.
-    dispatches: isUnread ? [] : [{ mode: "Call", root: dispatchOfBindgen(fn, dispatchWithin) }],
+    dispatches: isUnread
+      ? []
+      : [{ mode: "Call", root: dispatchOfBindgen(fn, dispatchWithin, { signature: fields.length }) }],
   });
 }
 
@@ -657,14 +665,14 @@ function directEntryOfGetter(type: ClassType, getter: Getter): DirectEntrySpec |
 
 // The setter of the table does the same for a store.
 function directEntryOfSetter(type: ClassType, getter: Getter): DirectEntrySpec | undefined {
-  const form = getter.type.directForm;
+  const form = getter.setterType.directForm;
   if (form?.value !== "Value") return undefined;
   const native = setterSymbolName(type, getter);
   const symbol = `AOT__${native}`;
   return {
     symbol,
     declaration: [
-      `extern "C" SYSV_ABI bool ${native}(JSC::JSGlobalObject*, JSC::JSCell*, ${externType(getter.type)});`,
+      cppExtern(native, { args: [{ type: getter.setterType }] }, ["JSC::JSCell*"], "bool"),
       `static SYSV_ABI JSC::EncodedJSValue ${symbol}(JSC::JSGlobalObject* globalObject, JSC::JSCell* thisObject, ${form.cppType} value)`,
       `{`,
       `    return ${native}(globalObject, thisObject, value) ? JSC::JSValue::encode(JSC::jsUndefined()) : JSC::encodedJSValue();`,
@@ -754,7 +762,7 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
     ...symbolColumns,
     this: isStatic ? b.any : undefined,
     getter: createStrictType(result),
-    resultIsDeclaredOnly: (getter !== null && checkedWordsOf(getter.type) !== null) || undefined,
+    resultIsDeclaredOnly: (getter !== null && isDeclaredOnly(getter.type)) || undefined,
     setter: isAssignable ? setterTakingAnything(isRead, isStatic) : undefined,
     capability: touchesNoCell ? "none" : runsNoJavaScript ? "heap" : "js",
     throws: getter === null || getter.capability === "js" || getter.throws,

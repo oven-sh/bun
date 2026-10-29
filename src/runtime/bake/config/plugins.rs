@@ -69,14 +69,12 @@ pub(crate) fn is_restarting() -> bool {
 
 /// `setPages(framework?)`: the next `Bun.serve()` adds the routers of `framework` (the `framework`
 /// object of a plugin), or of the default React framework when it is undefined.
-pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) {
+pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: Option<JsLocal<'a>>) {
     let global = cx.global();
-    let framework = framework.to_js();
     let vm = global.bun_vm().as_mut();
-    if framework.is_undefined_or_null() {
-        vm.bake_framework.deinit();
-    } else {
-        vm.bake_framework.set(global, framework);
+    match framework {
+        None => vm.bake_framework.deinit(),
+        Some(framework) => vm.bake_framework.set(global, framework.to_js()),
     }
     vm.bake_pages = true;
 }

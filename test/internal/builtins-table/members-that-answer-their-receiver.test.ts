@@ -33,9 +33,9 @@ test("a member that is passed its wrapper and answers an object of its class may
       ref: { returns: b.self, passThis: true },
       remove: { returns: b.self.optional, passThis: true },
       append: { returns: b.self.nullable, passThis: true },
-      on: { args: { handlers: b.any }, returns: b.self, passThis: true, capability: "js", throws: true },
+      on: { args: { handlers: b.opaque }, returns: b.self, passThis: true, capability: "js", throws: true },
       unref: { returns: b.self, passThis: true, invalidThis: "undefined" },
-      anyObject: { returns: b.any.returning("object"), passThis: true, capability: "heap" },
+      anyObject: { returns: b.opaque.returning("object"), passThis: true, capability: "heap" },
     `),
   ).toEqual({
     "%Thing%.prototype.ref": ["Retains", "Returns"],
@@ -53,7 +53,7 @@ test("one that is not passed its wrapper, or answers nothing that its receiver c
       copy: { returns: b.self, capability: "heap" },
       size: { returns: b.f64, passThis: true },
       other: { returns: Other, passThis: true, capability: "heap" },
-      later: { returns: b.any.returning("Promise"), passThis: true, capability: "heap" },
+      later: { returns: b.opaque.returning("Promise"), passThis: true, capability: "heap" },
     `),
   ).toEqual({
     "%Thing%.prototype.copy": ["Retains"],

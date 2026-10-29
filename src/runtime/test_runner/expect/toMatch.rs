@@ -1,5 +1,5 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::JsResult;
 use super::JSValueTestExt;
 
 use super::Expect;
@@ -11,7 +11,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) =
             self.matcher_prelude(global, this_value.to_js(), "toMatch", "<green>expected<r>")?;
@@ -46,7 +46,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let mut formatter2 = super::make_formatter(global);

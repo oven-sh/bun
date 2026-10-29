@@ -13,7 +13,7 @@ export const FileSystemRouterOptions = b.dictionary(
 );
 
 const text = { getter: b.string.utf8, cache: true } as const;
-const queryObject = { getter: b.any.returning("object"), cache: true, capability: "heap", throws: true } as const;
+const queryObject = { getter: b.object, cache: true, capability: "heap", throws: true } as const;
 
 export const RouteKind = b.enumeration(["exact", "catch-all", "optional-catch-all", "dynamic"]);
 
@@ -65,17 +65,29 @@ export const FileSystemRouter = b.class({
   },
 });
 
+/** A missing `root` is reported before `style` is read. */
+export const FrameworkRouterOptions = b.dictionary(
+  { root: b.string.loose.utf8.owned.nullable, style: b.opaque },
+  { deferred: true },
+);
+
 /** `frameworkRouterInternals.FrameworkRouter` of `bun:internal-for-testing`. */
 export const FrameworkFileSystemRouter = b.class({
   rustPath: "crate::bake::router::JSFrameworkRouter",
-  construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
+  construct: {
+    args: { options: FrameworkRouterOptions },
+    expected: { options: "FrameworkRouter needs an object as it's first argument" },
+    capability: "js",
+    throws: true,
+    length: 0,
+  },
   proto: {
     match: {
       args: { path: b.string.loose.utf8 },
-      returns: b.any.returning("object", "null"),
+      returns: b.opaque.returning("object", "null"),
       capability: "js",
       throws: true,
     },
-    toJSON: { returns: b.any.returning("object"), capability: "js", throws: true },
+    toJSON: { returns: b.object, capability: "js", throws: true },
   },
 });

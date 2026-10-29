@@ -31,17 +31,6 @@
     macro(envHttpProxy, "http_proxy") \
     macro(envNO_PROXY, "NO_PROXY") \
     macro(envNoProxy, "no_proxy") \
-    macro(fetchOptionCompress, "compress") \
-    macro(fetchOptionDecompress, "decompress") \
-    macro(fetchOptionKeepalive, "keepalive") \
-    macro(fetchOptionMaxRedirects, "maxRedirects") \
-    macro(fetchOptionProtocol, "protocol") \
-    macro(fetchOptionProxy, "proxy") \
-    macro(fetchOptionS3, "s3") \
-    macro(fetchOptionSession, "session") \
-    macro(fetchOptionTimeout, "timeout") \
-    macro(fetchOptionTls, "tls") \
-    macro(fetchOptionUnix, "unix") \
     macro(fetchOptionVerbose, "verbose") \
     macro(httpACL, "ACL") \
     macro(httpBIND, "BIND") \

@@ -3,9 +3,7 @@ use core::ptr;
 
 use crate as jsc;
 use crate::SysErrorJsc;
-use crate::{
-    ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult, ProtectedJSValue,
-};
+use crate::{JSGlobalObject, JSType, JSValue, JsResult, ProtectedJSValue};
 use bun_alloc::mimalloc;
 use bun_sys::{self, Fd, FdExt};
 
@@ -979,12 +977,8 @@ impl BinaryType {
         }
     }
 
-    pub fn from_js_value(global: &JSGlobalObject, input: JSValue) -> JsResult<Option<BinaryType>> {
-        if input.is_string() {
-            return BINARY_TYPE_MAP.from_js(global, input);
-        }
-
-        Ok(None)
+    pub fn from_bun_string(name: &bun_core::String) -> Option<BinaryType> {
+        BINARY_TYPE_MAP.get(name.to_utf8().slice()).copied()
     }
 
     /// This clones bytes

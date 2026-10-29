@@ -33,11 +33,6 @@
 
 namespace WebCore {
 
-extern "C" WebCore::URLSearchParams* URLSearchParams__fromJS(JSC::EncodedJSValue value)
-{
-    return WebCoreCast<WebCore::JSURLSearchParams, WebCore::URLSearchParams>(value);
-}
-
 // callback accepting a void* and a const EncodedSlice*, returning void
 typedef void (*URLSearchParams__toStringCallback)(void* ctx, const EncodedSlice* str);
 

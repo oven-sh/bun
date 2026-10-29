@@ -12,7 +12,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         MarkedArgumentBuffer::new(|return_roots| {
             to_have_returned_with_impl(self, cx.global(), this_value.to_js(), expected.to_js(), return_roots)
         })
@@ -25,7 +25,7 @@ fn to_have_returned_with_impl(
     this_value: JSValue,
     expected: JSValue,
     return_roots: &mut MarkedArgumentBuffer,
-) -> JsResult<JSValue> {
+) -> JsResult<()> {
     let (this, returns, _) = this.mock_prologue(
         global,
         this_value,
@@ -71,7 +71,7 @@ fn to_have_returned_with_impl(
     }
 
     if pass != this.flags.get().not() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(());
     }
 
     // Handle failure

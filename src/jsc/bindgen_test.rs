@@ -5,18 +5,25 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
-    self, BufferSource, Callable, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _,
-    JsScope, JsStructure, JsWrapper, PinnedBytes, StringOrJsBytes,
+    self, BufferSource, Callable, Deferred, IntoError as _, JsBytes, JsHeap, JsLocal,
+    JsPayload as _, JsScope, JsStructure, JsWrapper, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
-    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
-    TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
-    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
-    js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
-    js_TestSquare,
+    TestChoice, TestColor, TestColorOrOther, TestCountOrNested, TestCountOrText, TestCounterHolder,
+    TestDeferredHolder, TestDeferredOptions, TestDeferredOrText, TestDeferredOwnIfPassed,
+    TestDeferredPrivateMember, TestFailure, TestFlag, TestFlagOrOther, TestHandle, TestKind,
+    TestLength, TestLenientOptions, TestMaybeCounter, TestNames, TestNodeOptions,
+    TestObjectOrOther, TestOptions, TestOptionsEcho, TestOtherAsNullOptions, TestOuter,
+    TestOuterDeferred, TestOwnIfPassed, TestOwnOptions, TestPathOrFd, TestPathOrURL, TestPosition,
+    TestPrivateMember, TestRangeOptions, TestSignalOptions, TestTextOrBuffer, TestTextOrFlag,
+    TestTextOrOptions, TestTextOrOther, TestValue, TestViewOrBuffer, js_TestCounter, js_TestError,
+    js_TestMemberFunctions, js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
+    js_TestShape, js_TestSquare,
 };
-use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
+use crate::{
+    DOMURL, JSArray, JSGlobalObject, JSObject, JSPromise, JSString, JSValue, JsClass, JsResult,
+};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
@@ -123,7 +130,7 @@ pub(crate) fn describe_value(value: TestValue<'_>) -> Vec<u8> {
 
 pub(crate) fn describe_anything(value: TestAnything<'_>) -> Vec<u8> {
     match value {
-        TestAnything::Nothing => b"nothing".to_vec(),
+        TestAnything::None => b"nothing".to_vec(),
         TestAnything::Flag(flag) => format!("flag {flag}").into_bytes(),
         TestAnything::Integer(integer) => format!("integer {integer}").into_bytes(),
         TestAnything::Text(text) => format!("text {text}").into_bytes(),
@@ -148,7 +155,7 @@ pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: &TestOuter<'a>) 
         }
         None => "none".to_owned(),
     };
-    let value = if options.value.is_undefined() {
+    let value = if options.value.is_none() {
         "undefined"
     } else {
         "given"
@@ -158,10 +165,10 @@ pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: &TestOuter<'a>) 
         TestChoice::Flag(flag) => flag.to_string(),
     };
     let rest = match options.rest {
-        TestColorOrRest::Color(color) => format!("{color:?}"),
-        TestColorOrRest::Bytes(bytes) => bytes.with_bytes(heap, |bytes| format!("{bytes:?}")),
-        TestColorOrRest::Rest(rest) if rest.is_undefined() => "undefined".to_owned(),
-        TestColorOrRest::Rest(_) => "given".to_owned(),
+        TestColorOrOther::Color(color) => format!("{color:?}"),
+        TestColorOrOther::Buffer(bytes) => bytes.with_bytes(heap, |bytes| format!("{bytes:?}")),
+        TestColorOrOther::Missing => "undefined".to_owned(),
+        TestColorOrOther::Other(_) => "given".to_owned(),
     };
     format!("inner: {inner}; value: {value}; choice: {choice}; rest: {rest}").into_bytes()
 }
@@ -230,11 +237,11 @@ pub(crate) fn text_or_bytes<'a>(
     heap: &JsHeap<'a>,
     text: &[u8],
     r#as: u8,
-) -> bindgen::Result<'a, TestTextOrBytes<'a>> {
+) -> bindgen::Result<'a, TestTextOrBuffer<'a>> {
     Ok(match r#as {
-        0 => TestTextOrBytes::Text(text.to_vec()),
-        1 => TestTextOrBytes::Bytes(heap.create_uint8_array(text)?),
-        _ => TestTextOrBytes::Nothing,
+        0 => TestTextOrBuffer::Text(text.to_vec()),
+        1 => TestTextOrBuffer::Buffer(heap.create_uint8_array(text)?),
+        _ => TestTextOrBuffer::None,
     })
 }
 
@@ -490,6 +497,10 @@ impl TestCounter {
         self.count.get().wrapping_add(other.count.get())
     }
 
+    pub(crate) fn is_counter(value: Option<&Self>) -> bool {
+        value.is_some()
+    }
+
     pub(crate) fn starting<'a>(heap: &JsHeap<'a>, at: i32) -> JsWrapper<'a, Self> {
         Self::new(at).into_js(heap)
     }
@@ -667,12 +678,12 @@ impl TestNote {
     pub(crate) fn constructor<'a>(
         heap: &JsHeap<'a>,
         structure: JsStructure<'a, Self>,
-        text: JsLocal<'a>,
+        text: Option<JsLocal<'a>>,
         size: usize,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
-        if text.is_undefined() {
+        let Some(text) = text else {
             return Err(heap.type_error(format_args!("text is required")));
-        }
+        };
         let this_value = structure.create(heap, Self { size });
         // SAFETY: storing a value runs no JavaScript.
         js_TestNote::text_set_cached(this_value.to_js(), unsafe { heap.global() }, text.to_js());
@@ -699,12 +710,12 @@ impl TestRefCountedNote {
     pub(crate) fn constructor<'a>(
         heap: &JsHeap<'a>,
         structure: JsStructure<'a, Self>,
-        text: JsLocal<'a>,
+        text: Option<JsLocal<'a>>,
         size: usize,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
-        if text.is_undefined() {
+        let Some(text) = text else {
             return Err(heap.type_error(format_args!("text is required")));
-        }
+        };
         let ref_count = Cell::new(1);
         let this_value = structure.create(heap, RefPtr::new(Self { ref_count, size }));
         // SAFETY: storing a value runs no JavaScript.
@@ -892,7 +903,8 @@ pub(crate) fn this_and_callee<'a>(
     callee: JsLocal<'a>,
     value: JsLocal<'a>,
 ) -> bindgen::Result<'a, JsLocal<'a>> {
-    bindgen::to_js::array(heap, [this_value, callee, value], bindgen::to_js::any)
+    let values = [this_value, callee, value];
+    bindgen::to_js::array(heap, values, bindgen::to_js::any)
 }
 
 pub(crate) fn doubled(value: i32) -> i32 {
@@ -999,6 +1011,20 @@ pub(crate) fn counter_with_value<'a>(
     value
 }
 
+pub(crate) fn counter_of_member<'a>(_: &JsHeap<'a>, holder: &TestCounterHolder<'a>) -> JsLocal<'a> {
+    let (counter, value) = holder.counter;
+    counter.count.set(counter.count.get() + 1);
+    value
+}
+
+pub(crate) fn describe_view_or_buffer(value: TestViewOrBuffer<'_>) -> bun_core::String {
+    bun_core::String::static_(match value {
+        TestViewOrBuffer::DataView(_) => "DataView",
+        TestViewOrBuffer::Buffer(_) => "another buffer",
+        TestViewOrBuffer::Other => "other",
+    })
+}
+
 pub(crate) fn kept_string(text: bun_core::String) -> bun_core::String {
     text
 }
@@ -1010,7 +1036,7 @@ pub(crate) fn bracket_echo(bracket: TestBracket) -> TestBracket {
 pub(crate) fn describe_handle(value: TestHandle<'_>) -> Vec<u8> {
     match value {
         TestHandle::Missing => b"missing".to_vec(),
-        TestHandle::Nothing => b"nothing".to_vec(),
+        TestHandle::None => b"nothing".to_vec(),
         TestHandle::Callback(_) => b"callback".to_vec(),
         TestHandle::List(_) => b"list".to_vec(),
         TestHandle::Point(point) => format!("point {}", point.x).into_bytes(),
@@ -1018,8 +1044,8 @@ pub(crate) fn describe_handle(value: TestHandle<'_>) -> Vec<u8> {
     }
 }
 
-pub(crate) fn is_object(value: TestObjectOrRest<'_>) -> bool {
-    matches!(value, TestObjectOrRest::Object(_))
+pub(crate) fn is_object(value: TestObjectOrOther<'_>) -> bool {
+    matches!(value, TestObjectOrOther::Object(_))
 }
 
 pub(crate) fn object_echo<'a>(
@@ -1068,7 +1094,7 @@ pub(crate) fn callback_or_delay_callback(
 ) -> Vec<u8> {
     format!(
         "callback, this is undefined: {}, given itself: {}",
-        this_value.is_undefined(),
+        this_value.to_js().is_undefined(),
         callee.to_js() == callback.to_js()
     )
     .into_bytes()
@@ -1081,7 +1107,7 @@ pub(crate) fn callback_or_delay_delay(
 ) -> Vec<u8> {
     format!(
         "delay {delay}, this is undefined: {}",
-        this_value.is_undefined()
+        this_value.to_js().is_undefined()
     )
     .into_bytes()
 }
@@ -1223,9 +1249,9 @@ impl TestError {
         &self,
         this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
-        value: JsLocal<'a>,
+        value: f64,
     ) {
-        let doubled = JSValue::js_number(value.to_js().as_number() * 2.0);
+        let doubled = JSValue::js_number(value * 2.0);
         // SAFETY: storing a value runs no JavaScript.
         js_TestError::detail_set_cached(this_value.to_js(), unsafe { heap.global() }, doubled);
     }
@@ -1257,4 +1283,378 @@ pub(crate) fn loose_double_or_big_int(value: f64) -> f64 {
 
 pub(crate) fn wide_integer_or_big_int(value: u64) -> String {
     value.to_string()
+}
+
+pub(crate) fn join_second_first<'a>(
+    cx: &mut JsScope<'a>,
+    skip: bool,
+    first: Deferred<'a, bun_core::String>,
+    second: Deferred<'a, bun_core::String>,
+) -> bindgen::Result<'a, String> {
+    if skip {
+        return Ok(String::new());
+    }
+    let second = second.convert(cx.global())?;
+    let first = first.convert(cx.global())?;
+    Ok(format!("{second}{first}"))
+}
+
+pub(crate) fn text_or_null(value: TestTextOrOther) -> Option<bun_core::String> {
+    match value {
+        TestTextOrOther::Text(text) => Some(text),
+        TestTextOrOther::Other => None,
+    }
+}
+
+pub(crate) fn is_promise(value: Option<JsLocal<'_, JSPromise>>) -> bool {
+    value.is_some()
+}
+
+pub(crate) fn take_promise<'a>(
+    _: &JsHeap<'a>,
+    promise: JsLocal<'a, JSPromise>,
+) -> JsLocal<'a, JSPromise> {
+    promise
+}
+
+pub(crate) fn opaque_or<'a>(
+    _: &JsHeap<'a>,
+    value: Option<JsLocal<'a>>,
+    fallback: JsLocal<'a>,
+) -> JsLocal<'a> {
+    value.unwrap_or(fallback)
+}
+
+pub(crate) fn kind_of<'a>(
+    cx: &mut JsScope<'a>,
+    value: JsLocal<'a>,
+) -> bindgen::Result<'a, &'static str> {
+    Ok(TestKind::from_js(cx.global(), value.to_js(), |kind| {
+        Ok(match kind {
+            TestKind::Text(_) => "text",
+            TestKind::Number(_) => "number",
+            TestKind::List(_) => "list",
+            TestKind::Callback(_) => "callback",
+            TestKind::Other => "other",
+        })
+    })?)
+}
+
+pub(crate) fn negate_wide(value: i64) -> i64 {
+    -value
+}
+
+pub(crate) fn file_system_path(url: &DOMURL) -> Option<bun_core::String> {
+    url.file_system_path().ok()
+}
+
+pub(crate) fn path_of(value: TestPathOrURL<'_>) -> Option<bun_core::String> {
+    match value {
+        TestPathOrURL::Path(path) => Some(path),
+        TestPathOrURL::Url(url) => url.file_system_path().ok(),
+    }
+}
+
+pub(crate) fn is_aborted(options: &TestSignalOptions) -> Option<bool> {
+    Some(options.signal.as_ref()?.aborted())
+}
+
+pub(crate) fn count_in_range(count: i32) -> i32 {
+    count
+}
+
+pub(crate) fn timeout_of(options: &TestRangeOptions) -> Option<u64> {
+    options.timeout
+}
+
+pub(crate) fn own_and_inherited(options: &TestOwnOptions) -> [Option<i32>; 2] {
+    [options.own, options.any]
+}
+
+pub(crate) fn describe_path_or_fd(path: TestPathOrFd) -> bun_core::String {
+    bun_core::String::clone_utf8(
+        match path {
+            TestPathOrFd::Fd(fd) => format!("fd {fd}"),
+            TestPathOrFd::Path(path) => format!("path {path}"),
+            TestPathOrFd::Mode(mode) => format!("mode {}", i32::from(mode)),
+        }
+        .as_bytes(),
+    )
+}
+
+pub(crate) fn count_or_text(value: TestCountOrText) -> i32 {
+    match value {
+        TestCountOrText::Count(count) => count,
+        TestCountOrText::Text(text) => -(text.length() as i32),
+    }
+}
+
+pub(crate) fn length_of(length: TestLength) -> Option<f64> {
+    match length {
+        TestLength::Number(number) => Some(number),
+        TestLength::BigInt(bigint) => Some(bigint as f64),
+        TestLength::Other => None,
+    }
+}
+
+pub(crate) fn describe_absent(
+    count: i32,
+    flag: Option<bool>,
+    options: &TestLenientOptions,
+    choice: TestTextOrOptions,
+) -> bun_core::String {
+    let choice = match choice {
+        TestTextOrOptions::Text(text) => format!("text {text}"),
+        TestTextOrOptions::Options(options) => format!("x {}", options.x),
+        TestTextOrOptions::Other => "other".to_owned(),
+    };
+    bun_core::String::clone_utf8(
+        format!(
+            "{count} {flag:?} {} {} {choice}",
+            options.strict, options.level
+        )
+        .as_bytes(),
+    )
+}
+
+pub(crate) fn describe_absent_deferred<'a>(
+    cx: &mut JsScope<'a>,
+    count: Deferred<'a, i32>,
+    flag: Deferred<'a, Option<bool>>,
+    options: Deferred<'a, TestLenientOptions>,
+    choice: Deferred<'a, TestTextOrOptions>,
+) -> bindgen::Result<'a, bun_core::String> {
+    let count = count.convert(cx.global())?;
+    let flag = flag.convert(cx.global())?;
+    let options = options.convert(cx.global())?;
+    let choice = choice.convert(cx.global())?;
+    Ok(describe_absent(count, flag, &options, choice))
+}
+
+pub(crate) fn describe_converted(
+    int: Option<i32>,
+    loose: Option<i32>,
+    wrapped: Option<u8>,
+    ranged: Option<i64>,
+    digit: Option<i32>,
+    double: Option<f64>,
+    position: TestPosition<'_>,
+    callback: Option<JsLocal<'_, Callable>>,
+    buffer: Option<JsLocal<'_, BufferSource>>,
+    unshared: Option<JsLocal<'_, BufferSource>>,
+    object: Option<JsLocal<'_, JSObject>>,
+    list: Option<JsLocal<'_, JSArray>>,
+    number: Option<JsLocal<'_, bindgen::Number>>,
+    text: Option<JsLocal<'_, bindgen::StringLike>>,
+    string: Option<JsLocal<'_, JSString>>,
+    options: Option<TestDeferredOptions<'_>>,
+) -> bun_core::String {
+    let position = match position {
+        TestPosition::None => "missing".to_owned(),
+        TestPosition::Number(number) => format!("number {number}"),
+        TestPosition::BigInt(_) => "bigint".to_owned(),
+        TestPosition::Other => "other".to_owned(),
+    };
+    let values = [
+        callback.is_some(),
+        buffer.is_some(),
+        unshared.is_some(),
+        object.is_some(),
+        list.is_some(),
+        number.is_some(),
+        text.is_some(),
+        string.is_some(),
+        options.is_some(),
+    ];
+    bun_core::String::clone_utf8(
+        format!(
+            "{int:?} {loose:?} {wrapped:?} {ranged:?} {digit:?} {double:?} {position} {values:?}"
+        )
+        .as_bytes(),
+    )
+}
+
+pub(crate) fn describe_converted_deferred<'a>(
+    cx: &mut JsScope<'a>,
+    int: Deferred<'a, Option<i32>>,
+    loose: Deferred<'a, Option<i32>>,
+    wrapped: Deferred<'a, Option<u8>>,
+    ranged: Deferred<'a, Option<i64>>,
+    digit: Deferred<'a, Option<i32>>,
+    double: Deferred<'a, Option<f64>>,
+    position: Deferred<'a, TestPosition<'a>>,
+    callback: Deferred<'a, Option<JsLocal<'a, Callable>>>,
+    buffer: Deferred<'a, Option<JsLocal<'a, BufferSource>>>,
+    unshared: Deferred<'a, Option<JsLocal<'a, BufferSource>>>,
+    object: Deferred<'a, Option<JsLocal<'a, JSObject>>>,
+    list: Deferred<'a, Option<JsLocal<'a, JSArray>>>,
+    number: Deferred<'a, Option<JsLocal<'a, bindgen::Number>>>,
+    text: Deferred<'a, Option<JsLocal<'a, bindgen::StringLike>>>,
+    string: Deferred<'a, Option<JsLocal<'a, JSString>>>,
+    options: Deferred<'a, Option<TestDeferredOptions<'a>>>,
+) -> bindgen::Result<'a, bun_core::String> {
+    Ok(describe_converted(
+        int.convert(cx.global())?,
+        loose.convert(cx.global())?,
+        wrapped.convert(cx.global())?,
+        ranged.convert(cx.global())?,
+        digit.convert(cx.global())?,
+        double.convert(cx.global())?,
+        position.convert(cx.global())?,
+        callback.convert(cx.global())?,
+        buffer.convert(cx.global())?,
+        unshared.convert(cx.global())?,
+        object.convert(cx.global())?,
+        list.convert(cx.global())?,
+        number.convert(cx.global())?,
+        text.convert(cx.global())?,
+        string.convert(cx.global())?,
+        options.convert(cx.global())?,
+    ))
+}
+
+pub(crate) fn describe_deferred(
+    cx: &mut JsScope<'_>,
+    options: TestDeferredOptions<'_>,
+) -> JsResult<bun_core::String> {
+    let global = cx.global();
+    let name = options.name(global)?;
+    if name.is_empty() {
+        return Err(global.throw(format_args!("name is empty")));
+    }
+    let level = options.level(global)?;
+    let called = match options.callback(global)? {
+        Some(callback) => callback
+            .to_js()
+            .call(global, options.object().to_js(), &[])?
+            .is_same_value(options.object().to_js(), global)?,
+        None => false,
+    };
+    let mine = options.mine(global)?;
+    let x = options.nested(global)?.map(|nested| nested.x);
+    Ok(bun_core::String::clone_utf8(
+        format!("{name} {level} {called} {mine} {x:?}").as_bytes(),
+    ))
+}
+
+pub(crate) fn names_of_deferred(
+    cx: &mut JsScope<'_>,
+    lenient: Option<TestDeferredOptions<'_>>,
+    holder: &TestDeferredHolder<'_>,
+    outer: Option<TestOuterDeferred<'_>>,
+) -> JsResult<bun_core::String> {
+    let global = cx.global();
+    let name = |options: Option<TestDeferredOptions<'_>>| {
+        options.map(|options| options.name(global)).transpose()
+    };
+    let either = match &holder.either {
+        Some(TestDeferredOrText::Text(text)) => Some(text.clone()),
+        Some(TestDeferredOrText::Options(options)) => name(Some(*options))?,
+        None => None,
+    };
+    let inner = match outer {
+        Some(outer) => name(outer.inner(global)?)?,
+        None => None,
+    };
+    let names = [name(lenient)?, name(holder.options)?, either, inner]
+        .map(|name| name.map_or_else(|| "-".to_string(), |name| name.to_string()));
+    Ok(bun_core::String::clone_utf8(names.join(" ").as_bytes()))
+}
+
+pub(crate) fn view_length_or_none(text: Option<bun_core::StringView<'_>>, id: i64) -> i64 {
+    text.map_or(-1, |text| text.length() as i64) + id
+}
+
+pub(crate) fn deferred_key_length(
+    cx: &mut JsScope<'_>,
+    key: Deferred<'_, bun_core::String>,
+) -> JsResult<u32> {
+    Ok(key.convert(cx.global())?.length() as u32)
+}
+
+pub(crate) fn deferred_key_byte_length(
+    cx: &mut JsScope<'_>,
+    key: Deferred<'_, bun_core::Utf8Bytes<'static>>,
+) -> JsResult<u32> {
+    Ok(key.convert(cx.global())?.len() as u32)
+}
+
+pub(crate) fn deferred_count_or_one(
+    cx: &mut JsScope<'_>,
+    count: Deferred<'_, i32>,
+) -> JsResult<i32> {
+    count.convert(cx.global())
+}
+
+pub(crate) fn deferred_count_or_two(
+    cx: &mut JsScope<'_>,
+    count: Deferred<'_, i32>,
+) -> JsResult<i32> {
+    count.convert(cx.global())
+}
+
+pub(crate) fn take_number<'a>(
+    _: &JsHeap<'a>,
+    number: JsLocal<'a, bindgen::Number>,
+) -> JsLocal<'a, bindgen::Number> {
+    number
+}
+
+pub(crate) fn is_string_like(value: Option<JsLocal<'_, bindgen::StringLike>>) -> bool {
+    value.is_some()
+}
+
+pub(crate) fn count_of_maybe(options: &TestMaybeCounter<'_>) -> i32 {
+    options
+        .counter
+        .map_or(-1, |(counter, _)| counter.count.get())
+}
+
+pub(crate) fn describe_nested(value: TestCountOrNested) -> Vec<u8> {
+    match value {
+        TestCountOrNested::Count(count) => format!("count {count}"),
+        TestCountOrNested::Nested(TestTextOrFlag::Text(text)) => format!("text {text}"),
+        TestCountOrNested::Nested(TestTextOrFlag::Flag(flag)) => format!("flag {flag}"),
+        TestCountOrNested::Other => "other".to_owned(),
+    }
+    .into_bytes()
+}
+
+pub(crate) fn echo_nested(value: TestCountOrNested) -> TestCountOrNested {
+    value
+}
+
+pub(crate) fn wrap_to_int32(value: i32) -> i32 {
+    value
+}
+
+pub(crate) fn reads_private_member(
+    cx: &mut JsScope<'_>,
+    options: &TestPrivateMember,
+    deferred: TestDeferredPrivateMember<'_>,
+) -> JsResult<bool> {
+    Ok(options.shared_fd || deferred.shared_fd(cx.global())?)
+}
+
+pub(crate) fn describe_flag_or_other(value: Option<TestFlagOrOther<'_>>) -> &'static [u8] {
+    match value {
+        None => b"absent",
+        Some(TestFlagOrOther::Enabled(true)) => b"on",
+        Some(TestFlagOrOther::Enabled(false)) => b"off",
+        Some(TestFlagOrOther::Options(_)) => b"options",
+        Some(TestFlagOrOther::Other(_)) => b"other",
+    }
+}
+
+pub(crate) fn describe_own_if_passed(
+    cx: &mut JsScope<'_>,
+    options: &TestOwnIfPassed,
+    deferred: TestDeferredOwnIfPassed<'_>,
+) -> JsResult<Vec<u8>> {
+    Ok(format!(
+        "{:?} {:?}",
+        options.recursive,
+        deferred.recursive(cx.global())?
+    )
+    .into_bytes())
 }

@@ -6,7 +6,7 @@ use crate::shared::query_ctor_args;
 use crate::shared::row_decoder::RowDecoder;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSArray, JsCell};
+use bun_jsc::{JSArray, JSObject, JsCell};
 use bun_ptr::{AsCtxPtr, RefPtr};
 
 use super::PostgresSQLConnection;
@@ -448,14 +448,10 @@ impl PostgresSQLQuery {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         connection: &PostgresSQLConnection,
-        query: JsLocal<'_>,
+        query: JsLocal<'_, JSObject>,
     ) -> JsResult<()> {
         let global_object = cx.global();
         let query = query.to_js();
-
-        if !query.is_object() {
-            return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
-        }
         self.row_type
             .set(RowDecoder::expected_row_type(global_object, query));
 

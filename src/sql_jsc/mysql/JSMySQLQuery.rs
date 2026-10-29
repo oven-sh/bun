@@ -9,7 +9,7 @@ use crate::jsc::{
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSArray, JsCell};
+use bun_jsc::{JSArray, JSObject, JsCell};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
@@ -88,16 +88,13 @@ impl JSMySQLQuery {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         connection: &MySQLConnection,
-        query: JsLocal<'_>,
+        query: JsLocal<'_, JSObject>,
     ) -> JsResult<()> {
         debug!("doRun");
         let _guard = self.ref_guard();
 
         let global_object = cx.global();
         let query = query.to_js();
-        if !query.is_object() {
-            return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
-        }
         // A connection that failed or closed answers nothing: a query queued on it would hold the
         // event loop for ever. The pool hears of a close through `onclose` and stops handing the
         // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.

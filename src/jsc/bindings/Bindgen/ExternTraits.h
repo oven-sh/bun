@@ -1,15 +1,19 @@
 #pragma once
 #include <algorithm>
+#include <bit>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/NativeFunction.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
+#include <wtf/StdLibExtras.h>
 #include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 #include "helpers.h"
@@ -39,11 +43,37 @@ struct TrivialExtern {
     }
 };
 
+// `convertToExtern` of a `T` is a std::bit_cast: `T` is trivially copyable and is represented as its ExternType.
+template<typename T>
+inline constexpr bool canBitCastToExtern = std::derived_from<ExternTraits<T>, TrivialExtern<T>>;
+
+// For an argument that Rust takes by pointer: a pointer to `value` itself. A pointer to `toExtern(value)` costs a
+// store-forwarding stall, since the copy loads in one piece what the conversion has just stored in several.
+template<typename T>
+    requires canBitCastToExtern<T>
+ALWAYS_INLINE auto* asExtern(T& value)
+{
+    using ExternType = typename ExternTraits<T>::ExternType;
+    static_assert(alignof(T) == alignof(ExternType));
+    return reinterpret_cast<ExternType*>(&value);
+}
+
+// The bytes of `value`, then zeros.
+template<typename T>
+    requires(canBitCastToExtern<T> && sizeof(T) < sizeof(uint64_t))
+ALWAYS_INLINE uint64_t toBits(T value)
+{
+    uint64_t bits = 0;
+    memcpySpan(asMutableByteSpan(bits), asByteSpan(value));
+    return bits;
+}
+
 template<> struct ExternTraits<bool> : TrivialExtern<bool> {};
 template<> struct ExternTraits<uint8_t> : TrivialExtern<uint8_t> {};
 template<> struct ExternTraits<uint16_t> : TrivialExtern<uint16_t> {};
 template<> struct ExternTraits<int32_t> : TrivialExtern<int32_t> {};
 template<> struct ExternTraits<uint32_t> : TrivialExtern<uint32_t> {};
+template<> struct ExternTraits<int64_t> : TrivialExtern<int64_t> {};
 template<> struct ExternTraits<uint64_t> : TrivialExtern<uint64_t> {};
 template<> struct ExternTraits<double> : TrivialExtern<double> {};
 template<> struct ExternTraits<void*> : TrivialExtern<void*> {};
@@ -102,6 +132,7 @@ template<> struct ExternTraits<JSC::JSValue> {
         return JSC::JSValue::encode(cppValue);
     }
 };
+template<> inline constexpr bool canBitCastToExtern<JSC::JSValue> = true;
 
 struct ExternBytes {
     const uint8_t* data;
@@ -195,6 +226,23 @@ struct ExternWithValue {
     T converted;
     JSC::EncodedJSValue value;
 };
+
+// What IDLWithValue converts to.
+template<typename T>
+struct WithValue {
+    T converted {};
+    JSC::JSValue value {};
+};
+
+template<typename T> struct ExternTraits<WithValue<T>> {
+    using ExternType = ExternWithValue<typename ExternTraits<T>::ExternType>;
+
+    static ExternType convertToExtern(WithValue<T>&& cppValue)
+    {
+        return { ExternTraits<T>::convertToExtern(WTF::move(cppValue.converted)), JSC::JSValue::encode(cppValue.value) };
+    }
+};
+template<typename T> inline constexpr bool canBitCastToExtern<WithValue<T>> = canBitCastToExtern<T>;
 
 template<typename T, typename P, typename R> struct ExternTraits<WTF::RefPtr<T, P, R>> {
     using ExternType = T*;

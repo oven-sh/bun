@@ -19,7 +19,7 @@ export const CssParserFlag = b.enumeration(["DEEP_SELECTOR_COMBINATOR"]);
 export const CssParserOptions = b.dictionary({ flags: b.array(CssParserFlag).emptyStringAsNull });
 
 /** `failure` is what the parser logged, as an error that is not thrown, or `undefined` if an attribute cannot be printed. */
-export const CssTestOutput = b.union({ code: b.string.utf8, failure: b.any });
+export const CssTestOutput = b.union({ code: b.string.utf8, failure: b.opaque });
 
 const stylesheetTest = (options: b.Type) =>
   b.fn({

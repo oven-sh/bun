@@ -72,7 +72,7 @@ export const RenderCallbacks = b.dictionary(
 
 /** The `type` of the elements of each tag. A boolean is ignored. */
 export const ComponentOverrides = b.dictionary(
-  members(b.any.emptyStringAsNull, [
+  members(b.opaque.emptyStringAsNull, [
     "h1",
     "h2",
     "h3",
@@ -113,15 +113,15 @@ export const markdown = b.namespace({
   ansi: { args: { input, theme: AnsiTheme.default({}) }, returns: b.string.utf8, expected, length: 2, ...js },
   /** The callbacks run while `input` is read. */
   render: {
-    args: { input: b.any, callbacks: RenderCallbacks.otherAsNull, options: MarkdownOptions.otherAsNull },
+    args: { input: b.opaque, callbacks: RenderCallbacks.otherAsNull, options: MarkdownOptions.otherAsNull },
     returns: b.string.utf8,
     length: 3,
     ...js,
   },
   /** As `render`. */
   react: {
-    args: { input: b.any, components: ComponentOverrides.otherAsNull, options: ReactOptions.otherAsNull },
-    returns: b.any,
+    args: { input: b.opaque, components: ComponentOverrides.otherAsNull, options: ReactOptions.otherAsNull },
+    returns: b.object,
     length: 3,
     ...js,
   },

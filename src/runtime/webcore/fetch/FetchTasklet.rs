@@ -29,6 +29,7 @@ use crate::api::bun_x509 as X509;
 use crate::generated_bindgen::fetch_tasklet::{
     Bun__FetchTasklet__onRejectRequestStream, Bun__FetchTasklet__onResolveRequestStream,
 };
+use crate::generated_bindgen::response::BodyInit;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink;
@@ -248,7 +249,10 @@ impl HTTPRequestBody {
         }
     }
 
-    pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+    pub(crate) fn from_js(
+        cx: &bun_jsc::JsThread<'_>,
+        value: BodyInit<'_>,
+    ) -> JsResult<HTTPRequestBody> {
         let mut body_value = BodyValue::from_js(cx.global(), value)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))

@@ -24,7 +24,8 @@ export const braces = b.fn({
     input: b.string.loose,
     options: BracesOptions.nullable.default({}),
   },
-  returns: b.any,
+  /** A string of JSON with `tokenize` or `parse`, else an array of strings. */
+  returns: b.opaque,
   capability: "js",
   throws: true,
 });
@@ -102,7 +103,7 @@ export const InspectOptions = b.dictionary(
   },
   { allowArray: true },
 );
-export const InspectOptionsOrDepth = b.union({ options: InspectOptions, depth: b.f64, ignored: b.any });
+export const InspectOptionsOrDepth = b.union({ options: InspectOptions, depth: b.f64, other: b.ignored });
 
 /**
  * `(arg, options)` or `(arg, depth, colors)`. `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is
@@ -110,7 +111,7 @@ export const InspectOptionsOrDepth = b.union({ options: InspectOptions, depth: b
  */
 export const inspect = b.fn({
   export: "Bun__BunObject__inspect",
-  args: { arg: b.any.ifPassed, options: InspectOptionsOrDepth, colors: b.bool.loose.nullable },
+  args: { arg: b.opaque.ifPassed, options: InspectOptionsOrDepth, colors: b.bool.loose.nullable },
   returns: b.string.utf8,
   capability: "js",
   throws: true,
@@ -160,10 +161,10 @@ const resolveSignature = {
   capability: "js",
   throws: true,
 } as const;
-export const resolve = b.fn({ ...resolveSignature, returns: b.any, rejects: true });
+export const resolve = b.fn({ ...resolveSignature, returns: b.promise, rejects: true });
 export const resolveSync = b.fn({ ...resolveSignature, returns: b.string });
 
-export const serve = b.fn({ args: { options: b.any }, returns: b.any, capability: "js", throws: true });
+export const serve = b.fn({ args: { options: b.opaque }, returns: b.object, capability: "js", throws: true });
 
 export const shellEscape = b.fn({
   args: { input: b.string.loose },
@@ -227,7 +228,7 @@ const pinned = b.bytes({ from: ["string", "buffer"], held: "pinned" });
 
 export const zstdCompress = b.fn({
   args: { data: pinned, options: ZstdCompressionOptions.default({}) },
-  returns: b.any,
+  returns: b.promise,
   capability: "js",
   throws: true,
   rustPath: "crate::api::bun_object::JSZstd::compress",
@@ -243,7 +244,7 @@ export const zstdCompressSync = b.fn({
 
 export const zstdDecompress = b.fn({
   args: { data: pinned },
-  returns: b.any,
+  returns: b.promise,
   capability: "js",
   rustPath: "crate::api::bun_object::JSZstd::decompress",
 });

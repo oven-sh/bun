@@ -1,28 +1,79 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
+import { BuildArtifact } from "../api/JSBundler.bind.ts";
+import { Image } from "../image/Image.bind.ts";
+import { Blob } from "./Blob.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
-const getter = { getter: b.any.returning("string"), capability: "js" } as const;
+const getter = { getter: b.string.local, capability: "js" } as const;
 const cached = { ...getter, cache: true, ...js } as const;
-const headers = { ...cached, getter: b.any.returning("Headers") } as const;
+const headers = { ...cached, getter: b.object.returning("Headers") } as const;
 /** Reads the whole body. The `stream` field of the receiver says whether a script already read from it. */
-const read = { returns: b.any.returning("Promise"), ...js, passThis: true } as const;
+const read = { returns: b.promise, ...js, passThis: true } as const;
 
 /** Members of the trait `BodyMixin`. */
 const body = {
   rustTraits: ["crate::webcore::body::BodyMixin"],
   arrayBuffer: read,
   blob: read,
-  body: { ...cached, getter: b.any.returning("ReadableStream", "null") },
+  body: { ...cached, getter: b.opaque.returning("ReadableStream", "null") },
   bodyUsed: { getter: b.bool, capability: "js" },
   bytes: read,
   formData: read,
   json: { ...read, typedResultForm: { form: "ParsedBody", source: "this" } },
   text: read,
-  textStream: { returns: b.any.returning("ReadableStream"), ...js },
+  textStream: { returns: b.object.returning("ReadableStream"), ...js },
 } as const;
-const clone = (name: "Request" | "Response") =>
-  ({ returns: b.any.returning(name), ...js, passThis: true, rustName: "do_clone", length: 1 }) as const;
+
+export const Headers = b.wrapped("WebCore::JSFetchHeaders", "JSFetchHeaders.h", {
+  rustPath: "bun_jsc::FetchHeaders",
+  reportedAs: "Headers",
+}).withValue;
+
+/**
+ * A `DataView` is not among the buffers: like `object`, it is an async iterable or else the parts of a `Blob`,
+ * as `other` is.
+ */
+export const BodyInit = b.union(
+  {
+    missing: b.undefined,
+    none: b.null,
+    string: b.stringLike,
+    dataView: b.dataView,
+    buffer: b.bufferSource.allowShared,
+    formData: b.wrapped("WebCore::JSDOMFormData", "JSDOMFormData.h", {
+      rustPath: "bun_jsc::DOMFormData",
+      reportedAs: "FormData",
+    }).withValue,
+    urlSearchParams: b.wrapped("WebCore::JSURLSearchParams", "JSURLSearchParams.h", {
+      rustPath: "bun_jsc::URLSearchParams",
+    }).withValue,
+    blob: Blob.withValue,
+    buildArtifact: BuildArtifact.withValue,
+    image: Image.withValue,
+    readableStream: b.cell("WebCore::JSReadableStream", "streams/JSReadableStream.h", {
+      rustPath: "crate::webcore::ReadableStream",
+      tsType: "ReadableStream",
+    }),
+    object: b.object,
+    other: b.opaque,
+  },
+  { fromJS: true },
+);
+
+export const ResponseInit = b.dictionary(
+  {
+    headers: b.opaque.optional,
+    status: b.opaque.optional,
+    statusText: b.string.loose.emptyStringAsNull,
+    method: b.string.loose.emptyStringAsNull,
+  },
+  { deferred: true },
+);
+export const ResponseInitArgument = b.union({ none: b.null, init: ResponseInit, other: b.ignored });
+export const ResponseInitOrStatus = b.union({ status: b.f64, init: ResponseInit, other: b.ignored });
+
+const clone = { returns: b.self, ...js, passThis: true, rustName: "do_clone", length: 1 } as const;
 
 export const Request = b.class({
   rustPath: "crate::webcore::Request",
@@ -34,7 +85,7 @@ export const Request = b.class({
   estimatedSize: true,
   types: [table.viewType("Request"), table.exactType("$Bindgen.Request")],
   lockedObjects: ["prototype"],
-  construct: { args: { input: b.any, init: b.any }, ...js, passStructure: true, length: 0 },
+  construct: { args: { input: b.opaque, init: b.opaque }, ...js, passStructure: true, length: 0 },
   internalFields: ["stream"],
   proto: {
     arrayBuffer: body.arrayBuffer,
@@ -43,7 +94,7 @@ export const Request = b.class({
     bodyUsed: body.bodyUsed,
     bytes: body.bytes,
     cache: getter,
-    clone: clone("Request"),
+    clone,
     credentials: getter,
     destination: getter,
     formData: body.formData,
@@ -55,14 +106,12 @@ export const Request = b.class({
     redirect: getter,
     referrer: getter,
     referrerPolicy: getter,
-    signal: { getter: b.any.returning("AbortSignal"), capability: "js", cache: true },
+    signal: { getter: b.object.returning("AbortSignal"), capability: "js", cache: true },
     text: body.text,
     textStream: body.textStream,
     url: cached,
   },
 });
-
-const factory = { args: { args: b.any.variadic }, returns: b.any.returning("Response"), ...js } as const;
 
 export const Response = b.class({
   rustPath: "crate::webcore::Response",
@@ -73,7 +122,7 @@ export const Response = b.class({
   estimatedSize: true,
   types: [table.viewType("Response"), table.exactType("$Bindgen.Response")],
   lockedObjects: ["prototype"],
-  construct: { args: { body: b.any, init: b.any }, ...js, passStructure: true, length: 0 },
+  construct: { args: { body: BodyInit, init: ResponseInitArgument }, ...js, passStructure: true, length: 0 },
   internalFields: ["stream", "transform"],
   proto: {
     arrayBuffer: body.arrayBuffer,
@@ -81,7 +130,7 @@ export const Response = b.class({
     body: body.body,
     bodyUsed: body.bodyUsed,
     bytes: body.bytes,
-    clone: clone("Response"),
+    clone,
     formData: body.formData,
     headers,
     json: body.json,
@@ -95,21 +144,31 @@ export const Response = b.class({
     url: cached,
   },
   static: {
-    error: { returns: b.any.returning("Response"), capability: "js" },
+    error: { returns: b.self, capability: "js" },
     /** `Response.json()` is an empty body and `Response.json(undefined)` throws. */
     json: {
-      ...factory,
+      ...js,
+      args: { data: b.opaque.ifPassed, init: ResponseInitOrStatus },
+      returns: b.self,
       rustName: "construct_json",
       jsonTextForm: { argument: 0, nativeSymbol: "Response__constructJSONFromText" },
+      length: 0,
     },
     /** `Response.redirect()` is to "" and `Response.redirect(undefined)` to "undefined". */
-    redirect: factory,
+    redirect: {
+      ...js,
+      args: { url: b.string.loose.ifPassed, init: ResponseInitOrStatus },
+      returns: b.self,
+      length: 0,
+    },
   },
 });
 
 /** `Response.json(value, init)` for compiled code that has already serialized `value`: argument 0 is the JSON text (`jsonTextForm`). */
 export const constructJSONFromText = b.fn({
-  ...factory,
+  ...js,
+  args: { data: b.opaque.ifPassed, init: ResponseInitOrStatus },
+  returns: b.opaque.returning("Response"),
   export: "Response__constructJSONFromText",
   rustPath: "crate::webcore::response::construct_json_from_text",
 });

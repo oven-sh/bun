@@ -75,10 +75,10 @@ describe("the words of .returning", () => {
       "Promise",
       "this",
     ]) {
-      expect(b.any.returning(word).checkedResult).toEqual([word]);
+      expect(b.opaque.returning(word).checkedResult).toEqual([word]);
       expect(parseDeclaredType(word)).toEqual([word]);
     }
-    expect(b.any.returning("ReadableStream", "null").checkedResult).toEqual(["ReadableStream", "null"]);
+    expect(b.opaque.returning("ReadableStream", "null").checkedResult).toEqual(["ReadableStream", "null"]);
     expect(parseDeclaredType("Headers")).toEqual([{ instance: "Headers" }]);
     expect(parseDeclaredType("ReadableStream | null")).toEqual([{ instance: "ReadableStream" }, "null"]);
     expect(parseDeclaredType("string | number")).toEqual(["string", "number"]);
@@ -86,25 +86,25 @@ describe("the words of .returning", () => {
 
   test("anything else is refused", () => {
     for (const word of ["unknown", "string[]", "", "string | null", "Promise<string>"]) {
-      expect(() => b.any.returning(word)).toThrow(`'${word}' is not a declared type`);
+      expect(() => b.opaque.returning(word)).toThrow(`'${word}' is not a declared type`);
     }
-    expect(() => b.any.returning("null", "null")).toThrow();
-    expect(() => b.any.returning()).toThrow(".returning takes what the result can be");
+    expect(() => b.opaque.returning("null", "null")).toThrow();
+    expect(() => b.opaque.returning()).toThrow(".returning takes what the result can be");
     for (const text of ["unknown", "string[]", "", "null | null"]) {
       expect(() => parseDeclaredType(text)).toThrow(`'${text}' is not a declared type`);
     }
   });
 
   test("a type in the words of the table is not checked", () => {
-    expect(b.any.returning({ type: "Primitive", primitive: "String" }).checkedResult).toBeNull();
-    expect(b.any.returning("string", { type: "Operand", operand: "output" }).checkedResult).toBeNull();
-    expect(b.any.checkedResult).toBeNull();
+    expect(b.opaque.returning({ type: "Primitive", primitive: "String" }).checkedResult).toBeNull();
+    expect(b.opaque.returning("string", { type: "Operand", operand: "output" }).checkedResult).toBeNull();
+    expect(b.opaque.checkedResult).toBeNull();
   });
 
   test("the table reads the words", () => {
-    expect(b.any.returning("this").resultType).toEqual({ type: "Operand", operand: "this" });
-    expect(b.any.returning("Blob").resultType).toMatchObject({ type: "Instance", class: "Blob" });
-    expect(b.any.returning("string", "null").resultType).toEqual({
+    expect(b.opaque.returning("this").resultType).toEqual({ type: "Operand", operand: "this" });
+    expect(b.opaque.returning("Blob").resultType).toMatchObject({ type: "Instance", class: "Blob" });
+    expect(b.opaque.returning("string", "null").resultType).toEqual({
       type: "Union",
       members: [
         { type: "Primitive", primitive: "String" },
@@ -125,11 +125,11 @@ const toyMembers = (declare: (...words: string[]) => string) => `
   proto: {
     label: { getter: ${declare("string")}, cache: true, capability: "heap" },
     count: { getter: b.i32, pure: true },
-    plain: { getter: b.any, capability: "heap" },
+    plain: { getter: b.opaque, capability: "heap" },
     level: { getter: ${declare("number")}, setter: true, capability: "heap" },
     load: { returns: ${declare("Promise")}, capability: "js", throws: true },
     chain: { returns: ${declare("this", "undefined")}, capability: "heap" },
-    free: { returns: b.any, capability: "heap" },
+    free: { returns: b.opaque, capability: "heap" },
   },
   static: {
     make: { returns: ${declare("Toy")}, capability: "heap" },
@@ -140,7 +140,7 @@ const toyMembers = (declare: (...words: string[]) => string) => `
 describe("generated bindings of a toy class", () => {
   test("a declared result is what TypeScript sees", async () => {
     const run = await runToy(
-      toyMembers((...words) => `b.any.returning(${words.map(word => JSON.stringify(word)).join(", ")})`),
+      toyMembers((...words) => `b.opaque.returning(${words.map(word => JSON.stringify(word)).join(", ")})`),
     );
     expect(run.stderr).not.toContain("error:");
     expect(run.exitCode).toBe(0);
@@ -157,8 +157,8 @@ describe("generated bindings of a toy class", () => {
 
   test("it changes no binding", async () => {
     const [declared, undeclared] = await Promise.all([
-      runToy(toyMembers((...words) => `b.any.returning(${words.map(word => JSON.stringify(word)).join(", ")})`)),
-      runToy(toyMembers(() => "b.any")),
+      runToy(toyMembers((...words) => `b.opaque.returning(${words.map(word => JSON.stringify(word)).join(", ")})`)),
+      runToy(toyMembers(() => "b.opaque")),
     ]);
     for (const name of ["generated_bindgen_bun_runtime.rs", "GeneratedToy.cpp", "GeneratedToy.h"]) {
       expect(declared.read(name)).toBe(undeclared.read(name));
@@ -167,13 +167,13 @@ describe("generated bindings of a toy class", () => {
 
   test("the keys that only the table reads change no binding", async () => {
     const [plain, annotated] = await Promise.all([
-      runToy(`proto: { count: { getter: b.i32 }, read: { args: { from: b.any }, capability: "heap" } }`),
+      runToy(`proto: { count: { getter: b.i32 }, read: { args: { from: b.opaque }, capability: "heap" } }`),
       runToy(`
         lockedObjects: ["prototype"],
         types: [{ path: ["$Node", "Toy"], isView: false, typeArguments: [] }],
         proto: {
           count: { getter: b.i32, pure: true },
-          read: { args: { from: b.any }, capability: "heap", uses: { this: [], from: [{ use: "ReadsContents" }] } },
+          read: { args: { from: b.opaque }, capability: "heap", uses: { this: [], from: [{ use: "ReadsContents" }] } },
         },
       `),
     ]);
@@ -188,12 +188,12 @@ describe("generated bindings of a toy class", () => {
   test.each([
     [
       "a word outside the grammar",
-      `proto: { x: { returns: b.any.returning("string[]"), capability: "heap" } }`,
+      `proto: { x: { returns: b.opaque.returning("string[]"), capability: "heap" } }`,
       "'string[]' is not a declared type",
     ],
     [
       "a declared result without a capability",
-      `proto: { x: { returns: b.any.returning("string") } }`,
+      `proto: { x: { returns: b.opaque.returning("string") } }`,
       'returning a JS value takes capability: "heap" or "js"',
     ],
     [

@@ -5,7 +5,7 @@ mod _impl {
     use core::ffi::{c_int, c_uint, c_void};
     use core::ptr;
 
-    use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper};
     use bun_jsc::{self as jsc, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
@@ -111,8 +111,8 @@ mod _impl {
             init_params_array: JsLocal<'_>,
             pledged_src_size: JsLocal<'_>,
             write_state: JsLocal<'_>,
-            process_callback: JsLocal<'_>,
-            dictionary: JsLocal<'_>,
+            process_callback: Deferred<'_, JsLocal<'_, Callable>>,
+            dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
         ) -> JsResult<bool> {
             let global = cx.global();
             let this_value = this_value.to_js();
@@ -123,7 +123,6 @@ mod _impl {
             let init_params_array_value = init_params_array.to_js();
             let pledged_src_size_value = pledged_src_size.to_js();
             let write_state_value = write_state.to_js();
-            let process_callback_value = process_callback.to_js();
 
             let Some(mut write_state) = write_state_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
@@ -152,8 +151,7 @@ mod _impl {
             }
             js::write_result_set_cached(this_value, global, write_state_value);
 
-            let write_js_callback =
-                validators::validate_function(global, "processCallback", process_callback_value)?;
+            let write_js_callback = process_callback.convert(global)?.to_js();
             js::write_callback_set_cached(
                 this_value,
                 global,
@@ -172,23 +170,10 @@ mod _impl {
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
-            let dictionary_buf;
-            let dictionary = if dictionary.is_undefined() {
-                None
-            } else {
-                let dictionary_value = dictionary.to_js();
-                dictionary_buf = match dictionary_value.as_array_buffer(global) {
-                    Some(buf) => buf,
-                    None => {
-                        return Err(global.throw_invalid_argument_type_value(
-                            "dictionary",
-                            "Buffer, TypedArray, or DataView",
-                            dictionary_value,
-                        ));
-                    }
-                };
-                Some(dictionary_buf.byte_slice())
-            };
+            let dictionary_buf = dictionary
+                .convert(global)?
+                .map(|buffer| buffer.as_array_buffer(global));
+            let dictionary = dictionary_buf.as_ref().map(|buf| buf.byte_slice());
 
             let err = self
                 .stream

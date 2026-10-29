@@ -14,6 +14,7 @@ use bun_jsc::{
 use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
+use crate::generated_bindgen::quic::EndpointOptions;
 use crate::jsc_hooks::timer_all_mut as timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
@@ -1097,7 +1098,7 @@ impl QuicEndpoint {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        options: JsLocal<'a>,
+        options: &EndpointOptions<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
@@ -1204,85 +1205,64 @@ impl QuicEndpoint {
             (*raw).vtable.set(Some(vt));
         }
 
-        let options = options.to_js();
-        if options.is_object() {
-            if let Some(addr_js) = options
-                .get(global, "address")?
-                .filter(|v| !v.is_empty_or_undefined_or_null())
-            {
-                if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
-                    let stored = StoredAddr::from_socket_address(addr);
-                    if let Some((_, port, ip)) = stored.decode() {
-                        use core::fmt::Write;
-                        let mut host = String::new();
-                        match ip.len() {
-                            4 => {
-                                let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
-                            }
-                            16 => {
-                                let segs: [u16; 8] = core::array::from_fn(|i| {
-                                    u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
-                                });
-                                let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
-                            }
-                            _ => {}
-                        }
-                        let mut host_nul = host.into_bytes();
-                        host_nul.push(0);
-                        // SAFETY: `raw` is uniquely owned here.
-                        unsafe {
-                            (*raw).bind_config.set(BindConfig {
-                                host: host_nul,
-                                port,
-                            })
-                        };
+        if let Some((addr, _)) = options.address {
+            let stored = StoredAddr::from_socket_address(addr);
+            if let Some((_, port, ip)) = stored.decode() {
+                use core::fmt::Write;
+                let mut host = String::new();
+                match ip.len() {
+                    4 => {
+                        let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
                     }
-                }
-            }
-            if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
-                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
-                {
-                    // SAFETY: `raw` is uniquely owned here; the Strong keeps
-                    // the BlockList wrapper (and thus the native object)
-                    // alive for the endpoint's lifetime.
-                    unsafe {
-                        (*raw).block_list.set(Some(bl.as_ptr()));
-                        (*raw)
-                            .block_list_js
-                            .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js, global)));
+                    16 => {
+                        let segs: [u16; 8] = core::array::from_fn(|i| {
+                            u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
+                        });
+                        let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
                     }
+                    _ => {}
                 }
+                let mut host_nul = host.into_bytes();
+                host_nul.push(0);
+                // SAFETY: `raw` is uniquely owned here.
+                unsafe {
+                    (*raw).bind_config.set(BindConfig {
+                        host: host_nul,
+                        port,
+                    })
+                };
             }
-            if let Some(policy) = options
-                .get(global, "blockListPolicy")?
-                .filter(|v| v.is_string())
-            {
-                let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
-                // SAFETY: as above.
-                unsafe { (*raw).block_list_allow.set(policy == b"allow") };
+        }
+        if let Some((bl, bl_js)) = options.block_list {
+            // SAFETY: `raw` is uniquely owned here; the Strong keeps
+            // the BlockList wrapper (and thus the native object)
+            // alive for the endpoint's lifetime.
+            unsafe {
+                (*raw)
+                    .block_list
+                    .set(Some(core::ptr::from_ref(bl).cast_mut()));
+                (*raw)
+                    .block_list_js
+                    .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js.to_js(), global)));
             }
-            if let Some(v) = options
-                .get(global, "disableStatelessReset")?
-                .filter(|v| v.is_boolean())
-            {
-                // SAFETY: as above.
-                unsafe { (*raw).disable_stateless_reset.set(v.to_boolean()) };
-            }
-            if let Some(v) = options
-                .get(global, "statelessResetBurst")?
-                .filter(|v| v.is_number())
-            {
-                let burst = v.as_number().max(0.0).min(u32::MAX as f64) as u32;
-                // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_burst.set(burst) };
-            }
-            if let Some(v) = options
-                .get(global, "statelessResetRate")?
-                .filter(|v| v.is_number())
-            {
-                // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
-            }
+        }
+        if let Some(policy) = &options.block_list_policy {
+            let policy = policy.to_owned_slice();
+            // SAFETY: as above.
+            unsafe { (*raw).block_list_allow.set(policy == b"allow") };
+        }
+        if let Some(v) = options.disable_stateless_reset {
+            // SAFETY: as above.
+            unsafe { (*raw).disable_stateless_reset.set(v) };
+        }
+        if let Some(v) = options.stateless_reset_burst {
+            let burst = v.max(0.0).min(u32::MAX as f64) as u32;
+            // SAFETY: as above.
+            unsafe { (*raw).stateless_reset_burst.set(burst) };
+        }
+        if let Some(v) = options.stateless_reset_rate {
+            // SAFETY: as above.
+            unsafe { (*raw).stateless_reset_rate.set(v.max(0.0)) };
         }
 
         let state_ptr = alloc_exposed_array_buffer(
@@ -2278,7 +2258,7 @@ impl QuicEndpoint {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        address: JsLocal<'_>,
+        address: Option<&crate::socket::SocketAddress>,
         options: JsLocal<'_>,
         session_ticket: JsLocal<'_>,
     ) -> JsResult<JSValue> {
@@ -2294,10 +2274,9 @@ impl QuicEndpoint {
         if !self.ensure_bound(global, this_value.to_js())? {
             return Ok(JSValue::UNDEFINED);
         }
-        let address = address.to_js();
         let options = options.to_js();
         let session_ticket = session_ticket.to_js();
-        let Some(addr) = address.as_class_ref::<crate::socket::SocketAddress>() else {
+        let Some(addr) = address else {
             return Err(global
                 .err(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -2633,7 +2612,7 @@ impl QuicEndpoint {
         &self,
         cx: &mut JsScope<'_>,
         entries: JsLocal<'_>,
-        replace: JsLocal<'_>,
+        replace: bool,
     ) -> JsResult<()> {
         let global = cx.global();
         if self.closed.get() {
@@ -2645,7 +2624,6 @@ impl QuicEndpoint {
                 .throw());
         }
         let entries = entries.to_js();
-        let replace = replace.to_js();
         if !entries.is_object() {
             return Err(global
                 .err(
@@ -2660,7 +2638,7 @@ impl QuicEndpoint {
         }
         let built = Self::build_sni_contexts(global, entries, &alpn)?;
         self.sni_contexts.with_mut(|map| {
-            if replace.to_boolean() {
+            if replace {
                 map.clear();
             }
             for (host, ctx) in built {

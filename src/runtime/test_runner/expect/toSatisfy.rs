@@ -11,7 +11,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         predicate: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         // Not `matcher_prelude`: toSatisfy bypasses `get_value` (no .resolves/.rejects handling).
         let this = self.post_match_guard(global);
@@ -39,7 +39,7 @@ impl Expect {
         let pass = (result.is_boolean() && result.to_boolean()) != not;
 
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // Formatter impls Drop.

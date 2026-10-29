@@ -8,7 +8,7 @@ const data = b.bytes({
   refuse: ["undefined", "null"],
 });
 /** A seed that is neither a number nor a BigInt is not converted: it is 0. */
-const seed = b.any;
+const seed = b.opaque;
 const unseeded32 = { args: { data }, returns: b.u32 };
 const seeded32 = { args: { data, seed }, returns: b.u32, length: 1 };
 const seeded64 = { args: { data, seed }, returns: b.u64.asBigInt, length: 1 };

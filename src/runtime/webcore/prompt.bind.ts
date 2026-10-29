@@ -9,8 +9,8 @@ export const alert = b.fn({ args: { message } });
 export const confirm = b.fn({ args: { message }, returns: b.bool });
 /** An empty answer returns `defaultValue` as it is. */
 export const prompt = b.fn({
-  args: { message, defaultValue: b.any.ifPassed },
-  returns: b.any,
+  args: { message, defaultValue: b.opaque.ifPassed },
+  returns: b.opaque,
   capability: "js",
   throws: true,
 });

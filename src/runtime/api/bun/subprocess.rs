@@ -56,6 +56,7 @@ pub(crate) use bun_io::MaxBuf;
 bun_output::declare_scope!(Subprocess, visible);
 bun_output::declare_scope!(IPC, visible);
 
+use crate::generated_bindgen::subprocess::KillSignal;
 pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
 
 /// Platform-dependent stdio result type.
@@ -639,7 +640,7 @@ impl Subprocess<'_> {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        signal: JsLocal<'_>,
+        signal: KillSignal,
     ) -> JsResult<()> {
         let global_this = cx.global();
         // Safe: this method can only be called while the object is alive (reachable from JS)
@@ -649,7 +650,7 @@ impl Subprocess<'_> {
 
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal.to_js(), global_this)?;
+        let sig = signal_code(global_this, signal)?;
 
         match self.try_kill(sig) {
             bun_sys::Result::Ok(()) => {}
@@ -1410,6 +1411,66 @@ impl Subprocess<'_> {
 
     pub(crate) fn ipc(&self) -> Option<&IPC::SendQueue> {
         self.ipc_data.get().as_deref()
+    }
+}
+
+pub(crate) fn signal_code(
+    global_this: &JSGlobalObject,
+    signal: KillSignal,
+) -> JsResult<SignalCode> {
+    match signal {
+        KillSignal::Number(sig64) => {
+            // Node does this:
+            if sig64.is_nan() {
+                return Ok(SignalCode::DEFAULT);
+            }
+
+            // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
+            if sig64.is_infinite() || sig64.trunc() != sig64 {
+                return Err(global_this.throw_invalid_arguments(format_args!("Unknown signal")));
+            }
+
+            if sig64 < 0.0 {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Invalid signal: must be >= 0")));
+            }
+
+            if sig64 > 31.0 {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Invalid signal: must be < 32")));
+            }
+
+            // SignalCode is non-exhaustive over `u8`, so construct via the public
+            // ctor instead of a transmute.
+            Ok(SignalCode(sig64 as u8))
+        }
+        KillSignal::Name(name) => {
+            if name.length() == 0 {
+                return Ok(SignalCode::DEFAULT);
+            }
+            if let Some(code) = bun_core::SignalCode::from_name(name.to_utf8().slice()) {
+                return Ok(SignalCode::of(code));
+            }
+            // Expected-names list
+            // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
+            // canonical signal X-macro so names are never re-spelled.
+            let names = bun_core::SignalCode::ALL;
+            let mut one_of = std::string::String::from("'");
+            for (i, entry) in names.iter().enumerate() {
+                one_of.push_str(entry.name());
+                one_of.push('\'');
+                if i < names.len() - 2 {
+                    one_of.push_str(", '");
+                } else if i == names.len() - 2 {
+                    one_of.push_str(" or '");
+                }
+            }
+            Err(global_this.throw_invalid_arguments(format_args!("signal must be one of {one_of}")))
+        }
+        KillSignal::None => Ok(SignalCode::DEFAULT),
+        KillSignal::Other => Err(global_this.throw_invalid_arguments(format_args!(
+            "Invalid signal: must be a string or an integer"
+        ))),
     }
 }
 

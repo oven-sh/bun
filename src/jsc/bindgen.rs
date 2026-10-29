@@ -9,7 +9,8 @@ use bun_core::EncodedSlice;
 
 use crate::{
     ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSArray, JSGlobalObject, JSObject,
-    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    JSString, JSValue, JsError, JsResult, JsThread, PinnedArrayBuffer, ThreadIsolated,
+    ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -114,6 +115,12 @@ impl<'a> JsHeap<'a> {
             array.put_index(global, index as u32, value?)?;
         }
         Ok(JsLocal::from_raw(array))
+    }
+
+    /// A string that shares the characters of `string`.
+    #[inline]
+    pub fn create_string(&self, string: &bun_core::String) -> Result<'a, JsLocal<'a, JSString>> {
+        JsLocal::from_js_result(crate::StringJsc::to_js(string, self.global_object()))
     }
 
     #[inline]
@@ -436,7 +443,7 @@ impl<'a, T> JsLocal<'a, T> {
 
     /// # Safety
     /// As [`Self::from_extern`], or `value` is empty: the caller has no such argument.
-    // Generated bindings call it for a `b.any.orAbsent` argument of a function with a Rust body.
+    // Generated bindings call it for a `b.opaque.orAbsent` argument of a function with a Rust body.
     #[cfg_attr(mordant, allow(unused_pub))]
     #[doc(hidden)]
     #[inline(always)]
@@ -462,18 +469,6 @@ impl<'a, T> JsLocal<'a, T> {
     }
 }
 
-/// SAFETY: `values` are `count` non-empty `T`s that something holds for the call `heap` belongs to.
-#[doc(hidden)]
-#[inline(always)]
-pub unsafe fn rest_from_extern<'a, T>(
-    values: *const JSValue,
-    count: usize,
-    _: &JsHeap<'a>,
-) -> &'a [JsLocal<'a, T>] {
-    // SAFETY: forwarded.
-    unsafe { JsLocal::slice_from_raw_parts(values, count) }
-}
-
 impl<'a> JsLocal<'a> {
     pub const UNDEFINED: Self = JsLocal(JSValue::UNDEFINED, PhantomData, PhantomData);
     pub const NULL: Self = JsLocal(JSValue::NULL, PhantomData, PhantomData);
@@ -485,7 +480,7 @@ impl<'a> JsLocal<'a> {
         Self::from_raw(value)
     }
 
-    /// A `b.any.variadic` argument as plain `JSValue`s, for the older API.
+    /// A `b.rest(b.opaque)` argument as plain `JSValue`s, for the older API.
     #[inline(always)]
     pub fn to_js_slice(values: &[Self]) -> &[JSValue] {
         // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
@@ -502,6 +497,96 @@ impl<'a> JsLocal<'a> {
         self.0.is_callable().then(|| JsLocal::from_raw(self.0))
     }
 }
+
+/// Runs a generated conversion, which returns false if it threw.
+#[doc(hidden)]
+#[inline(always)]
+pub fn call_conversion<'a>(
+    cx: &mut JsScope<'a>,
+    convert: impl FnOnce(*mut JSGlobalObject) -> bool,
+) -> Result<'a, ()> {
+    let global = cx.heap.global_ptr();
+    crate::call_false_is_throw(cx.heap.global_object(), || convert(global)).map_err(Error::pending)
+}
+
+type ConvertFn<'a, T> = fn(&mut JsScope<'a>, JSValue) -> Result<'a, T>;
+
+/// Runs a generated conversion of `value`, or of a member of it.
+#[doc(hidden)]
+#[inline]
+pub fn convert_with<'a, V, T>(
+    global: &JSGlobalObject,
+    value: JsLocal<'a, V>,
+    convert: ConvertFn<'a, T>,
+) -> JsResult<T> {
+    Deferred {
+        value: value.0,
+        convert,
+    }
+    .convert(global)
+}
+
+/// An argument the schema declares `.deferred`: the body says when it is converted.
+pub struct Deferred<'a, T> {
+    value: JSValue,
+    convert: ConvertFn<'a, T>,
+}
+impl<T> Clone for Deferred<'_, T> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for Deferred<'_, T> {}
+
+impl<'a, T> Deferred<'a, T> {
+    /// # Safety
+    /// Something holds `value` for the call `heap` belongs to, and `convert` takes it: it is empty
+    /// only for `.ifPassed`.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn from_extern(value: JSValue, _: &JsHeap<'a>, convert: ConvertFn<'a, T>) -> Self {
+        Deferred { value, convert }
+    }
+
+    /// Throws what the conversion of an argument throws. Runs JavaScript if the type coerces.
+    #[inline]
+    pub fn convert(self, global: &JSGlobalObject) -> JsResult<T> {
+        // SAFETY: `JsScope` is zero-sized, at the address of the global object, and the call `'a`
+        // is still running: it holds `self.value`.
+        let cx = unsafe { &mut *global.as_mut_ptr().cast::<JsScope<'a>>() };
+        (self.convert)(cx, self.value).map_err(|error| error.into_js_error(global))
+    }
+}
+
+impl<'a> JsLocal<'a, JSObject> {
+    /// `None` for what is not an object.
+    #[inline]
+    pub fn from_js(_: &'a JSGlobalObject, value: JSValue) -> Option<Self> {
+        value.is_object().then(|| JsLocal::from_raw(value))
+    }
+}
+
+impl<'a> JsLocal<'a, crate::JSBigInt> {
+    #[inline]
+    pub fn as_big_int(self) -> &'a crate::JSBigInt {
+        crate::JSBigInt::from_js(self.0).unwrap()
+    }
+}
+
+/// Marks a [`JsLocal`] that is a string or a `String` object.
+pub enum StringLike {}
+
+impl JsLocal<'_, StringLike> {
+    /// As [`JSValue::to_js_string_view`].
+    #[inline]
+    pub fn to_js_string_view(self, global: &JSGlobalObject) -> JsResult<crate::JSStringView<'_>> {
+        self.0.to_js_string_view(global)
+    }
+}
+
+/// Marks a [`JsLocal`] that is a number.
+pub enum Number {}
 
 impl<'a> JsLocal<'a> {
     /// A string, not a `String` object.
@@ -690,6 +775,11 @@ impl<'a> JsLocal<'a, Callable> {
 pub enum BufferSource {}
 
 impl<'a> JsLocal<'a, BufferSource> {
+    #[inline]
+    pub fn as_array_buffer(self, global: &JSGlobalObject) -> ArrayBuffer {
+        self.0.as_array_buffer(global).unwrap()
+    }
+
     /// The bytes as they are now. A detached or out-of-bounds view is empty.
     #[inline]
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
@@ -719,10 +809,7 @@ impl<'a> JsLocal<'a, BufferSource> {
 /// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
-    wrapped: *mut c_void,
-    _: &JsHeap<'a>,
-) -> &'a T {
+pub unsafe fn class_ref_from_extern<'a, T>(wrapped: *mut c_void, _: &JsHeap<'a>) -> &'a T {
     // SAFETY: forwarded.
     unsafe { &*wrapped.cast::<T>() }
 }
@@ -1158,6 +1245,10 @@ pub mod to_js {
         u16: u16 => |n| JSValue::js_number_from_int32(i32::from(n));
         i32: i32 => JSValue::js_number_from_int32;
         u32: u32 => |n| JSValue::js_number_from_uint64(u64::from(n));
+        i64: i64 => |n| match i32::try_from(n) {
+            Ok(n) => JSValue::js_number_from_int32(n),
+            Err(_) => JSValue::js_double_number(n as f64),
+        };
         u64: u64 => JSValue::js_number_from_uint64;
         usize: usize => |n| JSValue::js_number_from_uint64(n as u64);
         f64: f64 => |n| JSValue::js_number(JSValue::purify_nan(n));

@@ -901,21 +901,19 @@ impl Listener {
         }
     }
 
-    pub(crate) fn get_fd<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
-        let fd = match self.listener.get() {
+    pub(crate) fn get_fd(&self) -> i64 {
+        match self.listener.get() {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
                 // On Windows the listening socket fd is a system-kind SOCKET
                 // handle; routing it through `.uv()` panics for anything but
-                // stdio. The sys_jsc helper branches on kind
-                // (system→u64, uv→i32, posix→i32).
+                // stdio. The sys_jsc helper branches on kind.
                 use bun_sys_jsc::FdJsc as _;
-                socket.fd().to_js_without_making_lib_uv_owned()
+                socket.fd().to_number_without_making_lib_uv_owned()
             }
-            _ => JSValue::js_number(-1.0),
-        };
-        JsLocal::new(heap, fd)
+            _ => -1,
+        }
     }
 
     pub(crate) fn r#ref<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {

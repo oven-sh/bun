@@ -5,7 +5,7 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
 use crate::generated_bindgen::socket_body::{
-    AnySocket, BunSocket, DuplexTLSOptions, SocketHandle, js_TCPSocket, js_TLSSocket,
+    AnySocket, BunSocket, CipherInfo, DuplexTLSOptions, SocketHandle, js_TCPSocket, js_TLSSocket,
 };
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
@@ -26,7 +26,7 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, SystemError
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
-use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
+use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -760,35 +760,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    pub(crate) fn set_keep_alive(
-        &self,
-        cx: &mut JsScope<'_>,
-        enable: bool,
-        initial_delay: JsLocal<'_>,
-    ) -> JsResult<bool> {
-        let global = cx.global();
-
+    pub(crate) fn set_keep_alive(&self, enable: bool, initial_delay_ms: u32) -> bool {
         // `initialDelay` is documented in milliseconds; TCP_KEEPIDLE is seconds.
-        let initial_delay_ms = u32::try_from(global.validate_integer_range(
-            initial_delay.to_js(),
-            0i32,
-            bun_sql_jsc::jsc::IntegerRange {
-                min: 0,
-                field_name: b"initialDelay",
-                ..Default::default()
-            },
-        )?)
-        .unwrap();
         let initial_delay = initial_delay_ms / 1000;
         log!("setKeepAlive({}, {})", enable, initial_delay);
 
-        Ok(self.socket.get().set_keep_alive(enable, initial_delay))
+        self.socket.get().set_keep_alive(enable, initial_delay)
     }
 
-    pub(crate) fn set_no_delay(&self, no_delay: &[JsLocal<'_>]) -> bool {
-        let enabled = no_delay
-            .first()
-            .is_none_or(|enabled| enabled.to_js().to_boolean());
+    pub(crate) fn set_no_delay(&self, no_delay: Option<bool>) -> bool {
+        let enabled = no_delay.unwrap_or(true);
         log!("setNoDelay({})", enabled);
 
         self.socket.get().set_no_delay(enabled)
@@ -797,29 +778,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `_handle.setTypeOfService(tos)` - returns 0 on success or a negative
     /// platform errno (Node's TCPWrap::SetTypeOfService convention, so the JS
     /// layer can hand it to ErrnoException).
-    pub(crate) fn set_type_of_service(
-        &self,
-        cx: &mut JsScope<'_>,
-        tos: JsLocal<'_>,
-    ) -> JsResult<i32> {
-        let global = cx.global();
-        let arg = tos.to_js();
-        // node:net rejects NaN with ERR_INVALID_ARG_TYPE, but `validate_integer_range` maps it to the default.
-        if arg.is_number() && arg.as_number().is_nan() {
-            return Err(global.throw_invalid_property_type_value(b"tos", b"integer", arg));
-        }
-        let tos: i32 = global.validate_integer_range(
-            arg,
-            0i32,
-            bun_sql_jsc::jsc::IntegerRange {
-                min: 0,
-                max: 255,
-                field_name: b"tos",
-                ..Default::default()
-            },
-        )?;
+    pub(crate) fn set_type_of_service(&self, tos: i32) -> i32 {
         log!("setTypeOfService({})", tos);
-        Ok(self.socket.get().set_tos(tos))
+        self.socket.get().set_tos(tos)
     }
 
     /// `_handle.getTypeOfService()` - returns the value (>= 0) or a negative
@@ -2302,22 +2263,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    pub(crate) fn get_listener<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
-        let Some(handlers) = self.handlers.get() else {
-            return JsLocal::UNDEFINED;
-        };
+    pub(crate) fn get_listener<'a>(&self, heap: &JsHeap<'a>) -> Option<JsLocal<'a>> {
+        let handlers = self.handlers.get().as_ref()?;
 
         if handlers.mode != super::SocketMode::Server || self.socket.get().is_detached() {
-            return JsLocal::UNDEFINED;
+            return None;
         }
 
-        let Some(listener) = handlers.listener() else {
-            return JsLocal::UNDEFINED;
-        };
-        match listener.this_value.get().try_get() {
-            Some(listener) => JsLocal::new(heap, listener),
-            None => JsLocal::UNDEFINED,
-        }
+        let listener = handlers.listener()?.this_value.get().try_get()?;
+        Some(JsLocal::new(heap, listener))
     }
 
     pub(crate) fn get_ready_state(&self) -> i32 {
@@ -2369,15 +2323,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         })
     }
 
-    pub(crate) fn get_authorization_error(&self, cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn get_authorization_error(&self, cx: &mut JsScope<'_>) -> Option<JSValue> {
         let global = cx.global();
 
         let socket = self.socket.get();
         if socket.is_detached() {
             // The verdict must survive the forced close.
-            return self
-                .stored_verify_error_to_js(global)
-                .unwrap_or(JSValue::NULL);
+            return self.stored_verify_error_to_js(global);
         }
 
         // this error can change if called in different stages of hanshake
@@ -2388,16 +2340,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             || ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH
         {
             if let Some(stored) = self.stored_verify_error_to_js(global) {
-                return stored;
+                return Some(stored);
             }
             if ssl_error.error_no == 0 {
-                return JSValue::NULL;
+                return None;
             }
         } else if self.flags.get().contains(Flags::HANDSHAKE_COMPLETE) && socket.is_shutdown() {
             // What `on_handshake` reported stands.
-            return self
-                .stored_verify_error_to_js(global)
-                .unwrap_or(JSValue::NULL);
+            return self.stored_verify_error_to_js(global);
         }
 
         let code: &[u8] = ssl_error.code_bytes();
@@ -2409,7 +2359,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ..Default::default()
         };
 
-        fallback.to_error_instance(global)
+        Some(fallback.to_error_instance(global))
     }
 
     pub(crate) fn write(
@@ -2419,11 +2369,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         byte_offset: JsLocal<'_>,
         byte_length: JsLocal<'_>,
         encoding: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<i32> {
         let global = cx.global();
 
         if self.socket.get().is_detached() {
-            return Ok(JSValue::js_number_from_int32(-1));
+            return Ok(-1);
         }
 
         let result = self.write_or_end::<false>(
@@ -2437,7 +2387,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(match result {
             WriteResult::Fail => return Err(jsc::JsError::Thrown),
             // The errno of a fatal send (< -1) is for node:net; this API documents -1.
-            WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
+            WriteResult::Success { wrote, .. } => wrote.max(-1),
         })
     }
 
@@ -2649,12 +2599,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         cx: &mut JsScope<'_>,
         data: JsLocal<'_>,
         encoding: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<bool> {
         let global = cx.global();
         if self.socket.get().is_detached() {
             self.buffered_data_for_node_net
                 .with_mut(|b| b.clear_and_free());
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         }
 
         // `write_or_end_buffered` reaches `internal_flush`, which re-enters JS.
@@ -2667,7 +2617,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         let _ = self.internal_flush();
                     }
 
-                    JSValue::from(usize::try_from(wrote.max(0)).expect("int cast") == total)
+                    usize::try_from(wrote.max(0)).expect("int cast") == total
                 }
             };
         Ok(result)
@@ -2698,7 +2648,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // allocator dropped (global mimalloc)
                 data_value,
                 encoding_value,
-                StringObjects::Allow,
             ) {
                 Ok(Some(b)) => b,
                 Ok(None) => {
@@ -3181,11 +3130,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         byte_offset: JsLocal<'_>,
         byte_length: JsLocal<'_>,
         encoding: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<i32> {
         let global = cx.global();
         log!("end");
         if self.socket.get().is_detached() {
-            return Ok(JSValue::js_number(-1.0));
+            return Ok(-1);
         }
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
@@ -3204,7 +3153,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = self.internal_flush();
                 }
-                JSValue::js_number_from_int32(wrote.max(-1))
+                wrote.max(-1)
             }
         };
         Ok(result)
@@ -3273,15 +3222,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    pub(crate) fn get_fd<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
+    pub(crate) fn get_fd(&self) -> i64 {
         // On Windows the fd is a system-kind SOCKET handle; routing it through
         // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
-        // kind (system→u64, uv→i32, posix→i32).
+        // kind.
         use bun_sys_jsc::FdJsc as _;
-        JsLocal::new(
-            heap,
-            self.socket.get().fd().to_js_without_making_lib_uv_owned(),
-        )
+        self.socket
+            .get()
+            .fd()
+            .to_number_without_making_lib_uv_owned()
     }
 
     pub(crate) fn get_bytes_written(&self) -> f64 {
@@ -3698,8 +3647,8 @@ impl TCPSocket {
     pub(crate) fn set_verify_mode(
         &self,
         _: &mut JsScope<'_>,
-        _: JsLocal<'_>,
-        _: JsLocal<'_>,
+        _: Option<bool>,
+        _: Option<bool>,
     ) -> JsResult<()> {
         Ok(())
     }
@@ -3733,8 +3682,8 @@ impl TCPSocket {
     pub(crate) fn get_ephemeral_key_info(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         Ok(JSValue::NULL)
     }
-    pub(crate) fn get_cipher(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn get_cipher(&self) -> Option<CipherInfo> {
+        None
     }
     pub(crate) fn get_tls_peer_finished_message(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
@@ -3742,18 +3691,16 @@ impl TCPSocket {
     pub(crate) fn get_tls_finished_message(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn get_shared_sigalgs(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
-    }
-    pub(crate) fn get_tls_version(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
-        Ok(JSValue::NULL)
+    pub(crate) fn get_shared_sigalgs(&self) {}
+    pub(crate) fn get_tls_version(&self) -> Option<&'static [u8]> {
+        None
     }
     pub(crate) fn set_max_send_fragment(
         &self,
         _: &mut JsScope<'_>,
-        _: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::FALSE)
+        _: Option<f64>,
+    ) -> JsResult<bool> {
+        Ok(false)
     }
     pub(crate) fn get_peer_certificate(
         &self,
@@ -3765,8 +3712,8 @@ impl TCPSocket {
     pub(crate) fn get_certificate(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn get_servername(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn get_servername(&self) -> Option<&[u8]> {
+        None
     }
     pub(crate) fn set_servername(&self, _: &mut JsScope<'_>, _: JsLocal<'_>) -> JsResult<()> {
         Ok(())
@@ -4412,7 +4359,7 @@ pub(crate) fn release_held_flight(socket: SocketHandle<'_>) {
         // The raw half of an `upgradeTLS` pair shares the socket of its TLS half.
         SocketHandle::Tcp(this) => this.socket.get().release_held_flight(),
         SocketHandle::Tls(this) => this.socket.get().release_held_flight(),
-        SocketHandle::Ignored(_) => {}
+        SocketHandle::Other => {}
     }
 }
 
@@ -4511,11 +4458,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     }
     let socket_config: Option<&SSLConfig> = ssl_opts.as_ref();
 
-    let default_data = if options.data.is_undefined() {
-        JSValue::ZERO
-    } else {
-        options.data.to_js()
-    };
+    let default_data = options.data.map_or(JSValue::ZERO, JsLocal::to_js);
 
     let reject_unauthorized = upgrade_reject_policy(
         handlers.vm,
@@ -4706,7 +4649,7 @@ pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {
     match socket {
         SocketHandle::Tcp(this) => this.socket.get().is_named_pipe(),
         SocketHandle::Tls(this) => this.socket.get().is_named_pipe(),
-        SocketHandle::Ignored(_) => false,
+        SocketHandle::Other => false,
     }
 }
 
@@ -4714,7 +4657,7 @@ pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
     match socket {
         SocketHandle::Tcp(this) => this.buffered_data_for_node_net.get().len(),
         SocketHandle::Tls(this) => this.buffered_data_for_node_net.get().len(),
-        SocketHandle::Ignored(_) => 0,
+        SocketHandle::Other => 0,
     }
 }
 

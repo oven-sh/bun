@@ -3,8 +3,9 @@
 use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 use crate::bake::jsc;
-use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
+use crate::generated_bindgen::bake_plugins::{BakeMinify, BakeSourceMap, BuildConfigSubsetOptions};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_options_types::schema::api::SourceMapMode;
 use core::ptr::NonNull;
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
@@ -141,45 +142,30 @@ impl BuildConfigSubset {
         global: &JSGlobalObject,
         js_options: JSValue,
     ) -> JsResult<BuildConfigSubset> {
+        let js_options = BuildConfigSubsetOptions::from_js(global, js_options)?;
         let mut options = BuildConfigSubset::default();
 
-        'brk: {
-            let Some(val) = js_options.get_optional::<JSValue>(global, "sourcemap")? else {
-                break 'brk;
+        if let Some(sourcemap) = js_options.sourcemap {
+            options.source_map = match sourcemap {
+                BakeSourceMap::None => SourceMapMode::None,
+                BakeSourceMap::Inline => SourceMapMode::Inline,
+                BakeSourceMap::External => SourceMapMode::External,
+                BakeSourceMap::Linked => SourceMapMode::Linked,
             };
-            if let Some(sourcemap) = source_map_mode_from_js(global, val)? {
-                options.source_map = sourcemap;
-                break 'brk;
-            }
-
-            return Err(crate::node::validators::throw_err_invalid_arg_type(
-                global,
-                format_args!("sourcemap"),
-                "\"inline\" | \"external\" | \"linked\"",
-                val,
-            ));
         }
 
-        'brk: {
-            let Some(minify_options) = js_options.get_optional::<JSValue>(global, "minify")? else {
-                break 'brk;
-            };
-            if minify_options.is_boolean() && minify_options.as_boolean() {
-                options.minify_syntax = Some(minify_options.as_boolean());
-                options.minify_identifiers = Some(minify_options.as_boolean());
-                options.minify_whitespace = Some(minify_options.as_boolean());
-                break 'brk;
+        match js_options.minify {
+            Some(BakeMinify::All(true)) => {
+                options.minify_syntax = Some(true);
+                options.minify_identifiers = Some(true);
+                options.minify_whitespace = Some(true);
             }
-
-            if let Some(value) = minify_options.get_boolean_loose(global, "whitespace")? {
-                options.minify_whitespace = Some(value);
+            Some(BakeMinify::Parts(parts)) => {
+                options.minify_whitespace = parts.whitespace;
+                options.minify_syntax = parts.syntax;
+                options.minify_identifiers = parts.identifiers;
             }
-            if let Some(value) = minify_options.get_boolean_loose(global, "syntax")? {
-                options.minify_syntax = Some(value);
-            }
-            if let Some(value) = minify_options.get_boolean_loose(global, "identifiers")? {
-                options.minify_identifiers = Some(value);
-            }
+            Some(BakeMinify::All(false) | BakeMinify::Other) | None => {}
         }
 
         Ok(options)

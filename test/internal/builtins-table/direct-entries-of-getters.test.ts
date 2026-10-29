@@ -55,7 +55,7 @@ test("a getter is entered at its thunk, which takes the realm and the cell of th
 });
 
 test("it does not matter whether the schema says what the getter answers", async () => {
-  expect(await entriesOf(`proto: { data: { getter: b.any, capability: "js" } }`)).toEqual({
+  expect(await entriesOf(`proto: { data: { getter: b.opaque, capability: "js" } }`)).toEqual({
     "%Thing%.prototype.data": "Bun__Bindgen__ThingPrototypeGetter__data",
   });
 });
@@ -86,7 +86,7 @@ test("a getter whose answer nothing proves is entered at its thunk too: compiled
       proto: {
         name: { getter: b.string.local, capability: "heap" },
         peer: { getter: b.self, capability: "heap" },
-        size: { getter: b.any.returning("number"), capability: "heap" },
+        size: { getter: b.opaque.returning("number"), capability: "heap" },
       },
     `),
   ).toEqual({
@@ -94,7 +94,7 @@ test("a getter whose answer nothing proves is entered at its thunk too: compiled
     "%Thing%.prototype.peer": "Bun__Bindgen__ThingPrototypeGetter__peer",
     "%Thing%.prototype.size": "Bun__Bindgen__ThingPrototypeGetter__size",
   });
-  for (const field of [`b.string.local`, `b.self`, `b.any.returning("number")`]) {
+  for (const field of [`b.string.local`, `b.self`, `b.opaque.returning("number")`]) {
     const [signature] = (await accessorOf(`proto: { size: { getter: ${field}, capability: "heap" } }`)).signatures;
     expect(signature.resultIsDeclaredOnly).toBe(true);
   }
@@ -115,16 +115,18 @@ test("a pure getter touches no heap, throws nothing and writes nothing", async (
     writes: ["ExternalState"],
   });
   // A body without `throws: true` returns no `Result`.
-  expect(await signatureOf(`{ getter: b.any.returning("number"), capability: "heap" }`)).toMatchObject({
+  expect(await signatureOf(`{ getter: b.opaque.returning("number"), capability: "heap" }`)).toMatchObject({
     capability: "heap",
     throws: false,
     writes: ["ExternalState"],
   });
-  expect(await signatureOf(`{ getter: b.any.returning("number"), capability: "heap", throws: true }`)).toMatchObject({
-    capability: "heap",
-    throws: true,
-  });
-  expect(await signatureOf(`{ getter: b.any.returning("number"), capability: "js" }`)).toMatchObject({
+  expect(await signatureOf(`{ getter: b.opaque.returning("number"), capability: "heap", throws: true }`)).toMatchObject(
+    {
+      capability: "heap",
+      throws: true,
+    },
+  );
+  expect(await signatureOf(`{ getter: b.opaque.returning("number"), capability: "js" }`)).toMatchObject({
     capability: "heap",
     throws: true,
   });
@@ -135,13 +137,13 @@ test("a pure getter answers no cell", async () => {
   const hasMore = "size: a pure getter has no capability, throws, cache or passThis";
   expect(await refusal(`{ getter: b.i32.nullable, pure: true }`)).toBe("");
   expect(await refusal(`{ getter: b.u16.optional, pure: true }`)).toBe("");
-  expect(await refusal(`{ getter: b.any, passThis: true, pure: true }`)).toContain(hasMore);
+  expect(await refusal(`{ getter: b.opaque, passThis: true, pure: true }`)).toContain(hasMore);
   expect(await refusal(`{ getter: b.f64, cache: true, pure: true }`)).toContain(hasMore);
   expect(await refusal(`{ getter: b.string, pure: true }`)).toContain("size: a pure getter allocates nothing");
 });
 
 test("a store is entered only where the accessor cannot be replaced", async () => {
-  const handler = `proto: { ondata: { getter: b.any, setter: { capability: "js" }, passThis: true } }`;
+  const handler = `proto: { ondata: { getter: b.opaque, setter: { capability: "js" }, passThis: true } }`;
   expect((await accessorOf(handler)).columns.directEntryOfSetter).toBeUndefined();
   expect((await accessorOf(`lockedObjects: ["prototype"], ${handler}`)).columns.directEntryOfSetter).toMatchObject({
     symbol: "AOT__Bun__Bindgen__ThingPrototypeSetter__ondata",

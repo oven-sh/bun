@@ -5,7 +5,7 @@ export default b.module({ rustPath: "crate::ipc_host" });
 
 export const emitProcessErrorEvent = b.fn({
   export: "Bun__IPC__emitProcessErrorEvent",
-  args: { error: b.any },
+  args: { error: b.opaque },
   capability: "js",
 });
 
@@ -14,19 +14,21 @@ export const MessageTarget = b.union({
   subprocess: Subprocess,
   missing: b.undefined,
   thisProcess: b.null,
-  ignored: b.any,
+  other: b.ignored,
 });
-/** What the other process sent: any value. */
-export const ReceivedMessage = b.union({ object: b.object, primitive: b.any });
+/**
+ * `message` is what the other process sent: any value.
+ * `handle` is what `parseHandle` of `builtins/Ipc.ts` made of the descriptor.
+ */
 export const emitHandleIPCMessage = b.fn({
-  args: { target: MessageTarget, message: ReceivedMessage, handle: b.any },
+  args: { target: MessageTarget, message: b.opaque, handle: b.opaque },
   capability: "js",
   throws: true,
 });
 
 /** `process.send()` */
 export const send = b.fn({
-  args: { message: b.any, handle: b.any, options: b.any, callback: b.any },
+  args: { message: b.opaque, handle: b.opaque, options: b.opaque, callback: b.opaque },
   returns: b.bool,
   capability: "js",
   throws: true,

@@ -1,16 +1,18 @@
 // What a `.bind.ts` file imports as `b`: docs/project/bindgen.mdx
 
 import {
-  AnyType,
   ArrayType,
   BoolType,
   BufferSourceType,
   type BytesOptions,
   ByteSpanType,
   BytesType,
-  CellClass,
+  type CellOptions,
+  CellType,
   type ClassOptions,
   ClassType,
+  type DeferredDictionaryOptions,
+  DeferredDictionaryType,
   type DictionaryOptions,
   DictionaryType,
   DoubleType,
@@ -19,6 +21,7 @@ import {
   FunctionDefinition,
   type FunctionOptions,
   integers,
+  kindsOfCell,
   type MemberOptions,
   ModuleDefinition,
   NamespaceDefinition,
@@ -31,9 +34,12 @@ import {
   type SignatureOptions,
   StringType,
   type Type,
+  type UnionOptions,
   UnionType,
   UnitType,
   type ValueOptions,
+  type WrappedOptions,
+  WrappedType,
 } from "./bindgen-lib-internal.ts";
 
 export type { Capability, Type } from "./bindgen-lib-internal.ts";
@@ -42,17 +48,20 @@ export { null_ as null, undefined_ as undefined };
 /** Strict: only a boolean. `.loose` for `ToBoolean`. */
 export const bool = new BoolType();
 
-/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
-export const { u8, u16, i32, u32, u64, usize } = integers;
+/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`, `.validateIntegerRange()`, `b.i64.asIntN`. As a result, `b.u64.asBigInt`. */
+export const { u8, u16, i32, u32, i64, u64, usize } = integers;
 
 /** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. As a result, `b.f64.asDate`. */
 export const f64 = new DoubleType();
 
+/** A number kept as a JS value, as a `JsLocal<'a, Number>`, for a body that stores it, reports it or has JSC convert it. */
+export { jsNumberType as jsNumber } from "./bindgen-lib-internal.ts";
+
 /** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.local` for the JS string itself. */
 export const string = new StringType();
 
-/** The JS value itself, as a `JsLocal<'a>`. `.stringObjectAsString`, `.orAbsent`. */
-export const any = new AnyType();
+/** Any JS value, handed over as it is, as a `JsLocal<'a>`: the body stores it, hands it on or looks at it itself. `.stringObjectAsString`, `.orAbsent`. As a result, `.returning()`. */
+export { opaqueType as opaque } from "./bindgen-lib-internal.ts";
 
 /** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
 export { callableType as callable } from "./bindgen-lib-internal.ts";
@@ -62,6 +71,9 @@ export { objectType as object } from "./bindgen-lib-internal.ts";
 
 /** An array, as a `JsLocal<'a, JSArray>`: `b.array(T)` converts its elements. */
 export { jsArrayType as jsArray } from "./bindgen-lib-internal.ts";
+
+/** A string or a `String` object kept as a JS value, as a `JsLocal<'a, StringLike>`. Its text is `b.string.allowStringObject`. */
+export { stringLikeType as stringLike } from "./bindgen-lib-internal.ts";
 export { class_ as class };
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
@@ -70,8 +82,40 @@ export const bufferSource = new BufferSourceType();
 /** Bytes that C++ passes to one of a class's `calledFromCpp`. */
 export const byteSpan = new ByteSpanType();
 
-/** An internal field that holds one `JSCell` subclass: `b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h")`. */
-export const cell = (cpp: string, header: string) => new CellClass(cpp, header);
+/** An instance of a `JSCell` subclass, as a `JsLocal<'a, ..>` of `rustPath`: `b.cell("JSC::JSMap", "JavaScriptCore/JSMap.h", { rustPath: "bun_jsc::JSMap" })`. */
+export const cell = (cpp: string, header: string, options?: CellOptions) => new CellType(cpp, header, options);
+
+/** What an instance of a hand-written C++ wrapper class wraps, as a `&'a T` of `rustPath`: `b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" })`. `.shared`. */
+export const wrapped = (cpp: string, header: string, options: WrappedOptions) => new WrappedType(cpp, header, options);
+
+/** A promise, as a `JsLocal<'a, JSPromise>`. */
+export const promise = cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h", {
+  rustPath: "bun_jsc::JSPromise",
+  tsType: "Promise<any>",
+});
+
+/** A `DataView`, as a `JsLocal<'a, JSObject>`. */
+export const dataView = cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", {
+  rustPath: "bun_jsc::JSObject",
+  tsType: "DataView",
+});
+
+/** An `AbortSignal`, as a `&'a AbortSignal`. */
+export const abortSignal = wrapped("WebCore::JSAbortSignal", "JSAbortSignal.h", { rustPath: "bun_jsc::AbortSignal" });
+
+/** A `String` object, not converted: that runs its `toString`. */
+export const stringObject = cell("JSC::StringObject", "JavaScriptCore/StringObject.h", {
+  rustPath: "bun_jsc::JSObject",
+  reportedAs: "String",
+  tsType: "String",
+});
+
+/** A BigInt kept as a JS value, as a `JsLocal<'a, JSBigInt>`. */
+export const bigInt = cell("JSC::JSBigInt", "JavaScriptCore/JSBigInt.h", {
+  rustPath: "bun_jsc::JSBigInt",
+  reportedAs: "bigint",
+  tsType: "bigint",
+});
 
 /** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
 export const bytes = (options: BytesOptions) => new BytesType(options);
@@ -82,7 +126,7 @@ export const blob = new RefType(
   "globalThis.Blob",
   "bun_jsc::webcore_types::Blob",
   "Bindgen/IDLConvertBlob.h",
-  [{ cpp: "Bun::Bindgen::Generated::JSBlob" }],
+  kindsOfCell("Bun::Bindgen::Generated::JSBlob"),
   null,
 );
 
@@ -96,13 +140,15 @@ export const nativePromiseContext = (rustPath: string) => new NativePromiseConte
 const null_ = new UnitType("null");
 /** `undefined`, as an alternative of a union. */
 const undefined_ = new UnitType("undefined");
+/** Every value the alternatives before it do not take, as the last alternative of a union. It carries nothing. */
+export const ignored = new UnitType("ignored");
 
 export const array = (element: Type) => new ArrayType(element);
 
 /** A result only: an object with a property for each `(key, value)` the body gives. */
 export const record = (value: Type) => new RecordResultType(value);
 
-/** The last argument: it and every one after it, as a `&'a [T]`. `element` is `b.any` or `b.string.local`. */
+/** The last argument: it and every one after it, as a `&'a [T]`. `element` is `b.opaque` or `b.string.local`. */
 export const rest = (element: Type) => new RestType(element);
 
 // A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.
@@ -110,11 +156,23 @@ export const rest = (element: Type) => new RestType(element);
 /** An array in place of a value lists several spellings of it; the first is the one given back to JS. `{ RgbArray: "[rgb]" }` names the variants. */
 export const enumeration = (values: EnumerationValues) => new EnumerationType(values);
 
-export const dictionary = (members: Record<string, Type | MemberOptions>, options?: DictionaryOptions) =>
-  new DictionaryType(members, options);
+export function dictionary(
+  members: Record<string, Type | MemberOptions>,
+  options: DeferredDictionaryOptions,
+): DeferredDictionaryType;
+export function dictionary(members: Record<string, Type | MemberOptions>, options?: DictionaryOptions): DictionaryType;
+export function dictionary(
+  members: Record<string, Type | MemberOptions>,
+  options?: DictionaryOptions | DeferredDictionaryOptions,
+) {
+  return options && "deferred" in options
+    ? new DeferredDictionaryType(members, options)
+    : new DictionaryType(members, options);
+}
 
 /** A value goes to the first alternative, in written order, that takes its kind. */
-export const union = (alternatives: Record<string, Type>) => new UnionType(alternatives);
+export const union = (alternatives: Record<string, Type>, options?: UnionOptions) =>
+  new UnionType(alternatives, options);
 
 /** A JS class whose state is the Rust struct at `options.rustPath`, stored inside the wrapper object. */
 const class_ = (options: ClassOptions) => new ClassType(options);

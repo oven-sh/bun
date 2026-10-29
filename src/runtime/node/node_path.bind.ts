@@ -8,7 +8,7 @@ const text = b.string.allowStringObject.local;
 const result = b.string.local;
 
 /** A UNC root that is longer than any path of the system is answered with the error, which is not thrown. */
-const resultOrError = b.any;
+const resultOrError = b.opaque;
 
 /** An operand that is refused is described in the message of the error: that reads its constructor.name or prints it the way console.log does. Nothing keeps it. */
 const describedInMessage = (...membersRead: string[]) => [table.printedByFormatter("constructor", ...membersRead)];
@@ -91,7 +91,7 @@ const resolve = (returns: b.Type) =>
     name: "resolve",
     namedAsBound: true,
     length: 1,
-    args: { paths: b.rest(b.any.stringObjectAsString) },
+    args: { paths: b.rest(b.opaque.stringObjectAsString) },
     returns,
     capability: "heap",
     throws: true,
@@ -104,7 +104,7 @@ const format = () =>
     name: "format",
     namedAsBound: true,
     length: 1,
-    args: { pathObject: b.any },
+    args: { pathObject: b.opaque },
     returns: result,
     capability: "js",
     throws: true,
@@ -127,8 +127,8 @@ export const toNamespacedPathPosix = b.fn({
   name: "toNamespacedPath",
   namedAsBound: true,
   length: 1,
-  args: { path: b.any },
-  returns: b.any,
+  args: { path: b.opaque },
+  returns: b.opaque,
   capability: "heap",
   uses: { path: [table.returned] },
   ...ofOperandsAlone,
@@ -149,8 +149,8 @@ export const toNamespacedPathWin32 = b.fn({
   name: "toNamespacedPath",
   namedAsBound: true,
   length: 1,
-  args: { path: b.any },
-  returns: b.any,
+  args: { path: b.opaque },
+  returns: b.opaque,
   capability: "js",
   throws: true,
   runsOnlyOperandCode: true,

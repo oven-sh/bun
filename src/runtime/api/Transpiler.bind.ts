@@ -2,8 +2,8 @@ import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
 const flag = b.bool.loose.optional;
-/** `b.any`: a `String` object's `toString()` has to run after the code is copied. */
-const loader = b.any;
+/** `b.opaque`: a `String` object's `toString()` has to run after the code is copied. */
+const loader = b.opaque;
 
 export const TranspilerExternal = b.union({
   name: b.string.allowStringObject,
@@ -21,19 +21,19 @@ export const TranspilerSourcemap = b.union({ enabled: b.bool, mode: b.string.loo
 
 /** `eliminate` ignores non-strings. Each value of `replace` is converted to an expression. */
 export const TranspilerExports = b.dictionary(
-  { eliminate: b.any.emptyStringAsNull, replace: b.any.emptyStringAsNull },
+  { eliminate: b.opaque.emptyStringAsNull, replace: b.opaque.emptyStringAsNull },
   { allowArray: true },
 );
 
 /** `define` is a record. `tsconfig` and `macro` are a JSON string or an object to stringify. */
 export const TranspilerOptions = b.dictionary(
   {
-    define: b.any.emptyStringAsNull,
+    define: b.opaque.emptyStringAsNull,
     external: TranspilerExternal.nullable,
-    loader: b.any,
+    loader: b.opaque,
     target: b.string.utf8.optional,
-    tsconfig: b.any,
-    macro: b.any.emptyStringAsNull,
+    tsconfig: b.opaque,
+    macro: b.opaque.emptyStringAsNull,
     autoImportJSX: flag,
     allowBunRuntime: flag,
     inline: { type: flag, rustName: "inlining" },
@@ -52,9 +52,9 @@ export const TranspilerOptions = b.dictionary(
 );
 
 const code = b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" });
-const method = { returns: b.any, capability: "js", throws: true, length: 2 } as const;
+const method = { returns: b.object, capability: "js", throws: true, length: 2 } as const;
 const expected = (name: string) => ({ code: `Expected code to be a string or Uint8Array for '${name}'.` });
-const listOfNames = b.any.returning(table.plainData.fresh.spec);
+const listOfNames = b.object.returning(table.plainData.fresh.spec);
 const promiseOfText = table.instance("Promise").holding({ value: table.string, reason: table.any }).fresh;
 
 export const Transpiler = b.class({
@@ -80,12 +80,12 @@ export const Transpiler = b.class({
       ...method,
       args: { code, loader },
       expected: expected("transform"),
-      returns: b.any.returning(promiseOfText.spec),
+      returns: b.promise.returning(promiseOfText.spec),
       passThis: true,
     },
     transformSync: {
       ...method,
-      args: { code, loaderOrContext: b.any, context: b.any },
+      args: { code, loaderOrContext: b.opaque, context: b.opaque },
       expected: expected("transformSync"),
       returns: b.string.local,
     },

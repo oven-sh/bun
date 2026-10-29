@@ -15,16 +15,20 @@ const method = { capability: "js", throws: true, passThis: true, length: 0 } as 
 const write = {
   ...method,
   args: {
-    flush: b.any,
-    in_: b.any,
-    inOff: b.any,
-    inLen: b.any,
-    out: b.any,
-    outOff: b.any,
-    outLen: b.any,
+    flush: b.opaque,
+    in_: b.opaque,
+    inOff: b.opaque,
+    inLen: b.opaque,
+    out: b.opaque,
+    outOff: b.opaque,
+    outLen: b.opaque,
   },
 } as const;
 const int32 = b.i32.validateInteger();
+/** `init` first refuses a stream that is busy or closed, so these are `.deferred`. */
+const callback = b.callable.deferred;
+const dictionary = b.bufferSource.allowShared.optional.deferred;
+const dictionaryExpected = ["Buffer", "TypedArray", "DataView"];
 
 /** The native handle of a `node:zlib` stream: `kHandle` in `src/js/node/zlib.ts`. */
 const compressionStream = <Init extends object, Params extends object>(
@@ -43,7 +47,7 @@ const compressionStream = <Init extends object, Params extends object>(
     proto: {
       close: {},
       init: { ...method, ...init },
-      onerror: { getter: b.any, setter: { capability: "js" }, passThis: true },
+      onerror: { getter: b.opaque, setter: { capability: "js" }, passThis: true },
       params,
       reset: method,
       write,
@@ -60,10 +64,11 @@ export const NativeZlib = compressionStream(
       level: int32,
       memLevel: int32,
       strategy: int32,
-      writeState: b.any,
-      processCallback: b.any,
-      dictionary: b.any,
+      writeState: b.opaque,
+      writeCallback: callback,
+      dictionary,
     },
+    expected: { writeCallback: ["function"], dictionary: dictionaryExpected },
   },
   { ...method, args: { level: int32, strategy: int32 } },
 );
@@ -71,7 +76,11 @@ export const NativeZlib = compressionStream(
 export const NativeBrotli = compressionStream(
   "crate::node::zlib::native_brotli::NativeBrotli",
   [8, 9],
-  { args: { initParamsArray: b.any, writeState: b.any, processCallback: b.any, dictionary: b.any }, returns: b.bool },
+  {
+    args: { initParamsArray: b.opaque, writeState: b.opaque, writeCallback: callback, dictionary },
+    expected: { writeCallback: ["function"], dictionary: dictionaryExpected },
+    returns: b.bool,
+  },
   {},
 );
 
@@ -80,12 +89,13 @@ export const NativeZstd = compressionStream(
   [10, 11],
   {
     args: {
-      initParamsArray: b.any,
-      pledgedSrcSize: b.any,
-      writeState: b.any,
-      processCallback: b.any,
-      dictionary: b.any,
+      initParamsArray: b.opaque,
+      pledgedSrcSize: b.opaque,
+      writeState: b.opaque,
+      processCallback: callback,
+      dictionary,
     },
+    expected: { processCallback: ["function"], dictionary: dictionaryExpected },
     returns: b.bool,
   },
   {},

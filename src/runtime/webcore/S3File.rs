@@ -1,3 +1,4 @@
+use crate::generated_bindgen::blob as generated;
 use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
@@ -111,12 +112,10 @@ where
 /// path or Blob and require Blob arguments to be S3-backed.
 pub(crate) fn parse_s3_path_or_blob(
     global: &JSGlobalObject,
-    path: JSValue,
+    path: generated::PathOrBlob<'_>,
     error_message: &str,
 ) -> JsResult<PathOrBlob> {
-    let mut args =
-        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), core::slice::from_ref(&path));
-    let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
+    let path_or_blob = PathOrBlob::from_js_no_copy(global, path)?;
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.get().is_none()
             || !matches!(
@@ -152,7 +151,7 @@ pub(crate) fn resolve_s3_blob(
 
 pub(crate) fn s3_blob_from_js(
     global: &JSGlobalObject,
-    path: JSValue,
+    path: generated::PathOrBlob<'_>,
     options: Option<JSValue>,
     error_message: &str,
 ) -> JsResult<Box<Blob>> {
@@ -447,13 +446,6 @@ fn s3_store(blob: &Blob, global: &JSGlobalObject, verb: &str) -> JsResult<RefPtr
     }
 }
 
-// `Method.fromJS` lives in `bun_http_jsc` so `bun_http_types` stays
-// JSC-free. Thin local alias for the `getPresignUrlFrom` body.
-#[inline]
-fn method_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Method>> {
-    bun_http_jsc::method_jsc::from_js(global, value)
-}
-
 pub(crate) fn get_presign_url_from(
     this: &Blob,
     global: &JSGlobalObject,
@@ -476,7 +468,7 @@ pub(crate) fn get_presign_url_from(
     if let Some(options) = extra_options {
         if options.is_object() {
             if let Some(method_) = options.get_truthy(global, "method")? {
-                method = match method_from_js(global, method_)? {
+                method = match Method::which(method_.to_utf8(global)?.slice()) {
                     Some(m) => m,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(

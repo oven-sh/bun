@@ -29,7 +29,7 @@ fn to_have_returned_times_fn(
     this_value: JSValue,
     expected: JSValue,
     mode: Mode,
-) -> JsResult<JSValue> {
+) -> JsResult<()> {
     bun_jsc::mark_binding!();
     let (this, returns_arr, _) = this.mock_prologue(
         global,
@@ -81,7 +81,7 @@ fn to_have_returned_times_fn(
         pass = !pass;
     }
     if pass {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(());
     }
 
     let signature = Expect::get_signature(mode.tag_name(), "<green>expected<r>", not);
@@ -113,7 +113,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         to_have_returned_times_fn(self, cx.global(), this_value.to_js(), expected.to_js(), Mode::ToHaveReturned)
     }
 
@@ -122,7 +122,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         to_have_returned_times_fn(self, cx.global(), this_value.to_js(), expected.to_js(), Mode::ToHaveReturnedTimes)
     }
 }

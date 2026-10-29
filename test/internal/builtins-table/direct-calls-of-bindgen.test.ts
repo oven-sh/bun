@@ -24,7 +24,7 @@ const summarize = ({ signatures }: MemberDeclaration) =>
   }));
 
 test("a function whose arguments are taken as they are is entered with them", () => {
-  const member = declare(b.fn({ args: { flag: b.bool, fd: b.i32, time: b.f64, anything: b.any } }));
+  const member = declare(b.fn({ args: { flag: b.bool, fd: b.i32, time: b.f64, anything: b.opaque } }));
   expect(summarize(member)).toEqual([
     {
       accepted: [boolean, int32, number, anything],
@@ -55,7 +55,7 @@ test("a function without arguments takes the realm", () => {
 });
 
 test("arguments that converting would leave as they are have an overload of their own", () => {
-  const member = declare(b.fn({ args: { value: b.any, force: b.bool.loose.default(false), time: b.f64.loose } }));
+  const member = declare(b.fn({ args: { value: b.opaque, force: b.bool.loose.default(false), time: b.f64.loose } }));
   const [special, general] = summarize(member);
   expect(special).toEqual({
     accepted: [anything, boolean, number],
@@ -104,7 +104,7 @@ test("what only the host function can make for the thunk leaves the function wit
 });
 
 test("the realm and five arguments are the most", () => {
-  const argumentsNamed = (...names: string[]) => Object.fromEntries(names.map(name => [name, b.any]));
+  const argumentsNamed = (...names: string[]) => Object.fromEntries(names.map(name => [name, b.opaque]));
   expect(summarize(declare(b.fn({ args: argumentsNamed("a", "b", "c", "d", "e") })))[0].handedOver).toHaveLength(6);
   expect(summarize(declare(b.fn({ args: argumentsNamed("a", "b", "c", "d", "e", "f") })))[0].handedOver).toBeNull();
 });
@@ -178,7 +178,11 @@ test("an argument that a null pointer stands in for can be left out of a direct 
 
 test("a value that may be left out is handed over as it is or as nothing, in one overload", () => {
   const member = declare(
-    b.fn({ args: { value: b.any, name: b.any.orAbsent, options: b.any.orAbsent }, capability: "js", throws: true }),
+    b.fn({
+      args: { value: b.opaque, name: b.opaque.orAbsent, options: b.opaque.orAbsent },
+      capability: "js",
+      throws: true,
+    }),
   );
   expect(summarize(member)).toEqual([
     {
@@ -194,7 +198,7 @@ test("a value that may be left out is handed over as it is or as nothing, in one
 });
 
 test("one that another argument follows is always there", () => {
-  const member = declare(b.fn({ args: { name: b.any.orAbsent, value: b.f64 }, capability: "js" }));
+  const member = declare(b.fn({ args: { name: b.opaque.orAbsent, value: b.f64 }, capability: "js" }));
   expect(summarize(member)).toEqual([
     { accepted: [anything, number], isSpecialCase: false, handedOver: ["Realm", "Value", "Double"] },
   ]);
@@ -204,13 +208,13 @@ test("a function whose body is C++ is entered at that function", () => {
   const member = declare(
     b.overloads(
       {
-        args: { value: b.f64, name: b.any.orAbsent },
+        args: { value: b.f64, name: b.opaque.orAbsent },
         capability: "js",
         throws: true,
         cppSymbol: "Bun__Checks__checkNumber",
       },
       {
-        args: { value: b.any.orAbsent, name: b.any.orAbsent },
+        args: { value: b.opaque.orAbsent, name: b.opaque.orAbsent },
         capability: "js",
         throws: true,
         cppSymbol: "Bun__Checks__check",

@@ -4,6 +4,7 @@ use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 use super::throw;
+use crate::generated_bindgen::expect::ExpectPrecision;
 
 impl Expect {
     pub(crate) fn to_be_close_to(
@@ -11,8 +12,8 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-        precision: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        precision: ExpectPrecision,
+    ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 
@@ -25,15 +26,13 @@ impl Expect {
             return Err(global.throw_invalid_argument_type("toBeCloseTo", "expected", "number"));
         }
 
-        let precision_value = precision.to_js();
-        let mut precision: f64 = 2.0;
-        if !precision_value.is_undefined() {
-            if !precision_value.is_number() {
+        let precision: f64 = match precision {
+            ExpectPrecision::Missing => 2.0,
+            ExpectPrecision::Digits(digits) => digits,
+            ExpectPrecision::Other => {
                 return Err(global.throw_invalid_argument_type("toBeCloseTo", "precision", "number"));
             }
-
-            precision = precision_value.as_number();
-        }
+        };
 
         let received_: JSValue =
             this.get_value(global, this_value, "toBeCloseTo", "<green>expected<r>, precision")?;
@@ -53,7 +52,7 @@ impl Expect {
         }
 
         if expected == f64::INFINITY && received == f64::INFINITY {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let expected_diff = 10.0_f64.powf(-precision) / 2.0;
@@ -66,7 +65,7 @@ impl Expect {
         }
 
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters

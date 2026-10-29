@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -1136,7 +1136,7 @@ describe("mkdirSync", () => {
         // @ts-expect-error
         { recursive: "lalala" },
       ),
-    ).toThrow('The "recursive" property must be of type boolean, got string');
+    ).toThrow(`The "options.recursive" property must be of type boolean. Received type string ('lalala')`);
   });
 });
 
@@ -5626,6 +5626,25 @@ it("createReadStream on a large file emits readable event correctly", () => {
 });
 
 describe("fs.write", () => {
+  it("promises.write refuses a String object without converting it", async () => {
+    using dir = tempDir("fs-promises-write-string-object", { "a.txt": "" });
+    const fd = fs.openSync(join(String(dir), "a.txt"), "w");
+    try {
+      const data = new String("bun");
+      data.toString = mock(() => "bun");
+      // @ts-expect-error
+      await expect(_promises.write(fd, data)).rejects.toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of String',
+      });
+      expect(data.toString).not.toHaveBeenCalled();
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   it("should work with (fd, buffer, offset, length, position, callback)", done => {
     const path = `${tmpdir()}/bun-fs-write-1-${Date.now()}.txt`;
     const fd = fs.openSync(path, "w");

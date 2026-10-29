@@ -871,6 +871,19 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("a string naming is read once", async () => {
+    let reads = 0;
+    const x = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+      get naming() {
+        reads++;
+        return "hello";
+      },
+    });
+    expect(x.outputs[0].path).toBe("./hello");
+    expect(reads).toBe(1);
+  });
+
   test("BuildArtifact properties sourcemap", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties-sourcemap", {
@@ -979,6 +992,49 @@ describe("Bun.build", () => {
     const response = new Response(x.outputs[0]);
     expect(response.headers.get("content-type")).toBe("text/javascript;charset=utf-8");
     expect(await response.text()).toMatchSnapshot("response text");
+  });
+
+  test("ws.send, server.publish and Bun.write take a BuildArtifact", async () => {
+    using dir = tempDir("buildartifact-as-blob", {});
+    const entrypoints = [join(import.meta.dir, "./fixtures/trivial/index.js")];
+    const [artifact] = (await Bun.build({ entrypoints })).outputs;
+    const text = await artifact.text();
+
+    const frames: unknown[] = [];
+    const bothFrames = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: (request, server) => (server.upgrade(request) ? undefined : new Response(null, { status: 400 })),
+      websocket: {
+        open(ws) {
+          ws.subscribe("topic");
+          ws.send(artifact);
+          server.publish("topic", artifact);
+        },
+        message() {},
+      },
+    });
+    const ws = new WebSocket(`ws://localhost:${server.port}`);
+    ws.binaryType = "nodebuffer";
+    ws.onmessage = ({ data }) => {
+      frames.push(typeof data === "string" ? { text: data } : data.toString());
+      if (frames.length === 2) bothFrames.resolve();
+    };
+    ws.onerror = ws.onclose = event =>
+      bothFrames.reject(new Error(`WebSocket ${event.type} after ${frames.length} frames`));
+    try {
+      await bothFrames.promise;
+    } finally {
+      ws.onerror = ws.onclose = null;
+      ws.close();
+    }
+
+    const [onDisk] = (await Bun.build({ entrypoints, outdir: String(dir) })).outputs;
+    await Bun.write(onDisk, "replaced");
+    expect({ frames, destination: readFileSync(onDisk.path, "utf-8") }).toEqual({
+      frames: [text, text],
+      destination: "replaced",
+    });
   });
 
   test.todo("new Response(BuildArtifact) sets etag", async () => {

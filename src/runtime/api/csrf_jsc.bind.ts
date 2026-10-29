@@ -32,7 +32,7 @@ export const CSRF = b.namespace({
       secret: b.string.utf8.optional,
       options: CSRFGenerateOptions.nullable.default({}),
     },
-    returns: b.any,
+    returns: b.string.local,
     capability: "js",
     throws: true,
   },

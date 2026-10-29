@@ -36,7 +36,7 @@ macro_rules! unary_predicate_matcher {
                 &self,
                 this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
                 cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+            ) -> ::bun_jsc::JsResult<()> {
                 self.run_unary_predicate(
                     cx.global(),
                     this_value.to_js(),
@@ -341,7 +341,7 @@ pub(crate) mod expect {
             other_value: JSValue,
             name: &'static str,
             rel: OrderingRelation,
-        ) -> JsResult<JSValue> {
+        ) -> JsResult<()> {
             let this = self.post_match_guard(global);
 
             this.increment_expect_call_counter();
@@ -367,7 +367,7 @@ pub(crate) mod expect {
             };
 
             if not { pass = !pass; }
-            if pass { return Ok(JSValue::UNDEFINED); }
+            if pass { return Ok(()); }
 
             // failure path — two formatters because `to_fmt` borrows `&mut`.
             let mut f1 = make_formatter(global);

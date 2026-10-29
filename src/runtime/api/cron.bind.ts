@@ -19,7 +19,7 @@ export const CronJob = b.class({
 });
 
 const reaction = {
-  args: { value: b.any, context: b.nativePromiseContext("crate::api::cron::CronJob") },
+  args: { value: b.opaque, context: b.nativePromiseContext("crate::api::cron::CronJob") },
   capability: "js",
 } as const;
 
@@ -44,7 +44,7 @@ export const cron = b.overloads(
       schedule: "Bun.cron() expects a string schedule as the second argument",
       title: "Bun.cron() expects a string title as the third argument",
     },
-    returns: b.any,
+    returns: b.promise,
     rustPath: "crate::api::cron::register_os_job",
   },
   /** An in-process job, whose `cron` is the `schedule` it was given. */
@@ -65,7 +65,7 @@ export const remove = b.fn({
   feature: "Cron",
   args: { title: b.string.utf8 },
   expected: { title: "Bun.cron.remove() expects a string title" },
-  returns: b.any,
+  returns: b.promise,
   capability: "js",
   throws: true,
 });

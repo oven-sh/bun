@@ -116,10 +116,7 @@ impl Start {
     }
 
     /// `start({ path, fd })` of a `FileSink`.
-    pub(crate) fn file_sink(
-        path: &SinkPath<'_>,
-        fd: Option<bun_jsc::bindgen::JsLocal<'_>>,
-    ) -> Start {
+    pub(crate) fn file_sink(path: &SinkPath, fd: Option<bun_jsc::bindgen::JsLocal<'_>>) -> Start {
         use bun_sys_jsc::FdJsc as _;
         let error = |errno: sys::SystemErrno| {
             Start::Err(SysError {
@@ -132,7 +129,7 @@ impl Start {
             (SinkPath::Path(path), _) => {
                 crate::webcore::PathOrFileDescriptor::Path(path.clone().into_utf8())
             }
-            (SinkPath::Other(_), _) => return error(sys::SystemErrno::EINVAL),
+            (SinkPath::Other, _) => return error(sys::SystemErrno::EINVAL),
             (SinkPath::Missing, None) => crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
             (SinkPath::Missing, Some(fd)) => match Fd::from_js(fd.to_js()) {
                 Some(fd) => crate::webcore::PathOrFileDescriptor::Fd(fd),

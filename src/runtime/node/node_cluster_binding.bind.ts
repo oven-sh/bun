@@ -4,16 +4,16 @@ import { Subprocess } from "../api/bun/subprocess.bind.ts";
 export default b.module({ rustPath: "crate::node::node_cluster_binding" });
 
 export const onInternalMessageChild = b.fn({
-  args: { worker: b.any, callback: b.any },
+  args: { worker: b.opaque, callback: b.opaque },
   capability: "js",
   throws: true,
 });
 export const setRef = b.fn({ args: { enabled: b.bool } });
 export const channelIgnoreOneDisconnectEventListener = b.fn({});
 /** `"udp4"` or `"udp6"`, or 4, 6 or -1 (a path). Node compares it with `===`, so anything else is IPv4. */
-export const BindAddressType = b.union({ udp: b.string.utf8, family: b.f64, ignored: b.any });
+export const BindAddressType = b.union({ udp: b.string.utf8, family: b.f64, other: b.ignored });
 /** Anything but a string is the wildcard address. */
-export const BindAddress = b.union({ text: b.string.utf8, ignored: b.any });
+export const BindAddress = b.union({ text: b.string.utf8, other: b.opaque });
 export const BoundHandle = b.dictionary({ fd: b.u64, port: b.i32 });
 /** A negative errno when nothing was bound. */
 export const BindResult = b.union({ errno: b.i32, handle: BoundHandle });
@@ -37,6 +37,6 @@ export const sendHelperPrimary = b.fn({
   throws: true,
 });
 export const onInternalMessagePrimary = b.fn({
-  args: { handle: processHandle, worker: b.any, callback: b.any },
+  args: { handle: processHandle, worker: b.opaque, callback: b.opaque },
   capability: "js",
 });

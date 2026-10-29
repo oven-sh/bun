@@ -35,22 +35,24 @@ impl ExternStringView {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternOptional<T: Copy> {
-    data: ExternOptionalData<T>,
-    tag: u8,
+    pub data: ExternOptionalData<T>,
+    pub tag: u8,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-union ExternOptionalData<T: Copy> {
+pub union ExternOptionalData<T: Copy> {
     none: u8,
     some: T,
 }
 impl<T: Copy> ExternOptional<T> {
+    /// # Safety
+    /// C++ initialized the alternative `tag` names.
     #[inline(always)]
-    pub fn get(self) -> Option<T> {
+    pub unsafe fn get(self) -> Option<T> {
         if self.tag == 0 {
             return None;
         }
-        // SAFETY: C++ initialized the alternative `tag` names.
+        // SAFETY: forwarded.
         Some(unsafe { self.data.some })
     }
 }
@@ -100,8 +102,8 @@ impl<T: Copy> ExternVector<T> {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternBytes {
-    data: *const u8,
-    length: usize,
+    pub data: *const u8,
+    pub length: usize,
 }
 impl ExternBytes {
     /// # Safety
@@ -127,14 +129,14 @@ impl ExternBytes {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternVariadicArguments {
-    data: *const JSValue,
-    length: usize,
+    pub data: *const JSValue,
+    pub length: usize,
 }
 impl ExternVariadicArguments {
     /// # Safety
-    /// The host function that passed this is the call `heap` belongs to.
+    /// The host function that passed this is the call `heap` belongs to, and each value is a `T`.
     #[inline(always)]
-    pub unsafe fn get<'a>(self, _: &JsHeap<'a>) -> &'a [JsLocal<'a>] {
+    pub unsafe fn get<'a, T>(self, _: &JsHeap<'a>) -> &'a [JsLocal<'a, T>] {
         // SAFETY: C++ never passes a null pointer, and the frame holds the values.
         unsafe { JsLocal::slice_from_raw_parts(self.data, self.length) }
     }

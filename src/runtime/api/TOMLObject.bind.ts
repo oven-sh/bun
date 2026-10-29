@@ -12,13 +12,13 @@ export const TOML = b.namespace({
         shared: "copied",
       }),
     },
-    returns: b.any,
+    returns: b.opaque,
     capability: "heap",
     throws: true,
   },
   stringify: {
-    args: { value: b.any, replacer: b.any },
-    returns: b.any,
+    args: { value: b.opaque, replacer: b.opaque },
+    returns: b.opaque,
     capability: "js",
     throws: true,
     /** As for YAML and JSON5. `space` is ignored: the output is line-oriented and has no nesting indentation. */

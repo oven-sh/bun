@@ -107,7 +107,7 @@ test.skipIf(generated === undefined)(
           "../../codegen/bindgen-lib.ts",
           join(bunRoot, "src", "codegen", "bindgen-lib.ts").replaceAll("\\", "/"),
         )
-        .replace(member, `    aMethodNobodyHasYet: { ...find, args: { lineOffset: b.any } },\n${member}`),
+        .replace(member, `    aMethodNobodyHasYet: { ...find, args: { lineOffset: b.opaque } },\n${member}`),
     });
     const sources = schemas.map(path => (path === schema ? join(String(changed), "sourcemap.bind.ts") : path));
     const { exitCode, errors, tableOfBuiltins } = await generateAgainst(generatedCopy, sources);

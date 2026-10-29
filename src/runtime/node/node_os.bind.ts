@@ -5,7 +5,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::node::os" });
 
 export const hostCpuCount = b.value({ returns: b.i32 });
-export const cpus = b.fn({ returns: b.any, capability: "js", throws: true });
+export const cpus = b.fn({ returns: b.jsArray, capability: "js", throws: true });
 export const freemem = b.fn({ returns: b.u64 });
 export const getPriority = b.fn({
   args: {
@@ -16,9 +16,9 @@ export const getPriority = b.fn({
   throws: true,
 });
 export const homedir = b.fn({ returns: b.string, capability: "js", throws: true });
-export const hostname = b.fn({ returns: b.any, capability: "js", throws: true });
+export const hostname = b.fn({ returns: b.string.local, capability: "js", throws: true });
 export const loadavg = b.fn({ returns: b.array(b.f64) });
-export const networkInterfaces = b.fn({ returns: b.any, capability: "js", throws: true });
+export const networkInterfaces = b.fn({ returns: b.object, capability: "js", throws: true });
 export const release = b.fn({ returns: b.string });
 export const totalmem = b.fn({ returns: b.u64 });
 export const uptime = b.fn({ returns: b.f64, throws: true });
@@ -31,7 +31,7 @@ export const userInfo = b.fn({
   args: {
     options: UserInfoOptions.nullable.default({}),
   },
-  returns: b.any,
+  returns: b.object,
   capability: "js",
   throws: true,
 });

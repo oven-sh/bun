@@ -125,7 +125,7 @@ pub(crate) fn random_uuid_v7<'a>(
         ),
         UUIDEncodingOrTimestamp::Clock => (Encoding::Hex, Some(UUIDTimestamp::Clock)),
         UUIDEncodingOrTimestamp::Time(time) => (Encoding::Hex, Some(UUIDTimestamp::Time(time))),
-        UUIDEncodingOrTimestamp::Ignored(_) => (Encoding::Hex, None),
+        UUIDEncodingOrTimestamp::Other => (Encoding::Hex, None),
     };
     let Some(timestamp) = timestamp.or(alone) else {
         return Err(heap.invalid_arguments(format_args!("timestamp must be a number or Date")));

@@ -130,7 +130,7 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
-    pub fn is_empty(&mut self) -> bool {
+    pub fn is_empty(&self) -> bool {
         WebCore__FetchHeaders__isEmpty(self)
     }
 
@@ -257,10 +257,7 @@ impl FetchHeaders {
         WebCore__FetchHeaders__count(self, &mut names, &mut buf_len).then_some((names, buf_len))
     }
 
-    pub fn clone_this(
-        &mut self,
-        global: &JSGlobalObject,
-    ) -> JsResult<Option<NonNull<FetchHeaders>>> {
+    pub fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<NonNull<FetchHeaders>>> {
         host_fn::from_js_host_call_generic(global, || {
             NonNull::new(WebCore__FetchHeaders__cloneThis(self, global))
         })

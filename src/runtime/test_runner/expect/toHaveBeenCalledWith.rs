@@ -12,7 +12,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         bun_jsc::mark_binding!();
         let expected = JsLocal::to_js_slice(expected);
@@ -58,7 +58,7 @@ impl Expect {
         }
 
         if pass != this.flags.get().not() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // handle failure

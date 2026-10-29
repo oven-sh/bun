@@ -13,6 +13,8 @@ use bun_jsc::{
 
 use bun_lsquic_sys as lsquic;
 
+use crate::generated_bindgen::quic::EphemeralKey;
+
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
 use super::ffi::lsquic_callback;
@@ -2062,16 +2064,15 @@ impl QuicSession {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        direction: JsLocal<'_>,
+        direction: Option<f64>,
         body: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         if self.destroyed.get() || self.conn.get().is_null() {
             return Ok(JSValue::UNDEFINED);
         }
-        let direction = direction.to_js();
         let body = body.to_js();
-        let unidirectional = direction.is_number() && direction.as_number() == 1.0;
+        let unidirectional = direction == Some(1.0);
         let (key, qs, handle) = self.create_stream(global, this_value.to_js(), null_mut())?;
         if unidirectional {
             self.pending_local_uni.with_mut(|q| q.push_back(key));
@@ -2104,18 +2105,14 @@ impl QuicSession {
         self.schedule_process();
         Ok(handle)
     }
-    pub(crate) fn send_datagram(
-        &self,
-        cx: &mut JsScope<'_>,
-        data: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn send_datagram(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<u64> {
         let global = cx.global();
         if self.destroyed.get() || self.conn.get().is_null() {
-            return JSValue::from_uint64_no_truncate(global, 0);
+            return Ok(0);
         }
         let data = data.to_js();
         let Some(buf) = data.as_array_buffer(global) else {
-            return JSValue::from_uint64_no_truncate(global, 0);
+            return Ok(0);
         };
         // HTTP/3: the peer must have advertised SETTINGS_H3_DATAGRAM
         // (RFC 9297 §2.1.1); otherwise not sent (0n).
@@ -2123,13 +2120,13 @@ impl QuicSession {
             .endpoint_ref()
             .is_some_and(|ep| ep.is_http(self.is_server.get()));
         if is_http && self.conn().and_then(|c| c.peer_h3_datagram()) == Some(false) {
-            return JSValue::from_uint64_no_truncate(global, 0);
+            return Ok(0);
         }
         // Oversized for the negotiated budget: not sent (Node returns 0n).
         // SAFETY: state buffer is live.
         let max_size = self.with_state(|s| s.max_datagram_size);
         if max_size == 0 || buf.byte_slice().len() > max_size as usize {
-            return JSValue::from_uint64_no_truncate(global, 0);
+            return Ok(0);
         }
         // Copy before anything below can run user JS: the drop-oldest branch
         // invokes `ondatagramstatus`, which may detach or transfer
@@ -2147,14 +2144,14 @@ impl QuicSession {
                 self.report_datagram_abandoned(global, id)?;
                 // SAFETY: as above.
                 unsafe { (&raw mut (*self.state_mut()).last_datagram_id).write_unaligned(id) };
-                return JSValue::from_uint64_no_truncate(global, id);
+                return Ok(id);
             }
             if let Some((dropped_id, _)) = self.datagram_queue.with_mut(VecDeque::pop_front) {
                 // Runs the user's `ondatagramstatus`, which can destroy this
                 // session or close the conn before we get back here.
                 self.report_datagram_abandoned(global, dropped_id)?;
                 if self.destroyed.get() || self.conn.get().is_null() {
-                    return JSValue::from_uint64_no_truncate(global, 0);
+                    return Ok(0);
                 }
             }
         }
@@ -2166,7 +2163,7 @@ impl QuicSession {
             c.want_datagram_write(true);
         }
         self.schedule_process();
-        JSValue::from_uint64_no_truncate(global, id)
+        Ok(id)
     }
     /// Runs inside `sendDatagram`: what building the status left pending is
     /// thrown from there.
@@ -2232,30 +2229,16 @@ impl QuicSession {
         }
         Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn get_ephemeral_key(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        let Some((kind, name, bits)) = self
+    pub(crate) fn get_ephemeral_key(&self) -> Option<EphemeralKey> {
+        let (kind, name, bits) = self
             .conn_ssl()
             .and_then(tls::ephemeral_key_info)
-            .or_else(|| self.hsk_snapshot.get().as_ref().and_then(|s| s.ephemeral))
-        else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        let obj = JSValue::create_empty_object(global, 3);
-        obj.put(
-            global,
-            b"type",
-            bun_core::String::static_(kind.as_bytes()).to_js(global)?,
-        );
-        if let Some(name) = name {
-            obj.put(
-                global,
-                b"name",
-                bun_core::String::static_(name.as_bytes()).to_js(global)?,
-            );
-        }
-        obj.put(global, b"size", JSValue::js_number(f64::from(bits)));
-        Ok(obj)
+            .or_else(|| self.hsk_snapshot.get().as_ref().and_then(|s| s.ephemeral))?;
+        Some(EphemeralKey {
+            r#type: bun_core::String::static_(kind.as_bytes()),
+            name: name.map(|name| bun_core::String::static_(name.as_bytes())),
+            size: bits,
+        })
     }
     /// The lsquic conn while it is attached. Non-null between binding
     /// (create/connect) and `on_conn_closed` clearing it, so it is live for

@@ -95,7 +95,7 @@ pub(crate) fn do_connect<'a>(
     let (maybe_tcp, maybe_tls) = match socket {
         SocketHandle::Tcp(socket) => (Some(socket.as_ctx_ptr()), None),
         SocketHandle::Tls(socket) => (None, Some(socket.as_ctx_ptr())),
-        SocketHandle::Ignored(_) => (None, None),
+        SocketHandle::Other => (None, None),
     };
     Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, options.to_js())
 }

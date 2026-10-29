@@ -15,7 +15,7 @@ export const DigestOutput = b.union({
 
 /** A string for an encoding, the buffer that was given, or else a new one of the class. */
 const digestIn = (newBuffer: "Buffer" | "Uint8Array") =>
-  b.any.returning(
+  b.opaque.returning(
     { type: "Primitive", primitive: "String" },
     { type: "Operand", operand: "output" },
     { type: "Instance", class: newBuffer, isOfClassItself: true },

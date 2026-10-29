@@ -24,7 +24,7 @@ export const Timeout = b.class({
   internalFields: ["arguments", "callback", "idleTimeout", "repeat", "idleStart"],
   proto: {
     _destroyed: destroyed,
-    _idleStart: { getter: b.any, setter: { capability: "js" }, passThis: true },
+    _idleStart: { getter: b.opaque, setter: { capability: "js" }, passThis: true },
     _idleTimeout: { setter: true, internalField: "idleTimeout" },
     _onTimeout: { setter: true, internalField: "callback" },
     _repeat: { setter: true, internalField: "repeat" },

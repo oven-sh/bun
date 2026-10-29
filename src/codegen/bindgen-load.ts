@@ -12,7 +12,7 @@ import {
   type Origin,
   pascalCase,
   snakeCase,
-  type Type,
+  Type,
 } from "./bindgen-lib-internal.ts";
 
 /** `source` is `<crate>=<a.bind.ts>`. */
@@ -48,7 +48,7 @@ export async function loadSchemaFile(source: string): Promise<SchemaFile> {
       value.name = name;
       value.origin = origin;
       result.types.push(value);
-    } else {
+    } else if (!(value instanceof Type)) {
       throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function, a namespace or b.module()`);
     }
   }

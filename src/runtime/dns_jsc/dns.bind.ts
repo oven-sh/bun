@@ -38,7 +38,7 @@ export const LookupOptions = b.dictionary(
 
 export const lookup = b.fn({
   args: { hostname: b.string.utf8, options: LookupOptions.nullable.default({}) },
-  returns: b.any,
+  returns: b.promise,
   capability: "js",
   throws: true,
   rustPath: "crate::dns_jsc::Resolver::global_lookup",

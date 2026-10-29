@@ -9,11 +9,12 @@ use std::sync::Arc;
 use bun_core::fmt::{NodeNumber, OutOfRangeOptions, double, out_of_range};
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
-use bun_jsc::{ErrorCode, JSBigInt, JSGlobalObject, JSMap, JSValue, JsResult, MAX_SAFE_INTEGER};
+use bun_jsc::{ErrorCode, JSGlobalObject, JSMap, JSValue, JsResult};
 use bun_threading::Guarded;
 
-use crate::generated_bindgen::histogram::{HistogramJSON, js_ELDHistogram, js_RecordableHistogram};
-use crate::node::util::validators;
+use crate::generated_bindgen::histogram::{
+    HistogramJSON, RecordedValue, js_ELDHistogram, js_RecordableHistogram,
+};
 use crate::timer::event_loop_delay_monitor;
 
 /// The GC is told what JavaScriptCore tells it of a `SharedArrayBuffer`, which also grows and which a structured clone
@@ -180,8 +181,8 @@ pub(crate) fn create_interval<'a>(heap: &JsHeap<'a>, resolution: f64) -> JsWrapp
     js_ELDHistogram::create(heap, histogram)
 }
 
-pub(crate) fn is_histogram(value: JsLocal<'_>) -> bool {
-    value.to_js().as_class_ref::<Histogram>().is_some()
+pub(crate) fn is_histogram(value: Option<&Histogram>) -> bool {
+    value.is_some()
 }
 
 /// `Histogram`
@@ -297,26 +298,20 @@ impl Histogram {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        val: JsLocal<'a>,
+        val: RecordedValue<'a>,
     ) -> bindgen::Result<'a, ()> {
-        let val = val.to_js();
-        let big_int = if val.is_number() {
-            None
-        } else {
-            JSBigInt::from_js(val)
-        };
-        let value = if let Some(big_int) = big_int {
-            if !val.is_big_int_in_int64_range(1, i64::MAX) {
-                // https://github.com/nodejs/node/blob/v26.3.0/src/histogram.cc#L181
-                return Err(cx.heap.error_with_code(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!("value is out of range"),
-                ));
+        let value = match val {
+            RecordedValue::BigInt(val) => {
+                if !val.to_js().is_big_int_in_int64_range(1, i64::MAX) {
+                    // https://github.com/nodejs/node/blob/v26.3.0/src/histogram.cc#L181
+                    return Err(cx.heap.error_with_code(
+                        ErrorCode::OUT_OF_RANGE,
+                        format_args!("value is out of range"),
+                    ));
+                }
+                val.as_big_int().to_int64() as u64
             }
-            big_int.to_int64() as u64
-        } else {
-            validators::validate_integer(cx.global(), val, "val", Some(1), Some(MAX_SAFE_INTEGER))?
-                as u64
+            RecordedValue::Number(val) => val,
         };
         let (_, grown) = self.with(|state| state.histogram.record(value));
         Self::report_growth(&cx.heap, this_value, grown);

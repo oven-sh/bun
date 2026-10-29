@@ -8,6 +8,7 @@ use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
 
 use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams};
+use crate::generated_bindgen::server::WebSocketMessage;
 use crate::server::{NodeHTTPResponse, ServerWebSocket};
 
 pub(crate) fn get_bun_server_all_closed_promise<'a>(
@@ -54,12 +55,12 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     max_payload: u32,
     flags: i32,
     deflate: Option<&DeflateParams>,
-) -> JsResult<JSValue> {
+) -> JsResult<Option<JSValue>> {
     const AUTO_PONG: i32 = 1 << 0;
     const SKIP_UTF8_VALIDATION: i32 = 1 << 1;
 
     let Some(response) = response else {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(None);
     };
     let global = cx.global();
 
@@ -74,18 +75,16 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
         client_no_context_takeover: deflate.client_no_context_takeover,
     });
 
-    Ok(response
-        .upgrade_for_ws_package(
-            global,
-            websocket.to_js(),
-            handlers.to_js(),
-            handshake,
-            max_payload,
-            flags & AUTO_PONG != 0,
-            flags & SKIP_UTF8_VALIDATION != 0,
-            deflate_params.as_ref(),
-        )?
-        .unwrap_or(JSValue::UNDEFINED))
+    response.upgrade_for_ws_package(
+        global,
+        websocket.to_js(),
+        handlers.to_js(),
+        handshake,
+        max_payload,
+        flags & AUTO_PONG != 0,
+        flags & SKIP_UTF8_VALIDATION != 0,
+        deflate_params.as_ref(),
+    )
 }
 
 /// `(handle, data, opcode, fin, compress)`: sends one frame on a `ServerWebSocket`. `opcode` is
@@ -93,10 +92,10 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
 pub(crate) fn send_web_socket_frame<'a>(
     cx: &mut JsScope<'a>,
     handle: &'a ServerWebSocket,
-    data: JsLocal<'a>,
+    data: WebSocketMessage<'a>,
     opcode: i32,
     fin: bool,
     compress: bool,
 ) -> JsResult<JSValue> {
-    handle.send_frame(cx.global(), data.to_js(), Opcode(opcode), fin, compress)
+    handle.send_frame(cx.global(), data, Opcode(opcode), fin, compress)
 }

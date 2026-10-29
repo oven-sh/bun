@@ -33,18 +33,7 @@ pub enum CommonStringsForRust {
     QuicDatagramLost = 18,
     Base64 = 19,
     Write = 20,
-    FetchOptionCompress = 21,
-    FetchOptionDecompress = 22,
-    FetchOptionKeepalive = 23,
-    FetchOptionMaxRedirects = 24,
-    FetchOptionProtocol = 25,
-    FetchOptionProxy = 26,
-    FetchOptionS3 = 27,
-    FetchOptionSession = 28,
-    FetchOptionTimeout = 29,
-    FetchOptionTls = 30,
-    FetchOptionUnix = 31,
-    FetchOptionVerbose = 32,
+    FetchOptionVerbose = 21,
 }
 
 unsafe extern "C" {
@@ -55,23 +44,12 @@ unsafe extern "C" {
         common_string: CommonStringsForRust,
         global_object: &JSGlobalObject,
     ) -> JSValue;
-    safe fn Bun__CommonStringsForRust__getProperty(
-        object: JSValue,
-        global_object: &JSGlobalObject,
-        common_string: CommonStringsForRust,
-    ) -> JSValue;
 }
 
 impl CommonStringsForRust {
     #[inline]
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
         Bun__CommonStringsForRust__toJS(self, global_object)
-    }
-
-    /// `object[self]`; see `JSValue::get_common_string`.
-    #[inline]
-    pub(crate) fn get_property(self, object: JSValue, global_object: &JSGlobalObject) -> JSValue {
-        Bun__CommonStringsForRust__getProperty(object, global_object, self)
     }
 }
 
@@ -85,16 +63,6 @@ impl<'a> CommonStrings<'a> {
     #[inline]
     pub fn ipv6(self) -> JSValue {
         CommonStringsForRust::IPv6.to_js(self.global_object)
-    }
-    /// `"127.0.0.1"`
-    #[inline]
-    pub fn in4_loopback(self) -> JSValue {
-        CommonStringsForRust::IN4Loopback.to_js(self.global_object)
-    }
-    /// `"::"`
-    #[inline]
-    pub fn in6_any(self) -> JSValue {
-        CommonStringsForRust::IN6Any.to_js(self.global_object)
     }
     /// `"ipv4"`
     #[inline]

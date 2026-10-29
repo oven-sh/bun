@@ -5,7 +5,7 @@
 use super::{Expect, OrderingRelation};
 use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::JsResult;
 
 // ── unary predicates: expect(x).toBe<Kind>() ───────────────────────────────
 crate::unary_predicate_matcher!(to_be_array, "toBeArray", |v| v.js_type().is_array());
@@ -48,7 +48,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         self.numeric_ordering_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toBeGreaterThan", OrderingRelation::Gt)
     }
     pub(crate) fn to_be_greater_than_or_equal(
@@ -56,7 +56,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         self.numeric_ordering_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toBeGreaterThanOrEqual", OrderingRelation::Ge)
     }
     pub(crate) fn to_be_less_than(
@@ -64,7 +64,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         self.numeric_ordering_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toBeLessThan", OrderingRelation::Lt)
     }
     pub(crate) fn to_be_less_than_or_equal(
@@ -72,7 +72,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         self.numeric_ordering_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toBeLessThanOrEqual", OrderingRelation::Le)
     }
 }
@@ -84,7 +84,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         self.run_string_affix_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toStartWith", "start with", strings::starts_with)
     }
     pub(crate) fn to_end_with(
@@ -92,7 +92,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         self.run_string_affix_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toEndWith", "end with", strings::ends_with)
     }
     pub(crate) fn to_include(
@@ -100,7 +100,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         self.run_string_affix_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toInclude", "include", strings::contains)
     }
 }

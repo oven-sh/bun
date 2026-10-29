@@ -104,8 +104,8 @@ impl BlockList {
             / (self.ref_count.get().max(1) as usize)
     }
 
-    pub(crate) fn is_block_list(value: JsLocal<'_>) -> bool {
-        value.to_js().as_::<Self>().is_some()
+    pub(crate) fn is_block_list(value: Option<&Self>) -> bool {
+        value.is_some()
     }
 
     pub(crate) fn add_address(

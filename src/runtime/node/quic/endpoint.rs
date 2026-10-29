@@ -433,11 +433,7 @@ const VERNEG_PROBE_CID_LEN: usize = 8;
 const VERNEG_PROBE_LEN: usize = 1200;
 const SHORT_HEADER_DCID_LEN: usize = 8;
 
-extern "C" fn on_data(
-    socket: *mut uws::udp::Socket,
-    buf: *mut uws::udp::PacketBuffer,
-    packets: c_int,
-) {
+extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: &uws::udp::PacketBuffer, packets: c_int) {
     let user = uws::udp::Socket::opaque_mut(socket).user();
     if user.is_null() {
         return;
@@ -470,8 +466,8 @@ extern "C" fn on_data(
     this.send_scope_depth.set(this.send_scope_depth.get() + 1);
     bun_boringssl_sys::ERR_clear_error();
     for i in 0..packets {
-        let payload = uws::udp::PacketBuffer::opaque_mut(buf).get_payload(i);
-        let peer = uws::udp::PacketBuffer::opaque_mut(buf).get_peer(i);
+        let payload = buf.get_payload(i);
+        let peer = buf.get_peer(i);
         if payload.is_empty() {
             continue;
         }

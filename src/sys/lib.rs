@@ -1596,14 +1596,6 @@ mod safe_libc {
         pub(crate) safe fn setrlimit(resource: c_int, rlim: &libc::rlimit) -> c_int;
         // Reads the two `timespec`s; a `tv_nsec` out of range is `EINVAL`.
         pub(crate) safe fn futimens(fd: c_int, times: &[libc::timespec; 2]) -> c_int;
-        // Bytes go from fd to fd; the only memory touched is `offset`, read and written back unless null.
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub(crate) safe fn sendfile(
-            out_fd: c_int,
-            in_fd: c_int,
-            offset: Option<&mut libc::off_t>,
-            count: usize,
-        ) -> isize;
     }
 }
 
@@ -3597,7 +3589,7 @@ mod posix_impl {
         let len = len.min(i32::MAX as usize - 1);
         loop {
             // No `offset`: the kernel uses and updates `src`'s file offset.
-            let rc = safe_libc::sendfile(dest.native(), src.native(), None, len);
+            let rc = super::linux_syscall::sendfile(dest.native(), src.native(), None, len);
             if rc < 0 {
                 let e = last_errno();
                 if e == libc::EINTR {

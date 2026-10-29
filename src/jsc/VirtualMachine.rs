@@ -2540,8 +2540,7 @@ impl VirtualMachine {
             // reconnect/lifetime timers, schedulers): their owners stay valid
             // and find them CANCELLED, but nothing fires again even where the
             // loop still turns (JSC's timers).
-            // SAFETY: fn contract.
-            unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
+            (hooks.disarm_all_timers_for_vm_teardown)();
         }
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe {
@@ -3035,7 +3034,7 @@ pub struct RuntimeHooks {
     /// with the VM alive right after the WebCore stop phase.
     pub stop_active_handles_for_vm_teardown: fn(vm: &mut VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
-    pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
+    pub disarm_all_timers_for_vm_teardown: fn(),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.

@@ -1699,12 +1699,12 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
 }
 
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
-unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
+fn disarm_all_timers_for_vm_teardown() {
     let all = timer_all();
     if all.is_null() {
         return;
     }
-    // SAFETY: live per-thread `All`; JS thread; teardown has forbidden script.
+    // SAFETY: live per-thread `All`; JS thread.
     unsafe { crate::timer::All::disarm_all_for_vm_teardown(all) };
 }
 

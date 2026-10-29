@@ -244,19 +244,15 @@ impl Request {
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
-            // Snapshot the pointer first; it stays valid across the field borrow.
-            let content_type: Option<*const [u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => {
-                    Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
-                }
+            let content_type: Option<&[u8]> = match self.body_value() {
+                BodyValue::Blob(blob) => Some(blob.content_type_slice()),
                 BodyValue::Locked(locked) => match locked.readable.get() {
                     Some(readable) => match readable.ptr {
                         crate::webcore::readable_stream::Source::Blob(blob) => {
                             // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
                             // for as long as the readable stream exists; we only read
                             // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.get().as_slice() };
-                            Some(std::ptr::from_ref::<[u8]>(ct))
+                            Some(unsafe { (*blob).content_type.get().as_slice() })
                         }
                         _ => None,
                     },
@@ -266,9 +262,6 @@ impl Request {
             };
 
             if let Some(content_type_) = content_type {
-                // SAFETY: the sources above are live for the duration of this
-                // call; the bytes are copied into the header map below.
-                let content_type_ = unsafe { &*content_type_ };
                 if !content_type_.is_empty() {
                     self.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
@@ -1396,12 +1389,9 @@ impl Request {
                         .unwrap()
                         .fast_has(HTTPHeaderName::ContentType)
                 {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
                     match req.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &StringView::ascii(unsafe { &*ct_ptr }),
+                        &StringView::ascii(ct),
                         cx.global(),
                     ) {
                         Ok(()) => {}

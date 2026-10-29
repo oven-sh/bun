@@ -11,13 +11,9 @@ pub struct WorkPool;
 /// offset of that field once and provides the canonical container-of recovery
 /// used by every `fn(task: *mut Task)` thread-pool trampoline.
 ///
-/// Implement via [`intrusive_work_task!`]; the trait carries the safety
+/// Implement via [`intrusive_work_task!`]; the supertrait carries the safety
 /// contract so call sites need only assert "scheduled via this field".
-///
-/// # Safety
-/// Inherited from [`bun_core::IntrusiveField<Task>`]: `OFFSET` MUST equal
-/// `core::mem::offset_of!(Self, <task field>)`.
-pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
+pub trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     /// Safe accessor for the intrusive `task: Task` field
     /// (`&mut self.task`); [`WorkPool::schedule_owned`] uses this to install
     /// the callback without raw byte-offset arithmetic.
@@ -33,10 +29,13 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     /// allocation, with provenance covering the whole allocation.
     #[inline(always)]
     unsafe fn from_task_ptr(task: *mut Task) -> *mut Self {
-        // SAFETY: caller upholds the trait safety contract above.
+        // SAFETY: caller upholds the fn contract above.
         unsafe { Self::from_field_ptr(task) }
     }
 }
+
+// The only impl: `OwnedTask::__callback` trusts `from_task_ptr`, so no type may override it.
+impl<T: bun_core::IntrusiveField<Task>> IntrusiveWorkTask for T {}
 
 /// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
 /// (`Box<Self>`). [`WorkPool::schedule_owned`] performs the `Box` →
@@ -44,10 +43,9 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
 /// `Box<Self>` via [`IntrusiveWorkTask::from_task_ptr`], so call sites never
 /// touch `Box::into_raw`/`from_raw` directly.
 ///
-/// # Safety
 /// [`run`](OwnedTask::run) executes on an arbitrary worker thread (hence the
 /// `Send` bound).
-pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
+pub trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     /// Run the task. Receives ownership of the heap allocation; dropping
     /// `self` frees it.
     fn run(self: Box<Self>);
@@ -68,9 +66,7 @@ pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
 }
 
 /// Implements [`IntrusiveWorkTask`] for a struct that embeds an intrusive
-/// `task: Task` field. Expands to [`bun_core::intrusive_field!`] + a marker
-/// impl; brings [`IntrusiveWorkTask::from_task_ptr`] into scope for the
-/// type's `fn(*mut Task)` trampolines.
+/// `task: Task` field. Expands to [`bun_core::intrusive_field!`].
 ///
 /// ```ignore
 /// intrusive_work_task!(ReadFile, task);
@@ -84,13 +80,9 @@ macro_rules! intrusive_work_task {
     // and hard-errors.
     ([$($gen:tt)*] $ty:ty, $field:ident) => {
         ::bun_core::intrusive_field!([$($gen)*] $ty, $field: $crate::work_pool::Task);
-        // SAFETY: `IntrusiveField<Task>` impl above supplies the offset/field.
-        unsafe impl<$($gen)*> $crate::work_pool::IntrusiveWorkTask for $ty {}
     };
     ($ty:ty, $field:ident) => {
         ::bun_core::intrusive_field!($ty, $field: $crate::work_pool::Task);
-        // SAFETY: `IntrusiveField<Task>` impl above supplies the offset/field.
-        unsafe impl $crate::work_pool::IntrusiveWorkTask for $ty {}
     };
 }
 
@@ -112,8 +104,7 @@ macro_rules! owned_task {
         $crate::intrusive_work_task!([$($gen)*] $ty, $field);
         // SAFETY: see macro doc — the type is moved to a worker thread by design.
         unsafe impl<$($gen)*> ::core::marker::Send for $ty {}
-        // SAFETY: `run` forwards to the inherent `run_owned`.
-        unsafe impl<$($gen)*> $crate::work_pool::OwnedTask for $ty {
+        impl<$($gen)*> $crate::work_pool::OwnedTask for $ty {
             #[inline]
             fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
         }
@@ -122,8 +113,7 @@ macro_rules! owned_task {
         $crate::intrusive_work_task!($ty, $field);
         // SAFETY: see macro doc — the type is moved to a worker thread by design.
         unsafe impl ::core::marker::Send for $ty {}
-        // SAFETY: `run` forwards to the inherent `run_owned`.
-        unsafe impl $crate::work_pool::OwnedTask for $ty {
+        impl $crate::work_pool::OwnedTask for $ty {
             #[inline]
             fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
         }

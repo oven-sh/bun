@@ -2730,7 +2730,7 @@ pub mod parse_worker {
 
     fn run_from_thread_pool_impl(this: &mut ParseTask<'static>) {
         let ctx = this.ctx.expect("ParseTask.ctx unset");
-        let worker: &mut crate::Worker = crate::Worker::get(ctx.get());
+        let worker: &mut crate::Worker = crate::Worker::get(ctx.graph.pool());
         // `defer worker.unget()` — handled at function exit (scopeguard
         // would alias the `&mut worker` borrows below).
         scoped_log!(

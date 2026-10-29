@@ -234,7 +234,8 @@ pub(crate) fn run_task(
         task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
             // the task owns a ref for its duration; `run_deferred` releases it.
-            unsafe { crate::ipc::SendQueue::run_deferred(queue) };
+            let queue = unsafe { bun_ptr::RefPtr::from_raw(queue) };
+            crate::ipc::SendQueue::run_deferred(queue);
         }),
         task_tag::AsyncModule => feature_arm!(
             [Install],

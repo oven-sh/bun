@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readBuildReport } from "./harness/build-report";
-import { slot, spawned } from "./run-programs";
+import { slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const tsconfig = JSON.stringify({

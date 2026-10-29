@@ -25,7 +25,8 @@ impl Walker<'_, '_> {
         }
         let scope = bound.class_scope[class.idx()];
         let inner_name = bound.inner_class_symbol(class);
-        let mut slots = class::class_slots(hir, bound, self.input.compiled.settings, class);
+        let (settings, transpiled) = (self.input.compiled.settings, self.input.transpiled);
+        let mut slots = class::class_slots(hir, bound, settings, transpiled, class);
         slots.shared_sort_unstable();
         let source_constructor = hir[class].members.iter().find(|&member| {
             hir.runtime_member_kind(member) == MemberKind::Constructor

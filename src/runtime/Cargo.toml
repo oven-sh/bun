@@ -69,7 +69,6 @@ bun_js_parser_jsc.workspace = true
 bun_sema.workspace = true
 bun_sema_driver.workspace = true
 bun_aot = { package = "bun_aot_interface", path = "../aot/interface" }
-bun_builtin_sources = { workspace = true, features = ["linked_archive"] }
 bun_lint_driver.workspace = true
 bun_format_conformance.workspace = true
 bun_sema_baselines.workspace = true

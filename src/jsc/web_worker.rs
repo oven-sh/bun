@@ -51,7 +51,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
-use bun_core::{EncodedSlice, String as BunString, WTFStringImpl};
+use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
@@ -120,6 +121,10 @@ pub struct WebWorker {
     join_handle: JsCell<Option<JoinHandle<()>>>,
     /// What the thread is handed, until one has started; then null.
     thread_start: Cell<*mut ThreadStart>,
+    /// On the parent's loop while the worker waits for room.
+    pub room_timer: JsCell<EventLoopTimer>,
+    /// How many times `room_timer` has found the thread of a sibling returning and no room yet.
+    room_timer_rounds: Cell<u8>,
 
     // ---- Worker-thread only -----------------------------------------------------
     // Mutated only on the worker thread, but through `&self` because other
@@ -179,6 +184,11 @@ enum StartOutcome {
 
 /// Workers of all threads that are registered without a thread.
 static WORKERS_WAITING_FOR_ROOM: AtomicU32 = AtomicU32::new(0);
+/// A sibling that was asked to end may be blocked in a native call for ever, so a worker
+/// that waits for room is also tried again this long after it began to wait.
+const ROOM_TIMER_MS: i64 = 1000;
+/// How many more times it waits that long while the thread of a sibling is returning.
+const ROOM_TIMER_MAX_ROUNDS: u8 = 10;
 
 enum EntryOutcome {
     Continue,
@@ -225,7 +235,10 @@ unsafe extern "C" {
     safe fn WebWorker__postFailedToStartError(proxy: *mut c_void);
     /// The address space a compiled program's thread needs for its tables, taken
     /// by the thread that starts it. False: there is none. `pages` may be null.
-    fn Bun__AOT__tryReservePagesForNewThread(pages: *mut *mut c_void) -> bool;
+    fn Bun__AOT__tryReservePagesForNewThread(
+        pages: *mut *mut c_void,
+        threads_are_ending: bool,
+    ) -> bool;
     safe fn Bun__AOT__releasePagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__releaseUnusedPagesOfThread();
@@ -566,6 +579,8 @@ impl WebWorker {
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
             thread_start: Cell::new(core::ptr::null_mut()),
+            room_timer: JsCell::new(EventLoopTimer::init_paused(TimerTag::WorkerWaitsForRoom)),
+            room_timer_rounds: Cell::new(0),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
@@ -594,11 +609,13 @@ impl WebWorker {
             _parent_ticket: parent_ticket,
         });
         worker_ref.thread_start.set(start);
-        let mut outcome = worker_ref.try_start();
+        // SAFETY: `parent` is the calling thread's VM.
+        let mut outcome = worker_ref.try_start(unsafe { Self::has_room_to_wait_for(parent) });
         if matches!(outcome, StartOutcome::NoRoom) {
             // SAFETY: `parent` is the calling thread's VM.
             if unsafe { Self::join_returning_children(parent) } {
-                outcome = worker_ref.try_start();
+                // SAFETY: `parent` is the calling thread's VM.
+                outcome = worker_ref.try_start(unsafe { Self::has_room_to_wait_for(parent) });
             }
         }
         match outcome {
@@ -607,6 +624,7 @@ impl WebWorker {
             StartOutcome::NoRoom if unsafe { Self::has_room_to_wait_for(parent) } => {
                 log!("[{}] waits for room", this_context_id);
                 WORKERS_WAITING_FOR_ROOM.fetch_add(1, Ordering::Relaxed);
+                worker_ref.arm_room_timer();
             }
             StartOutcome::NoRoom | StartOutcome::Failed => {
                 // The thread's ref goes down with this; ours drops on return.
@@ -623,11 +641,12 @@ impl WebWorker {
     }
 
     /// Spawn the thread and hand it `thread_start`, which stays where it is unless that succeeds. Parent thread.
-    fn try_start(&self) -> StartOutcome {
+    /// A worker that `can_wait` for the room of workers that are ending does not take the last of the room.
+    fn try_start(&self, can_wait: bool) -> StartOutcome {
         let start = self.thread_start.get();
         let mut table_pages: *mut c_void = core::ptr::null_mut();
         // SAFETY: `table_pages` is a live local the callee writes once.
-        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages) } {
+        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages, can_wait) } {
             return StartOutcome::NoRoom;
         }
         // SAFETY: `heap::alloc`'d in `create()`; no thread has it yet.
@@ -678,6 +697,19 @@ impl WebWorker {
         // SAFETY: fn contract.
         unsafe { (*parent).child_workers.iter() }.any(|&child| {
             bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child")).is_ending()
+        })
+    }
+
+    /// Whether the thread of one of `parent`'s children is returning.
+    ///
+    /// # Safety
+    /// `parent` is the calling thread's VM.
+    unsafe fn has_returning_child(parent: *mut VirtualMachine) -> bool {
+        // SAFETY: fn contract.
+        unsafe { (*parent).child_workers.iter() }.any(|&child| {
+            let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
+            worker.is_returning.load(Ordering::Acquire)
+                && worker.join_handle.with_mut(|handle| handle.is_some())
         })
     }
 
@@ -733,9 +765,11 @@ impl WebWorker {
                 .filter(|worker| !worker.thread_start.get().is_null())
                 .min_by_key(|worker| worker.execution_context_id);
             let Some(worker) = oldest else { return };
-            match worker.try_start() {
+            // SAFETY: fn contract.
+            match worker.try_start(unsafe { Self::has_ending_child(parent) }) {
                 StartOutcome::Started => {
                     WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
+                    worker.disarm_room_timer();
                 }
                 // SAFETY: fn contract.
                 StartOutcome::NoRoom if unsafe { Self::has_ending_child(parent) } => return,
@@ -747,10 +781,62 @@ impl WebWorker {
         }
     }
 
+    fn arm_room_timer(&self) {
+        let timer = self.room_timer.as_ptr();
+        // SAFETY: parent thread; the node is unlinked, and the parent's list of children keeps `self` while it is linked.
+        unsafe {
+            (*timer).next = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(ROOM_TIMER_MS);
+            VirtualMachine::timer_insert(self.parent, timer);
+        }
+    }
+
+    fn disarm_room_timer(&self) {
+        let timer = self.room_timer.as_ptr();
+        // SAFETY: parent thread; an active node is linked into the parent's heap.
+        unsafe {
+            if (*timer).state == TimerState::ACTIVE {
+                VirtualMachine::timer_remove(self.parent, timer);
+            }
+        }
+    }
+
+    /// `Tag::WorkerWaitsForRoom` fire body. The worker takes what room there is, or gets 'error'.
+    /// Only the thread of a sibling that is returning is waited for any longer.
+    ///
+    /// # Safety
+    /// `this` waits for room; called on its parent's thread.
+    pub unsafe fn on_room_timer(this: *mut WebWorker) {
+        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("timer owner"));
+        this.room_timer
+            .with_mut(|timer| timer.state = TimerState::FIRED);
+        let parent = this.parent;
+        // SAFETY: fn contract.
+        if unsafe { (*parent).is_shutting_down() || !(*parent).script_allowed() } {
+            return;
+        }
+        let can_wait = this.room_timer_rounds.get() < ROOM_TIMER_MAX_ROUNDS
+            // SAFETY: fn contract.
+            && unsafe { Self::has_returning_child(parent) };
+        match this.try_start(can_wait) {
+            StartOutcome::Started => {
+                WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
+            }
+            StartOutcome::NoRoom if can_wait => {
+                this.room_timer_rounds.set(this.room_timer_rounds.get() + 1);
+                this.arm_room_timer();
+            }
+            StartOutcome::NoRoom | StartOutcome::Failed => {
+                WebWorker__postFailedToStartError(this.messaging_proxy);
+                this.end_without_thread(1);
+            }
+        }
+    }
+
     /// Reports the end of a worker that waits for room, as its thread would have. Parent thread.
     fn end_without_thread(&self, exit_code: i32) {
         log!("[{}] ends without a thread", self.execution_context_id);
         WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
+        self.disarm_room_timer();
         self.drop_thread_start();
         WebWorker__workerGlobalScopeDestroyed(self.messaging_proxy, exit_code, false);
     }
@@ -1564,36 +1650,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
     }
     // The file of the first entry point has the name of the executable, and its module the name of its source.
     // SAFETY: per fn contract; the resolver is only read.
-    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
-        // SAFETY: as above.
-        && let Some(module) = unsafe {
-            let root = graph.base_public_path_with_default_suffix();
-            let resolver = &(*parent).transpiler.resolver;
-            resolver.resolve_embedded_module(root, str, bun_ast::ImportKind::Stmt)
-        }
-        && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
-    {
-        return Some(crate::compiled_program::module_key(entry));
-    }
-    // A name without `./` in front leads to a package, else to a file, as `resolve_entry_point` has it below.
-    // SAFETY: per fn contract; the resolver is only read.
-    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
-        && bun_paths::is_package_path(str)
-        // SAFETY: as above.
-        && let Some(module) = unsafe {
-            let root = graph.base_public_path_with_default_suffix();
-            let resolver = &(*parent).transpiler.resolver;
-            let kind = bun_ast::ImportKind::Stmt;
-            use bun_resolver::standalone_module_graph::PackageLookup::{Found, Hidden, Unknown};
-            match resolver.resolve_embedded_package(root, str, kind) {
-                Found(module) => Some(module),
-                Hidden => None,
-                Unknown => {
-                    let prefixed = dot_slash.get_or_init(|| [b"./", str].concat());
-                    resolver.resolve_embedded_module(root, prefixed, kind)
-                }
-            }
-        }
+    let resolver = unsafe { &(*parent).transpiler.resolver };
+    if let Some(module) = resolver.resolve_embedded_entry_point(str)
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {
         return Some(crate::compiled_program::module_key(entry));

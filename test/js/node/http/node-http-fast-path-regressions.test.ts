@@ -152,9 +152,7 @@ describe.concurrent("node:http server keeps its behavior on keep-alive connectio
   test(
     "req.socket.server = null: the response that finishes reads the keep-alive timeout of the server",
     async () => {
-      // One request, then wait for the close. The process exits at the end of the turn of the event loop in which
-      // the exception is thrown, not at the throw. On Windows that turn reads the connection once more after the
-      // request, so the process also answers a second request that the client sends as soon as it has the response.
+      // The process serves what arrives in the turn of the event loop in which the error is thrown, so the client sends nothing more.
       const result = await run("null-socket-server", [{ untilClose: get("/") }]);
       expect(result).toEqual({
         // The process exits with the connection open: the client reads the response or only the close.

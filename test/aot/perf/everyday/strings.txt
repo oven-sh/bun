@@ -413,6 +413,30 @@ const text = ("line: the quick brown fox { \"key\": [1, 2, 3] } jumps over the l
 function turn(i: number): number {
   return text.replace(/[^\x00-\x7F]/gu, "").length + (i & 1);
 }
+//// strip-rare-characters-of-a-unicode-class-from-one-of-four-long-texts
+const nothing = String(Date.now()).slice(99);
+const texts = ["line", "row", "entry", "record"].map(word =>
+  ((nothing + word + ": the quick brown fox { \"key\": [1, 2, 3] } jumps over the lazy dog\n").repeat(40) + "— …\n").repeat(4),
+);
+function turn(i: number): number {
+  return texts[i & 3]!.replace(/[\p{Cf}\p{Variation_Selector}]/gu, "").length + (i & 1);
+}
+//// strip-what-is-not-ascii-from-one-of-four-long-texts
+const nothing = String(Date.now()).slice(99);
+const texts = ["line", "row", "entry", "record"].map(word =>
+  ((nothing + word + ": the quick brown fox { \"key\": [1, 2, 3] } jumps over the lazy dog\n").repeat(40) + "— …\n").repeat(4),
+);
+function turn(i: number): number {
+  return texts[i & 3]!.replace(/[^\x00-\x7F]/gu, "").length + (i & 1);
+}
+//// strip-what-is-not-ascii-from-one-of-four-long-texts-that-are-all-ascii
+const nothing = String(Date.now()).slice(99);
+const texts = ["line", "row", "entry", "record"].map(word =>
+  (nothing + word + ": the quick brown fox { \"key\": [1, 2, 3] } jumps over the lazy dog\n").repeat(160),
+);
+function turn(i: number): number {
+  return texts[i & 3]!.replace(/[^\x00-\x7F]/gu, "").length + (i & 1);
+}
 //// a-piece-of-a-query-compared-with-the-state-of-every-row
 const nothing = String(Date.now()).slice(99);
 const query = "status=open&limit=25" + nothing;

@@ -155,6 +155,17 @@ pub(crate) fn parsed_source_mut(payload: &mut Option<HostPayload>) -> &mut Parse
     source.expect("the payload of a tree is a ParsedSource")
 }
 
+/// The function that the file of library functions at `path` exports under the name.
+pub(crate) fn find_runtime_function(
+    manifest: &Manifest,
+    path: &[u8],
+    export_name: &[u8],
+) -> Option<RuntimeFunction> {
+    let id = manifest.builtin_function_id(path, export_name);
+    id.map(RuntimeFunction)
+        .or_else(|| find_compiler_function(path, export_name))
+}
+
 fn find_compiler_function(path: &[u8], export_name: &[u8]) -> Option<RuntimeFunction> {
     let archive_name = path.strip_prefix(VIRTUAL_ROOT)?;
     let file = archive_name.strip_suffix(b".ts")?;
@@ -247,11 +258,9 @@ impl Sources {
     pub fn runtime_function(&self, file: FileId, export_name: &[u8]) -> Option<RuntimeFunction> {
         let entry = &self.entries[file.idx()];
         match entry.kind {
-            SourceKind::RuntimeFunctions => self
-                .manifest
-                .builtin_function_id(&entry.public_path, export_name)
-                .map(RuntimeFunction)
-                .or_else(|| find_compiler_function(&entry.public_path, export_name)),
+            SourceKind::RuntimeFunctions => {
+                find_runtime_function(self.manifest, &entry.public_path, export_name)
+            }
             _ => None,
         }
     }

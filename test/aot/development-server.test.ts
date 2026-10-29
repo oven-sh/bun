@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { slot, unsupported } from "./run-programs";
+import { slot, unsupported } from "./harness/commands";
 
 const app = `{
   root: process.cwd(),
@@ -65,7 +65,7 @@ async function run(cmd: string[], cwd: string) {
           slot(async () => {
             using dir = tempDir("development-server", { [file]: source, ...late });
             const build = await run(
-              [bunExe(), "build", "--compile", "--aot", file, "--outfile", "program"],
+              [bunExe(), "build", "--compile", "--aot", "--no-builtin-modules", file, "--outfile", "program"],
               String(dir),
             );
             expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({

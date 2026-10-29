@@ -822,6 +822,13 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
+/** Whether the heap profiler of this thread's VM holds a snapshot. While it does, every collection visits each dead cell. */
+export const heapProfilerHasSnapshot: () => boolean = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_heapProfilerHasSnapshot",
+  0,
+);
+
 /** In a build with AddressSanitizer: reads a string of WTF's that was freed, which the sanitizer has to report. Elsewhere: nothing. */
 export const readFreedStringUnderASAN: () => number | undefined = $newCppFunction(
   "InternalForTesting.cpp",

@@ -2406,31 +2406,6 @@ pub fn init(
     let fs = FileSystem::get();
     // `C:\` keeps its separator: `C:` is the current directory of drive C, not its root.
     let top_level_dir_no_trailing_slash = without_trailing_slash_windows_path(fs.top_level_dir());
-    // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
-    // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.
-    unsafe {
-        let cwd_ptr = CWD_BUF.get().cast::<u8>();
-        #[cfg(windows)]
-        {
-            let _ = bun_paths::path_to_posix_buf::<u8>(
-                top_level_dir_no_trailing_slash,
-                &mut *CWD_BUF.get(),
-            );
-        }
-        #[cfg(not(windows))]
-        {
-            // Avoid memcpy alias when source and dest are the same
-            if cwd_ptr.cast_const() != top_level_dir_no_trailing_slash.as_ptr() {
-                core::ptr::copy_nonoverlapping(
-                    top_level_dir_no_trailing_slash.as_ptr(),
-                    cwd_ptr,
-                    top_level_dir_no_trailing_slash.len(),
-                );
-            }
-        }
-        #[cfg(windows)]
-        let _ = cwd_ptr;
-    }
 
     // Per-cfg const literal, no runtime alloc.
     #[cfg(windows)]

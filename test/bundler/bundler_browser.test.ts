@@ -172,34 +172,117 @@ describe("bundler", () => {
         import { addAbortListener } from "node:events";
         const microtasksRan = () => new Promise(resolve => queueMicrotask(resolve));
         const signal = AbortSignal.abort("why");
-        const lines = [];
-        {
-          let event;
-          addAbortListener(signal, received => {
-            event = received;
-            lines.push(JSON.stringify([received.type, received.target === signal, received.currentTarget === signal, received.target.reason]));
+        const HostEvent = Event;
+        // An error that the polyfill throws from its microtask is a line too.
+        process.on("uncaughtException", error => console.log("uncaught " + error.name + ": " + error.message));
+
+        let first;
+        addAbortListener(signal, received => {
+          first = received;
+          console.log(JSON.stringify([received.type, received.target === signal, received.currentTarget === signal, received.target.reason]));
+        });
+        addAbortListener(signal, () => console.log("disposed"))[Symbol.dispose]();
+        await microtasksRan();
+        console.log(JSON.stringify([first.target === signal, first.currentTarget, Object.keys(first).includes("target")]));
+        const other = new EventTarget();
+        other.addEventListener("abort", received => {
+          console.log(JSON.stringify([received.target === other, received.currentTarget === other]));
+        });
+        other.dispatchEvent(first);
+
+        const listeners = {
+          "seals its event": event => Object.seal(event),
+          "freezes its event": event => Object.freeze(event),
+          "throws": () => {
+            throw new Error("from the listener");
+          },
+        };
+        for (const [what, listener] of Object.entries(listeners)) {
+          addAbortListener(signal, event => {
+            console.log("a listener that " + what + " gets " + event.type);
+            listener(event);
           });
-          addAbortListener(signal, () => lines.push("disposed"))[Symbol.dispose]();
-          await microtasksRan();
-          lines.push(JSON.stringify([event.target === signal, event.currentTarget, Object.keys(event).includes("target")]));
-          const other = new EventTarget();
-          other.addEventListener("abort", received => {
-            lines.push(JSON.stringify([received.target === other, received.currentTarget === other]));
-          });
-          other.dispatchEvent(event);
-        }
-        {
-          delete globalThis.Event;
-          addAbortListener(signal, (...args) => lines.push(args.length + " arguments"));
-          addAbortListener(signal, () => lines.push("disposed"))[Symbol.dispose]();
           await microtasksRan();
         }
-        console.log(lines.join("\\n"));
+
+        // On each host a page cannot construct an Event, cannot change it, or cannot read the target that it inherits.
+        const hosts = {
+          "no Event": () => delete globalThis.Event,
+          "an Event that throws": () => {
+            globalThis.Event = function () {
+              throw new TypeError("Illegal constructor");
+            };
+          },
+          "an Event that is no constructor": () => {
+            globalThis.Event = () => ({});
+          },
+          "an Event that makes frozen objects": () => {
+            globalThis.Event = class {
+              constructor() {
+                Object.freeze(this);
+              }
+            };
+          },
+          "an Event with an own currentTarget": () => {
+            globalThis.Event = class {
+              constructor() {
+                Object.defineProperty(this, "currentTarget", { value: null });
+              }
+            };
+          },
+          "a bound Event": () => {
+            globalThis.Event = HostEvent.bind(null);
+          },
+          "an Event whose objects inherit a target that throws": () => {
+            globalThis.Event = function () {
+              return Object.create(HostEvent.prototype);
+            };
+          },
+          "an Event getter that throws": () => {
+            Object.defineProperty(globalThis, "Event", {
+              get() {
+                throw new Error("no Event on this host");
+              },
+            });
+          },
+        };
+        const received = args => (args.length === 0 ? "no argument" : "an event of " + (args[0].target === signal ? "the signal" : args[0].target));
+        for (const [host, install] of Object.entries(hosts)) {
+          install();
+          addAbortListener(signal, (...args) => console.log(host + ": " + received(args)));
+          addAbortListener(signal, () => console.log("disposed"))[Symbol.dispose]();
+          await microtasksRan();
+        }
+        addAbortListener(signal, (...args) => {
+          console.log("a listener that throws gets " + received(args));
+          throw new Error("from the listener");
+        });
+        await microtasksRan();
+        console.log("the first event names the target of its dispatch: " + (first.target === other));
       `,
     },
     target: "browser",
     run: {
-      stdout: '["abort",true,true,"why"]\n[true,null,false]\n[true,true]\n0 arguments',
+      stdout: `
+        ["abort",true,true,"why"]
+        [true,null,false]
+        [true,true]
+        a listener that seals its event gets abort
+        a listener that freezes its event gets abort
+        a listener that throws gets abort
+        uncaught Error: from the listener
+        no Event: no argument
+        an Event that throws: no argument
+        an Event that is no constructor: no argument
+        an Event that makes frozen objects: no argument
+        an Event with an own currentTarget: no argument
+        a bound Event: an event of the signal
+        an Event whose objects inherit a target that throws: an event of the signal
+        an Event getter that throws: no argument
+        a listener that throws gets no argument
+        uncaught Error: from the listener
+        the first event names the target of its dispatch: true
+      `,
     },
   });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {

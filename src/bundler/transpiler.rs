@@ -260,7 +260,7 @@ impl<'a> Transpiler<'a> {
 
     /// Reset the thread-local AST block stores (`Expr`/`Stmt`) and the side
     /// `AstAlloc` arena.
-    pub(crate) fn reset_store(&self) {
+    pub(crate) fn reset_store() {
         bun_ast::Expr::data_store_reset();
         bun_ast::Stmt::data_store_reset();
         // Side-arena for `AstAlloc` (e.g. `Vec<Property>` inside arena

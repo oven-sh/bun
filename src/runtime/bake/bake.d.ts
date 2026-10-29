@@ -612,10 +612,7 @@ declare module "bun:bake/client" {
   /**
    * Callback is invoked when server-side code is changed. This can be used to
    * fetch a non-html version of the updated page to perform a faster reload. If
-   * not provided, the client will perform a hard reload.
-   *
-   * The page of an HTML route (an `.html` file that `Bun.serve` serves) does not call it.
-   * That page always performs a hard reload.
+   * not provided, or on the page of an HTML route, the client will perform a hard reload.
    *
    * Only one callback can be set. This function overwrites the previous one.
    */

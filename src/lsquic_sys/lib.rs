@@ -50,67 +50,6 @@ pub const N_LSQVER: c_int = 8;
 pub const LSQUIC_GLOBAL_CLIENT: c_int = 1;
 pub const LSQUIC_GLOBAL_SERVER: c_int = 2;
 
-/// **Layout must match `struct us_nq_vtable` in node_quic_shim.c exactly.**
-/// The first field of every conn-ctx and stream-ctx the Rust side returns
-/// must be a `*const NqVtable` so the thunks can recover it via
-/// `*(struct us_nq_vtable **) ctx`.
-#[repr(C)]
-pub struct NqVtable {
-    pub owner: *mut c_void,
-    pub on_new_conn: unsafe extern "C" fn(owner: *mut c_void, c: *mut lsquic_conn) -> *mut c_void,
-    pub on_hsk_done: unsafe extern "C" fn(conn_ctx: *mut c_void, status: c_int),
-    pub on_hsk_confirmed: unsafe extern "C" fn(conn_ctx: *mut c_void),
-    pub on_goaway_received: unsafe extern "C" fn(conn_ctx: *mut c_void),
-    pub on_conn_closed: unsafe extern "C" fn(conn_ctx: *mut c_void),
-    pub on_conncloseframe: unsafe extern "C" fn(
-        conn_ctx: *mut c_void,
-        app_error: c_int,
-        code: u64,
-        reason: *const c_char,
-        reason_len: c_int,
-    ),
-    pub on_new_token:
-        unsafe extern "C" fn(conn_ctx: *mut c_void, token: *const u8, token_size: usize),
-    pub on_sess_resume:
-        unsafe extern "C" fn(conn_ctx: *mut c_void, blob: *const u8, blob_size: usize),
-    pub on_new_stream:
-        unsafe extern "C" fn(owner: *mut c_void, s: *mut lsquic_stream) -> *mut c_void,
-    pub on_stream_read: unsafe extern "C" fn(stream_ctx: *mut c_void, s: *mut lsquic_stream),
-    pub on_stream_write: unsafe extern "C" fn(stream_ctx: *mut c_void, s: *mut lsquic_stream),
-    pub on_stream_close: unsafe extern "C" fn(stream_ctx: *mut c_void, s: *mut lsquic_stream),
-    pub on_stream_reset: unsafe extern "C" fn(stream_ctx: *mut c_void, how: c_int, error_code: u64),
-    pub on_dg_write:
-        unsafe extern "C" fn(conn_ctx: *mut c_void, buf: *mut c_void, buf_sz: usize) -> isize,
-    pub on_datagram: unsafe extern "C" fn(conn_ctx: *mut c_void, buf: *const c_void, sz: usize),
-    pub on_datagram_status:
-        unsafe extern "C" fn(conn_ctx: *mut c_void, count: c_uint, acked: c_int),
-    pub on_early_data_failed: unsafe extern "C" fn(conn_ctx: *mut c_void),
-    pub on_path_switch: unsafe extern "C" fn(
-        conn_ctx: *mut c_void,
-        validated: c_int,
-        is_preferred: c_int,
-        new_local: *const sockaddr,
-        new_peer: *const sockaddr,
-        old_local: *const sockaddr,
-        old_peer: *const sockaddr,
-    ),
-    pub on_origin:
-        unsafe extern "C" fn(conn_ctx: *mut c_void, chunk: *const u8, len: usize, fin: c_int),
-    pub get_ssl_ctx:
-        unsafe extern "C" fn(owner: *mut c_void, local: *const sockaddr) -> *mut SSL_CTX,
-    pub get_client_ssl_ctx:
-        unsafe extern "C" fn(owner: *mut c_void, local: *const sockaddr) -> *mut SSL_CTX,
-    pub lookup_cert: unsafe extern "C" fn(
-        owner: *mut c_void,
-        local: *const sockaddr,
-        sni: *const c_char,
-    ) -> *mut SSL_CTX,
-    pub packets_out:
-        unsafe extern "C" fn(owner: *mut c_void, specs: *const lsquic_out_spec, n: c_uint) -> c_int,
-    pub on_mini_conn_failed:
-        unsafe extern "C" fn(owner: *mut c_void, peer_sa: *const sockaddr, error_code: u64),
-}
-
 unsafe extern "C" {
     pub fn lsquic_global_init(flags: c_int) -> c_int;
     pub fn lsquic_engine_destroy(engine: *mut lsquic_engine);
@@ -199,7 +138,7 @@ unsafe extern "C" {
     pub fn us_nq_engine_new(
         is_server: c_int,
         is_http: c_int,
-        vt: *mut NqVtable,
+        vt: *mut c_void,
         settings: *const lsquic_engine_settings,
         alpn: *const c_char,
     ) -> *mut lsquic_engine;
@@ -778,11 +717,6 @@ impl Conn {
 }
 
 pub fn debug_assert_layout() {
-    debug_assert_eq!(
-        us_nq_vtable_size(),
-        core::mem::size_of::<NqVtable>(),
-        "us_nq_vtable layout mismatch between node_quic_shim.c and lsquic_sys"
-    );
     debug_assert_eq!(
         us_nq_tp_size(),
         core::mem::size_of::<NqTransportParams>(),

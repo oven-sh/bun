@@ -210,8 +210,7 @@ impl ParsedConfig {
         }
     }
 
-    /// `useDefineForClassFields` as `bun run` resolves it: the flag, else `false` below ES2022 and `true` from
-    /// ES2022 on, else `None` for a config that names neither.
+    /// `useDefineForClassFields` as `bun run` resolves it: the flag, else what `target` implies, else `None`.
     fn class_field_semantics(&self) -> Option<bool> {
         self.use_define_for_class_fields.or(match self.target {
             ScriptTarget::None => None,

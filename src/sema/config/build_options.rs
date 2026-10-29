@@ -240,8 +240,7 @@ fn project_for_build(
     }
     let mut project = project_from_raw(host, session, path, base, raw, errors);
     project.options.imports_need_no_extension = true;
-    // Bun's transpiler assigns the fields of a class in its constructor under `useDefineForClassFields: false`,
-    // as specified or as the target implies, and keeps them where they are written otherwise, whatever the target.
+    // Bun never downlevels a class field: it keeps a [[Define]] field where it is written, whatever the target.
     project.options.emit_standard_class_fields = project.options.use_define_for_class_fields;
     project.options.referenced_outputs = find_outputs_of_referenced_projects(host, &project);
     if let Some(base_url) = base_url {

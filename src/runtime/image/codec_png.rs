@@ -264,13 +264,12 @@ pub(crate) fn encode(
     let mut err: c_int = 0;
     // SAFETY: ctx is valid; len/err are valid out-ptrs.
     let buf = unsafe { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
-    if buf.is_null() {
+    let Some(buf) = NonNull::new(buf) else {
         return Err(codecs::Error::EncodeFailed);
-    }
+    };
     // spng_get_png_buffer transfers ownership (libc malloc); hand to JS
     // with libc `free` as the finalizer instead of duping.
-    // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
-    let bytes = unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) };
+    let bytes = NonNull::slice_from_raw_parts(buf, len);
     Ok(codecs::Encoded {
         bytes,
         free: encoded_wrap_free!(libc::free),
@@ -381,11 +380,10 @@ pub(crate) fn encode_indexed(
     let mut err: c_int = 0;
     // SAFETY: ctx is valid; len/err are valid out-ptrs.
     let buf = unsafe { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
-    if buf.is_null() {
+    let Some(buf) = NonNull::new(buf) else {
         return Err(codecs::Error::EncodeFailed);
-    }
-    // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
-    let bytes = unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) };
+    };
+    let bytes = NonNull::slice_from_raw_parts(buf, len);
     Ok(codecs::Encoded {
         bytes,
         free: encoded_wrap_free!(libc::free),

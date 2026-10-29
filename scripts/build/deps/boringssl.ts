@@ -20,11 +20,34 @@
  *           console.log("nasm\n",f([...j.bcm.nasm,...j.crypto.nasm]))'
  */
 
+import type { Config } from "../config.ts";
 import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
 const BORINGSSL_COMMIT = "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f";
+
+/**
+ * The defines that make BoringSSL call functions its embedder has to define.
+ * bun's runtime defines them. A program that links these objects without that
+ * runtime defines them itself, for the same defines: packages/h3blast has
+ * src/boringssl_hooks.c, which bun.ts compiles with exactly these.
+ */
+export function boringsslEmbedderHooks(cfg: Pick<Config, "asan">): Record<string, true> {
+  return {
+    // The fork (oven-sh/boringssl#11) binds OPENSSL_memory_* as plain externs
+    // on every object format, not just as ELF weak symbols, and routes the
+    // sites upstream keeps on libc malloc (TLS record buffers, error queue,
+    // thread-local tables) through OPENSSL_system_*; src/boringssl/lib.rs
+    // defines all of them. Off under ASAN so BoringSSL stays on the
+    // intercepted libc heap instead of mimalloc.
+    ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
+    // Certificates/CRLs/public keys in PEM decode through simdutf
+    // (src/simdutf_sys/bun-simdutf.cpp) instead of the constant-time path
+    // that private keys keep.
+    BORINGSSL_PEM_FAST_PUBLIC_BASE64: true,
+  };
+}
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -48,17 +71,7 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
-        // The fork (oven-sh/boringssl#11) binds OPENSSL_memory_* as plain externs
-        // on every object format, not just as ELF weak symbols, and routes the
-        // sites upstream keeps on libc malloc (TLS record buffers, error queue,
-        // thread-local tables) through OPENSSL_system_*; src/boringssl/lib.rs
-        // defines all of them. Off under ASAN so BoringSSL stays on the
-        // intercepted libc heap instead of mimalloc.
-        ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
-        // Certificates/CRLs/public keys in PEM decode through simdutf
-        // (src/simdutf_sys/bun-simdutf.cpp) instead of the constant-time path
-        // that private keys keep.
-        BORINGSSL_PEM_FAST_PUBLIC_BASE64: true,
+        ...boringsslEmbedderHooks(cfg),
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
           WIN32_LEAN_AND_MEAN: true,

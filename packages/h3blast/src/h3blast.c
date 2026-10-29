@@ -263,7 +263,7 @@ static void on_sigint(int sig) {
     (void)sig;
     if (g_intr) {
         static const char restore[] = "\x1b[?7h\x1b[?25h";
-        if (g_isatty) write(STDERR_FILENO, restore, sizeof(restore) - 1);
+        if (g_isatty) (void)!write(STDERR_FILENO, restore, sizeof(restore) - 1);
         _exit(130);
     }
     g_intr = 1;
@@ -762,6 +762,12 @@ static void *worker_main(void *arg) {
     }
 
     lsquic_engine_destroy(w->engine);
+    // The engine closed every stream, so every stream context is on the free list.
+    for (struct stream_ctx *sc = w->sc_free, *next; sc; sc = next) {
+        next = sc->next_free;
+        free(sc);
+    }
+    free(w->conns);
     SSL_CTX_free(w->ssl_ctx);
     close(w->timerfd);
     close(w->epfd);
@@ -1205,7 +1211,8 @@ static int parse_args(int argc, char **argv, struct config *cfg) {
             if (!bf) die("cannot open %s: %s", path, strerror(errno));
             fseek(bf, 0, SEEK_END); long sz = ftell(bf); fseek(bf, 0, SEEK_SET);
             char *buf = malloc((size_t)sz);
-            fread(buf, 1, (size_t)sz, bf); fclose(bf);
+            if (fread(buf, 1, (size_t)sz, bf) != (size_t)sz) die("cannot read %s", path);
+            fclose(bf);
             cfg->body = buf; cfg->body_len = (size_t)sz;
         }
         else if (!strcmp(a, "-H") || !strcmp(a, "--header")) {
@@ -1353,6 +1360,8 @@ int main(int argc, char **argv) {
 
     render_final(&cfg, results);
 
+    for (int t = 0; t < nt; t++) free(results[t].hist);
+    free(ws);
     lsquic_global_cleanup();
     uint64_t done = 0;
     for (int t = 0; t < nt; t++) done += results[t].snap.done;

@@ -70,8 +70,7 @@ pub(crate) fn validate_path(
     Box::from(out)
 }
 
-/// The default `root`: the directory that holds every entry point, from their absolute paths. An entry
-/// point above the working directory (`../worker.ts`) does not lift the root above an entry point inside it.
+/// The default `root`: the directory that holds every entry point. `../worker.ts` does not lift it above `./index.ts`.
 pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) -> Vec<u8> {
     use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
     let paths: Vec<Vec<u8>> = entry_points

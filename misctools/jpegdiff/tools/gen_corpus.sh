@@ -3,7 +3,7 @@
 set -u
 T=/root/ref/build-tools; I=/root/ref/libjpeg-turbo/testimages; O=/root/ref/corpus/gen
 rm -rf $O; mkdir -p $O
-S=$(mktemp -d); trap 'rm -rf $S' EXIT
+S=$(mktemp -d); trap 'rm -rf "$S"' EXIT
 failed=0
 run() { tool=$1; out=$2; shift 2; $T/$tool-static "$@" > $O/$out 2>/dev/null || { echo "$tool failed: $out"; rm -f $O/$out; failed=1; }; }
 cj() { run cjpeg "$@"; }
@@ -94,5 +94,6 @@ for f in /root/ref/corpus/ppm/c100x75.ppm /root/ref/corpus/ppm/c33x31.ppm /root/
     cj ${b}_s${s}_nonintrst.jpg -sample $s -restart 2B -scans $S/noninter.scan $f
   done
 done
+"$(dirname "$0")"/../target/release/mkcmyk $O || failed=1
 ls $O | wc -l
 exit $failed

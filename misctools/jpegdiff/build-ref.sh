@@ -6,7 +6,7 @@ OUT=/root/ref/build
 CC=${CC:-clang-23}
 EXTRA=${EXTRA:-}
 OBJ=$OUT/obj${SUFFIX:-}
-rm -rf $OBJ
+rm -rf "$OBJ"
 mkdir -p $OBJ
 JPEG8="jcapimin jcapistd jccoefct jccolor jcdctmgr jcdiffct jchuff jcicc jcinit jclhuff jclossls jcmainct jcmarker jcmaster jcomapi jcparam jcphuff jcprepct jcsample jctrans jdapimin jdapistd jdatadst jdatasrc jdcoefct jdcolor jddctmgr jddiffct jdhuff jdicc jdinput jdlhuff jdlossls jdmainct jdmarker jdmaster jdmerge jdphuff jdpostct jdsample jdtrans jfdctflt jfdctfst jfdctint jidctflt jidctfst jidctint jidctred jaricom jcarith jdarith jerror jmemmgr jmemnobs jquant1 jquant2 jutils jpeg_nbits"
 TJ="turbojpeg transupp jdatadst-tj jdatasrc-tj"

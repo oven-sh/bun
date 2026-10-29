@@ -59,7 +59,7 @@ fn main() {
         v.sort();
         for p in v {
             let b = std::fs::read(&p).unwrap();
-            if b.len() < 40_000 { corpus.push(b); }
+            if b.len() < 200_000 { corpus.push(b); }
         }
     }
     if corpus.is_empty() {
@@ -75,7 +75,7 @@ fn main() {
             s.spawn(move || {
                 let mut r = Rng(seed.wrapping_mul(0x9E3779B97F4A7C15) ^ (t as u64 + 1).wrapping_mul(0xD1B54A32D192ED03) | 1);
                 for _ in 0..8 { r.next(); }
-                for i in 0..iters.div_ceil(threads as u64) {
+                for i in 0..iters / threads as u64 + u64::from((t as u64) < iters % threads as u64) {
                     let mut d = corpus[r.below(corpus.len())].clone();
                     let other = &corpus[r.below(corpus.len())];
                     for _ in 0..1 + r.below(4) { mutate(&mut r, &mut d, other); }

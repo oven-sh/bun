@@ -76,7 +76,7 @@ fn main() {
             s.spawn(move || {
                 let mut r = Rng(seed.wrapping_mul(0x9e3779b97f4a7c15) ^ (t as u64 + 1).wrapping_mul(0xd1342543de82ef95) | 1);
                 for _ in 0..8 { r.next(); }
-                for i in 0..iters.div_ceil(threads as u64) {
+                for i in 0..iters / threads as u64 + u64::from((t as u64) < iters % threads as u64) {
                     let state = r.0;
                     let (w, h) = (1 + r.below(max_dim), 1 + r.below(max_dim));
                     let px = image(&mut r, w, h);

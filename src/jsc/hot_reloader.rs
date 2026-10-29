@@ -32,7 +32,7 @@ pub enum ImportWatcher {
 }
 
 impl ImportWatcher {
-    /// Look up the `package_json` column for `hash` under the watcher's
+    /// Look up the `package_json` column for `path` under the watcher's
     /// mutex.
     ///
     /// Deliberately does NOT hand out the stored fd: the watchlist owns it
@@ -43,15 +43,16 @@ impl ImportWatcher {
     pub fn snapshot_package_json(
         &self,
         hash: bun_watcher::HashType,
+        path: &[u8],
     ) -> Option<&'static bun_watcher::PackageJSON> {
         let w = match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w,
             ImportWatcher::None => return None,
         };
         let _guard = w.mutex.lock_guard();
-        let index = w.index_of(hash)?;
+        let index = w.watchlist.find(hash, path)?;
         w.watchlist
-            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
+            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index]
     }
 
     #[inline]
@@ -376,10 +377,8 @@ pub struct MainFile {
     // (`entry_path: Option<&'static [u8]>`): the entry path is owned by the
     // Ctx, which outlives the leaked Reloader for the process lifetime.
     pub(crate) dir: &'static [u8],
-    pub(crate) dir_hash: bun_watcher::HashType,
 
     pub file: &'static [u8],
-    pub(crate) hash: bun_watcher::HashType,
 
     /// On macOS, vim's atomic save triggers a race condition:
     /// 1. Old file gets NOTE_RENAME (file renamed to temp name: a.js -> a.js~)
@@ -398,9 +397,7 @@ impl Default for MainFile {
     fn default() -> Self {
         Self {
             dir: b"",
-            dir_hash: 0,
             file: b"",
-            hash: 0,
             is_waiting_for_dir_change: false,
         }
     }
@@ -410,12 +407,6 @@ impl MainFile {
     pub(crate) fn init(file: &'static [u8]) -> MainFile {
         let mut main = MainFile {
             file,
-            hash: if !file.is_empty() {
-                Watcher::get_hash(file)
-            } else {
-                0
-            },
-            is_waiting_for_dir_change: false,
             ..Default::default()
         };
 
@@ -423,7 +414,6 @@ impl MainFile {
             debug_assert!(bun_core::is_slice_in_buffer(dir, file));
             debug_assert!(file.len() > dir.len() + 1);
             main.dir = &file[0..dir.len() + 1];
-            main.dir_hash = Watcher::get_hash(main.dir);
         }
 
         main
@@ -431,12 +421,8 @@ impl MainFile {
 }
 
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
+    /// A reload loads every module again, so the task only counts the changes.
     pub(crate) count: u8,
-    pub(crate) hashes: [u32; 8],
-    // Only meaningful for the DevServer Ctx, but Rust can't branch a field
-    // type on a generic parameter without specialization, so it is stored
-    // unconditionally (8 fat pointers of overhead for non-DevServer Ctx).
-    pub(crate) paths: [&'static [u8]; 8],
     /// Left `None` until [`Self::enqueue`] populates it on the heap copy.
     pub(crate) concurrent_task: Option<ConcurrentTask>,
     pub(crate) reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
@@ -452,9 +438,6 @@ where
     ) -> Self {
         Self {
             reloader,
-            hashes: [0u32; 8],
-            // See the `paths` field comment for why this is unconditional.
-            paths: [b"".as_slice(); 8],
             count: 0,
             concurrent_task: None,
         }
@@ -495,13 +478,12 @@ where
         unsafe { (*core::ptr::addr_of!((*self.reloader).ctx)).as_ptr() }
     }
 
-    pub(crate) fn append(&mut self, id: u32) {
+    pub(crate) fn append(&mut self) {
         if self.count == 8 {
             self.enqueue();
             self.count = 0;
         }
 
-        self.hashes[self.count as usize] = id;
         self.count += 1;
     }
 
@@ -588,8 +570,6 @@ where
         let that = bun_core::heap::into_raw(Box::new(Self {
             reloader: self.reloader,
             count: self.count,
-            paths: self.paths,
-            hashes: self.hashes,
             concurrent_task: None,
         }));
         // SAFETY: `that` was just allocated above and is exclusively owned here.
@@ -828,8 +808,6 @@ where
         let counts: &mut [u32] =
             unsafe { bun_core::ffi::slice_mut(slice.items_raw::<"count", u32>(), slice.len()) };
         let kinds = slice.items_kind();
-        let hashes = slice.items_hash();
-        let parents = slice.items_parent_hash();
         let file_descriptors = slice.items_fd();
         // Note: reshaped for borrowck — `ctx` is held as a raw pointer so
         // `self` can be reborrowed inside the loop body for tombstone access,
@@ -837,7 +815,7 @@ where
         // across the loop.
         let ctx: *mut Watcher = std::ptr::from_mut(self.get_context());
         // Wrap the Task itself in a guard so any exit path (including future
-        // early-returns) flushes the buffered hashes via `enqueue()`.
+        // early-returns) flushes the counted changes via `enqueue()`.
         // Dereferenced as `&mut *current_task` for the loop body below.
         //
         // Note: declared *before* `_flush` so `flush_evictions()` runs
@@ -846,7 +824,7 @@ where
         // in the watchlist, and read the cached fd while this thread is still
         // about to `close()` + `swap_remove()` it in `flush_evictions` —
         // surfacing as `EBADF`/`EISDIR reading "<path>"` in hot.test.ts under
-        // load. Evicting first is side-effect-free: `enqueue` carries hashes
+        // load. Evicting first is side-effect-free: `enqueue` carries a count
         // (not indices) and never reads the watchlist.
         let mut current_task = scopeguard::guard(
             Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self),
@@ -862,7 +840,7 @@ where
         let top_level_dir = fs.top_level_dir();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         #[cfg(windows)]
-        let _ = (changed_files, parents, file_descriptors, rfs);
+        let _ = (changed_files, file_descriptors, rfs);
         let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
 
         for event in events.iter() {
@@ -878,7 +856,6 @@ where
             // so it's consistent with the rest
             // if we use .extname we might run into an issue with whether or not the "." is included.
             // let path = Fs::PathName::init(file_path);
-            let current_hash = hashes[event.index as usize];
 
             match kind {
                 bun_watcher::Kind::File => {
@@ -891,14 +868,7 @@ where
                         // only buffers the eviction, and the borrow is scoped
                         // to this call so it never overlaps the watchlist
                         // column slices above.
-                        unsafe {
-                            (*ctx).remove_at_index::<false>(
-                                bun_watcher::Kind::File,
-                                event.index,
-                                0,
-                                &[],
-                            )
-                        };
+                        unsafe { (*ctx).remove_at_index::<false>(event.index) };
                     }
 
                     if self.verbose {
@@ -922,20 +892,19 @@ where
                                 // a directory write event confirming the file exists.
                                 // This handles vim's save process which renames the old file
                                 // before the new file is re-created with a different inode.
-                                if self.main.hash == current_hash && !RELOAD_IMMEDIATELY {
+                                if self.main.file == file_path && !RELOAD_IMMEDIATELY {
                                     self.main.is_waiting_for_dir_change = true;
                                     continue;
                                 }
                             }
 
                             // If we got a write event after rename, the file is back - proceed with reload
-                            if self.main.is_waiting_for_dir_change && self.main.hash == current_hash
-                            {
+                            if self.main.is_waiting_for_dir_change && self.main.file == file_path {
                                 self.main.is_waiting_for_dir_change = false;
                             }
                         }
 
-                        current_task.append(current_hash);
+                        current_task.append();
                     }
                 }
                 bun_watcher::Kind::Directory => {
@@ -976,7 +945,7 @@ where
                                     // the file), this directory write event signals that the new
                                     // file has been re-created. Verify it exists and trigger reload.
                                     if self.main.is_waiting_for_dir_change
-                                        && self.main.dir_hash == current_hash
+                                        && self.main.dir == file_path
                                     {
                                         // `.is_ok()` only checks faccessat didn't
                                         // error (it errs only on NAMETOOLONG), not
@@ -1001,7 +970,7 @@ where
                                         if exists {
                                             self.main.is_waiting_for_dir_change = false;
                                             record_changed_path(self.main.file);
-                                            current_task.append(self.main.hash);
+                                            current_task.append();
                                         }
                                     }
                                 }
@@ -1010,9 +979,9 @@ where
 
                                 // if a file descriptor is stale, we need to close it
                                 if event.op.contains(WatchOp::DELETE) && entries_option.is_some() {
-                                    for (entry_id, parent_hash) in parents.iter().enumerate() {
-                                        if *parent_hash == current_hash {
-                                            let affected_path: &[u8] = &file_paths[entry_id];
+                                    for (entry_id, affected_path) in file_paths.iter().enumerate() {
+                                        if slice.is_in_directory(entry_id, event.index as usize) {
+                                            let affected_path: &[u8] = affected_path;
                                             // bun_sys::access takes a &ZStr; build one on the
                                             // stack from the &[u8] watch-list slice.
                                             let was_deleted = {
@@ -1079,11 +1048,11 @@ where
                         // Recover the same way the kqueue path does (see
                         // `is_waiting_for_dir_change` above): if this directory event names
                         // the entrypoint and the file now exists, enqueue an entrypoint
-                        // reload unconditionally — `main.hash` is a stored field, independent
+                        // reload unconditionally — `main.file` is a stored field, independent
                         // of whether the per-file watchlist entry survived. The per-file
                         // watch itself is re-armed on the JS thread by
                         // `VirtualMachine::add_main_to_watcher_if_needed` after the reload.
-                        if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash {
+                        if !IS_KQUEUE && self.main.dir == file_path {
                             let main_basename = bun_paths::basename(self.main.file);
                             for changed_name_ in affected_inotify {
                                 let changed_name: &[u8] = match changed_name_ {
@@ -1108,7 +1077,7 @@ where
                                 };
                                 if main_exists {
                                     record_changed_path(self.main.file);
-                                    current_task.append(self.main.hash);
+                                    current_task.append();
                                 }
                                 break;
                             }
@@ -1176,40 +1145,34 @@ where
                                             }
                                             path_string = ent.abs_path();
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
-                                            for (entry_id, hash) in hashes.iter().enumerate() {
-                                                if *hash == file_hash {
-                                                    if file_descriptors[entry_id].is_valid() {
-                                                        if prev_entry_id != entry_id {
-                                                            record_changed_path(
-                                                                path_string.as_bytes(),
-                                                            );
-                                                            current_task.append(hashes[entry_id]);
-                                                            if self.verbose {
-                                                                Self::debug(format_args!(
-                                                                    "Removing file: {}",
-                                                                    bstr::BStr::new(
-                                                                        path_string.as_bytes()
-                                                                    )
-                                                                ));
-                                                            }
-                                                            // SAFETY: see the
-                                                            // File-arm call
-                                                            // above.
-                                                            unsafe {
-                                                                (*ctx).remove_at_index::<false>(
-                                                                    bun_watcher::Kind::File,
-                                                                    entry_id as bun_watcher::WatchItemIndex,
-                                                                    0,
-                                                                    &[],
+                                            if let Some(entry_id) =
+                                                slice.find(file_hash, path_string.as_bytes())
+                                            {
+                                                if file_descriptors[entry_id].is_valid() {
+                                                    if prev_entry_id != entry_id {
+                                                        record_changed_path(path_string.as_bytes());
+                                                        current_task.append();
+                                                        if self.verbose {
+                                                            Self::debug(format_args!(
+                                                                "Removing file: {}",
+                                                                bstr::BStr::new(
+                                                                    path_string.as_bytes()
                                                                 )
-                                                            };
+                                                            ));
                                                         }
+                                                        // SAFETY: see the File-arm
+                                                        // call above.
+                                                        unsafe {
+                                                            (*ctx).remove_at_index::<false>(
+                                                                entry_id
+                                                                    as bun_watcher::WatchItemIndex,
+                                                            )
+                                                        };
                                                     }
-
-                                                    prev_entry_id = entry_id;
-                                                    _ = prev_entry_id;
-                                                    break;
                                                 }
+
+                                                prev_entry_id = entry_id;
+                                                _ = prev_entry_id;
                                             }
 
                                             break 'brk path_string.as_bytes();

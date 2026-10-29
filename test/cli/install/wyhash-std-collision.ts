@@ -7,6 +7,8 @@
 // on it. Ported from the reporter's proof of concept for
 // https://github.com/oven-sh/bun/issues/32741.
 
+import { sep } from "node:path";
+
 const MASK = (1n << 64n) - 1n;
 const M128 = (1n << 128n) - 1n;
 const SECRET = [0xa0761d6478bd642fn, 0xe7037ed1a0b428dbn, 0x8ebc6af09c88c6e3n, 0x589965cc75374cc3n];
@@ -220,4 +222,14 @@ export function constructStdCollision(opts: {
     }
   }
   throw new Error("failed to steer kill word in-charset within budget");
+}
+
+/**
+ * Returns two names in `dir`. With `suffix` after each, their absolute paths have the same wyhash. The file watcher
+ * has a 32-bit part of that hash for each watched path.
+ */
+export function namesWithTheSameWyhash(dir: string, suffix: string): [string, string] {
+  const { str1, str2 } = constructStdCollision({ prefixStr: dir + sep + "m", suffixStr: suffix });
+  if (Bun.hash.wyhash(str1, 0n) !== Bun.hash.wyhash(str2, 0n)) throw new Error("the two paths do not collide");
+  return [str1, str2].map(path => path.slice(dir.length + 1, path.length - suffix.length)) as [string, string];
 }

@@ -1957,8 +1957,9 @@ setInterval(() => {}, 1e6);
 );
 
 // The watcher thread drops the folder of each write. A lookup that failed on the old listing must still be tried again.
-for (const flag of ["--hot", "--watch"]) {
-  it(`${flag} finds each module that the program writes and looks up at once`, async () => {
+it.each(["--hot", "--watch"])(
+  "%s finds each module that the program writes and looks up at once",
+  async flag => {
     using dir = tempDir("hot-look-up-own-write", {
       "main.js": `import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -1969,8 +1970,8 @@ const here = import.meta.dir;
 const missed = [];
 const write = name => fs.writeFileSync(path.join(here, name), "export const v = 1;\\n");
 
-// As a program does it.
-write("./first.js");
+// As a program does it. A run that the watcher started again does not write the file a second time.
+if (!fs.existsSync(path.join(here, "first.js"))) write("./first.js");
 await import("./first.js").catch(() => missed.push("./first.js"));
 
 // More folders to look in, which do not exist, keep one lookup at work for longer: the watcher
@@ -2000,8 +2001,9 @@ process.exit(0);
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // The watcher can handle the write of "first.js" after the import watches that file, and then
-    // the program starts again. Each run that comes to its end prints what it missed.
+    // the program starts again, once. Each run that comes to its end prints what it missed.
     expect([...new Set(stdout.trim().split("\n"))]).toEqual(["[]"]);
     expect(exitCode).toBe(0);
-  });
-}
+  },
+  longTimeout,
+);

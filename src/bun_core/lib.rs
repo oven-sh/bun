@@ -2636,16 +2636,14 @@ pub mod ffi {
     /// Single audited cfg-ladder over the per-libc TLS accessor symbol so the
     /// tree has ONE place that knows glibc/musl spell it `__errno_location()`,
     /// bionic spells it `__errno()`, Darwin/BSD spell it `__error()`, and the
-    /// Windows CRT spells it `_errno()`. Every higher-tier crate routes through
-    /// this — `bun_errno::posix::errno`, `bun_sys::last_errno`,
-    /// `bun_sys::c::errno_location`, `bun_platform::linux` — instead of each
-    /// re-deriving the same target_os→symbol mapping.
+    /// Windows CRT spells it `_errno()`.
     #[inline(always)]
     pub fn with_errno<R>(f: impl FnOnce(&core::cell::Cell<core::ffi::c_int>) -> R) -> R {
-        // Per-libc TLS errno accessor: no args, never null, no preconditions.
-        // `safe fn` discharges the link-time proof so the body is a plain
-        // call; only the per-platform symbol *name* varies, expressed via
-        // `#[cfg_attr(.., link_name = ..)]` on a single declaration.
+        // SAFETY: each of the four symbols takes no argument and returns the address that its libc's `errno`
+        // macro dereferences: never null, aligned for `int`. libc does not free that `int` until its thread
+        // exits, and the reference ends sooner: `&Cell` is `!Send`, so it stays on that thread, and `f` only
+        // borrows it, so it ends with this call. What libc writes to `errno` meanwhile is interior mutation,
+        // which `Cell` allows.
         unsafe extern "C" {
             #[cfg_attr(
                 any(

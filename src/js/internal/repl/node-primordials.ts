@@ -84,7 +84,7 @@ export default {
     ArrayPrototypeSortFn.$call(a, fn),
   ArrayPrototypeSplice: <T extends unknown>(
     a: T[],
-    ...args: [start: number, deleteCount: number, ...items: T[]]
+    ...args: [start: number, deleteCount?: number, ...items: T[]]
   ): T[] => ArrayPrototypeSpliceFn.$apply(a, args),
   ArrayPrototypeToSorted: <T extends unknown>(a: T[], fn?: (a: T, b: T) => number): T[] =>
     ArrayPrototypeToSortedFn.$call(a, fn),

@@ -387,6 +387,9 @@ fn widen_to_assets(
         path.strip_prefix(without_trailing_slash_windows_path(&working_directory))
             .is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
     };
+    if !is_inside(&entry_directory) {
+        return entry_directory;
+    }
     let paths = assets
         .iter()
         .map(|asset| absolute_path(&working_directory, asset));

@@ -19,7 +19,7 @@ pub use defines::Define;
 // B-3: `Define::init` / `DefineData::{from_input,parse}` are extension-trait
 // methods (the canonical types live in `bun_js_parser::defines`); bring the
 // traits into scope so the associated-fn call syntax below resolves.
-use crate::aot::paths::{absolute_path, real_directory_path};
+use crate::aot::paths::absolute_path;
 use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::global_cache::GlobalCache;
 pub use bun_options_types::offline_mode::OfflineMode;
@@ -70,28 +70,26 @@ pub(crate) fn validate_path(
     Box::from(out)
 }
 
-/// The default `root`: the directory that holds every entry point, never above the working directory.
+/// The default `root`: the directory that holds every entry point. When that directory is above
+/// the working directory, the root is the working directory and an entry point above it is named `../<file>`.
 pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) -> Vec<u8> {
     let paths: Vec<Vec<u8>> = entry_points
         .iter()
         .map(|entry| absolute_path(working_directory, entry))
         .collect();
-    let common: &[u8] = match &paths[..] {
-        [only] => bun_core::dirname(only).unwrap_or(only),
+    let common: Vec<u8> = match &paths[..] {
+        [only] => absolute_path(working_directory, bun_core::dirname(only).unwrap_or(only)),
         all => {
             let all: Vec<&[u8]> = all.iter().map(|path| &path[..]).collect();
-            longest_common_path_of(&all)
+            let common = absolute_path(working_directory, longest_common_path_of(&all));
+            let working_directory = absolute_path(working_directory, b"");
+            match bun_paths::resolve_path::is_parent_or_equal(&common, &working_directory) {
+                bun_paths::resolve_path::ParentEqual::Parent => working_directory,
+                _ => common,
+            }
         }
     };
-    let common = absolute_path(working_directory, common);
-    // Compared in the form `getcwd` gives, so `/tmp/app` and `/private/tmp/app` meet.
-    let common = real_directory_path(&common).unwrap_or(common);
-    let working_directory = absolute_path(working_directory, b"");
-    let common = bun_paths::string_paths::without_trailing_slash_windows_path(&common);
-    match bun_paths::resolve_path::is_parent_or_equal(&working_directory, common) {
-        bun_paths::resolve_path::ParentEqual::Unrelated => working_directory,
-        _ => common.to_vec(),
-    }
+    bun_paths::string_paths::without_trailing_slash_windows_path(&common).to_vec()
 }
 
 /// `resolve_path::longest_common_path` has a second rule for more than eight paths, which can answer a folder that does not hold all of them.

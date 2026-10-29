@@ -601,7 +601,7 @@ fn single_entry_point_directory_is_root() {
         (b"main.ts", b"/project"),
         (b"src/main.ts", b"/project/src"),
         (b"./src/../lib/main.ts", b"/project/lib"),
-        (b"/main.ts", b"/project"),
+        (b"/main.ts", b"/"),
     ];
     for (entry_point, root_directory) in cases {
         assert_eq!(

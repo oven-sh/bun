@@ -93,24 +93,13 @@ pub(crate) struct BufferedIoClosed {
 pub(crate) enum BufferedIoState {
     #[default]
     Open,
-    Closed(Vec<u8>),
+    Closed,
 }
 
 impl BufferedIoState {
     #[inline]
     fn closed(&self) -> bool {
-        matches!(self, BufferedIoState::Closed(_))
-    }
-}
-
-impl Drop for BufferedIoState {
-    fn drop(&mut self) {
-        // Spec `BufferedIoState.deinit`: the closed buffer was taken via
-        // `PipeReader.take_buffer()`; we own it regardless of the original
-        // stdio variant. `Vec<u8>`'s own Drop frees the storage.
-        if let BufferedIoState::Closed(list) = self {
-            list.clear_and_free();
-        }
+        matches!(self, BufferedIoState::Closed)
     }
 }
 
@@ -163,22 +152,20 @@ impl BufferedIoClosed {
     /// Close the stdout/stderr side.
     ///
     /// `readable` is the subprocess's `stdout`/`stderr` `Readable`; if it was
-    /// a pipe its buffered bytes are taken (ownership moves into
-    /// `state.Closed`) and, if the shell-side IO is `.pipe` and the AST
-    /// redirect didn't send this stream elsewhere, also tee'd into the
+    /// a pipe, the shell-side IO is `.pipe` and the AST redirect didn't send
+    /// this stream elsewhere, its buffered bytes are tee'd into the
     /// command-substitution aggregate buffer.
     fn close_out(
         slot: &mut Option<BufferedIoState>,
-        readable: &mut Readable,
+        readable: &Readable,
         io_is_pipe: bool,
         redirects_elsewhere: bool,
         shell_buf: *mut Vec<u8>,
     ) {
         let Some(state) = slot.as_mut() else { return };
         let Readable::Pipe(pipe) = readable else {
-            // Not a pipe: nothing to capture. Mark closed with an empty
-            // buffer so `all_closed()` is satisfied.
-            *state = BufferedIoState::Closed(Vec::<u8>::default());
+            // Not a pipe: nothing to capture. Mark closed so `all_closed()` is satisfied.
+            *state = BufferedIoState::Closed;
             return;
         };
         // If the shell state is piped (inside a cmd substitution) aggregate
@@ -190,11 +177,7 @@ impl BufferedIoClosed {
             // of the command. Single-threaded.
             unsafe { (*shell_buf).append_slice(the_slice) };
         }
-        // SAFETY: `Rc<PipeReader>` interior mutability — the shell is
-        // single-threaded and this is the same pattern `subproc::on_close_io`
-        // uses to take the done buffer.
-        let buffer = unsafe { &mut *(std::rc::Rc::as_ptr(pipe).cast_mut()) }.take_buffer();
-        *state = BufferedIoState::Closed(Vec::<u8>::move_from_list(buffer));
+        *state = BufferedIoState::Closed;
     }
 }
 
@@ -916,8 +899,6 @@ impl Cmd {
                     ShellSubprocess::deinit_in_flight_io(child);
                     drop(bun_core::heap::take(child));
                 }
-                // `sub.buffered_closed` drops here, freeing any captured
-                // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }
             // `Exec::Subproc` with null `child`: spawn failed before the
             // subprocess box was returned. Nothing to tear down.
@@ -1029,7 +1010,7 @@ impl Cmd {
         }
         BufferedIoClosed::close_out(
             &mut sub.buffered_closed.stdout,
-            &mut child.stdout,
+            &child.stdout,
             matches!(self.io.stdout, IoOutKind::Pipe),
             redirect.redirects_elsewhere(ast::IoKind::Stdout),
             self.base.shell_mut().buffered_stdout(),
@@ -1063,7 +1044,7 @@ impl Cmd {
         }
         BufferedIoClosed::close_out(
             &mut sub.buffered_closed.stderr,
-            &mut child.stderr,
+            &child.stderr,
             matches!(self.io.stderr, IoOutKind::Pipe),
             redirect.redirects_elsewhere(ast::IoKind::Stderr),
             self.base.shell_mut().buffered_stderr(),

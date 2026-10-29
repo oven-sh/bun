@@ -150,10 +150,8 @@ extern "C" fn on_stream_open(s: &mut quic::Stream, is_client: c_int) {
         return;
     }
     let Some(qs) = s.socket() else { return };
-    // Parent connection outlives this stream callback; single-threaded event
-    // loop, no other `&mut Socket` live across this reborrow — same invariant
-    // `quic_socket_mut` encapsulates.
-    let qs = super::client_session::quic_socket_mut(qs.as_ptr());
+    // A caller of `make_stream` may hold a `&mut` to this connection: the handle is zero-sized, so the two cannot conflict.
+    let qs = quic::Socket::opaque_mut(qs.as_ptr());
     let Some(session) = session_of(qs) else {
         s.close();
         return;

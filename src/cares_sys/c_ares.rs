@@ -695,7 +695,13 @@ pub trait ResolveHandler: Sized {
     const NS_TYPE: NSType;
     /// The `ares_callback`-compatible thunk that parses the reply and forwards
     /// to `Self`.
-    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
+    unsafe extern "C" fn raw_callback(
+        ctx: *mut c_void,
+        status: c_int,
+        timeouts: c_int,
+        buffer: *mut u8,
+        buffer_length: c_int,
+    );
 }
 
 /// Copy `src` into the caller-owned stack `buf`, NUL-terminate, and return a
@@ -819,7 +825,7 @@ impl Channel {
         {
             // SAFETY: thunk handles ARES_EBADNAME path.
             unsafe {
-                (T::RAW_CALLBACK)(
+                T::raw_callback(
                     std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
                     ARES_EBADNAME,
                     0,
@@ -840,7 +846,7 @@ impl Channel {
                 name_ptr,
                 NSClass::ns_c_in,
                 T::NS_TYPE,
-                Some(T::RAW_CALLBACK),
+                Some(T::raw_callback),
                 std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
             );
         }

@@ -440,7 +440,7 @@ function reportFailedFile(
     ...fileNode,
     type: undefined,
     testNumber: 1,
-    details: { ...details, passed: false },
+    details: { __proto__: null, ...details, passed: false },
   });
   reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
   counts.tests++;
@@ -449,13 +449,23 @@ function reportFailedFile(
 }
 
 // Promise.race([stop, awaited]) without the public `resolve` and `then`, which the caller's program can replace.
-function untilStopped<T>(stop: Promise<undefined>, awaited: Promise<T>): Promise<T | undefined> {
+function firstOf<T>(stop: Promise<undefined>, awaited: Promise<T>): Promise<T | undefined> {
   const first = $newPromise<T | undefined>();
   const resolve = (value: T | undefined) => $resolvePromiseWithFirstResolvingFunctionCallCheck(first, value);
   const reject = (err: unknown) => $rejectPromiseWithFirstResolvingFunctionCallCheck(first, err);
   stop.$then(resolve, reject);
   awaited.$then(resolve, reject);
   return first;
+}
+
+// An error of a listener goes to `onError` at once: the reader that publishes rejects only after it closed its pipe.
+function publishLine(publish: (line: string) => void, line: string, onError: (err: unknown) => void) {
+  try {
+    publish(line);
+  } catch (err) {
+    onError(err);
+    throw err;
+  }
 }
 
 async function runOneFile(
@@ -515,9 +525,12 @@ async function runOneFile(
 
   // False after the abort, and after this function: nothing more of the child is published.
   let live = true;
-  // Ends a wait for the child: it fulfills at the abort and rejects when the stderr reader fails.
+  // Ends a wait for the child: it fulfills at the abort and rejects when a reader fails.
   let stop: Promise<undefined> | undefined;
   let abortListener: Disposable | undefined;
+  // The first error of a reader. A listener of the caller that throws is one.
+  let readerFailed = false;
+  let readerError: unknown;
 
   try {
     if (signal !== undefined) {
@@ -531,6 +544,14 @@ async function runOneFile(
       });
     }
 
+    // Only a run with a signal has a wait that the error of a reader can end.
+    const onReaderError = (err: unknown) => {
+      if (readerFailed) return;
+      readerFailed = true;
+      readerError = err;
+      if (stop !== undefined) $rejectPromiseWithFirstResolvingFunctionCallCheck(stop, err);
+    };
+
     // Reads one pipe of the child to its end, and publishes each line while the file is live.
     const readLines = async (pipe: unknown, publish: (line: string) => void) => {
       const decoder = new TextDecoder();
@@ -543,10 +564,10 @@ async function runOneFile(
         while (live && (nl = carry.indexOf("\n")) !== -1) {
           const line = carry.slice(0, nl);
           carry = carry.slice(nl + 1);
-          publish(line);
+          publishLine(publish, line, onReaderError);
         }
       }
-      if (live && carry.length > 0) publish(carry);
+      if (live && carry.length > 0) publishLine(publish, carry, onReaderError);
     };
 
     let stderrText = "";
@@ -554,10 +575,7 @@ async function runOneFile(
       stderrText += line + "\n";
       if (line.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: line + "\n" });
     });
-    // A test:stderr listener that throws fails this reader. Only a run with a signal has a wait that this can end.
-    drainStderr.$then(undefined, (err: unknown) => {
-      if (stop !== undefined) $rejectPromiseWithFirstResolvingFunctionCallCheck(stop, err);
-    });
+    drainStderr.$then(undefined, onReaderError);
 
     const handleStdoutLine = (line: string) => {
       if (line.length === 0) return;
@@ -594,15 +612,18 @@ async function runOneFile(
       exitCode = await proc.exited;
     } else {
       // Node's file test ends at child exit and stdout end: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/runner.js#L557-L560
-      await untilStopped(stop, drainStdout);
-      exitCode = await untilStopped(stop, proc.exited);
+      await firstOf(stop, drainStdout);
+      exitCode = await firstOf(stop, proc.exited);
+      // A listener that aborts and then throws ends the wait with the abort. Its error is still the result.
+      if (readerFailed) throw readerError;
       if (!live) {
         addRunCounts(counts, fileCounts);
         reportFailedFile(fileNode, abortFailure(signal!), "cancelled", Date.now() - fileStarted, reporter, counts);
         return;
       }
       // The file has its verdict. An abort from here on only ends this wait.
-      await untilStopped(stop, drainStderr);
+      await firstOf(stop, drainStderr);
+      if (readerFailed) throw readerError;
     }
 
     // A nonzero exit with no child-reported failures means the file itself died

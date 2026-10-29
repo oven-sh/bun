@@ -107,6 +107,9 @@ function countListeners(signal: AbortSignal) {
   return () => count;
 }
 
+/** Each `details` object of an event that inherits from Object.prototype, over all scenarios. */
+const detailsWithPrototype: string[] = [];
+
 /** Records what the runner publishes, at the time that it publishes it. `isReason`: the error is `reason` itself. */
 function observe(stream: Stream, reason?: unknown) {
   const types: string[] = [];
@@ -121,6 +124,8 @@ function observe(stream: Stream, reason?: unknown) {
   const emit = stream.emit;
   stream.emit = function (this: Stream, type: string, data: any) {
     if (type.startsWith("test:")) types.push(type);
+    if (data?.details && Object.getPrototypeOf(data.details) !== null)
+      detailsWithPrototype.push(`${type} ${data.name}`);
     if (type === "test:stderr") stderr.push(data.message);
     if (type === "test:plan" && data.file === undefined) plan = data.count;
     if (type === "test:summary" && data.file === undefined) summary = data;
@@ -282,6 +287,36 @@ for (const source of ["stdout", "stderr"] as const) {
   }
 }
 
+// The error of the listener is the result, as without the abort.
+for (const [name, source, afterExit] of [
+  ["a test:stdout listener aborts, then throws", "stdout", false],
+  ["a test:stderr listener aborts, then throws", "stderr", false],
+  ["a test:stderr listener aborts, then throws, after the child exited", "stderr", true],
+] as const) {
+  await scenario(name, async () => {
+    const controller = new AbortController();
+    const spawned = nextChild();
+    const watch = observe(run({ files: ["a.js"], signal: controller.signal }));
+    watch.stream.on(`test:${source}`, () => {
+      controller.abort();
+      throw new Error("the listener throws");
+    });
+    const child = await spawned;
+    if (afterExit) {
+      child.stdout.write(pass("passes"));
+      child.stdout.end();
+      child.exit(0);
+      await tick();
+    }
+    child[source].write("a line\n");
+
+    const endedAtThrow = await watch.endedNow();
+    child.end(0);
+    await watch.settled();
+    return { endedAtThrow, destroyedWith: watch.destroyedWith(), kills: child.kills };
+  });
+}
+
 await scenario("the child of the first file does not start", async () => {
   const cause = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
   spawnError = cause;
@@ -375,5 +410,7 @@ for (const [name, reason] of [
     };
   });
 }
+
+results["details objects that inherit from Object.prototype"] = detailsWithPrototype;
 
 console.log(JSON.stringify(results, null, 2));

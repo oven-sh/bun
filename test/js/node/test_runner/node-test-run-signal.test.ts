@@ -10,7 +10,7 @@ const isPosix = process.platform !== "win32";
 const harness = isBun ? await import("harness") : undefined;
 const node = harness?.nodeExeAtLeast("26.3.0") ?? null;
 const env: Record<string, string | undefined> = harness?.bunEnv ?? process.env;
-// A child of the debug build takes seconds to start.
+// A child of the debug build takes seconds to start. A test that ends too early leaves its run behind.
 const timeout = 30_000;
 
 // Each long test of a fixture ends after a minute. A child that a failed run leaves behind ends then, too.
@@ -327,7 +327,7 @@ test(
   },
 );
 
-test("Node.js passes each test of this file", { skip: !node, timeout: 120_000 }, async () => {
+test("Node.js passes each test of this file", { skip: !node, timeout }, async () => {
   await using proc = Bun.spawn({
     cmd: [node!, "--test-reporter=tap", import.meta.filename],
     env,

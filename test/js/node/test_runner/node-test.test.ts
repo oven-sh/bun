@@ -631,6 +631,9 @@ describe("node:test run() signal", () => {
       "a test:stderr listener throws, with a signal": destroyed(true),
       // Without a signal, the runner waits for the end of stdout first.
       "a test:stderr listener throws, without a signal": destroyed(false),
+      "a test:stdout listener aborts, then throws": destroyed(true),
+      "a test:stderr listener aborts, then throws": destroyed(true),
+      "a test:stderr listener aborts, then throws, after the child exited": destroyed(true),
       "the child of the first file does not start": {
         outcome: {
           success: false,
@@ -661,6 +664,7 @@ describe("node:test run() signal", () => {
       "a test:dequeue listener aborts": { endedAtAbort: true, outcome: cancelled("a.js", 1), spawns: 0 },
       "the reason is a string": wrapped,
       "the reason is a frozen object": wrapped,
+      "details objects that inherit from Object.prototype": [],
     });
     expect(exitCode).toBe(0);
   }, 30_000);

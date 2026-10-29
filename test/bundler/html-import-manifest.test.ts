@@ -663,6 +663,8 @@ console.log("About manifest:", aboutHtml);
       const written = new Set(outputs.map(output => "./" + output.path));
       const listed = outputs.flatMap(output => parseManifests(output.text)).flatMap(listedPaths);
       expect(listed.filter(path => !written.has(path))).toEqual([]);
+      // No two outputs of one build have one hash and two contents.
+      expect(mismatches(outputs, outputs).oneNameTwoContents).toEqual([]);
       return outputs;
     }
 
@@ -740,7 +742,7 @@ console.log("About manifest:", aboutHtml);
       expect(mismatches(second, edited)).toEqual(none);
     }
 
-    const cases: (Omit<Edit, "files"> & { changes: string; renames: string[] })[] = [
+    const cases: (Omit<Edit, "files"> & { changes: string; renames: string[]; keeps?: string[] })[] = [
       {
         changes: "client JS",
         edit: { "client.js": `import("./lazy.js"); console.log("changed");` },
@@ -789,10 +791,18 @@ console.log("About manifest:", aboutHtml);
         splitting: true,
         renames: ["chunk.js", "other.js", "server.js"],
       },
+      {
+        // Only this entry point's own code changes. Both print the same manifest.
+        changes: "the server code of one of two entry points",
+        edit: { "server.js": `import page from "./index.html"; console.log("changed", page);` },
+        entrypoints: ["server.js", "other.js"],
+        renames: ["server.js"],
+        keeps: ["other.js"],
+      },
     ];
 
-    test.each(cases)("when $changes changes", async ({ renames, ...options }) => {
-      await expectRenames({ files, ...options }, renames);
+    test.each(cases)("when $changes changes", async ({ renames, keeps, ...options }) => {
+      await expectRenames({ files, ...options }, renames, keeps);
     });
 
     // `server.js` and `other.js` import a chunk, and that chunk imports the chunk that prints the manifest.

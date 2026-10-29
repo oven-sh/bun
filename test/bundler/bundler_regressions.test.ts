@@ -232,9 +232,8 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     target: "bun",
-    run: {
-      file: "/entry.js",
-    },
+    // #2948 ran the source file, so `/entry.js` runs as it is. `/out.js` is the bundle.
+    run: [{ file: "/entry.js" }, { file: "/out.js" }],
   });
 
   // https://github.com/oven-sh/bun/issues/3660

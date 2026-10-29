@@ -1,12 +1,4 @@
-//! `process.binding("tty_wrap").TTY`: the native handle behind
-//! `tty.ReadStream`, with Node's `LibuvStreamWrap` surface (`readStart`,
-//! `readStop`, `onread(nread, buffer)`; `nread < 0` is a libuv errno, `UV_EOF`
-//! ends the stream). `readStop()` unregisters the poll, so a stopped stdin
-//! releases fd 0.
-//!
-//! Refs: the JS wrapper (released in `finalize`) and the reader (released by
-//! its terminal callback). `this_value` is strong while reading, and on Windows
-//! until `close()`: there the reader's handle is the caller's fd.
+//! `process.binding("tty_wrap").TTY`: the native handle behind `tty.ReadStream`, with Node's `LibuvStreamWrap` surface.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -64,6 +56,7 @@ bitflags::bitflags! {
 
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct TTY {
+    /// One ref is the JS wrapper's, released in `finalize`. One is the reader's, released by its last callback.
     ref_count: bun_ptr::RefCount<TTY>,
 
     /// The fd JS passed in. `setRawMode`/`getWindowSize` act on it.
@@ -76,6 +69,7 @@ pub(crate) struct TTY {
     reader: JsCell<BufferedReader>,
     event_loop_handle: EventLoopHandle,
     global_this: bun_ptr::BackRef<JSGlobalObject>,
+    /// Strong while reading. On Windows strong until `close()`: there the reader's handle is the caller's fd.
     this_value: JsCell<JsRef>,
     bytes_read: Cell<u64>,
     bytes_written: Cell<u64>,
@@ -289,8 +283,7 @@ impl TTY {
         Ok(())
     }
 
-    /// Opens the reader on its own fd and leaves it paused: `readStart()`
-    /// starts the reads. On success the reader holds a ref.
+    /// Opens the reader on its own fd, paused. On success the reader holds a ref.
     fn start_reader(&self) -> Result<(), StartError> {
         #[cfg(unix)]
         let (read_fd, nonblocking, owns_fd) = {

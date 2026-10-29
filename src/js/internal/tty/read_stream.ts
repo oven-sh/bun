@@ -24,8 +24,6 @@ declare global {
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L51-L72
-// readableHighWaterMark: 0 makes every push() report backpressure, so the
-// handle only reads while a consumer pulls.
 function ReadStream(this: $Node.TTYReadStream, fd: number, options?: $Node.SocketOptions): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd, options) as any;
@@ -52,6 +50,7 @@ function ReadStream(this: $Node.TTYReadStream, fd: number, options?: $Node.Socke
   }
 
   net.Socket.$call(this, {
+    // Every push() reports backpressure: the handle reads only while a consumer pulls.
     readableHighWaterMark: 0,
     handle: tty,
     manualStart: true,

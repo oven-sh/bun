@@ -726,45 +726,33 @@ impl<'a> LinkerContext<'a> {
 
     fn process_html_import_files(&mut self) {
         // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, a sibling
-        // field of `BundleV2.linker` (= `*self`). The two are disjoint, and no
-        // other `&`/`&mut` to `BundleV2.graph` is live for this scope —
-        // `self.graph` below is `LinkerGraph`, a distinct allocation.
-        // Note: go through raw pointers and reborrow per use to avoid holding
-        // overlapping `&`/`&mut` into `parse_graph.html_imports` and
-        // `parse_graph.input_files`.
-        let parse_graph: *mut Graph<'a> = self.parse_graph;
-        // SAFETY: see above; sole accessor of `html_imports` for this scope.
-        let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
-        if server_len > 0 {
+        // field of `BundleV2.linker` (= `*self`), so these three fields of it are
+        // disjoint from `*self` and from each other. Nothing else uses `html_imports`
+        // during this call; the source map workers that may be running only read the graph.
+        let (html_imports, input_files, build_graphs) = unsafe {
+            let parse_graph: *mut Graph<'a> = self.parse_graph;
+            (
+                &mut (*parse_graph).html_imports,
+                &(*parse_graph).input_files,
+                &(*parse_graph).build_graphs,
+            )
+        };
+        let crate::Graph::HtmlImports {
+            server_source_indices,
+            html_source_indices,
+        } = html_imports;
+        if !server_source_indices.is_empty() {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
+            let sources = input_files.items_source();
+            let browser_paths = &build_graphs[Target::Browser];
 
-            for i in 0..server_len as usize {
-                // SAFETY: `server_source_indices` is a stable Vec; index
-                // bounded by `server_len`.
-                let html_import: u32 =
-                    unsafe { (*parse_graph).html_imports.server_source_indices.slice()[i] };
-                // SAFETY: `input_files` SoA is append-only; read-only here.
-                let path_text = unsafe {
-                    &(*parse_graph).input_files.items_source()[html_import as usize]
-                        .path
-                        .text
-                };
-                // SAFETY: sole `&mut` into the per-target map for this lookup.
-                let source_index: u32 = unsafe {
-                    (*parse_graph).path_to_source_index_map(Target::Browser)
-                }
-                .get(path_text)
-                .unwrap_or_else(|| {
+            for &html_import in server_source_indices.iter() {
+                let path_text = sources[html_import as usize].path.text;
+                let source_index: u32 = browser_paths.get(path_text).unwrap_or_else(|| {
                     panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 });
 
-                // SAFETY: sole `&mut` into `html_source_indices` for this push.
-                unsafe {
-                    (*parse_graph)
-                        .html_imports
-                        .html_source_indices
-                        .push(source_index)
-                };
+                html_source_indices.push(source_index);
 
                 // S.LazyExport is a call to __jsonParse. Each accessor returns
                 // `Option`; `.unwrap()` panics on shape mismatch.
@@ -782,9 +770,10 @@ impl<'a> LinkerContext<'a> {
                 .ref_;
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                // SAFETY: `original_ref`'s symbol slot is disjoint from any live borrow here
-                // (only `actual_ref` is held, a `Copy` value).
-                unsafe { self.graph.symbol_mut(original_ref) }
+                self.graph
+                    .symbols
+                    .get_const(original_ref)
+                    .expect("infallible: ref in symbol table")
                     .link
                     .set(actual_ref);
 

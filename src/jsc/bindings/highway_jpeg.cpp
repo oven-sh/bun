@@ -194,11 +194,11 @@ struct JpegRows {
         return hn::Add(hn::Add(v, v), v);
     }
 
-    // Whether `Widen` puts the even lanes in one vector and the odd ones in the other, which on x86 takes no shuffles.
+    // Whether `Promote` puts the even lanes in one vector and the odd ones in the other, which on x86 takes no shuffles.
     // Otherwise it is the lower and the upper lanes, for which Arm has instructions that widen and narrow on the way.
     static constexpr bool kEvenOdd = HWY_ARCH_X86;
 
-    static HWY_INLINE void Widen(V8 v, VU16& a, VU16& b)
+    static HWY_INLINE void Promote(V8 v, VU16& a, VU16& b)
     {
         const DU16 d;
         if constexpr (kEvenOdd) {
@@ -210,8 +210,8 @@ struct JpegRows {
         }
     }
 
-    // Undoes `Widen`, of numbers under 256.
-    static HWY_INLINE V8 Narrow(VU16 a, VU16 b)
+    // Undoes `Promote`, of numbers under 256.
+    static HWY_INLINE V8 Demote(VU16 a, VU16 b)
     {
         const D8 d8;
         if constexpr (kEvenOdd) {
@@ -237,10 +237,10 @@ struct JpegRows {
         if (n < N + 2) return false;
 
         const auto load = [=](size_t i, VU16& a, VU16& b) HWY_ATTR {
-            Widen(hn::LoadU(d8, near_row + i), a, b);
+            Promote(hn::LoadU(d8, near_row + i), a, b);
             if constexpr (kTwoRows) {
                 VU16 far_a, far_b;
-                Widen(hn::LoadU(d8, far_row + i), far_a, far_b);
+                Promote(hn::LoadU(d8, far_row + i), far_a, far_b);
                 a = hn::Add(Triple(a), far_a);
                 b = hn::Add(Triple(b), far_b);
             }
@@ -258,9 +258,9 @@ struct JpegRows {
             }
             const VU16 a3 = Triple(at_a), b3 = Triple(at_b);
             hn::StoreInterleaved2(
-                Narrow(hn::ShiftRight<kShift>(hn::Add(hn::Add(a3, before_a), bias_left)),
+                Demote(hn::ShiftRight<kShift>(hn::Add(hn::Add(a3, before_a), bias_left)),
                     hn::ShiftRight<kShift>(hn::Add(hn::Add(b3, before_b), bias_left))),
-                Narrow(hn::ShiftRight<kShift>(hn::Add(hn::Add(a3, after_a), bias_right)),
+                Demote(hn::ShiftRight<kShift>(hn::Add(hn::Add(a3, after_a), bias_right)),
                     hn::ShiftRight<kShift>(hn::Add(hn::Add(b3, after_b), bias_right))),
                 d8, out + i * 2);
             if (i == last) break;

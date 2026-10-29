@@ -27,7 +27,7 @@ impl Method {
 /// edge sample repeats, which leaves the outermost samples as they are.
 ///
 /// The result is `(3 * near + far + bias) >> shift`.
-fn widen(
+fn fancy(
     input: impl DoubleEndedIterator<Item = u16> + Clone,
     output: &mut [[u8; 2]],
     [bias_left, bias_right]: [u16; 2],
@@ -45,7 +45,7 @@ fn widen(
 pub(crate) fn h2v1_fancy(input: &[u8], output: &mut [u8]) {
     let (output, _) = output.as_chunks_mut::<2>();
     if !bun_highway::jpeg::h2v1_fancy(input, output) {
-        widen(input.iter().copied().map(u16::from), output, [1, 2], 2);
+        fancy(input.iter().copied().map(u16::from), output, [1, 2], 2);
     }
 }
 
@@ -64,7 +64,7 @@ pub(crate) fn h2v2_fancy(near: &[u8], far: &[u8], output: &mut [u8]) {
     if !bun_highway::jpeg::h2v2_fancy(near, far, output) {
         let columns = near.iter().zip(far);
         let sums = columns.map(|(&near, &far)| u16::from(near) * 3 + u16::from(far));
-        widen(sums, output, [8, 7], 4);
+        fancy(sums, output, [8, 7], 4);
     }
 }
 

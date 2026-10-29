@@ -1379,6 +1379,9 @@ struct BatchBuffers<'buf, 'a> {
     within: Range<usize>,
     /// [`ExtDict::Within::window`]
     window: usize,
+    /// Where in `buf` the literals would be, which the output must not catch up with. What gets close to them is not of
+    /// the common kind. That is where `buf` ends, unless `within` is after it.
+    lit_ptr: usize,
 }
 
 /// Turns sequences into output.
@@ -1419,6 +1422,12 @@ impl<'a> Executor<'_, 'a> {
     #[inline(always)]
     fn lits_left(&self) -> usize {
         self.lits.len().saturating_sub(WILDCOPY_OVERLENGTH)
+    }
+
+    /// `litPtr`, if `split`: where in the output buffer `lits` would start.
+    #[inline(always)]
+    fn lit_ptr(&self) -> usize {
+        self.lit_end_in_dst.wrapping_sub(self.lits_left())
     }
 
     /// The same, for a while. A loop works on a copy that is a local variable and whose address nothing takes, which
@@ -1462,7 +1471,7 @@ impl<'a> Executor<'_, 'a> {
             return Err(Error::CorruptionDetected);
         }
         if self.split {
-            let lit_ptr = self.lit_end_in_dst.wrapping_sub(self.lits_left());
+            let lit_ptr = self.lit_ptr();
             if op > lit_ptr && op < lit_ptr.wrapping_add(lit_length) {
                 return Err(Error::DstSizeTooSmall);
             }
@@ -1506,6 +1515,7 @@ impl<'a> Executor<'_, 'a> {
         let match_length = sequence.match_length as usize;
         let offset = sequence.offset;
         let op = self.op;
+        let lit_ptr = self.lit_ptr();
 
         let room = self.out.bytes().get_mut(op..)?;
         if lit_length + match_length + WILDCOPY_OVERLENGTH > room.len()
@@ -1515,9 +1525,7 @@ impl<'a> Executor<'_, 'a> {
         }
         if SPLIT {
             // The output must not catch up with the literals.
-            let i_lit_end = (self.lit_end_in_dst)
-                .wrapping_sub(self.lits.len() - WILDCOPY_OVERLENGTH)
-                .wrapping_add(lit_length);
+            let i_lit_end = lit_ptr.wrapping_add(lit_length);
             if op + lit_length + match_length + WILDCOPY_OVERLENGTH > i_lit_end {
                 return None;
             }
@@ -1661,8 +1669,18 @@ impl<'a> Executor<'_, 'a> {
             _ => (&[][..], 0..0, 0),
         };
         let lits = self.lits.get(..u32::MAX as usize).unwrap_or(self.lits);
+        let lit_ptr = if self.split {
+            self.lit_ptr()
+        } else {
+            usize::MAX
+        };
+        let end = if within.is_empty() {
+            lit_ptr
+        } else {
+            usize::MAX
+        };
         let buf = self.out.bytes();
-        let end = buf.len().min(start + u32::MAX as usize);
+        let end = buf.len().min(start + u32::MAX as usize).min(end);
         let buf = buf.get_mut(start..end).unwrap_or_default();
         BatchBuffers {
             start,
@@ -1671,6 +1689,7 @@ impl<'a> Executor<'_, 'a> {
             dict,
             within,
             window,
+            lit_ptr: lit_ptr.saturating_sub(start),
         }
     }
 
@@ -1696,6 +1715,7 @@ impl<'a> Executor<'_, 'a> {
             dict,
             within,
             window,
+            lit_ptr,
         } = self.batch_buffers();
         let mut op = op.wrapping_sub(start) as u32;
         let mut lit_pos = 0u32;
@@ -1719,6 +1739,7 @@ impl<'a> Executor<'_, 'a> {
             let o_match_end = o_lit_end + match_length;
             let lit_end = lit_pos as usize + lit_length;
             if o_match_end + WILDCOPY_OVERLENGTH > buf.len()
+                || EXT == EXT_WITHIN && o_match_end + WILDCOPY_OVERLENGTH > lit_ptr
                 || lit_end + WILDCOPY_OVERLENGTH > lits.len()
                 || lit_length > MAX_BATCH_LITERALS as usize
                 || (EXT == NO_EXT || match_length > 64 || offset_value < MIN_FAR_OFFSET_VALUE)
@@ -1821,7 +1842,7 @@ impl<'a> Executor<'_, 'a> {
             {
                 break;
             }
-            exec.exec_sequence::<false>(Sequence {
+            exec.exec_sequence_maybe_split(Sequence {
                 lit_length: raw.lit_length,
                 match_length: raw.match_length + MINMATCH,
                 offset: (offset_value as usize).wrapping_sub(3),
@@ -1854,7 +1875,7 @@ impl<'a> Executor<'_, 'a> {
 
         let mut remaining = nb_seq;
         // Long copies go on while the next sequences are decoded, if that is what comes next. And a batch of a few
-        // sequences is not worth it.
+        // sequences is not worth it. This loop knows nothing of literals that would be in the output.
         if (seq_state.tables.matches_are_long() || nb_seq <= MAX_ONE_BY_ONE && !LONG) && !self.split
         {
             let mut exec = self.fork();
@@ -1870,28 +1891,26 @@ impl<'a> Executor<'_, 'a> {
         let mut left_at = None;
         while remaining > ahead.len() {
             let mut count = 0;
-            if !self.split {
-                if PaddedStart::fits(&seq_state.bit_d)
-                    && let Some(start) = start.take()
-                    && let Some(bit_d) = start.insert(PaddedStart::new()).set(&seq_state.bit_d)
-                {
-                    left_at = Some((seq_state, remaining));
-                    seq_state.bit_d = bit_d;
-                }
-                // The last sequence is followed by no state.
-                let room = (batch.len() - 4).min(remaining - ahead.len().max(1));
-                if room > 0 {
-                    let history = &mut self.history();
-                    let room = batch.span_mut(3, room)?;
-                    count = seq_state.decode_batch(LONG, more_bits, room, history)?;
-                }
-                if left_at.is_some()
-                    && count + 1 == remaining
-                    && let Some(last) = seq_state.decode_last()
-                {
-                    batch.put(3 + count, last)?;
-                    count += 1;
-                }
+            if PaddedStart::fits(&seq_state.bit_d)
+                && let Some(start) = start.take()
+                && let Some(bit_d) = start.insert(PaddedStart::new()).set(&seq_state.bit_d)
+            {
+                left_at = Some((seq_state, remaining));
+                seq_state.bit_d = bit_d;
+            }
+            // The last sequence is followed by no state.
+            let room = (batch.len() - 4).min(remaining - ahead.len().max(1));
+            if room > 0 {
+                let history = &mut self.history();
+                let room = batch.span_mut(3, room)?;
+                count = seq_state.decode_batch(LONG, more_bits, room, history)?;
+            }
+            if left_at.is_some()
+                && count + 1 == remaining
+                && let Some(last) = seq_state.decode_last()
+            {
+                batch.put(3 + count, last)?;
+                count += 1;
             }
             let mut sequence = None;
             if count == 0 {

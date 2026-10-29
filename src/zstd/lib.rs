@@ -760,6 +760,71 @@ mod tests {
     }
 
     #[test]
+    fn output_does_not_catch_up_with_literals_that_would_be_in_its_buffer() {
+        const MAGIC: [u8; 4] = common::ZSTD_MAGICNUMBER.to_le_bytes();
+        let le24 = |value: usize| [value as u8, (value >> 8) as u8, (value >> 16) as u8];
+        let size = |more: usize, nb_seq: usize| (1 << 16) + more + 1027 * nb_seq;
+        // A last block: 64 KB and `more` times a byte, and sequences of 16 literals and 1027 bytes from 16 back.
+        let block = |more: usize, nb_seq: usize| {
+            // For each sequence 4 bits of the offset, 10 of the match length and one of the literal length. After the
+            // last, a bit set.
+            let mut bits = vec![0u8; 15 * nb_seq / 8 + 1];
+            let of_offsets = (0..nb_seq).flat_map(|i| [15 * i + 11, 15 * i + 12]);
+            for bit in of_offsets.chain([15 * nb_seq]) {
+                if let Some(byte) = bits.get_mut(bit / 8) {
+                    *byte |= 1 << (bit % 8);
+                }
+            }
+            let literals = le24(1 | 3 << 2 | ((1 << 16) + more) << 4);
+            // All three codes are one symbol.
+            let sequences = [nb_seq as u8, 0x54, 16, 4, 46];
+            let header = le24(1 | 2 << 1 | (4 + sequences.len() + bits.len()) << 3);
+            [&header[..], &literals, b"a", &sequences, &bits].concat()
+        };
+        let in_one_call = |more: usize, nb_seq: usize| {
+            let content_size = (size(more, nb_seq) as u32).to_le_bytes();
+            let frame = [&MAGIC[..], &[0xA0], &content_size, &block(more, nb_seq)].concat();
+            let mut dst = vec![0; size(more, nb_seq)];
+            let written = DCtx::new().decompress(&mut dst, &frame)?;
+            dst.truncate(written);
+            Ok((written, dst == vec![b'a'; written]))
+        };
+        // With a window of 128 KB, after 3 blocks of as many times the byte, which fill the buffer of the stream.
+        let as_a_stream = |more: usize, nb_seq: usize| {
+            let filler = [&le24(1 << 1 | 1 << 17 << 3)[..], b"a"].concat().repeat(3);
+            let frame = [&MAGIC[..], &[0, 7 << 3], &filler, &block(more, nb_seq)].concat();
+            let mut dst = vec![0; 600_000];
+            let mut output = OutBuffer {
+                dst: &mut dst,
+                pos: 0,
+            };
+            assert_eq!(feed(&mut DCtx::new(), &mut output, &frame)?, 0);
+            let written = output.pos;
+            dst.truncate(written);
+            Ok((written - (3 << 17), dst == vec![b'a'; written]))
+        };
+        // Where there is too little room for the C library to keep all the literals in it, it keeps the first `more`,
+        // which end 32 bytes before the 128 KB that a block can make.
+        let cases = [
+            (500, 60, Ok((size(500, 60), true))),
+            // The 125th starts 6 bytes after where its literals do, and ends before where the last of them does.
+            (3698, 125, Err(Error::DstSizeTooSmall)),
+            (3698, 126, Err(Error::DstSizeTooSmall)),
+            (3698, 124, Err(Error::CorruptionDetected)),
+            (3698, 61, Err(Error::CorruptionDetected)),
+            (3698, 60, Ok((size(3698, 60), true))),
+            // Too few for a batch where the literals are elsewhere.
+            (50, 5, Ok((size(50, 5), true))),
+        ];
+        for (more, nb_seq, expected) in cases.into_iter().take(if cfg!(miri) { 2 } else { 7 }) {
+            assert_eq!(in_one_call(more, nb_seq), expected, "{more}, {nb_seq}");
+            if !cfg!(miri) {
+                assert_eq!(as_a_stream(more, nb_seq), expected, "{more}, {nb_seq}");
+            }
+        }
+    }
+
+    #[test]
     fn output_that_is_appended_is_what_output_that_is_there_is() -> Result<()> {
         let mut state = 1u32;
         let mut random = move || {

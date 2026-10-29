@@ -367,8 +367,8 @@ describe("decompressing frames whose size is known", () => {
   ];
   const whole = Buffer.concat(pieces);
 
-  // "raw", "rle", or how many sequences a compressed block has. Or else how its literals are written.
-  function blocks(frame: Uint8Array, ofLiterals = false) {
+  // "raw", "rle", or how many sequences a compressed block has. Or else how its literals are written, or how many it has.
+  function blocks(frame: Uint8Array, ofLiterals: boolean | "count" = false) {
     const descriptor = frame[4];
     const isSingleSegment = (descriptor >> 5) & 1;
     let at = 5 + (1 - isSingleSegment) + [0, 1, 2, 4][descriptor & 3] + [isSingleSegment, 2, 4, 8][descriptor >> 6];
@@ -387,22 +387,26 @@ describe("decompressing frames whose size is known", () => {
           frame[at + 3] * 2 ** 24 +
           frame[at + 4] * 2 ** 32;
         let literals: number;
+        let count: number;
         if ((frame[at] & 3) < 2) {
-          const size = format === 1 ? (bits >> 4) & 0xfff : format === 3 ? (bits >> 4) & 0xfffff : frame[at] >> 3;
-          literals = [1, 2, 1, 3][format] + ((frame[at] & 3) === 0 ? size : 1);
+          count = format === 1 ? (bits >> 4) & 0xfff : format === 3 ? (bits >> 4) & 0xfffff : frame[at] >> 3;
+          literals = [1, 2, 1, 3][format] + ((frame[at] & 3) === 0 ? count : 1);
         } else {
           const width = [10, 10, 14, 18][format];
+          count = Math.floor(bits / 2 ** 4) % 2 ** width;
           literals = [3, 3, 4, 5][format] + (Math.floor(bits / 2 ** (4 + width)) % 2 ** width);
         }
         const [first, second, third] = frame.subarray(at + literals);
         kinds.push(
-          ofLiterals
-            ? ["raw", "rle", "code", "same code"][frame[at] & 3]
-            : first < 128
-              ? first
-              : first < 255
-                ? ((first - 128) << 8) + second
-                : second + (third << 8) + 0x7f00,
+          ofLiterals === "count"
+            ? count
+            : ofLiterals
+              ? ["raw", "rle", "code", "same code"][frame[at] & 3]
+              : first < 128
+                ? first
+                : first < 255
+                  ? ((first - 128) << 8) + second
+                  : second + (third << 8) + 0x7f00,
         );
       } else {
         kinds.push(["raw", "rle"][type]);
@@ -507,6 +511,58 @@ describe("decompressing frames whose size is known", () => {
     // There is room for all three, so each is decoded in one go to where the one before it ends.
     const decoded = zlib.zstdDecompressSync(Buffer.concat([frame, frame, frame]), { dictionary, chunkSize: 1 << 17 });
     expect(decoded.equals(Buffer.concat([data, data, data]))).toBe(true);
+  });
+
+  // The C library keeps some of them in the output buffer, unless that has room for all of them.
+  describe("blocks of more than 64 KB of literals", () => {
+    // Noise of 6 bits, and after every 6 to 30 bytes of it, up to `end`, 5 to 8 bytes from `nearest` to `furthest` back.
+    function literalsAndMatches(length: number, end: number, nearest: number, furthest: number) {
+      const data = Buffer.alloc(length);
+      for (let at = 0, x = 0x9e3779b9; at < length; at++) {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        data[at] = x & 63;
+      }
+      for (let at = furthest, i = 0; at < end - 64; i++) {
+        at += 6 + (i % 25);
+        const from = at - nearest - ((i * 7919) % (furthest - nearest));
+        data.copyWithin(at, from, from + 5 + (i % 4));
+        at += 5 + (i % 4);
+      }
+      return data;
+    }
+    const params = { [zlib.constants.ZSTD_c_compressionLevel]: 6, [zlib.constants.ZSTD_c_windowLog]: 17 };
+
+    it.each([128_000, 40_000])("with matches in the first %i bytes", end => {
+      const data = literalsAndMatches(128_000, end, 16, 56);
+      const frame = zstdCompressSync(data, { level: 3 });
+      expect(blocks(frame)).toEqual([expect.any(Number)]);
+      expect(blocks(frame)[0]).toBeGreaterThan(end / 40);
+      expect(blocks(frame, "count")[0]).toBeGreaterThan(1 << 16);
+      expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+      expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+    });
+
+    it("with matches in the older part of a buffer that is written to from its start again", () => {
+      const data = literalsAndMatches(900_000, 900_000, 70_000, 125_000);
+      const frame = zlib.zstdCompressSync(data, { params });
+      expect(blocks(frame).length).toBe(7);
+      // The buffer holds 3 blocks.
+      for (const sequences of blocks(frame).slice(3)) expect(sequences).toBeGreaterThan(3_000);
+      for (const literals of blocks(frame, "count")) expect(literals).toBeGreaterThan(1 << 16);
+      expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+    });
+
+    it("with matches in a dictionary", () => {
+      const all = literalsAndMatches(250_000, 250_000, 70_000, 125_000);
+      const [dictionary, data] = [all.subarray(0, 125_000), all.subarray(125_000)];
+      const frame = zlib.zstdCompressSync(data, { params, dictionary });
+      expect(blocks(frame)).toEqual([expect.any(Number)]);
+      expect(blocks(frame)[0]).toBeGreaterThan(3_000);
+      expect(blocks(frame, "count")[0]).toBeGreaterThan(1 << 16);
+      expect(zlib.zstdDecompressSync(frame, { dictionary }).equals(data)).toBe(true);
+    });
   });
 
   it("a frame that makes more than it says is refused", () => {

@@ -60,16 +60,9 @@ pub(crate) enum ScanError {
 }
 bun_core::oom_from_alloc!(ScanError);
 
-/// Newtype around `*mut Scanner` so it can satisfy [`DirEntryIterator`]
-/// (whose `next` takes `&self`) while still allowing mutable calls.
-#[repr(transparent)]
-struct ScannerDirIter<'a>(*mut Scanner<'a>);
-impl<'a> DirEntryIterator for ScannerDirIter<'a> {
-    fn next<R: EntryKindResolver>(&self, rfs: &R, entry: &fs::Entry, _fd: Fd) {
-        // SAFETY: `self.0` is `&mut Scanner` for the duration of
-        // `read_directory_with_iterator`; no other live `&mut` alias exists
-        // while the resolver walks entries.
-        unsafe { (*self.0).next(rfs, entry) }
+impl DirEntryIterator for Scanner<'_> {
+    fn next<R: EntryKindResolver>(&mut self, rfs: &R, entry: &fs::Entry, _fd: Fd) {
+        Scanner::next(self, rfs, entry)
     }
 }
 
@@ -228,10 +221,9 @@ impl<'a> Scanner<'a> {
         handle: Option<Fd>,
     ) -> crate::Result<&'static mut EntriesOption> {
         let fs_ptr = self.fs;
-        let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, handle, 0, false, &iter)
+            .read_directory_with_iterator(name, handle, 0, false, self)
             .map_err(Into::into)
     }
 
@@ -368,9 +360,7 @@ impl<'a> Scanner<'a> {
 
                 self.dirs_to_scan.push_back(ScanEntry {
                     relative_dir: self.current_dir.clone(),
-                    // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
-                    // no Drop. Upstream type lacks Clone/Copy, so bitwise-copy here.
-                    name: unsafe { core::ptr::read(&raw const entry.base_) },
+                    name: entry.base_,
                     dir_path: entry.dir,
                 });
             }

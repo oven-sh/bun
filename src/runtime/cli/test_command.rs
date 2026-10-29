@@ -990,20 +990,19 @@ impl CommandLineReporter {
         let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
         let initial_repeat_count = test_entry.repeat_count;
         let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
-        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
-            BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> =
-            test_entry.base.parent.map(|p| p.cast_const());
+        let mut scopes_stack: BoundedArray<&bun_test::DescribeScope, 64> = BoundedArray::default();
+        let mut parent_ = test_entry.base.parent;
 
         while let Some(scope) = parent_ {
+            // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
+            let scope = unsafe { &*scope };
             if scopes_stack.push(scope).is_err() {
                 break;
             }
-            // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
+            parent_ = scope.base.parent;
         }
 
-        let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
+        let scopes: &[&bun_test::DescribeScope] = scopes_stack.as_slice();
         let display_label: &[u8] = test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
         // Quieter output when claude code is in use.
@@ -1065,9 +1064,7 @@ impl CommandLineReporter {
             if Output::enable_ansi_colors_stderr() {
                 for i in 0..scopes.len() {
                     let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }
@@ -1086,9 +1083,7 @@ impl CommandLineReporter {
             } else {
                 for i in 0..scopes.len() {
                     let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }
@@ -1439,11 +1434,7 @@ impl CommandLineReporter {
         vm.exit_handler.exit_code = 1;
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
         vm.exit_handler.requested = true;
-        let vm_ptr: *mut VirtualMachine = vm;
-        // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-        // `run_with_api_lock` takes `&self` only, so the closure holds the
-        // unique mutable access on this single-threaded path.
-        vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();
@@ -1452,8 +1443,7 @@ impl CommandLineReporter {
         unsafe {
             jest::Jest::RUNNER.write(None);
         }
-        // SAFETY: as above; `global_exit()` diverges, so the closure is the sole mutator.
-        vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() })
+        vm.run_with_api_lock_mut(|vm| vm.global_exit())
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -1859,13 +1849,11 @@ impl TestCommand {
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context); cast back to a typed `NonNull` —
-                // kept raw so `matches()` can write through it without
-                // laundering shared-ref provenance.
+                // options_types::context).
                 filter_regex: ctx
                     .test_options
                     .test_filter_regex()
-                    .map(|p| p.cast::<jsc::RegularExpression>()),
+                    .map(|p| jsc::RegularExpression::opaque_ref(p.as_ptr().cast())),
                 snapshots: Snapshots::init(ctx.test_options.update_snapshots),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 // `TestRunner` cannot derive `Default` because of the
@@ -2015,8 +2003,6 @@ impl TestCommand {
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
-            // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
-            // this never-returning call.
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
@@ -2076,11 +2062,7 @@ impl TestCommand {
                             }
                             vm.exit_handler.exit_code = 1;
                             vm.is_shutting_down = true;
-                            let vm_ptr: *mut VirtualMachine = vm;
-                            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                            // `run_with_api_lock` takes `&self` only and `global_exit()`
-                            // diverges, so the closure is the sole mutator.
-                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                            vm.run_with_api_lock_mut(|vm| vm.global_exit());
                         }
                     }
                 }
@@ -2147,11 +2129,7 @@ impl TestCommand {
                     }
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
-                    let vm_ptr: *mut VirtualMachine = vm;
-                    // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                    // `run_with_api_lock` takes `&self` only and `global_exit()`
-                    // diverges, so the closure is the sole mutator.
-                    vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                    vm.run_with_api_lock_mut(|vm| vm.global_exit());
                 }
             }
         }
@@ -2337,11 +2315,7 @@ impl TestCommand {
             if !vm.is_watcher_enabled() {
                 Global::exit(1);
             }
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -2371,7 +2345,8 @@ impl TestCommand {
                     &mut *ctx,
                     &mut coverage_options,
                 )?;
-            } else {
+            }
+            if !ran_parallel {
                 Self::run_all_tests(&mut reporter, vm, test_files);
             }
         }
@@ -2403,14 +2378,9 @@ impl TestCommand {
             }
         }
 
-        let write_snapshots_success = jest::Jest::runner()
-            .unwrap()
-            .snapshots
-            .write_inline_snapshots()?;
-        jest::Jest::runner()
-            .unwrap()
-            .snapshots
-            .write_snapshot_file()?;
+        let runner = &mut reporter.jest;
+        let write_snapshots_success = runner.snapshots.write_inline_snapshots(&runner.files)?;
+        runner.snapshots.write_snapshot_file()?;
         let mut write_coverage_success = true;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()
@@ -2689,11 +2659,7 @@ impl TestCommand {
         }
 
         if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
         }
         let summary = reporter.summary();
 
@@ -2713,13 +2679,7 @@ impl TestCommand {
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
         vm.exit_handler.requested = exit_is_requested();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
-        }
+        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
@@ -2735,13 +2695,7 @@ impl TestCommand {
         drop(reporter);
         // `global_exit()` does not return, so nothing is dropped after it.
         drop(all_test_files);
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only and `global_exit()`
-            // diverges, so the closure is the sole mutator.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
-        }
+        vm.run_with_api_lock_mut(|vm| vm.global_exit());
         Ok(())
     }
 
@@ -2830,17 +2784,14 @@ impl TestCommand {
         // path; the parallel worker path in runner.rs does wire one.
         // Reintroduce here if it shows up in profiles.
         vm_.event_loop_ref().ensure_waker();
-        // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
-        // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
-        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
-        let mut ctx = Context {
-            reporter: reporter_,
-            vm: vm_,
-            files: files_,
-        };
-        // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
-        // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
-        unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+        vm_.run_with_api_lock_mut(|vm| {
+            Context {
+                reporter: reporter_,
+                vm,
+                files: files_,
+            }
+            .begin()
+        });
     }
 
     pub(crate) fn run(
@@ -2870,11 +2821,8 @@ impl TestCommand {
 
         // Restore test.only state after each module.
         let prev_only = reporter.jest.only;
-        let reporter_ptr: *mut CommandLineReporter = reporter;
-        // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
-        // escape so the closure does not hold a borrowck
-        // lock on `reporter` for the entire function body.
-        scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
+        let mut restore_only = scopeguard::guard(reporter, move |r| r.jest.only = prev_only);
+        let reporter: &mut CommandLineReporter = &mut restore_only;
 
         let dot_slash = core::cell::OnceCell::new();
         let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
@@ -2937,20 +2885,14 @@ impl TestCommand {
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
             let file_title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
-            // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
-            // and writes only `current_file` — disjoint fields. Fresh raw-ptr
-            // split (not the defer-captured `reporter_ptr`) keeps the borrows
-            // disjoint without tripping borrowck.
-            unsafe {
-                let rp: *mut CommandLineReporter = reporter;
-                (*rp).jest.current_file.set(
-                    file_title,
-                    file_prefix,
-                    repeat_count,
-                    repeat_index,
-                    &mut *rp,
-                );
-            }
+            reporter.jest.current_file.set(
+                file_title,
+                file_prefix,
+                repeat_count,
+                repeat_index,
+                reporter.worker_ipc_file_idx.is_some(),
+                &reporter.reporters,
+            );
 
             bun_output::scoped_log!(
                 bun_test,

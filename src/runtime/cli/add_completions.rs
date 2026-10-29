@@ -3241,7 +3241,6 @@ static COMPRESSED_DATA: &[u8] = &[
 ];
 
 struct Table {
-    _decompressed: Vec<u8>,
     packages: Vec<&'static [u8]>,
 }
 
@@ -3252,11 +3251,7 @@ fn build_table() -> Table {
         .expect("add_completions: zstd decompress failed");
     debug_assert_eq!(decompressed.len(), UNCOMPRESSED_SIZE);
 
-    // SAFETY: the decompressed Vec is moved into TABLE (a process-lifetime
-    // Once) and never dropped or reallocated, so its storage is valid for
-    // 'static. The package slices below borrow this storage.
-    let data: &'static [u8] =
-        unsafe { core::slice::from_raw_parts(decompressed.as_ptr(), decompressed.len()) };
+    let data: &'static [u8] = decompressed.leak();
 
     let total = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
     let mut packages: Vec<&'static [u8]> = Vec::with_capacity(total);
@@ -3268,10 +3263,7 @@ fn build_table() -> Table {
         pos += len;
     }
 
-    Table {
-        _decompressed: decompressed,
-        packages,
-    }
+    Table { packages }
 }
 
 /// Decompress the package-name table. Idempotent.

@@ -3342,6 +3342,8 @@ struct RemoteImageDownload {
     // Self-referential: borrows from `url: Box<[u8]>` below.
     async_http: bun_http::AsyncHTTP<'static>,
     response_buffer: bun_core::MutableString,
+    /// Status code of the response head, 0 until one arrives.
+    status_code: u32,
     url: Box<[u8]>,
     done: *const DoneChannel,
 }
@@ -3368,6 +3370,9 @@ impl RemoteImageDownload {
                 // `*real.as_ptr() = …` would run Drop on the previous
                 // `this.async_http` (whose state the fresh copy still aliases).
                 real.as_ptr().write(::core::ptr::read(async_http));
+            }
+            if let Some(metadata) = &result.metadata {
+                this.status_code = metadata.status_code();
             }
             result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
@@ -3462,6 +3467,7 @@ impl RunCommand {
             // `MaybeUninit` slot; no prior value is dropped.
             unsafe {
                 ::core::ptr::addr_of_mut!((*slot).response_buffer).write(response_buffer);
+                ::core::ptr::addr_of_mut!((*slot).status_code).write(0);
                 ::core::ptr::addr_of_mut!((*slot).url).write(raw_url);
                 ::core::ptr::addr_of_mut!((*slot).done).write(&raw const done_channel);
             }
@@ -3485,7 +3491,7 @@ impl RunCommand {
                 bun_http::FetchRedirect::Follow,
                 Default::default(),
             );
-            // SAFETY: last field — all four fields are now initialized.
+            // SAFETY: last field — all five fields are now initialized.
             unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
             // SAFETY: every field of `RemoteImageDownload` was `ptr::write`n above.
             let mut d: Box<RemoteImageDownload> = unsafe {
@@ -3519,13 +3525,7 @@ impl RunCommand {
             if d.async_http.err.is_some() {
                 continue;
             }
-            let status = d
-                .async_http
-                .response
-                .as_ref()
-                .map(|r| r.status_code)
-                .unwrap_or(0);
-            if status != 200 {
+            if d.status_code != 200 {
                 continue;
             }
             let bytes = d.response_buffer.slice();

@@ -28,11 +28,27 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     src/runtime/webcore/blob/read_file.rs, and the comments on `deinit` in
 //     src/sql_jsc/postgres/PostgresSQLConnection.rs).
 //
-// Scope: the single-expression spellings below, with `self` as the receiver.
-// A self-derived pointer stashed in a local and freed later, a helper that
-// takes the pointer and frees it (`Self::destroy(ptr::from_mut(self))`), and
-// reference *parameters* (`fn f(this: &mut T)` freeing `this`) are outside this
-// lint; they are the same bug, convert them on sight.
+// The same calls are banned when their argument is spelled from a shared
+// reference, whatever it refers to: `ptr::from_ref(x)`, `NonNull::from(&x)`,
+// `&x`. Such a pointer may only read, so a free through it is UB under both
+// models. `HTTPResponseMetadata` freed its header list through the
+// `&'static [Header]` it stored. The owner holds the `Box` (or the raw pointer
+// that `heap::into_raw` returned) and frees through that. It builds a view of
+// the allocation when one is needed and does not store it: a reference stored
+// beside the owner is protected, like `self` above, in every call the owner
+// moves into by value.
+//
+// `&raw const x` and `addr_of!(x)` are banned with them. They take the
+// permissions of the place `x`, which a regex cannot see: a place behind a raw
+// `*mut` may be freed, a place behind a reference may not. On a raw place,
+// write `&raw mut x` or `addr_of_mut!(x)`.
+//
+// Scope: these calls, with the argument spelled in the same expression. A
+// pointer stashed in a local and freed later, a helper that takes the pointer
+// and frees it (`Self::destroy(ptr::from_mut(self))`), reference *parameters*
+// (`fn f(this: &mut T)` freeing `this`), and a free through any other call
+// (`StdAllocator::free(&[u8])`, `default_alloc::free`) are outside this lint;
+// they are the same bug, convert them on sight.
 //
 // Sibling guards: fn-long-mut-reborrow.test.ts, frozen-nonnull-reborrow.test.ts,
 // unsound-erased-box.test.ts.
@@ -71,7 +87,21 @@ const SELF_AS_POINTER = [
   String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
 ].join("|");
 
-const BANNED = new RegExp(`${RECLAIM}(?:${SELF_AS_POINTER})`, "g");
+// The ways of spelling "a pointer that is not known to be the owner's" as the
+// first argument, whatever it points at: one from a shared reference, or a
+// `*const` one from a place. `&mut x`, `&raw mut x` and `addr_of_mut!(x)` are
+// not among them.
+const SHARED_AS_POINTER = [
+  // `ptr::from_ref(x)`, `NonNull::from_ref(x)`.
+  String.raw`(?:[\w:]+::)?from_ref(?:::<[^>]*>)?\(`,
+  String.raw`(?:[\w:]+::)?NonNull::from\(\s*&(?!\s*(?:mut|raw\s+mut)\b)`,
+  // `&x as *const _ as *mut _`, `&raw const x`.
+  String.raw`&(?!\s*(?:mut|raw\s+mut)\b)`,
+  String.raw`(?:[\w:]+::)?addr_of!\s*\(`,
+].join("|");
+
+// `(?:\(\s*)*`: the pointer expression may be parenthesized before its cast.
+const BANNED = new RegExp(String.raw`${RECLAIM}(?:\(\s*)*(?:${SELF_AS_POINTER}|${SHARED_AS_POINTER})`, "g");
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape. Prefer converting over adding an entry here.
@@ -80,6 +110,12 @@ const ALLOW: Record<string, number> = {
   // It is being converted separately (#37672); delete this entry when that
   // lands.
   "src/jsc/webcore_types.rs": 1,
+  // `free_owned_href(href: &'static [u8])` frees the URL of `fetch.preconnect`
+  // through its parameter. #47023 deletes it. Delete this entry with it.
+  "src/http/AsyncHTTP.rs": 1,
+  // `TranspilerJob::reset_for_pool` frees the path of the job through
+  // `Path::text`. #47099 converts it. Delete this entry with it.
+  "src/jsc/RuntimeTranspilerStore.rs": 1,
 };
 
 const counts: Record<string, number> = {};
@@ -136,6 +172,22 @@ test("the pattern recognizes the spellings it claims to", () => {
     // rustfmt-wrapped calls.
     "unsafe {\n    bun_core::heap::take(\n        std::ptr::from_mut::<Blob>(self),\n    )\n}",
     "unsafe {\n    bun_core::heap::destroy(\n        self,\n    )\n}",
+    // `HTTPResponseMetadata::drop`, as it was, and
+    // `TranspilerJob::reset_for_pool`: a free through the shared view the
+    // owner stores.
+    "unsafe { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };",
+    "drop(unsafe { bun_core::heap::take(ptr::from_ref::<[u8]>(old_path.text).cast_mut()) });",
+    "unsafe {\n    bun_core::heap::destroy(\n        core::ptr::from_ref(list).cast_mut(),\n    )\n}",
+    // Other spellings of a pointer from a shared reference.
+    "unsafe { Box::from_non_null(NonNull::from_ref(self.name)) }",
+    "unsafe { Box::from_non_null(NonNull::from(&*self.name)) }",
+    "drop(unsafe { Box::from_raw(&self.buf[..] as *const [u8] as *mut [u8]) });",
+    // A `*const` pointer from a place. Behind a reference (`list`, `text`) the
+    // free is UB. Behind a raw `this` it is not, and the spelling is banned
+    // all the same: write `&raw mut`.
+    "unsafe { heap::destroy((&raw const *list).cast_mut()) }",
+    "unsafe { heap::take(core::ptr::addr_of!(*text).cast_mut()) }",
+    "unsafe { heap::destroy(&raw const (*this).header as *mut Header) }",
   ];
   const allowed = [
     // Freeing something the receiver owns is fine.
@@ -154,12 +206,22 @@ test("the pattern recognizes the spellings it claims to", () => {
     // Producing a pointer from `self` without reclaiming it is fine.
     "let this = std::ptr::from_ref::<Blob>(self).cast_mut();",
     "Self::finalize(core::ptr::from_mut(self));",
+    // So is producing one from any other shared reference.
+    "let list = core::ptr::from_ref(self.response.headers.list);",
+    // The owner's own pointer, `*const` or not, and a pointer from a `&mut`.
+    "unsafe { bun_core::heap::take(core::ptr::slice_from_raw_parts_mut((*this).ptr.cast_mut(), len)) }",
+    "unsafe { heap::destroy(self.data.cast_mut()) }",
+    "unsafe { heap::take(ptr::from_mut(other.text)) }",
+    "unsafe { Box::from_non_null(NonNull::from(&mut *slot)) }",
+    "drop(unsafe { Box::from_raw(&mut *other) });",
+    "drop(unsafe { Box::from_raw(&raw mut *other) });",
+    "unsafe { heap::destroy(core::ptr::addr_of_mut!((*this).inner)) }",
   ];
   expect(banned.filter(s => !matches(s))).toEqual([]);
   expect(allowed.filter(matches)).toEqual([]);
 });
 
-test("no method reclaims its own receiver's allocation", () => {
+test("no reclaim call names its own receiver, a shared reference or a `*const` place as its argument", () => {
   expect(offenders).toEqual([]);
 });
 

@@ -223,7 +223,7 @@ impl NetworkTask {
             if let Some(m) = result.metadata.take() {
                 // SAFETY: `stream` is the live heap-allocated `TarballStream`.
                 unsafe {
-                    (*stream).status_code = m.response.status_code;
+                    (*stream).status_code = m.status_code();
                     if let http::BodySize::ContentLength(len) = result.body_size {
                         (*stream).content_length = Some(len);
                     }

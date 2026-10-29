@@ -108,8 +108,8 @@ pub struct Watcher {
     /// The platform-specific implementation of the watcher
     pub(crate) platform: Platform,
 
-    pub watchlist: WatchList,
-    pub mutex: Mutex,
+    pub(crate) watchlist: WatchList,
+    pub(crate) mutex: Mutex,
 
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
@@ -392,7 +392,7 @@ impl Watcher {
             return;
         }
         // The close+swap_remove below must be serialized against the JS
-        // thread's watchlist lookups (`ImportWatcher::snapshot_package_json`)
+        // thread's watchlist lookups (`snapshot_package_json`)
         // and `append_file_maybe_lock<true>` re-adds — both take `self.mutex`.
         // The close in pass 1 is also why the watchlist's stored fd is never
         // handed out for reads: a reader that copied the number before this
@@ -917,13 +917,28 @@ impl Watcher {
         r
     }
 
-    pub fn index_of(&self, hash: HashType) -> Option<u32> {
+    pub(crate) fn index_of(&self, hash: HashType) -> Option<u32> {
         for (i, other) in self.watchlist.items_hash().iter().enumerate() {
             if hash == *other {
                 return Some(i as u32);
             }
         }
         None
+    }
+
+    /// Look up the `package_json` column for `hash` under the watcher's
+    /// mutex.
+    ///
+    /// Deliberately does NOT hand out the stored fd: the watchlist owns it
+    /// and `flush_evictions` closes it concurrently, so a reader would hit
+    /// `EBADF`/`EISDIR` after the mutex is released (watch-many-dirs.test.ts)
+    /// or read the stale pre-rename inode after an atomic save. Reloads open
+    /// the file by path; `Watcher::add_file` adopts the fresh descriptor.
+    pub fn snapshot_package_json(&self, hash: HashType) -> Option<&'static PackageJSON> {
+        let _guard = self.mutex.lock_guard();
+        let index = self.index_of(hash)?;
+        self.watchlist
+            .items::<"package_json", Option<&'static PackageJSON>>()[index as usize]
     }
 
     // Const-generic

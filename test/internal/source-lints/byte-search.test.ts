@@ -34,8 +34,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // dispatch, and would be a second set of kernels to keep correct on every
 // target. clippy.toml bans `Simd`, `Mask` and their constructors, but a `u8x16`
 // made with `.into()` gets past it. Nothing gets past the feature gate, so that
-// is banned here. New kernels go in src/jsc/bindings/highway_strings.cpp, with a
-// wrapper in src/highway/lib.rs.
+// is banned here. A new kernel goes in src/jsc/bindings/highway_strings.cpp or a
+// highway_*.cpp of its own next to it, with its safe wrapper in src/highway/.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 // Proc-macro crates and cargo build scripts run on the host at compile time and

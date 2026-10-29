@@ -453,6 +453,8 @@ mod tests {
         }
         // 14 zeros, the first entry of the decoder's table.
         check_huffman(b"000");
+        // Every code of 8 bits, the longest that the kernel takes.
+        check_huffman(b"&*,;XZ");
     }
 
     /// Coding and decoding with one wrong table would agree. The hash is of the 583 bytes that Go's encoder and the RFC's table give.
@@ -506,23 +508,21 @@ mod tests {
             b"a\naaaa\x80",  // 45 and 30, the long codes second
             b"aaa\na\xffa",  // 45 and 36
         ];
-        for (group, sixes) in groups
-            .iter()
-            .flat_map(|group| (0..8).map(move |n| (group, n)))
-        {
-            // 35 to 42 bits, the group, and what it takes for groups to be used at all.
-            let mut string = [b"-".repeat(sixes), b"a".repeat(7 - sixes)].concat();
-            string.extend_from_slice(*group);
-            string.extend_from_slice(&b"z".repeat(56 + sixes));
-            check_huffman(&string);
-            // Under 64 bytes, as the last 7 bytes and not.
-            check_huffman(&string[..14]);
-            check_huffman(&string[..17]);
-        }
-        // 90 bits are all that is left, after 7 bytes and after 9 groups.
-        for (sixes, len) in (0..8).flat_map(|sixes| [(sixes, 7), (sixes, 63)]) {
-            let start = [b"-".repeat(sixes), b"a".repeat(len - sixes)].concat();
+        for sixes in 0..8 {
+            // 35 to 42 bits, so that what follows comes after every number of pending bits.
+            let start = [b"-".repeat(sixes), b"a".repeat(7 - sixes)].concat();
+            for group in groups {
+                // Too short for `encode_groups`, as the last 7 bytes and not.
+                check_huffman(&[&start, &group[..]].concat());
+                check_huffman(&[&start, &group[..], b"zzz"].concat());
+            }
+            let rest = b"z".repeat(huffman::GROUPS_MIN_LEN + sixes);
+            let all = groups.map(|group| *group);
+            check_huffman(&[&start[..], all.as_flattened(), &rest].concat());
+            // 90 bits are all that is left, after 7 bytes and after whole groups.
             check_huffman(&[&start, &b"\n\n\n"[..]].concat());
+            let whole = b"a".repeat(huffman::GROUPS_MIN_LEN.next_multiple_of(7));
+            check_huffman(&[&start, &whole, &b"\n\n\n"[..]].concat());
         }
         // Every byte in a place where room is made for its code by a multiplication.
         let every_byte = (0..128).flat_map(|byte| [b'a', byte, b'a', b'a', b'a', byte + 128, b'a']);

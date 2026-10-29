@@ -109,7 +109,7 @@ const GROUP_LEN: usize = 7;
 const GROUP_MAX_BITS: u32 = 57;
 
 /// Under this many bytes, groups do not pay: huffman_simd.md.
-const GROUPS_MIN_LEN: usize = 64;
+pub(crate) const GROUPS_MIN_LEN: usize = 128;
 
 /// The low `count` bits of `bits` are not written yet: under 8 after [`Pending::write`].
 #[derive(Clone, Copy)]
@@ -168,20 +168,20 @@ impl Pending {
 #[inline(never)]
 fn encode_groups<'a>(src: &'a [u8], out: &mut Vec<u8>) -> (Pending, &'a [u8]) {
     let len = |byte| code(byte).1;
-    let first = |byte| u64::from(code(byte).0);
+    let bits = |byte| u64::from(code(byte).0);
     // Wraps if the codes do not fit 64 bits. Then they are not used.
     let join = |codes: u64, byte: u8| {
         let shift = SHIFTS.get(usize::from(byte)).copied().unwrap_or_default();
-        codes.wrapping_mul(shift.into()).wrapping_add(first(byte))
+        codes.wrapping_mul(shift.into()) | bits(byte)
     };
     let (mut pending, mut rest) = (Pending { bits: 0, count: 0 }, src);
     while let Some((group, after)) = rest.split_first_chunk() {
         rest = after;
         let [a, b, c, d, e, f, g] = *group;
         let cd_len = len(c) + len(d);
-        let abcd = join(first(a), b) << cd_len | join(first(c), d);
+        let abcd = join(bits(a), b) << cd_len | join(bits(c), d);
         let abcd_len = u32::from(len(a) + len(b) + cd_len);
-        let efg = join(join(first(e), f), g);
+        let efg = join(join(bits(e), f), g);
         let efg_len = u32::from(len(e) + len(f) + len(g));
         if abcd_len + efg_len <= GROUP_MAX_BITS {
             pending.put(abcd << efg_len | efg, abcd_len + efg_len, out);
@@ -587,7 +587,7 @@ pub(crate) mod test_kernel {
         let mut written = 0;
         // It may stop anywhere, also where it started.
         for _ in 0..(bit_pos * 7 + src.len()) % 29 {
-            let window = (0..16).fold(0, |window, i| window << 1 | bit(bit_pos + i)) << 48;
+            let window = (0..8).fold(0, |window, i| window << 1 | bit(bit_pos + i)) << 56;
             let symbol = Decoder::first_symbol(window);
             let len = usize::from(code(symbol).1);
             if window >> (64 - 7) == 0x7f || bit_pos + len > src.len() * 8 {

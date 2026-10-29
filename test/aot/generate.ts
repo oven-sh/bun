@@ -1,5 +1,5 @@
 // Some folders of ./programs are written by a script, whole or in part. What a script writes is not kept in the repository: a test file writes the programs that it runs
-// into a temporary folder when it starts (run-programs.ts). This writes them for whoever wants to read them, or to run them with a tool of their own:
+// into a temporary folder when it starts. This writes them for whoever wants to read them, or to run them with a tool of their own:
 //
 //   bun test/aot/generate.ts                       names the folders
 //   bun test/aot/generate.ts <folder> <where>      writes <where>/<folder> as a test sees it: the programs that the script writes and, beside them, those of ./programs/<folder>, written by hand
@@ -23,6 +23,7 @@ import {
   writeFileSync,
 } from "fs";
 import { availableParallelism, tmpdir } from "os";
+import { findBuiltinTable } from "./harness/builtin-table";
 import "./harness/without-installing-packages";
 import { basename, dirname, join, resolve, sep } from "path";
 import type { Row } from "./built-ins-alone/table";
@@ -49,7 +50,7 @@ export type Generator = {
 const besidePrograms = /\.(json|expected\.txt|build-errors\.txt|todo\.txt)$/;
 
 /**
- * Files, by their paths below a folder of programs, as programs, by the rules at the top of run-programs.ts: a folder with a main.<extension> is one program,
+ * Files, by their paths below a folder of programs, as programs: a folder with a main.<extension> is one program,
  * and so is any other source file, with the files that bear its name.
  */
 export function programsOf(files: Record<string, string>): WrittenProgram[] {
@@ -249,7 +250,13 @@ export const generators: Record<string, () => Generator> = {
         "members",
       ].flatMap(part => (require(`./generate/native-callbacks-${part}`) as Generator).programs()),
   }),
-  "nothing-throws-because-of-a-type": () => require("./programs/generate-nothing-throws-because-of-a-type"),
+  "nothing-throws-because-of-a-type": () => ({
+    programs: () =>
+      [
+        "./programs/generate-nothing-throws-because-of-a-type",
+        "./generate/url-objects-made-of-values-that-are-not-what-their-types-say",
+      ].flatMap(part => (require(part) as Generator).programs()),
+  }),
   "objects": () => require("./generate/objects"),
   "objects-that-are-not-what-their-layout-says": () =>
     require("./generate/objects-that-are-not-what-their-layout-says"),
@@ -289,12 +296,7 @@ for (const { name: topic } of topics()) {
  * The table of built-ins that `bun` was built with, as the build wrote it: $AOT_BUILTIN_TABLE, or aot_builtin_table.json beside that Bun (CI packs it there),
  * or in the folder `codegen` beside it, where it lies in a build folder.
  */
-export function findBuiltinTable(bun: string): string | undefined {
-  const name = "aot_builtin_table.json";
-  return (
-    process.env.AOT_BUILTIN_TABLE ?? [join(dirname(bun), name), join(dirname(bun), "codegen", name)].find(existsSync)
-  );
-}
+export { findBuiltinTable };
 
 export function writeProgram(folder: string, program: WrittenProgram) {
   for (const [name, text] of Object.entries(program.files)) {
@@ -308,7 +310,8 @@ export function writeProgram(folder: string, program: WrittenProgram) {
  * A tsconfig.json at the top of `folder` is inherited from: what it names by a path stays where it is.
  */
 export function unpacked(folder: string): string {
-  const where = realpathSync(mkdtempSync(join(tmpdir(), `${basename(folder)}-`)));
+  // On Windows this one alone spells each name as the file system does.
+  const where = realpathSync.native(mkdtempSync(join(tmpdir(), `${basename(folder)}-`)));
   process.on("exit", () => rmSync(where, { recursive: true, force: true }));
   cpSync(folder, where, { recursive: true, filter: source => !source.endsWith(".programs") });
   if (existsSync(join(folder, "tsconfig.json")))

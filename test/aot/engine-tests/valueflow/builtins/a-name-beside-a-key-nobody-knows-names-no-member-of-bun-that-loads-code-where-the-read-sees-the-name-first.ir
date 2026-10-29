@@ -1,0 +1,30 @@
+# name = key; name = "build"; [Bun].at(0)[name](options)
+# The key may be anything. A name that the program writes beside it names a member of Bun, but not one whose call loads code: under a computed key such a function
+# is found only where every value of the key is known. The call is no call of Bun.build
+# a-name-beside-a-key-nobody-knows-names-no-member-of-bun-that-loads-code.ir with an order of the rules in which the read sees the written name before the key that may be anything: the
+# answer is the same.
+# OPTIONS: testing=DelayFlowRules:3
+# RUN: valueflow-solve unseen calls
+# CHECK-NOT: BunBuild
+# CHECK: unseen-code no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="name" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    PutModuleVariable v1 variable=g0
+    v3 = String string="build"
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=Bun
+    v6 = NewArray v5 contents=anything
+    v7 = PropGet v6 key="at"
+    v8 = Integer
+    v9 = Call v7, v6, v8
+    v10 = GetModuleVariable variable=g0
+    v11 = ElemGet v9, v10
+    v12 = PropGet v0 key="options" [isFreeName]
+    v13 = Call v11, v9, v12
+    Return v13
+}

@@ -1378,10 +1378,9 @@ impl<ValueType, const COUNT: usize> OverflowListBlock<ValueType, COUNT> {
         debug_assert!((self.used as usize) < COUNT);
         let index = self.used as usize;
         // Raw write — slot may be uninit; no drop glue runs.
-        self.items[index].write(value);
+        let slot = self.items[index].write(value);
         self.used = self.used.wrapping_add(1);
-        // SAFETY: just initialized on the line above.
-        unsafe { self.items[index].assume_init_mut() }
+        slot
     }
 }
 
@@ -1543,8 +1542,7 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
         if index as usize >= BSS_LIST_CHUNK_SIZE {
             return Err(AllocError);
         }
-        // SAFETY: `index < BSS_LIST_CHUNK_SIZE` checked above.
-        Ok(unsafe { self.data.as_mut_ptr().add(index as usize) })
+        Ok(&raw mut self.data[index as usize])
     }
 }
 
@@ -2224,9 +2222,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         } else {
             let idx = result.index.index() as usize;
             // Raw write — fresh slots are uninit; no drop glue runs.
-            self.backing_buf[idx].write(value);
-            // SAFETY: just initialized on the line above.
-            unsafe { self.backing_buf[idx].assume_init_mut() }
+            self.backing_buf[idx].write(value)
         };
         self.index.insert(result.hash, result.index);
         Ok(ret)

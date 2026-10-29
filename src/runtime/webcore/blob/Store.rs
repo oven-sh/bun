@@ -221,13 +221,10 @@ impl FileExt for File {
     fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
-                // The `*Binding` arg is unused in `AsyncFSTask::create`.
-                let binding = node_fs::Binding::default();
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
                 // task is created on the JS thread that owns it.
-                Ok(node_fs::async_::Unlink::create(
+                Ok(node_fs::async_::Unlink::schedule(
                     cx,
-                    &binding,
                     node_fs::args::Unlink::owned(path_like.slice().to_vec()),
                     cx.vm().as_mut(),
                     None,

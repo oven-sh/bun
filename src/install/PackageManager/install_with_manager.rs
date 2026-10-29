@@ -412,7 +412,7 @@ pub fn install_with_manager(
                         old_resolutions_list.get(lf.resolutions).to_vec();
 
                     // `extend_from_fn`
-                    // writes into `spare_capacity_mut()` then bumps `len`, so we
+                    // writes into spare capacity then bumps `len`, so we
                     // never form `&mut [T]` over uninitialized storage and never drop garbage.
                     debug_assert_eq!(lf.dependencies.len(), off as usize);
                     debug_assert_eq!(lf.resolutions.len(), off as usize);

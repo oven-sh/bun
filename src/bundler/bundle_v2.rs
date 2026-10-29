@@ -8194,15 +8194,15 @@ pub mod bv2_impl {
         }
     }
 
-    pub struct CompileResultForSourceMap {
-        pub source_map_chunk: bun_sourcemap::Chunk,
+    pub struct CompileResultForSourceMap<'r> {
+        pub source_map_chunk: &'r bun_sourcemap::Chunk,
         pub generated_offset: bun_sourcemap::LineColumnOffset,
         pub source_index: u32,
     }
 
     bun_collections::multi_array_columns! {
-        pub trait CompileResultForSourceMapColumns for CompileResultForSourceMap {
-            source_map_chunk: bun_sourcemap::Chunk,
+        pub trait CompileResultForSourceMapColumns ['r] for CompileResultForSourceMap<'r> {
+            source_map_chunk: &'r bun_sourcemap::Chunk,
             generated_offset: bun_sourcemap::LineColumnOffset,
             source_index: u32,
         }

@@ -207,7 +207,7 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
 }
 
 impl StandaloneModuleGraph {
-    // by normalized file path
+    /// A file under the virtual root only; `find_ref` also answers for source paths.
     pub fn find(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
             return None;
@@ -345,7 +345,7 @@ pub(crate) fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) ->
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
 // startup, never freed) shared by the main VM, Workers and resolver threads.
-// The raw pointers in `File` point into the immortal section; `cached_blob`
+// The raw pointers in the graph and in `File` point into the immortal section; `cached_blob`
 // and `wtf_string` are `OnceLock`s holding VM-independent state only (null
 // `global_this`, shared string impls); `sourcemap` is `Send + Sync` by itself.
 unsafe impl Send for StandaloneModuleGraph {}
@@ -966,9 +966,9 @@ pub struct LazySourceMap {
 
 impl LazySourceMap {
     pub fn load(&self) -> Option<Arc<SourceMap::ParsedSourceMap>> {
+        let serialized = self.serialized?;
         self.parsed
             .get_or_init(|| {
-                let serialized = self.serialized?;
                 let blob = serialized.mapping_blob()?;
                 if !SourceMap::InternalSourceMap::is_valid_blob(blob) {
                     return None;

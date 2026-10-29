@@ -238,6 +238,24 @@ function numberLoadedAheadOnArm64({ view }: Image, at: number, start: number, re
 }
 
 /**
+ * `at`: a branch to libc's syscall(), or the `adr` or `adrp` that begins to load its address. Returns where the call is, or undefined if the
+ * address is kept for later. The compiler may load the arguments between the two.
+ */
+function findCallOnArm64({ view }: Image, at: number, end: number): number | undefined {
+  const first = view.getUint32(at, true);
+  if ((first & 0x1f000000) >>> 0 !== 0x10000000) return at;
+  let register = first & 31;
+  for (let next = at + 4; next < at + 128 && next + 4 <= end; next += 4) {
+    const word = view.getUint32(next, true);
+    const source = (word >>> 5) & 31;
+    // ldr or add from the page, then br or blr
+    if (source === register && [0xf9400000, 0x91000000].includes((word & 0xffc00000) >>> 0)) register = word & 31;
+    else if (source === register && (word & 0xffdffc1f) >>> 0 === 0xd61f0000) return next;
+  }
+  return undefined;
+}
+
+/**
  * The places that make one of the system calls `numbers`, with a `syscall` or `svc` instruction or through libc's syscall().
  *
  * On x86-64 an instruction can begin at any byte, and the bytes of `syscall` also occur inside other instructions. So the code is decoded from
@@ -256,7 +274,8 @@ export function placesThatMakeSystemCalls(file: Uint8Array, numbers: readonly nu
     };
     const calls = throughLibc.map(place => place.address - address + offset).filter(at => at >= offset && at < end);
     if (image.isArm64) {
-      for (const at of calls) add([numberLoadedAheadOnArm64(image, at, offset, 0) ?? -1], at, 4);
+      for (const at of calls)
+        add([numberLoadedAheadOnArm64(image, findCallOnArm64(image, at, end) ?? at, offset, 0) ?? -1], at, 4);
       for (let at = (offset + 3) & ~3; at + 4 <= end; at += 4)
         if ((image.view.getUint32(at, true) & 0xffe0001f) >>> 0 === 0xd4000001)
           add([numberLoadedAheadOnArm64(image, at, offset, 8) ?? -1], at, 4);
@@ -275,7 +294,8 @@ export function placesThatMakeSystemCalls(file: Uint8Array, numbers: readonly nu
 /** `at`: four bytes that lead to libc's syscall(). Returns nothing if they are not the operand of an instruction, and undefined if the number cannot be told. */
 function numbersPassedToLibc(file: Uint8Array, view: DataView, walked: Walked, at: number): number[] | undefined {
   const start = startOfInstruction(walked, at);
-  if (start < 0 || start + decode(file, start, walked.end) <= at) return [];
+  // After bytes that are not code, no instruction that the walk saw holds these four.
+  if (start < 0 || start + decode(file, start, walked.end) <= at) return undefined;
   const { map, opcode, modrm, immediate, isRelative } = decoded;
   if (isRelative) return immediate === at ? constantsIn(file, view, walked, 7, start) : [];
   if (modrm + 1 !== at || (file[modrm]! & 0xc7) !== 0x05) return [];

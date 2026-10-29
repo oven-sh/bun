@@ -308,7 +308,7 @@ export interface Walked {
   jumps: { count: number; from: Int32Array; to: Int32Array };
   /** Where a `syscall` instruction begins. */
   systemCalls: number[];
-  /** Where the bytes of a `syscall` instruction come so soon after bytes that are not code that nothing tells whether they begin an instruction. */
+  /** Where the bytes of a `syscall` instruction may begin an instruction that the walk did not see: soon after bytes that are not code, or after a jump into the middle of an instruction. */
   doubtful: number[];
 }
 
@@ -355,6 +355,20 @@ export function walk(file: Uint8Array, view: DataView, offset: number, end: numb
     } else if (decoded.map === 1 && decoded.opcode === 0x05 && !decoded.isVector) systemCalls.push(at);
     at += length;
   }
+  // A jump or a call into the middle of an instruction: the walk is out of step there, over data that decodes as code. Walk from the target
+  // until the two are in step again.
+  for (let byte = 0; byte < starts.length; byte++) {
+    let inside = (callTargets[byte]! | jumpTargets[byte]!) & ~starts[byte]!;
+    for (let bit = 0; inside !== 0; bit++, inside >>= 1) {
+      if ((inside & 1) === 0) continue;
+      for (let at = offset + byte * 8 + bit, steps = 0; steps < 64 && at < end && !has(starts, at - offset); steps++) {
+        const length = decode(file, at, end);
+        if (length === 0) break;
+        if (decoded.map === 1 && decoded.opcode === 0x05 && !decoded.isVector) doubtful.push(at);
+        at += length;
+      }
+    }
+  }
   const isFound = new Set(systemCalls);
   return {
     offset,
@@ -364,7 +378,7 @@ export function walk(file: Uint8Array, view: DataView, offset: number, end: numb
     jumpTargets,
     jumps: { count, from, to },
     systemCalls,
-    doubtful: doubtful.filter(at => !isFound.has(at)),
+    doubtful: [...new Set(doubtful)].filter(at => !isFound.has(at)),
   };
 }
 

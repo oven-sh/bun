@@ -99,11 +99,17 @@ long after_a_branch(long flags) {
   return number;
 }
 `,
+    // The number is loaded after the address of syscall(): a compiler may order them so.
+    "number-last.c": `__asm__(".text\\n.globl number_last\\nnumber_last:\\n\\tadrp x3, :got:syscall\\n\\tldr x3, [x3, :got_lo12:syscall]\\n\\tmov w0, #281\\n\\tbr x3");
+`,
     "any.c": `long any(long number) {
   register long passed __asm__("rax") = number;
   __asm__ volatile("syscall" : "+r"(passed) :: "rcx", "r11", "memory");
   return passed;
 }
+`,
+    // Three bytes of data that read on as `mov $0x050f0000, %ecx`, which covers the instruction that the jump goes to.
+    "behind-data.c": `void behind_data(void) { __asm__ volatile("mov $56, %%eax\\n\\tjmp 1f\\n\\t.byte 0xb9, 0, 0\\n1:\\tsyscall" ::: "rax", "rcx", "r11", "memory"); }
 `,
     // The bytes of `syscall` inside an immediate, after a register was given the number of clone; and getpid() after that.
     "harmless.c": `void bytes_in_an_immediate(void) { __asm__ volatile("mov $56, %%eax\\n\\tmov $0x050f, %%ecx" ::: "eax", "ecx"); }
@@ -129,9 +135,19 @@ describe.skipIf(!isLinux || !systemCC)("the search for system calls", () => {
     expect(numbersOf(await search("starts.c"))).toEqual(startsAProgram.systemCalls);
   });
 
+  test.skipIf(process.arch !== "arm64")("finds a number that is loaded after the address of syscall()", async () => {
+    expect(numbersOf(await search("number-last.c"))).toEqual([281]);
+  });
+
   test.skipIf(process.arch !== "x64")("reports a system call whose number is not a constant", async () => {
     expect(await search("any.c")).toEqual([
       { number: "unknown", address: expect.any(Number), bytes: expect.stringMatching(/0f05$/) },
+    ]);
+  });
+
+  test.skipIf(process.arch !== "x64")("reports a system call that data in front of it covers", async () => {
+    expect(await search("behind-data.c")).toEqual([
+      { number: "unknown", address: expect.any(Number), bytes: expect.stringMatching(/b900000f05$/) },
     ]);
   });
 
@@ -160,7 +176,7 @@ if (isASAN)
 
       const cut = await build(startsAProgram.features);
       expect(placesThatCall(cut.file, startsAProgram.functions)).toEqual([]);
-      expect(placesThatMakeSystemCalls(cut.file, startsAProgram.systemCalls)).toEqual([]);
+      if (isLinux) expect(placesThatMakeSystemCalls(cut.file, startsAProgram.systemCalls)).toEqual([]);
       expect(await run([cut.executable], folder)).toEqual(saysHello);
     });
 
@@ -175,7 +191,7 @@ if (isASAN)
         expect(
           namesOf(placesThatCall(file, startsAProgram.functions)).filter(name => !sendsACrashReport.includes(name)),
         ).toEqual([]);
-        expect(placesThatMakeSystemCalls(file, startsAProgram.systemCalls)).toEqual([]);
+        if (isLinux) expect(placesThatMakeSystemCalls(file, startsAProgram.systemCalls)).toEqual([]);
         expect(await run([join(folder, "named")], folder)).toEqual(saysHello);
       },
     );

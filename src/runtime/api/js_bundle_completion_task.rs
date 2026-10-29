@@ -1463,15 +1463,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
         // Post-init field wiring.
-        // Reborrow through a raw ptr so `&mut self` is usable
-        // again after handing `&'a mut Transpiler` (which is tied to `bump`,
-        // not `self`) to the trait method.
-        let tp: *mut Transpiler<'a> = transpiler;
-        // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
-        self.configure_bundler(unsafe { &mut *tp }, bump)?;
-        // SAFETY: `tp` was the unique `&'a mut` slot from `bump.alloc`; the
-        // reborrow above has ended.
-        Ok(unsafe { &mut *tp })
+        self.configure_bundler(transpiler, bump)?;
+        Ok(transpiler)
     }
 
     fn init_and_run<'a>(

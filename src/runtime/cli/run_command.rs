@@ -806,7 +806,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             path,
             loader: Some(Self::loader_of_main(ctx, path, loader)),
             // `[eval]`, `[stdin]`
-            text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
+            text: ctx.runtime_options.eval.script.as_deref(),
         };
         // src/js/internal/html.ts serves every argument that is a page.
         let is_page = |path: &&[u8]| path.ends_with(b".html");
@@ -824,7 +824,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun).ok()?;
             crate::jsc_hooks::loader_for_path(&bun_resolver::fs::Path::init(path), &loaders)
         };
-        let is_in_memory = !ctx.runtime_options.eval.script.is_empty();
+        let is_in_memory = ctx.runtime_options.eval.script.is_some();
         let named = (!is_in_memory).then(|| loader.or_else(by_name)).flatten();
         // `[eval]`, `[stdin]`, and a name that says nothing.
         named.unwrap_or(Loader::Tsx)
@@ -1101,17 +1101,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.set_main(entry);
 
         if let Some(entry) = entry
-            && !ctx.runtime_options.eval.script.is_empty()
+            && let Some(script) = ctx.runtime_options.eval.script.as_deref()
         {
-            // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
-            // (CLI argv); erase the borrow lifetime so the `Source` (stored in
-            // the VM for the process duration) can backref into it.
-            let script: &'static [u8] = unsafe {
-                ::core::slice::from_raw_parts(
-                    ctx.runtime_options.eval.script.as_ptr(),
-                    ctx.runtime_options.eval.script.len(),
-                )
-            };
+            // SAFETY: `ctx` is the process-global `ContextData`, and nothing
+            // assigns `eval.script` after `boot`. So the bytes live as long as
+            // the `Source` (stored in the VM for the process duration) that
+            // backrefs into them.
+            let script: &'static [u8] =
+                unsafe { ::core::slice::from_raw_parts(script.as_ptr(), script.len()) };
             vm.module_loader.eval_source =
                 Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
             vm.module_loader.interactive_eval_script =
@@ -1144,14 +1141,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let cron_script: &'static [u8] =
                 runner_arena().alloc_slice_copy(cron_script.as_bytes());
 
-            // entry_path must end with /[eval] for the transpiler to use eval_source
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_bytes = cwd.as_bytes();
-            let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
-            eval_path.extend_from_slice(cwd_bytes);
-            eval_path.extend_from_slice(EVAL_TRIGGER);
-            let heap_entry: &'static [u8] = runner_arena().alloc_slice_copy(&eval_path);
+            let heap_entry: &'static [u8] =
+                runner_arena().alloc_slice_copy(&RunCommand::synthetic_entry_path(EVAL_TRIGGER));
 
             vm.module_loader.eval_source = Some(Box::new(bun_ast::Source::init_path_string(
                 heap_entry,
@@ -1433,7 +1424,7 @@ impl Run<'_> {
             fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
         }
         let ro = &ctx.runtime_options;
-        if !ro.eval.script.is_empty() {
+        if ro.eval.script.is_some() {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
             unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
         }
@@ -2560,7 +2551,11 @@ impl RunCommand {
 
         // ── stdin (`bun run -`) ─────────────────────────────────────────────
         if target_name.len() == 1 && target_name[0] == b'-' {
-            return Self::exec_stdin(ctx);
+            // Not `boot_and_handle_error`: its allocator and `.md` checks do not apply.
+            if let Err(err) = Self::exec_stdin(ctx, Some(b"-")) {
+                Self::boot_failed_exit(ctx, b"-", &err);
+            }
+            return Ok(true);
         }
 
         // ── package.json script lookup ──────────────────────────────────────
@@ -3093,53 +3088,38 @@ impl RunCommand {
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
-    /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
-    /// and boot the VM with the synthetic `[stdin]` path.
-    fn exec_stdin(ctx: &mut ContextData) -> crate::Result<bool> {
+    /// Boots the program on stdin as `cwd/[stdin]`. `name` is `process.argv[1]`, if any.
+    fn exec_stdin(ctx: &mut ContextData, name: Option<&[u8]>) -> crate::Result<()> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
-        // read from stdin
-        // PERF: could swap to
-        // `SmallVec<[u8; 2048]>` if profiled hot; cold CLI path here.
         // `read_to_end_into` is the cursor-relative streaming reader
         // (stdin is a pipe/tty, not seekable; `read_to_end` would `pread(0)`).
         let mut list: Vec<u8> = Vec::new();
-        if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
-            return Ok(false);
+        if let Err(err) = bun_sys::File::stdin().read_to_end_into(&mut list) {
+            Output::err(err, "Failed to read the program from stdin", ());
+            Global::exit(1);
         }
-        ctx.runtime_options.eval.script = list.into_boxed_slice();
+        ctx.runtime_options.eval.script = Some(list.into_boxed_slice());
 
-        #[cfg(windows)]
-        const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
-        #[cfg(not(windows))]
-        const STDIN_TRIGGER: &[u8] = b"/[stdin]";
+        if let Some(name) = name {
+            let mut passthrough_list: Vec<Box<[u8]>> =
+                Vec::with_capacity(ctx.passthrough.len() + 1);
+            passthrough_list.push(name.to_vec().into_boxed_slice());
+            passthrough_list.append(&mut ctx.passthrough);
+            ctx.passthrough = passthrough_list;
+        }
 
-        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
+        Self::boot(ctx, Self::synthetic_entry_path(STDIN_TRIGGER), None)
+    }
+
+    /// `cwd` + `trigger`: the entry path for which the module loader serves `eval.script`.
+    fn synthetic_entry_path(trigger: &[u8]) -> Box<[u8]> {
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-        let cwd_bytes = cwd.as_bytes();
-        let cwd_len = cwd_bytes.len();
-        entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-        entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
-        let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
-
-        // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
-        // Node's `node -` semantics.
-        let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
-        passthrough_list.push(b"-".to_vec().into_boxed_slice());
-        passthrough_list.append(&mut ctx.passthrough);
-        ctx.passthrough = passthrough_list;
-
-        // NOT routed through `boot_and_handle_error` — the
-        // stdin path skips the
-        // `configure_allocator(long_running=true)` / `.md` checks and prints
-        // `basename(target_name)` (= "-"), not `basename(entry_path)`
-        // (= "[stdin]"), in the error message.
-        let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
-            Self::boot_failed_exit(ctx, b"-", &err);
-        }
-        Ok(true)
+        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf).as_bytes();
+        let mut entry: Vec<u8> = Vec::with_capacity(cwd.len() + trigger.len());
+        entry.extend_from_slice(cwd);
+        entry.extend_from_slice(trigger);
+        entry.into_boxed_slice()
     }
 
     /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
@@ -3155,8 +3135,8 @@ impl RunCommand {
         // bootstrap via `[eval]`; it runs `process._eval` like Node's
         // internal/main/repl.js — no source splicing.
         ctx.runtime_options.eval.interactive_script =
-            Some(::core::mem::take(&mut ctx.runtime_options.eval.script));
-        ctx.runtime_options.eval.script = bootstrap.to_vec().into_boxed_slice();
+            Some(ctx.runtime_options.eval.script.take().unwrap_or_default());
+        ctx.runtime_options.eval.script = Some(bootstrap.to_vec().into_boxed_slice());
         Self::exec_eval(ctx)
     }
 
@@ -3176,17 +3156,7 @@ impl RunCommand {
             ctx.passthrough = merged;
         }
 
-        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-        let cwd_bytes = cwd.as_bytes();
-        let cwd_len = cwd_bytes.len();
-        entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-        let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-            .to_vec()
-            .into_boxed_slice();
-        Self::boot(ctx, entry, None)
+        Self::boot(ctx, Self::synthetic_entry_path(EVAL_TRIGGER), None)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
@@ -3200,39 +3170,35 @@ impl RunCommand {
         // values. Explicit `--env-file` is still honored. #6338
         ctx.args.disable_default_env_files = true;
 
+        // What follows a `-` positional is already in `ctx.passthrough`.
+        let reads_stdin = match ctx.positionals.as_slice() {
+            [] => true,
+            [first, ..] => first.as_ref() == b"-",
+        };
+
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
         // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
         if ctx.runtime_options.interactive
             && !ctx.runtime_options.eval.eval_and_print
-            && ctx.positionals.is_empty()
+            && reads_stdin
         {
             return Self::exec_node_repl(ctx);
         }
 
-        if !ctx.runtime_options.eval.script.is_empty() {
-            // synthetic `[eval]` path under cwd
-            let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_bytes = cwd.as_bytes();
-            let cwd_len = cwd_bytes.len();
-            entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-            entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-            let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-                .to_vec()
-                .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+        if ctx.runtime_options.eval.script.is_some() {
+            return Self::exec_eval(ctx);
         }
 
-        if ctx.positionals.is_empty() {
-            // Node: bare `node` on a TTY starts the REPL. Only in emulation
-            // mode; bun's own `bun` with no args stays the help text. Use
-            // Output's cached stdio flag (set at startup via libuv's handle
-            // probe), which is the same check `bun update --interactive` uses.
+        if reads_stdin {
+            // Bare `node` on a TTY is the REPL, as in node. Bun's own `bun` stays the help text.
             if Output::is_stdin_tty() {
                 return Self::exec_node_repl(ctx);
             }
-            Self::exec_as_if_node_missing_script();
+            let name = ctx.positionals.first().map(|_| &b"-"[..]);
+            if let Err(err) = Self::exec_stdin(ctx, name) {
+                Self::exec_as_if_node_boot_failed(ctx, b"[stdin]", err);
+            }
+            return Ok(());
         }
 
         // borrowck — `boot_and_handle_error` takes `&mut ctx`, so
@@ -3272,20 +3238,6 @@ impl RunCommand {
     #[inline(never)]
     #[cfg_attr(
         any(target_os = "linux", target_os = "android"),
-        unsafe(link_section = ".text.unlikely.exec_as_if_node_missing_script")
-    )]
-    fn exec_as_if_node_missing_script() -> ! {
-        Output::err_generic(
-            "Missing script to execute. Pass --interactive to start the Node.js-compatible REPL.",
-            (),
-        );
-        Global::exit(1);
-    }
-
-    #[cold]
-    #[inline(never)]
-    #[cfg_attr(
-        any(target_os = "linux", target_os = "android"),
         unsafe(link_section = ".text.unlikely.exec_as_if_node_boot_failed")
     )]
     fn exec_as_if_node_boot_failed(ctx: &mut ContextData, basename: &[u8], err: crate::Error) -> ! {
@@ -3309,6 +3261,10 @@ impl RunCommand {
 const EVAL_TRIGGER: &[u8] = b"\\[eval]";
 #[cfg(not(windows))]
 const EVAL_TRIGGER: &[u8] = b"/[eval]";
+#[cfg(windows)]
+const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
+#[cfg(not(windows))]
+const STDIN_TRIGGER: &[u8] = b"/[stdin]";
 
 /// Escape `\ " \n \r \t` for
 /// embedding in a double-quoted JS string literal. Used by the cron-execution

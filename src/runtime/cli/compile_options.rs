@@ -998,7 +998,7 @@ fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
     if compiles && has_debugger {
         exit_with_message(b"--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled");
     }
-    if !ctx.runtime_options.eval.script.is_empty() || ctx.runtime_options.interactive {
+    if ctx.runtime_options.eval.script.is_some() || ctx.runtime_options.interactive {
         exit_with_message(
             b"--aot can't compile code passed with -e, -p or --interactive. Pass a file instead",
         );

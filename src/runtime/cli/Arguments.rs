@@ -339,6 +339,8 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // Bun tells ESM from CommonJS by the source, so the value is not read.
+    parse_param!("--input-type <STR>"),
     // For bun's own use and tests: no help text.
     parse_param!("--debug-aot"),
     parse_param!("--aot-huge-heap"),
@@ -544,6 +546,7 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
             RuntimeRequirement::Feature(Feature::InternalForTesting),
         ),
         (Long(b"stack-trace-limit"), Nothing),
+        (Long(b"input-type"), Nothing),
         (
             Long(b"debug-aot"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
@@ -1281,6 +1284,36 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
 
+    // Modes of node that a program on stdin does not replace.
+    if cmd == CommandTag::RunAsNodeCommand
+        && ctx
+            .positionals
+            .first()
+            .is_none_or(|first| first.as_ref() == b"-")
+    {
+        let refuse = |name: &[u8]| -> ! {
+            Output::err_generic(
+                "--{} is not supported when bun runs as node\n",
+                format_args!("{}", BStr::new(name)),
+            );
+            Global::exit(1);
+        };
+        for flag in &unknown_long_flags {
+            match flag.name {
+                b"version" => cli::print_node_version_and_exit(),
+                b"test" | b"run" | b"v8-options" | b"completion-bash" => refuse(flag.name),
+                _ => {}
+            }
+        }
+        // To node, `-c` and `--check` only parse the program.
+        if (args.flag(b"--check") || args.has(b"--config"))
+            && args.option(b"--eval").is_none()
+            && args.option(b"--print").is_none()
+        {
+            refuse(b"check");
+        }
+    }
+
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;
         if may_refuse_options {
@@ -1470,7 +1503,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if let Some(port_str) = args.option(b"--port") {
             if cmd == CommandTag::RunAsNodeCommand {
                 // TODO: prevent `node --port <script>` from working
-                ctx.runtime_options.eval.script = port_str.into();
+                ctx.runtime_options.eval.script = Some(port_str.into());
                 ctx.runtime_options.eval.eval_and_print = true;
             } else {
                 opts.port = match strings::parse_int::<u16>(port_str, 10) {
@@ -1554,11 +1587,16 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
+        // `bun -e ''` prints the help text: there an empty program is no program.
+        let program = |script: &[u8]| {
+            (!script.is_empty() || !matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand))
+                .then(|| script.into())
+        };
         if let Some(script) = args.option(b"--print") {
-            ctx.runtime_options.eval.script = script.into();
+            ctx.runtime_options.eval.script = program(script);
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
-            ctx.runtime_options.eval.script = script.into();
+            ctx.runtime_options.eval.script = program(script);
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");

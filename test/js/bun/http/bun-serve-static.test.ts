@@ -3,7 +3,7 @@ import { isBroken, isMacOS, tempDir } from "harness";
 import { routes, static_responses } from "./bun-serve-static-helpers";
 
 describe.todoIf(isBroken && isMacOS)("static", () => {
-  let server: Server;
+  let server: Bun.Server<undefined>;
   let handler = mock(req => {
     return new Response(req.url, {
       headers: {
@@ -18,6 +18,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
 
   beforeAll(async () => {
     server = Bun.serve({
+      // @ts-expect-error legacy option name
       static: routes,
       port: 0,
       fetch: handler,
@@ -33,6 +34,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
       },
     });
     server.reload({
+      // @ts-expect-error legacy option name
       static: modified,
 
       fetch: handler,
@@ -42,6 +44,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("modified");
     server.reload({
+      // @ts-expect-error legacy option name
       static: routes,
       fetch: handler,
     });
@@ -96,7 +99,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
 });
 
 describe("static route Content-Type", () => {
-  async function contentTypeOf(server: Server, path: string) {
+  async function contentTypeOf(server: Bun.Server<undefined>, path: string) {
     const res = await fetch(new URL(path, server.url));
     expect(res.status).toBe(200);
     await res.arrayBuffer();
@@ -120,6 +123,7 @@ describe("static route Content-Type", () => {
 
     using server = Bun.serve({
       port: 0,
+      // @ts-expect-error legacy option name
       static: { "/a": response, "/b": response },
       fetch: () => new Response("fallback"),
     });
@@ -130,6 +134,7 @@ describe("static route Content-Type", () => {
     }).toEqual({ a: expected, b: expected });
 
     // server.reload() re-registers the very same Response object.
+    // @ts-expect-error legacy option name
     server.reload({ static: { "/a": response }, fetch: () => new Response("fallback") });
     expect(await contentTypeOf(server, "/a")).toBe(expected);
   });
@@ -143,6 +148,7 @@ describe("static route Content-Type", () => {
 
     using server = Bun.serve({
       port: 0,
+      // @ts-expect-error legacy option name
       static: { "/untouched": untouched, "/touched": touched },
       fetch: () => new Response("fallback"),
     });
@@ -161,6 +167,7 @@ describe("static route Content-Type", () => {
 
     using server = Bun.serve({
       port: 0,
+      // @ts-expect-error legacy option name
       static: { "/a": response, "/b": response },
       fetch: () => new Response("fallback"),
     });
@@ -212,9 +219,9 @@ describe("static route Date header", () => {
     });
 
     expect({
-      static: await rawDateLines(server.port, "/static"),
-      handler: await rawDateLines(server.port, "/handler"),
-      fallback: await rawDateLines(server.port, "/fallback"),
+      static: await rawDateLines(server.port!, "/static"),
+      handler: await rawDateLines(server.port!, "/handler"),
+      fallback: await rawDateLines(server.port!, "/fallback"),
     }).toEqual({
       static: [`Date: ${pinned}`],
       handler: [`Date: ${pinned}`],
@@ -222,7 +229,7 @@ describe("static route Date header", () => {
     });
 
     // HEAD and 304 go through the same header-writing path.
-    expect(await rawDateLines(server.port, "/static", "HEAD")).toEqual([`Date: ${pinned}`]);
+    expect(await rawDateLines(server.port!, "/static", "HEAD")).toEqual([`Date: ${pinned}`]);
   });
 
   test("a user-set Date on a Bun.file route is sent exactly once", async () => {
@@ -236,7 +243,7 @@ describe("static route Date header", () => {
       fetch: () => new Response("fallback"),
     });
 
-    expect(await rawDateLines(server.port, "/file")).toEqual([`Date: ${pinned}`]);
+    expect(await rawDateLines(server.port!, "/file")).toEqual([`Date: ${pinned}`]);
   });
 
   test("without a user-set Date, exactly one auto Date is sent", async () => {
@@ -247,8 +254,126 @@ describe("static route Date header", () => {
       fetch: () => new Response("fallback"),
     });
 
-    const dates = await rawDateLines(server.port, "/static");
+    const dates = await rawDateLines(server.port!, "/static");
     expect(dates).toHaveLength(1);
     expect(dates[0]).not.toContain(pinned);
+  });
+});
+
+// RFC 9110 §13.2.2: preconditions evaluate in order (1) If-Match, else
+// (2) If-Unmodified-Since; then (3) If-None-Match, else (4) If-Modified-Since.
+// Steps 1/2 must short-circuit with 412 before steps 3/4 can yield 304.
+describe("static route preconditions (RFC 9110 §13.2.2)", () => {
+  const LM = "Wed, 21 Oct 2015 07:28:00 GMT";
+  const EARLIER = "Mon, 01 Jan 2001 00:00:00 GMT";
+  const LATER = "Sat, 01 Jan 2028 00:00:00 GMT";
+  let server: Bun.Server<undefined>;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      routes: {
+        "/s": new Response("static-body", { headers: { etag: '"s1"', "last-modified": LM } }),
+        "/weak": new Response("static-body", { headers: { etag: 'W/"w1"', "last-modified": LM } }),
+      },
+      fetch: () => new Response("nf", { status: 404 }),
+    });
+  });
+  afterAll(() => server.stop(true));
+
+  const get = (path: string, headers: Record<string, string>, method = "GET") =>
+    fetch(new URL(path, server.url), { method, headers }).then(async r => ({
+      status: r.status,
+      body: await r.text(),
+      etag: r.headers.get("etag"),
+    }));
+
+  describe.each(["GET", "HEAD"])("%s", method => {
+    it("If-Match: non-matching tag → 412", async () => {
+      expect(await get("/s", { "If-Match": '"zz"' }, method)).toEqual({ status: 412, body: "", etag: '"s1"' });
+    });
+
+    it("If-Match: matching strong tag → 200", async () => {
+      const r = await get("/s", { "If-Match": '"s1"' }, method);
+      expect(r.status).toBe(200);
+      if (method === "GET") expect(r.body).toBe("static-body");
+    });
+
+    it("If-Match: list with one matching tag → 200", async () => {
+      expect((await get("/s", { "If-Match": '"a", "s1", "b"' }, method)).status).toBe(200);
+    });
+
+    it("If-Match: * → 200", async () => {
+      expect((await get("/s", { "If-Match": "*" }, method)).status).toBe(200);
+    });
+
+    it('If-Match: W/"s1" uses strong compare → 412', async () => {
+      // §8.8.3.2 strong comparison: a weak client tag never matches.
+      expect((await get("/s", { "If-Match": 'W/"s1"' }, method)).status).toBe(412);
+    });
+
+    it("If-Match against a weak stored ETag → 412 (strong compare)", async () => {
+      expect((await get("/weak", { "If-Match": '"w1"' }, method)).status).toBe(412);
+    });
+
+    it("If-Unmodified-Since earlier than Last-Modified → 412", async () => {
+      expect(await get("/s", { "If-Unmodified-Since": EARLIER }, method)).toEqual({
+        status: 412,
+        body: "",
+        etag: '"s1"',
+      });
+    });
+
+    it("If-Unmodified-Since equal to Last-Modified → 200", async () => {
+      expect((await get("/s", { "If-Unmodified-Since": LM }, method)).status).toBe(200);
+    });
+
+    it("If-Unmodified-Since later than Last-Modified → 200", async () => {
+      expect((await get("/s", { "If-Unmodified-Since": LATER }, method)).status).toBe(200);
+    });
+
+    it("If-Match failure + matching If-None-Match → 412 (not 304)", async () => {
+      // Step 1 fails: 412 is mandatory; step 3 must not run.
+      expect((await get("/s", { "If-Match": '"zz"', "If-None-Match": '"s1"' }, method)).status).toBe(412);
+    });
+
+    it("If-Unmodified-Since failure + matching If-None-Match → 412 (not 304)", async () => {
+      expect((await get("/s", { "If-Unmodified-Since": EARLIER, "If-None-Match": '"s1"' }, method)).status).toBe(412);
+    });
+
+    it("If-Match present suppresses If-Unmodified-Since", async () => {
+      // Step 2 only runs when If-Match is absent: a passing If-Match with a
+      // failing IUS still yields 200.
+      expect((await get("/s", { "If-Match": '"s1"', "If-Unmodified-Since": EARLIER }, method)).status).toBe(200);
+    });
+
+    it("If-Match pass then If-None-Match match → 304", async () => {
+      expect((await get("/s", { "If-Match": '"s1"', "If-None-Match": '"s1"' }, method)).status).toBe(304);
+    });
+  });
+});
+
+test("HEAD for a static route with an S3 file body reports the same Content-Length as GET", async () => {
+  const s3 = new Bun.S3Client({
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "my-bucket",
+    // Neither request contacts S3.
+    endpoint: "http://127.0.0.1:1",
+  });
+  using server = Bun.serve({
+    port: 0,
+    routes: { "/object": new Response([s3.file("object.txt")]) },
+    fetch: () => new Response("nf", { status: 404 }),
+  });
+
+  const url = new URL("/object", server.url);
+  const [head, get] = await Promise.all([fetch(url, { method: "HEAD" }), fetch(url)]);
+  expect({
+    head: { status: head.status, contentLength: head.headers.get("content-length") },
+    get: { status: get.status, contentLength: get.headers.get("content-length"), body: await get.text() },
+  }).toEqual({
+    head: { status: 200, contentLength: "0" },
+    get: { status: 200, contentLength: "0", body: "" },
   });
 });

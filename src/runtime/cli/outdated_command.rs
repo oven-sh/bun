@@ -1,57 +1,97 @@
-use core::fmt::Write as _;
-
-use bstr::BStr;
-
-use bun_core::fmt::{Table, TableSymbols};
+use bun_core::fmt::{Table, TableSymbols, count, escape_control_chars};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::package_manager::{
-    self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+use bun_install::package_manager::workspace_manifests::{
+    BrokenMember, DeclaredDependencies, DeclaredDependency, is_outdated,
 };
-use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
-use bun_paths::{self as path, PathBuffer};
-use bun_resolver::fs::FileSystem;
+use bun_install::package_manager::{Subcommand, WorkspaceFilter, populate_manifest_cache};
+use bun_install::{CommandLineArguments, PackageID, PackageManager};
 use bun_wyhash::hash;
 
 use crate::Command;
 
 pub(crate) struct OutdatedCommand;
 
-#[derive(Clone, Copy)]
-struct OutdatedInfo {
-    package_id: PackageID,
-    dep_id: DependencyID,
-    workspace_pkg_id: PackageID,
-    is_catalog: bool,
-}
-
 struct GroupedOutdatedInfo {
-    package_id: PackageID,
-    dep_id: DependencyID,
-    workspace_pkg_id: PackageID,
+    dep: DeclaredDependency,
     grouped_workspace_names: Option<Box<[u8]>>,
 }
 
-// TODO: use in `bun pack, publish, run, ...`
+/// Printed between the two names of an aliased dependency: `"my-alias": "npm:dep@1.0.0"` is listed
+/// as `my-alias@npm:dep`.
+const ALIAS_SEPARATOR: &str = "@npm:";
+
+/// A name as a cell prints it. Widths are taken from this text, not from the raw name.
+pub(crate) fn printed(name: &[u8]) -> String {
+    escape_control_chars(name).to_string()
+}
+
+pub(crate) fn printed_width(printed: &str) -> usize {
+    strings::visible::width::exclude_ansi_colors::utf8(printed.as_bytes())
+}
+
+fn behavior_label(behavior: Behavior) -> &'static str {
+    if behavior.is_dev() {
+        " (dev)"
+    } else if behavior.is_peer() {
+        " (peer)"
+    } else if behavior.is_optional() {
+        " (optional)"
+    } else {
+        ""
+    }
+}
+
+static COLUMN_NAMES: [&[u8]; 5] = [b"Package", b"Current", b"Update", b"Latest", b"Workspace"];
+
+/// The rows of the `bun outdated` table and the column widths that fit them.
+struct OutdatedTable {
+    declared: DeclaredDependencies,
+    rows: Vec<GroupedOutdatedInfo>,
+    /// One per `COLUMN_NAMES`.
+    column_inside_lengths: [usize; 5],
+    show_workspace_column: bool,
+    has_filtered_versions: bool,
+}
+
 enum FilterType<'a> {
     All,
     Name(&'a [u8]),
-    Path,
 }
 
-impl<'a> FilterType<'a> {
-    fn init(pattern: &'a [u8], is_path: bool) -> Self {
-        if is_path {
-            FilterType::Path
-        } else {
-            FilterType::Name(pattern)
+/// Combines the patterns like `--filter` values (`workspace_selection::select`).
+fn package_patterns_select(
+    patterns: &[FilterType<'_>],
+    package_name: &[u8],
+    alias: Option<&[u8]>,
+) -> bool {
+    let mut has_positive = false;
+    let mut selected = false;
+    for pattern in patterns {
+        match pattern {
+            FilterType::All => {
+                has_positive = true;
+                selected = true;
+            }
+            FilterType::Name(name_pattern) => {
+                for name in [Some(package_name), alias].into_iter().flatten() {
+                    let result = glob::r#match(name_pattern, name);
+                    if result.is_negated() {
+                        if !result.matches() {
+                            return false;
+                        }
+                    } else {
+                        has_positive = true;
+                        selected |= result.matches();
+                    }
+                }
+            }
         }
     }
-    // *NOTE*: name and path are not allocated → no Drop impl needed.
+    selected || !has_positive
 }
 
 impl OutdatedCommand {
@@ -63,13 +103,12 @@ impl OutdatedCommand {
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
-        let silent = cli.silent;
 
         let (manager, original_cwd) =
-            match PackageManager::init(&mut *ctx, cli, Subcommand::Outdated) {
+            match PackageManager::init(&mut *ctx, &cli, Subcommand::Outdated) {
                 Ok(v) => v,
                 Err(err) => {
-                    if !silent {
+                    if !cli.log_level.is_silent() {
                         if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing outdated", ());
                         }
@@ -78,309 +117,98 @@ impl OutdatedCommand {
                     Global::crash();
                 }
             };
-        // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)` is
-        // implicit via Drop at scope exit.
 
-        Self::outdated(ctx, &original_cwd, manager)
+        manager.load_lockfile_from_cwd_or_exit("nothing outdated");
+        Self::outdated_dispatch(&original_cwd, manager)
     }
 
-    fn outdated(
-        ctx: Command::Context,
-        original_cwd: &[u8],
-        manager: &mut PackageManager,
-    ) -> crate::Result<()> {
-        // Reshaped for borrowck — `load_from_cwd` would otherwise alias
-        // `PackageManager` with its `lockfile` field. Project disjoint
-        // raw pointers from the singleton first; `load_from_cwd` only reads
-        // `manager.options` / migration helpers and never re-borrows
-        // `manager.lockfile` through the `pm` argument.
-        let pm_ptr: *mut PackageManager = manager;
-        let not_silent = manager.options.log_level != LogLevel::Silent;
-        let log_ptr: *mut bun_ast::Log = manager.log;
-
-        // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
-        // no other live `&mut Lockfile` exists at this point.
-        let lockfile: &mut bun_install::lockfile::Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
-        // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
-        let log = unsafe { &mut *log_ptr };
-        match lockfile.load_from_cwd::<true>(
-            // SAFETY: see comment above — `load_from_cwd` accesses `manager`
-            // fields disjoint from `lockfile`.
-            Some(unsafe { &mut *pm_ptr }),
-            log,
-        ) {
-            LoadResult::NotFound => {
-                if not_silent {
-                    Output::err_generic("missing lockfile, nothing outdated", ());
-                }
-                Global::crash();
-            }
-            LoadResult::Err(cause) => {
-                if not_silent {
-                    match cause.step {
-                        LoadStep::OpenFile => Output::err_generic(
-                            "failed to open lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ParseFile => Output::err_generic(
-                            "failed to parse lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ReadFile => Output::err_generic(
-                            "failed to read lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::Migrating => Output::err_generic(
-                            "failed to migrate lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                    }
-                    if ctx.log_ref().has_errors() {
-                        // SAFETY: `log_ptr` aliases `manager.log` which is the
-                        // `*logger.Log` borrowed from `Command::Context`; no
-                        // other `&mut Log` is live here.
-                        let _ =
-                            unsafe { (*log_ptr).print(std::ptr::from_mut(Output::error_writer())) };
-                    }
-                }
-                Global::crash();
-            }
-            LoadResult::Ok(_) => {
-                // `load_from_cwd(&mut self, ..)` populates the
-                // lockfile in place, so the `ok.lockfile: &mut Lockfile` reborrow
-                // is the same storage and no reassignment is needed.
-            }
-        }
-
-        if Output::enable_ansi_colors_stdout() {
-            Self::outdated_dispatch::<true>(original_cwd, manager)
-        } else {
-            Self::outdated_dispatch::<false>(original_cwd, manager)
-        }
-    }
-
-    fn outdated_dispatch<const ENABLE_ANSI_COLORS: bool>(
-        original_cwd: &[u8],
-        manager: &mut PackageManager,
-    ) -> crate::Result<()> {
-        if !manager.options.filter_patterns.is_empty() {
-            let filters = manager.options.filter_patterns;
-            let workspace_pkg_ids = Self::find_matching_workspaces(original_cwd, manager, filters);
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &workspace_pkg_ids, true)
-        } else if manager.options.do_.recursive() {
-            let all_workspaces = Self::get_all_workspaces(manager);
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&all_workspaces),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &all_workspaces, true)
-        } else {
-            let root_pkg_id = manager
-                .root_package_id
-                .get(&manager.lockfile, manager.workspace_name_hash);
-            if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
-                return Ok(());
-            }
-            let ids = [root_pkg_id];
-            populate_manifest_cache::populate_manifest_cache(
-                manager,
-                populate_manifest_cache::Packages::Ids(&ids),
-            )?;
-            Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &ids, false)
-        }
-    }
-
-    fn get_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_resolutions = packages.items_resolution();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-        workspace_pkg_ids
-    }
-
-    fn find_matching_workspaces(
-        original_cwd: &[u8],
-        manager: &PackageManager,
-        filters: &[&[u8]],
-    ) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-
-        let converted_filters: Vec<WorkspaceFilter> = filters
-            .iter()
-            .map(|filter| {
-                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
-            })
-            .collect();
-        // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
-
-        // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
-        // process-singleton is populated.
-        let top_level_dir = FileSystem::get().top_level_dir;
-
-        // move all matched workspaces to front of array
-        let mut i: usize = 0;
-        while i < workspace_pkg_ids.len() {
-            let workspace_pkg_id = workspace_pkg_ids[i];
-
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[workspace_pkg_id as usize];
-                            let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => {
-                                    // Borrow the field in-place so the returned slice (which may
-                                    // point into the inline small-string storage) stays valid.
-                                    res.workspace().slice(string_buf)
-                                }
-                                resolution::Tag::Root => top_level_dir,
-                                _ => unreachable!(),
-                            };
-
-                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
-                                path::platform::Posix,
-                            >(
-                                top_level_dir, &mut path_buf.0, &[res_path]
-                            );
-
-                            if !glob::r#match(
-                                pattern,
-                                strings::without_trailing_slash(abs_res_path),
-                            )
-                            .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
-                            if !glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
-                    }
-                }
-                true
-            };
-
-            if matched {
-                i += 1;
+    fn outdated_dispatch(original_cwd: &[u8], manager: &mut PackageManager) -> crate::Result<()> {
+        let (workspace_pkg_ids, was_filtered) =
+            if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {
+                let ids = WorkspaceFilter::select_workspaces(
+                    &manager.lockfile,
+                    manager.options.filter_patterns,
+                    original_cwd,
+                );
+                (ids, true)
             } else {
-                workspace_pkg_ids.swap_remove(i);
+                let root_pkg_id = manager
+                    .root_package_id
+                    .get(&manager.lockfile, manager.workspace_name_hash);
+                if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
+                    return Ok(());
+                }
+                (vec![root_pkg_id], false)
+            };
+        populate_manifest_cache::populate_manifest_cache(
+            manager,
+            populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
+        )?;
+        // The table covers what could be checked; what could not follows it.
+        if let Some(table) = Self::collect_outdated(manager, &workspace_pkg_ids, was_filtered) {
+            if Output::enable_ansi_colors_stdout() {
+                Self::print_outdated_info_table::<true>(manager, &table);
+            } else {
+                Self::print_outdated_info_table::<false>(manager, &table);
             }
         }
-
-        workspace_pkg_ids
+        if populate_manifest_cache::print_fetch_failures(manager)? {
+            Global::crash();
+        }
+        Ok(())
     }
 
     fn group_catalog_dependencies(
         manager: &PackageManager,
-        outdated_items: &[OutdatedInfo],
-        _: &[PackageID],
+        declared: &DeclaredDependencies,
+        outdated_items: &[DeclaredDependency],
     ) -> Vec<GroupedOutdatedInfo> {
-        let lockfile = &manager.lockfile;
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let pkg_names = manager.lockfile.packages.items_name();
+        let pkg_names_buf = manager.lockfile.buffers.string_bytes.as_slice();
+        let string_buf = declared.string_bytes();
+        // (name hash, catalog name hash, behavior)
+        let catalog_key = |item: &DeclaredDependency| {
+            let dep = declared.dependency(item);
+            (
+                hash(dep.name.slice(string_buf)),
+                hash(dep.version.catalog().slice(string_buf)),
+                dep.behavior,
+            )
+        };
 
         let mut result: Vec<GroupedOutdatedInfo> = Vec::new();
-
-        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-        struct CatalogKey {
-            name_hash: u64,
-            catalog_name_hash: u64,
-            behavior: Behavior,
-        }
-        let mut catalog_map: bun_collections::HashMap<CatalogKey, Vec<PackageID>> =
+        let mut catalog_map: bun_collections::HashMap<(u64, u64, Behavior), Vec<PackageID>> =
             bun_collections::HashMap::new();
 
         for item in outdated_items {
-            if item.is_catalog {
-                let dep = &dependencies[item.dep_id as usize];
-                let name_hash = hash(dep.name.slice(string_buf));
-                let catalog = *dep.version.catalog();
-                let catalog_name = catalog.slice(string_buf);
-                let catalog_name_hash = hash(catalog_name);
-                let key = CatalogKey {
-                    name_hash,
-                    catalog_name_hash,
-                    behavior: dep.behavior,
-                };
+            if declared.dependency(item).version.tag == dependency::Tag::Catalog {
                 catalog_map
-                    .entry(key)
+                    .entry(catalog_key(item))
                     .or_default()
                     .push(item.workspace_pkg_id);
             } else {
                 result.push(GroupedOutdatedInfo {
-                    package_id: item.package_id,
-                    dep_id: item.dep_id,
-                    workspace_pkg_id: item.workspace_pkg_id,
+                    dep: *item,
                     grouped_workspace_names: None,
                 });
             }
         }
 
-        // Second pass: add grouped catalog dependencies
+        // One row per catalog entry, at the first workspace that uses it.
         for item in outdated_items {
-            if !item.is_catalog {
+            let version = &declared.dependency(item).version;
+            if version.tag != dependency::Tag::Catalog {
                 continue;
             }
-
-            let dep = &dependencies[item.dep_id as usize];
-            let name_hash = hash(dep.name.slice(string_buf));
-            let catalog = *dep.version.catalog();
-            let catalog_name = catalog.slice(string_buf);
-            let catalog_name_hash = hash(catalog_name);
-            let key = CatalogKey {
-                name_hash,
-                catalog_name_hash,
-                behavior: dep.behavior,
-            };
-
-            let Some(workspace_list) = catalog_map.get(&key) else {
+            let Some(workspace_list) = catalog_map.get(&catalog_key(item)) else {
                 continue;
             };
-
             if workspace_list[0] != item.workspace_pkg_id {
                 continue;
             }
             let mut workspace_names: Vec<u8> = Vec::new();
 
-            let cat_name = catalog_name;
+            let cat_name = version.catalog().slice(string_buf);
             if !cat_name.is_empty() {
                 workspace_names.extend_from_slice(b"catalog:");
                 workspace_names.extend_from_slice(cat_name);
@@ -392,15 +220,13 @@ impl OutdatedCommand {
                 if i > 0 {
                     workspace_names.extend_from_slice(b", ");
                 }
-                let workspace_name = pkg_names[workspace_id as usize].slice(string_buf);
+                let workspace_name = pkg_names[workspace_id as usize].slice(pkg_names_buf);
                 workspace_names.extend_from_slice(workspace_name);
             }
             workspace_names.push(b')');
 
             result.push(GroupedOutdatedInfo {
-                package_id: item.package_id,
-                dep_id: item.dep_id,
-                workspace_pkg_id: item.workspace_pkg_id,
+                dep: *item,
                 grouped_workspace_names: Some(workspace_names.into_boxed_slice()),
             });
         }
@@ -408,308 +234,202 @@ impl OutdatedCommand {
         result
     }
 
-    fn print_outdated_info_table<const ENABLE_ANSI_COLORS: bool>(
+    /// Finds the outdated dependencies of `workspace_pkg_ids` and sizes the
+    /// table that lists them. `None` when there is nothing to list.
+    fn collect_outdated(
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
         was_filtered: bool,
-    ) -> crate::Result<()> {
-        let package_patterns: Option<Vec<FilterType<'_>>> = 'package_patterns: {
-            let args = manager.options.positionals.get(1..).unwrap_or(&[]);
-            if args.is_empty() {
-                break 'package_patterns None;
+    ) -> Option<OutdatedTable> {
+        let args = manager.options.positionals.get(1..).unwrap_or(&[]);
+        let mut package_patterns: Vec<FilterType<'_>> = Vec::with_capacity(args.len());
+        for &arg in args {
+            match arg {
+                b"" => {}
+                b"*" | b"**" => package_patterns.push(FilterType::All),
+                // As a glob, `*` would stop at the `/` of a scoped name.
+                b"!*" | b"!**" => return None,
+                _ => package_patterns.push(FilterType::Name(arg)),
             }
+        }
+        if package_patterns.is_empty() && !args.is_empty() {
+            return None;
+        }
 
-            let mut at_least_one_greater_than_zero = false;
-            let mut patterns_buf: Vec<FilterType<'_>> = Vec::with_capacity(args.len());
-            for arg in args {
-                if arg.is_empty() {
-                    patterns_buf.push(FilterType::init(b"", false));
-                    continue;
-                }
-                if (arg.len() == 1 && arg[0] == b'*') || strings::eql_comptime(arg, b"**") {
-                    patterns_buf.push(FilterType::All);
-                    at_least_one_greater_than_zero = true;
-                    continue;
-                }
-                patterns_buf.push(FilterType::init(arg, false));
-                at_least_one_greater_than_zero = at_least_one_greater_than_zero || !arg.is_empty();
-            }
-
-            // nothing will match
-            if !at_least_one_greater_than_zero {
-                return Ok(());
-            }
-
-            Some(patterns_buf)
-        };
-        // `defer { pattern.deinit(); allocator.free(patterns) }` — Drop on Vec.
-
-        let mut max_name: usize = 0;
-        let mut max_current: usize = 0;
-        let mut max_update: usize = 0;
-        let mut max_latest: usize = 0;
-        let mut max_workspace: usize = 0;
+        let mut column_inside_lengths = [
+            "Packages".len(),
+            "Current".len(),
+            "Update".len(),
+            "Latest".len(),
+            "Workspace".len(),
+        ];
         let mut has_filtered_versions: bool = false;
 
-        // Reshaped for borrowck — `manifests.byNameAllowExpired` would
-        // otherwise alias the receiver.
-        // Hoist the four scalars that path reads into a by-value
-        // `DiskCacheCtx` so the loop body holds only disjoint field borrows
-        // (`&mut manager.manifests` against `&manager.lockfile` /
-        // `&manager.options`).
+        // By value, so that the loop body holds only disjoint borrows of `manager`.
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes;
 
-        let mut version_buf: String = String::new();
+        let declared =
+            DeclaredDependencies::load(manager, workspace_pkg_ids, BrokenMember::LeftOut);
+        let mut outdated_ids: Vec<DeclaredDependency> = Vec::new();
 
-        let mut outdated_ids: Vec<OutdatedInfo> = Vec::new();
+        for row in declared.rows() {
+            let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+            let dep = declared.dependency(row);
+            let resolution = manager.lockfile.packages.items_resolution()[row.package_id as usize];
 
-        for &workspace_pkg_id in workspace_pkg_ids {
-            let pkg_deps =
-                manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
-            for dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let package_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                if package_id == bun_install::INVALID_PACKAGE_ID {
-                    continue;
-                }
-                let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
-                let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
-                else {
-                    continue;
-                };
-                if resolved_version.tag != dependency::Tag::Npm
-                    && resolved_version.tag != dependency::Tag::DistTag
-                {
-                    continue;
-                }
-                let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
-                if resolution.tag != resolution::Tag::Npm {
-                    continue;
-                }
+            let package_name =
+                manager.lockfile.packages.items_name()[row.package_id as usize].slice(string_buf);
+            let dep_name = dep.name.slice(declared.string_bytes());
+            let alias = (dep_name != package_name).then_some(dep_name);
 
-                // package patterns match against dependency name (name in package.json)
-                if let Some(patterns) = &package_patterns {
-                    let matched = 'match_: {
-                        for pattern in patterns {
-                            match pattern {
-                                FilterType::Path => unreachable!(),
-                                FilterType::Name(name_pattern) => {
-                                    if name_pattern.is_empty() {
-                                        continue;
-                                    }
-                                    if !glob::r#match(name_pattern, dep.name.slice(string_buf))
-                                        .matches()
-                                    {
-                                        break 'match_ false;
-                                    }
-                                }
-                                FilterType::All => {}
-                            }
-                        }
-                        true
-                    };
-                    if !matched {
-                        continue;
-                    }
-                }
-
-                let package_name =
-                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
-                let scope = manager.options.scope_for_package_name(package_name).clone();
-                let mut expired = false;
-                let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    cache_ctx,
-                    &scope,
-                    package_name,
-                    Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
-                    needs_extended,
-                ) else {
-                    continue;
-                };
-
-                let Some(actual_latest) = manifest.find_by_dist_tag(b"latest") else {
-                    continue;
-                };
-
-                let latest = manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
-
-                let update_version = if resolved_version.tag == dependency::Tag::Npm {
-                    manifest.find_best_version_with_filter(
-                        &resolved_version.npm().version,
-                        string_buf,
-                        min_age_ms,
-                        excludes,
-                    )
-                } else {
-                    manifest.find_by_dist_tag_with_filter(
-                        resolved_version.dist_tag().tag.slice(string_buf),
-                        min_age_ms,
-                        excludes,
-                    )
-                };
-
-                let current_version = resolution.npm().version;
-                if current_version.order(actual_latest.version, string_buf, &manifest.string_buf)
-                    != core::cmp::Ordering::Less
-                {
-                    continue;
-                }
-
-                let has_filtered_update = update_version.latest_is_filtered();
-                let has_filtered_latest = latest.latest_is_filtered();
-                if has_filtered_update || has_filtered_latest {
-                    has_filtered_versions = true;
-                }
-
-                let package_name_len = package_name.len()
-                    + if dep.behavior.is_dev() {
-                        " (dev)".len()
-                    } else if dep.behavior.is_peer() {
-                        " (peer)".len()
-                    } else if dep.behavior.is_optional() {
-                        " (optional)".len()
-                    } else {
-                        0
-                    };
-                if package_name_len > max_name {
-                    max_name = package_name_len;
-                }
-
-                version_buf.clear();
-                write!(version_buf, "{}", current_version.fmt(string_buf))
-                    .expect("OOM writing version");
-                if version_buf.len() > max_current {
-                    max_current = version_buf.len();
-                }
-
-                version_buf.clear();
-                if let Some(uv) = update_version.unwrap() {
-                    write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
-                        .expect("OOM writing version");
-                } else {
-                    write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
-                        .expect("OOM writing version");
-                }
-                let update_version_len =
-                    version_buf.len() + if has_filtered_update { " *".len() } else { 0 };
-                if update_version_len > max_update {
-                    max_update = update_version_len;
-                }
-
-                version_buf.clear();
-                if let Some(lv) = latest.unwrap() {
-                    write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
-                        .expect("OOM writing version");
-                } else {
-                    write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
-                        .expect("OOM writing version");
-                }
-                let latest_version_len =
-                    version_buf.len() + if has_filtered_latest { " *".len() } else { 0 };
-                if latest_version_len > max_latest {
-                    max_latest = latest_version_len;
-                }
-                version_buf.clear();
-
-                let workspace_name = manager.lockfile.packages.items_name()
-                    [workspace_pkg_id as usize]
-                    .slice(string_buf);
-                if workspace_name.len() > max_workspace {
-                    max_workspace = workspace_name.len();
-                }
-
-                outdated_ids.push(OutdatedInfo {
-                    package_id,
-                    dep_id,
-                    workspace_pkg_id,
-                    is_catalog: dep.version.tag == dependency::Tag::Catalog,
-                });
+            if !package_patterns_select(&package_patterns, package_name, alias) {
+                continue;
             }
+
+            let scope = manager.options.scope_for_package_name(package_name).clone();
+            let mut expired = false;
+            let Some(manifest) = manager.manifests.by_name_allow_expired(
+                cache_ctx,
+                &scope,
+                package_name,
+                Some(&mut expired),
+                needs_extended,
+            ) else {
+                continue;
+            };
+
+            let Some(actual_latest) = manifest.find_latest(None, None).unwrap() else {
+                continue;
+            };
+
+            let latest = manifest.find_latest(min_age_ms, excludes);
+            let update_version = declared.find_update(row, manifest, min_age_ms, excludes);
+
+            // `DeclaredDependencies` only has rows installed from npm.
+            let current_version = resolution.npm().version;
+            if !is_outdated(
+                current_version,
+                string_buf,
+                update_version.unwrap(),
+                actual_latest,
+                manifest,
+            ) {
+                continue;
+            }
+
+            let mut fit = |column: usize, length: usize| {
+                column_inside_lengths[column] = column_inside_lengths[column].max(length);
+            };
+
+            let alias_len = alias.map_or(0, |alias| {
+                printed_width(&printed(alias)) + ALIAS_SEPARATOR.len()
+            });
+            fit(
+                0,
+                printed_width(&printed(package_name))
+                    + alias_len
+                    + behavior_label(dep.behavior).len(),
+            );
+
+            let current_len = count(format_args!("{}", current_version.fmt(string_buf)));
+            fit(1, current_len);
+
+            for (column, found) in [(2, update_version), (3, latest)] {
+                let filtered = found.latest_is_filtered();
+                has_filtered_versions |= filtered;
+                let version_len = found.unwrap().map_or(current_len, |found| {
+                    count(format_args!("{}", found.version.fmt(&manifest.string_buf)))
+                });
+                fit(column, version_len + if filtered { " *".len() } else { 0 });
+            }
+
+            let workspace_name = manager.lockfile.packages.items_name()
+                [row.workspace_pkg_id as usize]
+                .slice(string_buf);
+            fit(4, printed_width(&printed(workspace_name)));
+
+            outdated_ids.push(*row);
         }
 
         if outdated_ids.is_empty() {
-            return Ok(());
+            return None;
         }
 
-        // Group catalog dependencies
-        let grouped_ids =
-            Self::group_catalog_dependencies(manager, &outdated_ids, workspace_pkg_ids);
+        let rows = Self::group_catalog_dependencies(manager, &declared, &outdated_ids);
 
-        // Recalculate max workspace length after grouping
-        let mut new_max_workspace: usize = max_workspace;
         let mut has_catalog_deps = false;
-        for item in &grouped_ids {
+        for item in &rows {
             if let Some(names) = &item.grouped_workspace_names {
-                if names.len() > new_max_workspace {
-                    new_max_workspace = names.len();
-                }
+                column_inside_lengths[4] =
+                    column_inside_lengths[4].max(printed_width(&printed(names)));
                 has_catalog_deps = true;
             }
         }
 
-        // Show workspace column if filtered OR if there are catalog dependencies
-        let show_workspace_column = was_filtered || has_catalog_deps;
+        Some(OutdatedTable {
+            declared,
+            rows,
+            column_inside_lengths,
+            show_workspace_column: was_filtered || has_catalog_deps,
+            has_filtered_versions,
+        })
+    }
 
-        let package_column_inside_length = "Packages".len().max(max_name);
-        let current_column_inside_length = "Current".len().max(max_current);
-        let update_column_inside_length = "Update".len().max(max_update);
-        let latest_column_inside_length = "Latest".len().max(max_latest);
-        let workspace_column_inside_length = "Workspace".len().max(new_max_workspace);
+    fn print_outdated_info_table<const ENABLE_ANSI_COLORS: bool>(
+        manager: &mut PackageManager,
+        outdated: &OutdatedTable,
+    ) {
+        let declared = &outdated.declared;
+        let cache_ctx = manager.manifest_disk_cache_ctx();
+        let min_age_ms = manager.options.minimum_release_age_ms;
+        let needs_extended = min_age_ms.is_some();
+        let excludes = manager.options.minimum_release_age_excludes;
 
         const COLUMN_LEFT_PAD: usize = 1;
         const COLUMN_RIGHT_PAD: usize = 1;
 
-        let names_5: [&[u8]; 5] = [b"Package", b"Current", b"Update", b"Latest", b"Workspace"];
-        let names_4: [&[u8]; 4] = [b"Package", b"Current", b"Update", b"Latest"];
-        let lengths_5 = [
-            package_column_inside_length,
-            current_column_inside_length,
-            update_column_inside_length,
-            latest_column_inside_length,
-            workspace_column_inside_length,
-        ];
-        let lengths_4 = [
-            package_column_inside_length,
-            current_column_inside_length,
-            update_column_inside_length,
-            latest_column_inside_length,
-        ];
-        let (column_names, column_lengths): (&[&[u8]], &[usize]) = if show_workspace_column {
-            (&names_5, &lengths_5)
-        } else {
-            (&names_4, &lengths_4)
-        };
-
+        let columns = if outdated.show_workspace_column { 5 } else { 4 };
         let table = Table::<COLUMN_LEFT_PAD, COLUMN_RIGHT_PAD, ENABLE_ANSI_COLORS>::init(
-            column_names,
-            column_lengths,
+            &COLUMN_NAMES[..columns],
+            &outdated.column_inside_lengths[..columns],
             "blue",
         );
         let symbols = TableSymbols {
             enable_ansi_colors: ENABLE_ANSI_COLORS,
         };
+        let start_cell = || {
+            bun_core::pretty!("{}", symbols.vertical_edge());
+            for _ in 0..COLUMN_LEFT_PAD {
+                bun_core::pretty!(" ");
+            }
+        };
+        let end_cell = |column: usize, printed_length: usize| {
+            for _ in printed_length..outdated.column_inside_lengths[column] + COLUMN_RIGHT_PAD {
+                bun_core::pretty!(" ");
+            }
+        };
 
         table.print_top_line_separator();
         table.print_column_names();
 
-        // Print grouped items sorted by behavior type
-        for group_behavior in [
+        let groups = [
             Behavior::PROD,
             Behavior::DEV,
             Behavior::PEER,
             Behavior::OPTIONAL,
-        ] {
-            for item in &grouped_ids {
-                let package_id = item.package_id;
-                let dep_id = item.dep_id;
+        ];
+        for group_behavior in groups {
+            for item in &outdated.rows {
+                let package_id = item.dep.package_id;
 
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
-                if !dep.behavior.includes(group_behavior) {
+                let dep = declared.dependency(&item.dep);
+                // An optional peer has both the `PEER` and `OPTIONAL` bits. Print it only once.
+                let first_group = groups.into_iter().find(|&g| dep.behavior.includes(g));
+                if first_group != Some(group_behavior) {
                     continue;
                 }
 
@@ -724,157 +444,74 @@ impl OutdatedCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
                 };
 
-                let latest = manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
-                let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
-                else {
-                    continue;
-                };
-                let update = if resolved_version.tag == dependency::Tag::Npm {
-                    manifest.find_best_version_with_filter(
-                        &resolved_version.npm().version,
-                        string_buf,
-                        min_age_ms,
-                        excludes,
-                    )
-                } else {
-                    manifest.find_by_dist_tag_with_filter(
-                        resolved_version.dist_tag().tag.slice(string_buf),
-                        min_age_ms,
-                        excludes,
-                    )
-                };
+                let latest = manifest.find_latest(min_age_ms, excludes);
+                let update = declared.find_update(&item.dep, manifest, min_age_ms, excludes);
 
-                // resolution.tag == Npm (verified in first pass).
+                // `DeclaredDependencies` only has rows installed from npm.
                 let current_version = resolution.npm().version;
 
                 table.print_line_separator();
 
-                {
-                    // package name
-                    let behavior_str: &str = if dep.behavior.is_dev() {
-                        " (dev)"
-                    } else if dep.behavior.is_peer() {
-                        " (peer)"
-                    } else if dep.behavior.is_optional() {
-                        " (optional)"
+                start_cell();
+                let behavior_str = behavior_label(dep.behavior);
+                let name = printed(package_name);
+                let mut name_len = printed_width(&name) + behavior_str.len();
+                let dep_name = dep.name.slice(declared.string_bytes());
+                if dep_name != package_name {
+                    let alias = printed(dep_name);
+                    bun_core::pretty!("{}<d>{}<r>", alias, ALIAS_SEPARATOR);
+                    name_len += printed_width(&alias) + ALIAS_SEPARATOR.len();
+                }
+                bun_core::pretty!("{}<d>{}<r>", name, behavior_str);
+                end_cell(0, name_len);
+
+                start_cell();
+                let current = current_version.fmt(string_buf).to_string();
+                bun_core::pretty!("{}", current);
+                end_cell(1, current.len());
+
+                for (column, found) in [(2, update), (3, latest)] {
+                    start_cell();
+                    let filtered = found.latest_is_filtered();
+                    let mut version_len = if let Some(found) = found.unwrap() {
+                        let (version, buf) = (found.version, &*manifest.string_buf);
+                        // A `latest` that is older than the installed version is not an update.
+                        if column == 3 && version.order(current_version, buf, string_buf).is_lt() {
+                            bun_core::pretty!("<d>{}<r>", version.fmt(buf));
+                        } else {
+                            bun_core::pretty!(
+                                "{}",
+                                version.diff_fmt(current_version, buf, string_buf)
+                            );
+                        }
+                        count(format_args!("{}", version.fmt(buf)))
                     } else {
-                        ""
+                        bun_core::pretty!("<d>{}<r>", current);
+                        current.len()
                     };
-
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    bun_core::pretty!("{}<d>{}<r>", BStr::new(package_name), behavior_str);
-                    for _ in package_name.len() + behavior_str.len()
-                        ..package_column_inside_length + COLUMN_RIGHT_PAD
-                    {
-                        bun_core::pretty!(" ");
-                    }
-                }
-
-                {
-                    // current version
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    version_buf.clear();
-                    write!(version_buf, "{}", current_version.fmt(string_buf))
-                        .expect("OOM writing version");
-                    bun_core::pretty!("{}", version_buf);
-                    for _ in version_buf.len()..current_column_inside_length + COLUMN_RIGHT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    version_buf.clear();
-                }
-
-                {
-                    // update version
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    let update_filtered = update.latest_is_filtered();
-                    if let Some(uv) = update.unwrap() {
-                        write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
-                            .expect("OOM writing version");
-                        bun_core::pretty!(
-                            "{}",
-                            uv.version
-                                .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        );
-                    } else {
-                        write!(version_buf, "{}", current_version.fmt(string_buf))
-                            .expect("OOM writing version");
-                        bun_core::pretty!("<d>{}<r>", version_buf);
-                    }
-                    let mut update_version_len = version_buf.len();
-                    if update_filtered {
+                    if filtered {
                         bun_core::pretty!(" <blue>*<r>");
-                        update_version_len += " *".len();
+                        version_len += " *".len();
                     }
-                    for _ in update_version_len..update_column_inside_length + COLUMN_RIGHT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    version_buf.clear();
+                    end_cell(column, version_len);
                 }
 
-                {
-                    // latest version
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    let latest_filtered = latest.latest_is_filtered();
-                    if let Some(lv) = latest.unwrap() {
-                        write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
-                            .expect("OOM writing version");
-                        bun_core::pretty!(
-                            "{}",
-                            lv.version
-                                .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        );
-                    } else {
-                        write!(version_buf, "{}", current_version.fmt(string_buf))
-                            .expect("OOM writing version");
-                        bun_core::pretty!("<d>{}<r>", version_buf);
-                    }
-                    let mut latest_version_len = version_buf.len();
-                    if latest_filtered {
-                        bun_core::pretty!(" <blue>*<r>");
-                        latest_version_len += " *".len();
-                    }
-                    for _ in latest_version_len..latest_column_inside_length + COLUMN_RIGHT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    version_buf.clear();
-                }
-
-                if show_workspace_column {
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-
+                if outdated.show_workspace_column {
+                    start_cell();
                     let workspace_name: &[u8] = if let Some(names) = &item.grouped_workspace_names {
                         names
                     } else {
-                        manager.lockfile.packages.items_name()[item.workspace_pkg_id as usize]
+                        manager.lockfile.packages.items_name()[item.dep.workspace_pkg_id as usize]
                             .slice(string_buf)
                     };
-                    bun_core::pretty!("{}", BStr::new(workspace_name));
-
-                    for _ in workspace_name.len()..workspace_column_inside_length + COLUMN_RIGHT_PAD
-                    {
-                        bun_core::pretty!(" ");
-                    }
+                    let workspace_name = printed(workspace_name);
+                    bun_core::pretty!("{}", workspace_name);
+                    end_cell(4, printed_width(&workspace_name));
                 }
 
                 bun_core::pretty!("{}\n", symbols.vertical_edge());
@@ -883,18 +520,10 @@ impl OutdatedCommand {
 
         table.print_bottom_line_separator();
 
-        if has_filtered_versions {
+        if outdated.has_filtered_versions {
             bun_core::prettyln!(
                 "<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>"
             );
         }
-
-        Ok(())
     }
 }
-
-type _AssertImports = (
-    package_manager::WorkspaceFilter,
-    package_manager::ManifestCacheOptions<'static>,
-    bun_install::package_manifest_map::CacheBehavior,
-);

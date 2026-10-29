@@ -1,0 +1,22 @@
+{
+  "name": "v9-importer-peers",
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "no-deps": "^1.0.0"
+  },
+  "peerDependencies": {
+    "no-deps": "^1.0.0",
+    "peer-deps-fixed": "^1.0.0",
+    "@types/no-deps": "*"
+  },
+  "peerDependenciesMeta": {
+    "@types/no-deps": {
+      "optional": true
+    },
+    "@types/is-number": {
+      "optional": true
+    }
+  }
+}

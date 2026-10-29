@@ -63,16 +63,12 @@ pub fn frame_address() -> usize {
 struct MemoryAccessor {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     mem: core::ffi::c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    _mem: (),
 }
 
 impl MemoryAccessor {
     const INIT: Self = Self {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         mem: -1,
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        _mem: (),
     };
 
     fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
@@ -175,7 +171,11 @@ fn is_valid_memory(address: usize) -> bool {
     }
     #[cfg(windows)]
     {
-        use bun_windows_sys::kernel32::{MEM_FREE, MEMORY_BASIC_INFORMATION, VirtualQuery};
+        use bun_windows_sys::kernel32::{
+            MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
+            PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE,
+            PAGE_WRITECOPY, VirtualQuery,
+        };
         // SAFETY: MEMORY_BASIC_INFORMATION is a plain Win32 POD; all-zeros is
         // a valid representation.
         let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { crate::ffi::zeroed_unchecked() };
@@ -188,7 +188,19 @@ fn is_valid_memory(address: usize) -> bool {
                 core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
             )
         };
-        rc != 0 && mbi.State != MEM_FREE
+        // "Not MEM_FREE" is not enough to make a read safe: MEM_RESERVE has no
+        // backing, and MEM_COMMIT pages can be PAGE_NOACCESS or PAGE_GUARD (the
+        // stack guard page after EXCEPTION_STACK_OVERFLOW is exactly this).
+        const READABLE: u32 = PAGE_READONLY
+            | PAGE_READWRITE
+            | PAGE_WRITECOPY
+            | PAGE_EXECUTE_READ
+            | PAGE_EXECUTE_READWRITE
+            | PAGE_EXECUTE_WRITECOPY;
+        rc != 0
+            && mbi.State == MEM_COMMIT
+            && mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD) == 0
+            && mbi.Protect & READABLE != 0
     }
     #[cfg(not(windows))]
     {
@@ -207,9 +219,121 @@ fn is_valid_memory(address: usize) -> bool {
     }
 }
 
-/// Walks the frame-pointer chain.
+/// How the frame of ahead-of-time compiled code that a return address runs in is found.
+#[derive(Clone, Copy)]
+pub struct CompiledFrame {
+    has_frame_record: bool,
+    /// Nothing but the return address is on the stack.
+    is_empty: bool,
+    /// Between the return address and what the caller had on the stack.
+    bytes_above_return_address: usize,
+    /// In code that the compiled functions share. The rest holds at the return addresses in it and nowhere else.
+    is_in_stub: bool,
+    size: usize,
+}
+
+impl CompiledFrame {
+    /// What `Bun__AOT__frameAtReturnAddress` answers.
+    pub fn decode(bits: i64) -> Option<CompiledFrame> {
+        if bits < 0 {
+            return None;
+        }
+        let bits = bits as usize;
+        Some(CompiledFrame {
+            has_frame_record: bits & 1 != 0,
+            is_empty: bits & 2 != 0,
+            bytes_above_return_address: if bits & 4 != 0 { 32 } else { 0 },
+            is_in_stub: bits & 8 != 0,
+            size: bits >> 16,
+        })
+    }
+}
+
+static COMPILED_FRAME_AT_RETURN_ADDRESS: std::sync::OnceLock<fn(usize) -> Option<CompiledFrame>> =
+    std::sync::OnceLock::new();
+
+pub fn set_compiled_frame_at_return_address(lookup: fn(usize) -> Option<CompiledFrame>) {
+    let _ = COMPILED_FRAME_AT_RETURN_ADDRESS.set(lookup);
+}
+
+fn compiled_frame_at_return_address(return_address: usize) -> Option<CompiledFrame> {
+    COMPILED_FRAME_AT_RETURN_ADDRESS
+        .get()
+        .and_then(|lookup| lookup(return_address))
+}
+
+/// The registers of the caller of a frame of compiled code, given those in the frame: (pc, sp, fp).
+fn caller_of_compiled_frame(
+    frame: CompiledFrame,
+    sp: usize,
+    fp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    let place_of_record = if frame.has_frame_record {
+        fp
+    } else if frame.is_empty {
+        sp.checked_sub(WORD)?
+    } else {
+        sp.checked_add(frame.size)?
+    };
+    if place_of_record % WORD != 0 || place_of_record.checked_add(WORD)? < sp {
+        return None;
+    }
+    let caller_fp = if frame.has_frame_record {
+        load(place_of_record)?
+    } else {
+        fp
+    };
+    let caller_pc = load(place_of_record.checked_add(WORD)?)?;
+    let caller_sp = place_of_record.checked_add(2 * WORD + frame.bytes_above_return_address)?;
+    Some((caller_pc, caller_sp, caller_fp))
+}
+
+/// The registers of the caller of a stub that faulted, given those at the fault: (pc, sp, fp). No table says how much a stub has
+/// on the stack between two of its calls. Its caller came by a near call into the stubs, and the lowest word on the stack that
+/// returns from such a call is its return address.
+#[cfg(target_arch = "x86_64")]
+fn caller_of_faulting_stub(
+    sp: usize,
+    fp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    const WORDS_SEARCHED: usize = 64;
+    const OPCODE_OF_NEAR_CALL: u8 = 0xe8;
+    if !sp.is_multiple_of(WORD) {
+        return None;
+    }
+    for place in (0..WORDS_SEARCHED).map(|index| sp.wrapping_add(index * WORD)) {
+        let word = load(place)?;
+        if compiled_frame_at_return_address(word).is_none() {
+            continue;
+        }
+        let [_, _, _, opcode, displacement @ ..] = load(word - WORD)?.to_le_bytes();
+        let target = word.wrapping_add_signed(i32::from_le_bytes(displacement) as isize);
+        if opcode != OPCODE_OF_NEAR_CALL
+            || !compiled_frame_at_return_address(target).is_some_and(|frame| frame.is_in_stub)
+        {
+            continue;
+        }
+        let caller_fp = if fp.checked_add(WORD) == Some(place) {
+            load(fp)?
+        } else {
+            fp
+        };
+        return Some((word, place + WORD, caller_fp));
+    }
+    None
+}
+
+/// Walks the frame-pointer chain, and frames of compiled code by their tables.
 pub struct StackIterator {
     pub fp: usize,
+    /// The return address that `next()` gave last and the stack pointer in the frame it runs in.
+    returned_to: Option<(usize, usize)>,
+    /// `returned_to` stands for the instruction that faulted.
+    is_at_fault: bool,
     ma: MemoryAccessor,
 }
 
@@ -235,11 +359,40 @@ impl StackIterator {
     pub fn init(fp: usize) -> StackIterator {
         StackIterator {
             fp,
+            returned_to: None,
+            is_at_fault: false,
             ma: MemoryAccessor::INIT,
         }
     }
 
     pub fn next(&mut self) -> Option<usize> {
+        if let Some((pc, sp)) = self.returned_to {
+            let is_at_fault = core::mem::take(&mut self.is_at_fault);
+            if let Some(frame) = compiled_frame_at_return_address(pc) {
+                let ma = &mut self.ma;
+                #[cfg(target_arch = "x86_64")]
+                let caller_of_stub = if is_at_fault && frame.is_in_stub {
+                    caller_of_faulting_stub(sp, self.fp, |address| ma.load_usize(address))
+                } else {
+                    None
+                };
+                #[cfg(not(target_arch = "x86_64"))]
+                let caller_of_stub = {
+                    let _ = (is_at_fault, frame.is_in_stub);
+                    None
+                };
+                let (caller_pc, caller_sp, caller_fp) = match caller_of_stub {
+                    Some(caller) => caller,
+                    None => caller_of_compiled_frame(frame, sp, self.fp, |address| {
+                        ma.load_usize(address)
+                    })?,
+                };
+                self.fp = caller_fp;
+                self.returned_to = Some((caller_pc, caller_sp));
+                return Some(caller_pc);
+            }
+        }
+
         let fp = self.fp.checked_sub(Self::FP_OFFSET)?;
 
         // Sanity check.
@@ -256,6 +409,10 @@ impl StackIterator {
         }
         let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
 
+        self.returned_to = Some((
+            new_pc,
+            fp.checked_add(Self::PC_OFFSET + core::mem::size_of::<usize>())?,
+        ));
         self.fp = new_fp;
 
         Some(new_pc)
@@ -322,6 +479,24 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
     n
 }
 
+#[cfg(windows)]
+pub fn with_current_context<R>(run: impl FnOnce(usize, usize) -> R) -> R {
+    unsafe extern "system" {
+        fn RtlCaptureContext(context: *mut bun_windows_sys::CONTEXT);
+    }
+    let mut context = core::mem::MaybeUninit::<bun_windows_sys::CONTEXT>::zeroed();
+    // SAFETY: the pointer is valid for a write of a whole CONTEXT, which all-zero bytes are a value of
+    let context = unsafe {
+        RtlCaptureContext(context.as_mut_ptr());
+        context.assume_init()
+    };
+    #[cfg(target_arch = "x86_64")]
+    let pc = context.Rip;
+    #[cfg(target_arch = "aarch64")]
+    let pc = context.Pc;
+    run(pc as usize, &raw const context as usize)
+}
+
 /// Capture a faulting thread's call stack from the fault context. `pc` is the
 /// exact faulting instruction (`ExceptionAddress` / `mcontext` PC) and becomes
 /// frame 0.
@@ -330,12 +505,12 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
 /// No trimming is needed — the walk starts on the faulting stack, so the
 /// signal handler's own frames (on the altstack) are never in the chain.
 ///
-/// Windows: `rbp` is not a reliable frame pointer across all linked code (the
-/// prebuilt JavaScriptCore and LLInt assembly do not maintain it), so an
-/// fp-walk derails at the C++ boundary. Use the native `.pdata`-based
-/// `RtlCaptureStackBackTrace` instead — it works with or without unwind tables
-/// since `.pdata` is always emitted — and trim the handler's own frames by
-/// scanning for `pc`. `fp` is unused on Windows.
+/// Windows: `fp` is the `*const CONTEXT` the VEH received (`EXCEPTION_POINTERS
+/// ::ContextRecord`). The walk is `RtlLookupFunctionEntry` + `RtlVirtualUnwind`
+/// seeded from that context, so it starts at the fault frame and the handler's
+/// own frames are never in the chain. `rbp` is not a reliable frame pointer
+/// across the prebuilt JavaScriptCore/LLInt code, so an fp-walk would derail;
+/// `.pdata` is always emitted, so the Rtl unwinder works everywhere.
 pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     if out.is_empty() {
         return 0;
@@ -344,47 +519,167 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     let mut n = 1usize;
     #[cfg(windows)]
     {
-        let _ = fp;
-        let cap = (out.len() - 1).min(u16::MAX as usize) as u32;
-        // SAFETY: out[1..] is valid for `cap` writes; hash ptr may be null.
-        let got = unsafe {
-            bun_windows_sys::ntdll::RtlCaptureStackBackTrace(
-                0,
-                cap,
-                out[1..].as_mut_ptr().cast::<*mut core::ffi::c_void>(),
-                core::ptr::null_mut(),
-            )
-        } as usize;
-        // VEH runs on the faulting thread's stack, so the captured trace is
-        // [handler frames…][fault frame][callers…]. Trim everything above the
-        // first frame whose return address sits within a small tolerance of
-        // the fault `pc` (the call-site/return-address may be a few bytes
-        // off). If no match, keep the full trace rather than discard it.
-        const TOLERANCE: usize = 256;
-        let frames = &out[1..1 + got];
-        let skip = frames
-            .iter()
-            .take(12)
-            .position(|&a| a.abs_diff(pc) <= TOLERANCE)
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        if skip > 0 {
-            out.copy_within(1 + skip..1 + got, 1);
+        use bun_windows_sys::{CONTEXT, UNW_FLAG_NHANDLER, ntdll};
+        if fp == 0 {
+            // No CONTEXT available (should not happen for a real VEH fault).
+            return n;
         }
-        n += got - skip;
+        // SAFETY: `fp` is `EXCEPTION_POINTERS::ContextRecord` from the kernel;
+        // valid for the duration of the handler. Copy so RtlVirtualUnwind can
+        // mutate freely without touching the kernel's record.
+        let mut ctx: CONTEXT = unsafe { *(fp as *const CONTEXT) };
+        // Termination: on x64 RtlVirtualUnwind sets Pc = 0 at the end of the
+        // chain; on ARM64 it can leave the CONTEXT entirely unchanged, so a
+        // step that changed neither Pc nor Sp is also terminal. An Sp-only or
+        // Pc-only check truncates legitimate stacks: an ARM64 fault at prolog
+        // offset 0 (or a .pdata-bearing zero-stack leaf) sets Pc = Lr while
+        // leaving Sp unchanged, and directly-recursive frames share a return
+        // Pc. The `n < out.len()` cap is the ultimate bound.
+        while n < out.len() {
+            #[cfg(target_arch = "x86_64")]
+            let (control_pc, control_sp) = (ctx.Rip, ctx.Rsp);
+            #[cfg(target_arch = "aarch64")]
+            let (control_pc, control_sp) = (ctx.Pc, ctx.Sp);
+            let mut image_base: u64 = 0;
+            // SAFETY: `control_pc` is a code address from the fault context;
+            // `image_base` is valid for write; history table may be null.
+            let rf = unsafe {
+                ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
+            };
+            let compiled_frame = if rf.is_null() {
+                compiled_frame_at_return_address(control_pc as usize)
+            } else {
+                None
+            };
+            if let Some(compiled_frame) = compiled_frame {
+                #[cfg(target_arch = "x86_64")]
+                let frame_pointer = ctx.Rbp;
+                #[cfg(target_arch = "aarch64")]
+                let frame_pointer = ctx.Fp;
+                let load = |address: usize| {
+                    if address % core::mem::size_of::<usize>() != 0 || !is_valid_memory(address) {
+                        return None;
+                    }
+                    // SAFETY: the word is aligned, so it lies in the one page that is_valid_memory found committed and readable.
+                    Some(unsafe { *(address as *const usize) })
+                };
+                let Some((caller_pc, caller_sp, caller_fp)) = caller_of_compiled_frame(
+                    compiled_frame,
+                    control_sp as usize,
+                    frame_pointer as usize,
+                    load,
+                ) else {
+                    break;
+                };
+                #[cfg(target_arch = "x86_64")]
+                {
+                    ctx.Rip = caller_pc as u64;
+                    ctx.Rsp = caller_sp as u64;
+                    ctx.Rbp = caller_fp as u64;
+                }
+                #[cfg(target_arch = "aarch64")]
+                {
+                    ctx.Pc = caller_pc as u64;
+                    ctx.Sp = caller_sp as u64;
+                    ctx.Fp = caller_fp as u64;
+                }
+            } else if rf.is_null() {
+                // Leaf function with no `.pdata` entry: manually pop the
+                // return address. On x64 it is at `[Rsp]`; on ARM64 it is in
+                // `Lr`. An ARM64 leaf allocates no stack (bl does not push),
+                // so `Sp` is correctly left unchanged here.
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if ctx.Rsp & 7 != 0 || !is_valid_memory(ctx.Rsp as usize) {
+                        break;
+                    }
+                    // SAFETY: is_valid_memory confirmed the page at `Rsp` is
+                    // committed and readable (not reserved/guard/noaccess),
+                    // and `Rsp` is 8-aligned.
+                    unsafe {
+                        ctx.Rip = *(ctx.Rsp as *const u64);
+                    }
+                    ctx.Rsp += 8;
+                }
+                #[cfg(target_arch = "aarch64")]
+                {
+                    if ctx.Lr == control_pc {
+                        break;
+                    }
+                    ctx.Pc = ctx.Lr;
+                }
+            } else {
+                let mut handler_data: *mut core::ffi::c_void = core::ptr::null_mut();
+                let mut establisher_frame: u64 = 0;
+                // SAFETY: `rf` and `image_base` came from RtlLookupFunctionEntry
+                // for `control_pc`; `ctx` is a valid local CONTEXT; out-params
+                // are valid for write; ContextPointers may be null.
+                unsafe {
+                    ntdll::RtlVirtualUnwind(
+                        UNW_FLAG_NHANDLER,
+                        image_base,
+                        control_pc,
+                        rf,
+                        &mut ctx,
+                        &mut handler_data,
+                        &mut establisher_frame,
+                        core::ptr::null_mut(),
+                    );
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            let (next_pc, next_sp) = (ctx.Rip, ctx.Rsp);
+            #[cfg(target_arch = "aarch64")]
+            let (next_pc, next_sp) = (ctx.Pc, ctx.Sp);
+            if next_pc == 0 || (next_pc == control_pc && next_sp == control_sp) {
+                break;
+            }
+            out[n] = next_pc as usize;
+            n += 1;
+        }
     }
     #[cfg(not(windows))]
     {
-        let mut it = StackIterator::init(fp);
-        while n < out.len() {
-            match it.next() {
-                Some(addr) => {
-                    out[n] = addr;
-                    n += 1;
-                }
-                None => break,
+        n += walk(StackIterator::init(fp), &mut out[n..]);
+    }
+    n
+}
+
+#[cfg(not(windows))]
+fn walk(mut it: StackIterator, out: &mut [usize]) -> usize {
+    let mut n = 0usize;
+    while n < out.len() {
+        match it.next() {
+            Some(addr) => {
+                out[n] = addr;
+                n += 1;
             }
+            None => break,
         }
     }
     n
+}
+
+/// As `capture_from_context`, with the stack pointer at the fault. On x86-64 many frames of ahead-of-time compiled code have no
+/// frame record: where the fault lies in one, the frame-pointer chain starts at a caller far up the stack, and the callers in
+/// between are found from the stack pointer and the tables. `behind_pc` lies behind the start of the instruction at `pc` and
+/// not behind its end: the tables are asked about return addresses.
+#[cfg(not(windows))]
+pub fn capture_from_fault(
+    pc: usize,
+    behind_pc: usize,
+    fp: usize,
+    sp: usize,
+    out: &mut [usize],
+) -> usize {
+    if out.is_empty() {
+        return 0;
+    }
+    out[0] = pc;
+    let mut it = StackIterator::init(fp);
+    if cfg!(target_arch = "x86_64") {
+        it.returned_to = Some((behind_pc, sp));
+        it.is_at_fault = true;
+    }
+    1 + walk(it, &mut out[1..])
 }

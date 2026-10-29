@@ -1,4 +1,4 @@
-#![allow(nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
+#![allow(nonstandard_style)]
 #![feature(adt_const_params)]
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -58,7 +58,6 @@ pub(crate) mod bun_bunfig {
 }
 
 use core::cell::Cell;
-use core::fmt;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module declarations — explicit #[path] attrs for PascalCase files.
@@ -79,7 +78,7 @@ pub mod config_version;
 pub mod dependency;
 pub mod hosted_git_info;
 pub mod integrity;
-pub mod padding_checker;
+mod padding_checker;
 pub mod postinstall_optimizer;
 
 /// `ExternalSlice<T>` and `VersionedURLType<I>` live in `bun_install_types`
@@ -93,9 +92,7 @@ pub mod external_slice {
     };
 }
 pub mod versioned_url {
-    pub use bun_install_types::resolver_hooks::{
-        OldV2VersionedURL, VersionedURL, VersionedURLType,
-    };
+    pub use bun_install_types::resolver_hooks::{VersionedURL, VersionedURLType};
 }
 
 pub mod extract_tarball;
@@ -110,8 +107,13 @@ pub mod package_manager_task;
 #[path = "TarballStream.rs"]
 pub mod tarball_stream;
 pub use lockfile_real::{DEFAULT_TRUSTED_DEPENDENCIES_LIST, default_trusted_dependencies};
+pub mod audit_fix;
 #[path = "bin.rs"]
 pub mod bin_real;
+pub mod cache_pack;
+pub(crate) mod cache_publish;
+pub mod dedupe;
+pub mod git_runner;
 pub mod hoisted_install;
 pub mod isolated_install;
 pub mod lifecycle_script_runner;
@@ -122,9 +124,14 @@ pub mod package_install;
 pub mod package_installer;
 pub mod patch_install;
 pub mod pnpm;
+pub mod prune;
 #[path = "repository.rs"]
 pub mod repository_real;
+pub(crate) mod retry_timer;
+pub mod update_scope;
+pub mod update_transitive;
 pub mod yarn;
+pub mod yarn_berry;
 
 /// `repository` — re-export of the file-backed `repository_real` module
 /// (src/install/repository.rs). The earlier inline stub duplicated the
@@ -164,7 +171,6 @@ pub mod lockfile {
     }
     pub use package::{HasInstallScript, Meta};
     pub mod tree {
-        pub use crate::lockfile_real::tree::IteratorPathStyle as PathStyle;
         pub use crate::lockfile_real::tree::*;
     }
 }
@@ -196,22 +202,11 @@ pub mod package_manager {
 
     /// Re-export the file-backed workspace package.json cache.
     pub use crate::package_manager_real::workspace_package_json_cache;
+    pub use crate::package_manager_real::workspace_selection;
     pub use workspace_package_json_cache::{
         GetJSONOptions as GetJsonOptions, GetResult as GetJsonResult,
         MapEntry as WorkspacePackageJsonCacheEntry, WorkspacePackageJSONCache,
     };
-
-    /// `populateManifestCache` `Packages` union.
-    pub enum ManifestCacheOptions<'a> {
-        Ids(&'a [crate::PackageID]),
-        Names(&'a [&'a [u8]]),
-    }
-    /// Alias used by `outdated_command.rs`.
-    pub type ManifestCacheRequest<'a> = ManifestCacheOptions<'a>;
-
-    /// `PackageManifestMap.load` `When` enum — re-export the real enum so
-    /// callers naming either path agree on one type.
-    pub use crate::package_manifest_map::CacheBehavior as ManifestLoad;
 
     /// `CommandLineArguments.AuditLevel` (subset surfaced for
     /// `bun_runtime::cli::audit_command`). Re-exported alongside the full
@@ -238,10 +233,9 @@ pub(crate) mod install {
 /// `.bunx` shim encoder consumed by
 /// `bin::Linker` (Windows only at runtime, but the encoder types are
 /// referenced unconditionally so the module must exist on all targets).
-// `#[path]` inside an inline `mod {}` resolves relative to the
-// synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
-// file-backed module to crate level with an absolute-ish path and re-export
-// through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
+// Crate-level because `#[path]` inside an inline `mod {}` resolves against a
+// synthetic `windows_shim/` directory that doesn't exist on disk.
+#[cfg(windows)]
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;
 // `bun_shim_impl` is a *freestanding Windows PE* (no CRT, raw NT syscalls)
@@ -254,13 +248,12 @@ pub mod _bin_linking_shim;
 #[path = "windows-shim/bun_shim_impl.rs"]
 pub mod _bun_shim_impl;
 pub mod windows_shim {
-    pub use crate::_bin_linking_shim as bin_linking_shim;
+    #[cfg(windows)]
+    use crate::_bin_linking_shim as bin_linking_shim;
     #[cfg(windows)]
     pub use crate::_bun_shim_impl as bun_shim_impl;
-    pub use bin_linking_shim::{
-        BinLinkingShim, Decoded, EMBEDDED_EXECUTABLE_DATA, Flags, Shebang,
-        embedded_executable_data, loose_decode,
-    };
+    #[cfg(windows)]
+    pub(crate) use bin_linking_shim::{BinLinkingShim, Shebang, embedded_executable_data};
 }
 
 #[path = "resolvers/folder_resolver.rs"]
@@ -293,45 +286,36 @@ pub use external::VersionSlice;
 pub use external_slice as external;
 
 pub use dependency::Behavior;
-pub use dependency::{Dependency, DependencyExt, TagExt, ValueExt, VersionExt};
+pub use dependency::{Dependency, DependencyExt, TagExt, VersionExt};
 pub use integrity::Integrity;
 
 pub use bin::Bin;
 pub use lockfile_real::bun_lock as TextLockfile;
-pub use patch_install as patch;
 
 pub use dependency::Tag as DependencyVersionTag;
 pub use extract_tarball::ExtractTarball;
 pub use lockfile::{LoadResult, LoadStep, Lockfile, PatchedDep};
 pub use package_manager::Options::LogLevel;
 pub use package_manager::{
-    GetJsonOptions, GetJsonResult, ManifestCacheOptions, ManifestCacheRequest, ManifestLoad,
-    WorkspaceFilter, WorkspacePackageJsonCacheEntry,
+    GetJsonOptions, GetJsonResult, WorkspaceFilter, WorkspacePackageJsonCacheEntry,
 };
 pub use repository::{Repository, RepositoryExt};
 pub use resolution::Tag as ResolutionTag;
 
 // Real types — previously shadowed by inline ZST stubs in this file.
-pub use _folder_resolver::FolderResolution;
+pub use isolated_install::Store;
 pub use lifecycle_script_runner::LifecycleScriptSubprocess;
 pub use network_task::NetworkTask;
-pub use package_install::PackageInstall;
+pub(crate) use package_install::PackageInstall;
+pub use package_manager_real::security_scanner::SecurityScanSubprocess;
 pub use package_manager_task::Task;
 pub use package_manifest_map::PackageManifestMap;
-pub use postinstall_optimizer::PostinstallOptimizer;
-pub use tarball_stream::TarballStream;
-// `FileCopier` was hoisted out of `PackageInstall.rs` into
-// `isolated_install/FileCopier.rs` (shared by both linkers); re-export from
-// the new home so `bun_install::FileCopier` keeps resolving.
-pub use isolated_install::FileCopier;
-pub use isolated_install::Store;
-pub use package_manager_real::security_scanner::SecurityScanSubprocess;
 pub use patch_install::PatchTask;
+pub use tarball_stream::TarballStream;
 
 // PackageManager + its associated types — re-exported from the file-backed
 // `package_manager_real` so `crate::PackageManager` and
 // `package_manager_real::PackageManager` are the SAME type.
-pub use package_manager_real::package_manager_directories::CacheDirAndSubpath;
 pub use package_manager_real::{
     AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, RootPackageId,
     Subcommand,
@@ -344,75 +328,6 @@ pub use package_manager_real::{
 // ──────────────────────────────────────────────────────────────────────────
 pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
-
-/// Callback bundle passed to `PackageManager.runTasks`. Generic over each
-/// slot so call sites can pass `()` for unused hooks and a
-/// fn item for active ones. The trait-based dispatch lives in
-/// `package_manager_real::run_tasks::RunTasksCallbacks`; this value-level
-/// struct is only the call-site spelling.
-pub struct RunTasksCallbacks<E = (), R = (), M = (), D = ()> {
-    pub on_extract: E,
-    pub on_resolve: R,
-    pub on_package_manifest_error: M,
-    pub on_package_download_error: D,
-    pub progress_bar: bool,
-    pub manifests_only: bool,
-}
-impl<E: Default, R: Default, M: Default, D: Default> Default for RunTasksCallbacks<E, R, M, D> {
-    fn default() -> Self {
-        Self {
-            on_extract: E::default(),
-            on_resolve: R::default(),
-            on_package_manifest_error: M::default(),
-            on_package_download_error: D::default(),
-            progress_bar: false,
-            manifests_only: false,
-        }
-    }
-}
-
-/// MOVE_DOWN: `bun_resolver::package_json::PackageJSON` — the resolver crate
-/// depends on `bun_install` (for `Dependency`), so re-importing `PackageJSON`
-/// from there would create a cycle. Mounted here with the install-side field
-/// surface (`name`/`version`/`dependencies`/`arch`/`os`) so
-/// `lockfile::Package::from_package_json` can type-check; the resolver-only
-/// fields (`browser_map`, `exports`, …) stay in `bun_resolver` until the type
-/// is split into install-layer / resolver-layer halves.
-#[derive(Default)]
-pub struct PackageJSON {
-    pub name: Box<[u8]>,
-    pub version: Box<[u8]>,
-    pub arch: npm::Architecture,
-    pub os: npm::OperatingSystem,
-    pub package_manager_package_id: PackageID,
-    pub dependencies: PackageJSONDependencyMap,
-}
-
-#[derive(Default)]
-pub struct PackageJSONDependencyMap {
-    pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
-    // Erased borrow of the package.json source contents (mirrors
-    // `bun_resolver::package_json::DependencyMap::source_buf`, which is
-    // likewise `'static`-erased); kept alive by the originating
-    // `PackageJSON::source_contents` for the lifetime of the map.
-    pub source_buf: &'static [u8],
-}
-
-/// `crate::ci_info` — install-tier shim for `bun_runtime::cli::ci_info`
-/// (`src/runtime/cli/ci_info.rs`). Only `detect_ci_name` is exposed; the
-/// CI-probe table itself is generated at build time in `bun_runtime` and is
-/// not reachable from this tier, so the shim returns the `CI` env var name
-/// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
-pub mod ci_info {
-    pub(crate) fn detect_ci_name() -> Option<&'static [u8]> {
-        // The per-vendor probes live in `bun_runtime` (T6) and are wired in
-        // there; install only needs *some* answer for the user-agent string.
-        if bun_core::env_var::CI::get().is_some() {
-            return Some(b"ci");
-        }
-        None
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Only the `Shell` enum (variant detection) is consumed here — the embedded
@@ -468,23 +383,20 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+#[cfg(not(windows))]
 use bun_core::ZStr;
 
 impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `/tmp/bun-node-<sha>` (or debug variant). Windows builds compute the path
-    /// at runtime via GetTempPathW, so this constant is POSIX-only.
+    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant): `/tmp` is everybody's, this is one user's.
     ///
     /// NOTE: the SHA alone does not uniquely identify a binary — two local
     /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
     /// therefore re-points a stale link on EEXIST instead of trusting it.
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = {
-        // `const_format::concatcp!` cannot host
-        // `if` expressions inline, so split into helper consts.
-        use const_format::concatcp;
+    pub fn bun_node_dir() -> &'static ZStr {
         const TMP: &str = if cfg!(target_os = "macos") {
             "/private/tmp"
         } else if cfg!(target_os = "android") {
@@ -493,70 +405,126 @@ impl RunCommand {
             "/tmp"
         };
         const SUFFIX: &str = if bun_core::env::IS_DEBUG {
-            "/bun-node-debug"
+            "-debug"
         } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-            "/bun-node"
+            ""
         } else {
-            concatcp!("/bun-node-", bun_core::env::GIT_SHA_SHORT)
+            const_format::concatcp!("-", bun_core::env::GIT_SHA_SHORT)
         };
-        concatcp!(TMP, SUFFIX)
-    };
+        static DIR: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
+        DIR.get_or_init(|| {
+            bun_core::ZBox::from_bytes(format!("{TMP}/bun-node-{}{SUFFIX}", bun_sys::c::getuid()))
+        })
+    }
 
+    /// Under `%TEMP%`, or beside bun.exe when that is another drive, which no hard link reaches.
+    #[cfg(windows)]
+    pub fn windows_node_shim_dir(buf: &mut [u16]) -> Option<usize> {
+        use bun_sys::windows as win;
+
+        const TEMP_DIR_NAME: &str = if bun_core::env::IS_DEBUG {
+            "bun-node-debug"
+        } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
+            "bun-node"
+        } else {
+            const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
+        };
+        const BESIDE_EXE_DIR_NAME: &str = "bun-node";
+
+        // The case of a drive letter varies.
+        fn drive(path: &[u16]) -> Option<u16> {
+            match path {
+                [letter, colon, ..] if *colon == b':' as u16 => Some(*letter | 0x20),
+                _ => None,
+            }
+        }
+
+        let image_path = win::exe_path_w().as_slice();
+        // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
+        // trailing NUL) into `buf`.
+        let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
+
+        let (mut len, name) = if temp_len > 0
+            && temp_len < buf.len()
+            && drive(&buf[..temp_len]).is_some_and(|temp| Some(temp) == drive(image_path))
+        {
+            // Ends with a separator.
+            (temp_len, TEMP_DIR_NAME)
+        } else {
+            let exe_dir = bun_paths::resolve_path::dirname_w(image_path);
+            if exe_dir.is_empty() || exe_dir.len() >= buf.len() {
+                return None;
+            }
+            buf[..exe_dir.len()].copy_from_slice(exe_dir);
+            if exe_dir.ends_with(bun_core::w!("\\bun-node")) {
+                // The process is running as the `bun.exe` link (a nested `bun run`), so this is
+                // already the directory.
+                (exe_dir.len(), "")
+            } else {
+                buf[exe_dir.len()] = b'\\' as u16;
+                (exe_dir.len() + 1, BESIDE_EXE_DIR_NAME)
+            }
+        };
+
+        // The callers append `\node.exe` and a NUL.
+        if len + name.len() + b"\\node.exe\0".len() > buf.len() {
+            return None;
+        }
+        for b in name.bytes() {
+            buf[len] = b as u16;
+            len += 1;
+        }
+        Some(len)
+    }
+
+    #[cfg(not(windows))]
     fn find_shell_impl<'a>(
         buf: &'a mut bun_paths::PathBuffer,
         path: &[u8],
         cwd: &[u8],
     ) -> Option<&'a ZStr> {
-        #[cfg(windows)]
-        {
-            let _ = (buf, path, cwd);
-            return Some(bun_core::zstr!("C:\\Windows\\System32\\cmd.exe"));
+        for shell in Self::SHELLS_TO_SEARCH {
+            if let Some(found) = bun_which::which(buf, path, cwd, shell) {
+                // `which()` writes a NUL-terminated path into `buf` and
+                // returns a borrow of it; reborrow as `&ZStr`.
+                let len = found.len();
+                return Some(ZStr::from_buf(buf, len));
+            }
         }
 
-        #[cfg(not(windows))]
-        {
-            for shell in Self::SHELLS_TO_SEARCH {
-                if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                    // `which()` writes a NUL-terminated path into `buf` and
-                    // returns a borrow of it; reborrow as `&ZStr`.
-                    let len = found.len();
-                    return Some(ZStr::from_buf(buf, len));
-                }
+        const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
+            bun_core::zstr!("/bin/bash"),
+            bun_core::zstr!("/usr/bin/bash"),
+            bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
+            bun_core::zstr!("/bin/sh"),
+            bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
+            bun_core::zstr!("/usr/bin/zsh"),
+            bun_core::zstr!("/usr/local/bin/zsh"),
+            bun_core::zstr!("/system/bin/sh"), // Android
+        ];
+        for &shell in HARDCODED_POPULAR_ONES {
+            if bun_sys::is_executable_file_path(shell) {
+                let body = shell.as_bytes();
+                buf[..body.len()].copy_from_slice(body);
+                buf[body.len()] = 0;
+                return Some(ZStr::from_buf(buf, body.len()));
             }
-
-            const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
-                bun_core::zstr!("/bin/bash"),
-                bun_core::zstr!("/usr/bin/bash"),
-                bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
-                bun_core::zstr!("/bin/sh"),
-                bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
-                bun_core::zstr!("/usr/bin/zsh"),
-                bun_core::zstr!("/usr/local/bin/zsh"),
-                bun_core::zstr!("/system/bin/sh"), // Android
-            ];
-            for &shell in HARDCODED_POPULAR_ONES {
-                if bun_sys::is_executable_file_path(shell) {
-                    let body = shell.as_bytes();
-                    buf[..body.len()].copy_from_slice(body);
-                    buf[body.len()] = 0;
-                    return Some(ZStr::from_buf(buf, body.len()));
-                }
-            }
-
-            None
         }
+
+        None
     }
 
     /// Find the "best" shell to use. Cached to only run once.
     /// Returns a slice into a process-lifetime static buffer (includes trailing NUL).
-    pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static [u8]> {
+    #[cfg(not(windows))]
+    pub(crate) fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static [u8]> {
         // PORTING.md §Concurrency: `bun.once` + static buf → OnceLock. Store the
         // result bytes (including NUL) directly in the OnceLock so the borrow is
         // trivially `'static` — avoids the Mutex+data_ptr dance from the draft.
         static ONCE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
 
         ONCE.get_or_init(|| {
-            let mut scratch = bun_paths::PathBuffer::uninit();
+            let mut scratch = bun_paths::path_buffer_pool::get();
             let found = Self::find_shell_impl(&mut scratch, path, cwd)?;
             // Includes trailing NUL so the caller may treat it as `[:0]const u8`.
             Some(found.as_bytes_with_nul().to_vec())
@@ -584,9 +552,8 @@ impl RunCommand {
 
         #[cfg(not(windows))]
         {
-            use const_format::concatcp;
-
             let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+            let dir = Self::bun_node_dir();
 
             // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
             // OUTER bun prepends `BUN_NODE_DIR` to `PATH` and the INNER bun is
@@ -617,7 +584,7 @@ impl RunCommand {
                     }
                     result => {
                         let argv0_bytes = argv0.as_bytes();
-                        if argv0_bytes.starts_with(Self::BUN_NODE_DIR.as_bytes()) {
+                        if argv0_bytes.starts_with(dir.as_bytes()) {
                             // `self_exe_path()` failed and `argv[0]` is the shim
                             // under `BUN_NODE_DIR` (nested `--bun`). Using it as
                             // the target would recreate the #30711 self-loop; the
@@ -640,36 +607,16 @@ impl RunCommand {
                 }
             };
 
-            #[cfg(bun_debug)]
-            {
-                // Debug-only cleanup; failures are ignored. The EEXIST branch
-                // below already handles a stale dir.
-                let _ = bun_sys::delete_tree_absolute(Self::BUN_NODE_DIR.as_bytes());
-            }
-
-            const NODE_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const BUN_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const DIR_Z: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
+            let links = [&b"/node"[..], b"/bun"]
+                .map(|name| bun_core::ZBox::from_vec([dir.as_bytes(), name].concat()));
 
             // Don't trust attacker-created entries in a shared temp dir
             // (`BUN_NODE_DIR` lives under e.g. `/tmp`). Create it `0700`; if it
             // already exists, refuse to use it unless it's a directory we own
             // with no group/other write bits.
-            match bun_sys::mkdir(DIR_Z, 0o700) {
+            match bun_sys::mkdir(dir, 0o700) {
                 Ok(()) => {}
-                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(dir) {
                     Ok(st)
                         if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
                             == bun_sys::FileKind::Directory
@@ -680,20 +627,21 @@ impl RunCommand {
                 Err(_) => return Ok(()),
             }
 
-            for dest in [NODE_LINK, BUN_LINK] {
+            for dest in &links {
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
                         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                            // The dir is keyed only on GIT_SHA_SHORT, so two
+                            // The dir is keyed only on the uid and GIT_SHA_SHORT, so two
                             // different binaries built at the same commit (e.g.
                             // side-by-side local builds being benchmarked)
                             // collide here. Blindly reusing the existing link
                             // would make every `--bun` child of the SECOND
                             // binary silently exec the FIRST. Verify the target
                             // before reusing; replace it once if stale.
-                            let mut buf = bun_paths::PathBuffer::uninit();
+                            // Never remove a matching link: concurrent runs' scripts exec it.
+                            let mut buf = bun_paths::path_buffer_pool::get();
                             let matches = bun_sys::readlink(dest, &mut buf)
                                 .map(|n| &buf[..n] == argv0_z.as_bytes())
                                 .unwrap_or(false);
@@ -715,7 +663,7 @@ impl RunCommand {
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
-            path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
+            path.extend_from_slice(dir.as_bytes());
             path.push(bun_paths::DELIMITER);
             Ok(())
         }
@@ -725,78 +673,70 @@ impl RunCommand {
             use bun_core::strings;
             use bun_sys::windows as win;
 
-            let mut target_path_buffer = bun_paths::WPathBuffer::default();
+            let mut target_path_buffer = bun_paths::w_path_buffer_pool::get();
             let prefix: &[u16] = strings::w!("\\??\\");
 
-            // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
-            // trailing NUL) into the offset slice; we reserve `prefix.len()` at
-            // the front for the NT object prefix.
-            let len = unsafe {
-                win::GetTempPathW(
-                    (target_path_buffer.len() - prefix.len()) as u32,
-                    target_path_buffer.as_mut_ptr().add(prefix.len()),
-                )
-            } as usize;
-            if len == 0 {
+            // The front is reserved for the NT object prefix.
+            let Some(dir_len) =
+                Self::windows_node_shim_dir(&mut target_path_buffer[prefix.len()..])
+            else {
                 // Non-fatal; fall through and leave
                 // PATH unmodified. (No `RUN` scope is declared in this crate.)
                 return Ok(());
-            }
-
-            target_path_buffer[..prefix.len()].copy_from_slice(prefix);
-
-            // The dir name is ASCII-only, so widen the const `&str` byte-by-
-            // byte into a small stack buffer at runtime (Rust macros require a
-            // single string *literal* token, which `concatcp!` doesn't yield).
-            let dir_name_str: &str = if bun_core::env::IS_DEBUG {
-                "bun-node-debug"
-            } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-                "bun-node"
-            } else {
-                const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
             };
-            let mut dir_name_buf = [0u16; 64];
-            for (i, b) in dir_name_str.bytes().enumerate() {
-                debug_assert!(b < 0x80, "dir_name is ASCII-only");
-                dir_name_buf[i] = b as u16;
-            }
-            let dir_name: &[u16] = &dir_name_buf[..dir_name_str.len()];
-            target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
-            let dir_slice_len = prefix.len() + len + dir_name.len();
-
-            #[cfg(bun_debug)]
-            {
-                // Debug builds wipe and recreate the bun-node temp dir so the
-                // ALREADY_EXISTS short-circuit below never reuses a stale
-                // hardlink at a previous debug binary.
-                //
-                // The wipe does not always leave the path absent:
-                // `bun-run.test.ts` uses
-                // `describe.concurrent`, so multiple debug processes race on
-                // this shared dir and `make_dir` can legitimately observe
-                // `PathAlreadyExists` after a sibling re-created it. Swallow
-                // the error — the `CreateHardLinkW` retry below already
-                // re-mkdirs on failure, so a lost race here is harmless.
-                let dir_slice_u8 = bun_core::strings::to_utf8_alloc_with_type(
-                    &target_path_buffer[..dir_slice_len],
-                );
-                let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);
-                let _ = bun_sys::Dir::cwd().make_dir(&dir_slice_u8);
-            }
+            target_path_buffer[..prefix.len()].copy_from_slice(prefix);
+            let dir_slice_len = prefix.len() + dir_len;
 
             let image_path = win::exe_path_w();
+            // A hard link has no target to read back, so compare file identity instead.
+            let image_stat = bun_sys::File::openat_os_path(
+                bun_sys::Fd::cwd(),
+                image_path,
+                bun_sys::O::RDONLY,
+                0,
+            )
+            .and_then(|image| image.stat())
+            .ok();
+
             for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // `target_path_buffer` is mutated in place between FFI calls
-                // (the dir-NUL/backslash toggle below).
-                // Under Stacked Borrows a `*const` derived via `Deref::deref`
-                // is invalidated by the intervening `&mut` from `IndexMut`, so
-                // re-derive `as_ptr()` at each FFI call site instead of caching.
-                if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None) == 0
-                {
+                // `name` includes its NUL terminator, and the link path ends before it.
+                let link_len = dir_slice_len + name.len() - 1;
+                let mut made_dir = false;
+                let mut replaced = false;
+                loop {
+                    // `as_ptr()` stays inline: the buffer is mutated below (Stacked Borrows).
+                    if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None)
+                        != 0
+                    {
+                        break;
+                    }
                     match win::Win32Error::get() {
-                        win::Win32Error::ALREADY_EXISTS => {}
-                        _ => {
+                        win::Win32Error::ALREADY_EXISTS => {
+                            // As in the POSIX EEXIST branch: a rebuilt bun is a different file.
+                            let keep = image_stat.as_ref().is_none_or(|image| {
+                                bun_sys::openat_windows(
+                                    bun_sys::Fd::cwd(),
+                                    &target_path_buffer[..link_len],
+                                    bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
+                                    0,
+                                )
+                                .map(bun_sys::File::from_fd)
+                                .and_then(|link| link.stat())
+                                .is_ok_and(|link| {
+                                    link.st_dev == image.st_dev && link.st_ino == image.st_ino
+                                })
+                            });
+                            if keep || replaced {
+                                break;
+                            }
+                            let _ = win::DeleteFileBun(
+                                &target_path_buffer[..link_len],
+                                win::DeleteFileOptions::default(),
+                            );
+                            replaced = true;
+                        }
+                        _ if !made_dir => {
                             target_path_buffer[dir_slice_len] = 0;
                             // SAFETY: `dir_slice_len` is in-bounds; the byte at
                             // `dir_slice_len` was just set to NUL.
@@ -804,15 +744,19 @@ impl RunCommand {
                                 bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len);
                             let _ = bun_sys::mkdir_w(dir_w);
                             target_path_buffer[dir_slice_len] = b'\\' as u16;
-
-                            if win::CreateHardLinkW(
-                                target_path_buffer.as_ptr(),
-                                image_path.as_ptr(),
-                                None,
-                            ) == 0
-                            {
-                                return Ok(());
-                            }
+                            made_dir = true;
+                        }
+                        _ => {
+                            bun_core::run_once! {{
+                                bun_core::warn!(
+                                    "failed to create <b>node<r> alias in {}, scripts that run <b>node<r> will not find it",
+                                    bun_core::fmt::fmt_os_path(
+                                        &target_path_buffer[prefix.len()..dir_slice_len],
+                                        Default::default(),
+                                    ),
+                                );
+                            }}
+                            return Ok(());
                         }
                     }
                 }
@@ -855,41 +799,42 @@ fn install_runner_arena() -> &'static bun_alloc::Arena {
 }
 
 impl RunCommand {
-    /// DEP-CYCLE NOTE: the full implementation walks `bun_resolver::DirInfo`
-    /// and reads `package.json` via the resolver — T6 work that lives in
-    /// `bun_runtime::cli::RunCommand::configure_env_for_run`. The install
-    /// tier needs the *Transpiler-initialisation* half of that contract
-    /// because callers (`configure_env_for_scripts_run`) `assume_init()` the
-    /// out-param. This shim performs the init + the env-var seeding that has
-    /// no T6 dependency; the `*mut ()` return stands in for `*mut DirInfo`
-    /// (opaque to install — every caller discards it).
-    pub fn configure_env_for_run(
+    /// The half of `bun_runtime`'s `RunCommand::configure_env_for_run` that needs no `DirInfo`.
+    pub(crate) fn configure_env_for_run(
         ctx: &mut bun_options_types::context::ContextData,
-        this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
-        env: Option<*mut bun_dotenv::Loader<'static>>,
-        _log_errors: bool,
-        store_root_fd: bool,
-    ) -> Result<*mut (), crate::Error> {
-        use bun_core::Global;
-
-        let args = ctx.args.clone();
-        this_transpiler.write(bun_transpiler::Transpiler::init(
+        env: Option<*mut bun_dotenv::Loader>,
+    ) -> Result<bun_transpiler::Transpiler<'static>, crate::Error> {
+        let mut this_transpiler = bun_transpiler::Transpiler::init(
             install_runner_arena(),
             ctx.log,
-            args,
+            ctx.args.clone(),
             env,
-        )?);
-        // SAFETY: fully written on the line above.
-        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        )?;
         this_transpiler.options.env.behavior =
             bun_options_types::schema::api::DotEnvBehavior::load_all;
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = store_root_fd;
+        this_transpiler.resolver.store_fd = false;
 
         // Re-derive per-use rather than holding a long-lived `&mut` (avoids
         // Stacked-Borrows overlap with `run_env_loader`).
         let env_loader = this_transpiler.env_mut();
+        Self::seed_script_env(env_loader);
+
+        // Overwrite it like npm does, because an outer `bun run` in another project may have left a
+        // stale value.
+        env_loader.map.put(
+            b"npm_config_local_prefix",
+            bun_fs::FileSystem::get().top_level_dir(),
+        )?;
+
+        // `npm_package_*` is set per package. See `spawn_package_lifecycle_scripts`.
+        Ok(this_transpiler)
+    }
+
+    /// Sets the variables that both `bun run` and lifecycle scripts have in their environment.
+    pub fn seed_script_env(env_loader: &mut bun_dotenv::Loader) {
+        use bun_core::Global;
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
         // Bun process the script spawns enables its own watchdog. The env
@@ -928,32 +873,17 @@ impl RunCommand {
                     .put_default(b"npm_execpath", self_exe.as_bytes());
             }
         }
-
-        // DirInfo walk / npm_package_* seeding is performed by the T6 impl
-        // (`bun_runtime::cli::RunCommand::configure_env_for_run`); install
-        // callers discard the return value.
-        Ok(core::ptr::null_mut())
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) const BUN_HASH_TAG: &[u8] = b".bun-tag-";
+const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
-pub(crate) const MAX_HEX_HASH_LEN: usize = {
-    // u64::MAX in hex is always 16 nibbles.
-    let mut n = u64::MAX;
-    let mut len = 0usize;
-    while n != 0 {
-        n >>= 4;
-        len += 1;
-    }
-    len
-};
-const _: () = assert!(MAX_HEX_HASH_LEN == 16);
+const MAX_HEX_HASH_LEN: usize = 16;
 
-pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
+const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
 pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
 pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
@@ -966,51 +896,11 @@ pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &m
     &mut buf[..BUN_HASH_TAG.len() + digits_len]
 }
 
-pub struct StorePathFormatter<'a> {
-    str: &'a [u8],
-}
-
-impl<'a> StorePathFormatter<'a> {
-    /// Emits raw bytes
-    /// verbatim (mapping `/` and `\` to `+`). This is the byte-faithful sink; callers that
-    /// need an on-disk store path (legal non-UTF-8 on Linux) must use this, not `Display`.
-    pub fn write_to<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-        // if (!this.opts.replace_slashes) {
-        //     try writer.writeAll(this.str);
-        //     return;
-        // }
-        for &c in self.str {
-            match c {
-                b'/' | b'\\' => w.write_all(b"+")?,
-                _ => w.write_all(core::slice::from_ref(&c))?,
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<'a> fmt::Display for StorePathFormatter<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // `core::fmt` cannot emit non-UTF-8 bytes, but the store path must be
-        // emitted byte-faithfully; routing through `to_str_lossy()` here was wrong
-        // (it silently expanded each invalid byte to U+FFFD = 3 bytes, changing on-disk
-        // store directory names). We now build the raw byte sequence via `write_to` and
-        // pass it through only when it is already valid UTF-8 — otherwise we surface
-        // `fmt::Error` rather than corrupt the path.
-        let mut buf = Vec::with_capacity(self.str.len());
-        self.write_to(&mut buf).map_err(|_| fmt::Error)?;
-        f.write_str(bun_core::str_utf8(&buf).ok_or(fmt::Error)?)
-    }
-}
-
-pub(crate) fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
-    StorePathFormatter { str }
-}
-
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
 pub(crate) static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 
+#[inline(never)]
 pub(crate) fn initialize_store() {
     bun_ast::initialize_store_or_reset();
 }
@@ -1073,14 +963,14 @@ pub use bun_install_types::{
 // Phase-A drafts use the field-style lowercase names; alias both spellings.
 pub(crate) const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
 pub(crate) const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
-pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
+pub(crate) const bun_hash_tag: &[u8] = BUN_HASH_TAG;
 
 pub(crate) type PackageNameAndVersionHash = u64;
 
 pub(crate) struct Aligner;
 
 impl Aligner {
-    pub(crate) fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
+    fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
         let to_write = Self::skip_amount::<T>(pos as usize);
 
         let remainder: &[u8] = &ALIGNMENT_BYTES_TO_REPEAT_BUFFER
@@ -1093,7 +983,7 @@ impl Aligner {
     /// Runtime-alignment variant of [`Aligner::write`] for call sites that
     /// compute `align_of::<T>()` at the caller (callers without a nameable
     /// `T` pass the alignment as a value).
-    pub(crate) fn write_with_align<W: bun_io::Write>(
+    fn write_with_align<W: bun_io::Write>(
         align: usize,
         writer: &mut W,
         pos: u64,
@@ -1108,12 +998,12 @@ impl Aligner {
     }
 
     #[inline]
-    pub(crate) fn skip_amount<T>(pos: usize) -> usize {
+    fn skip_amount<T>(pos: usize) -> usize {
         Self::skip_amount_with_align(core::mem::align_of::<T>(), pos)
     }
 
     #[inline]
-    pub(crate) fn skip_amount_with_align(align: usize, pos: usize) -> usize {
+    fn skip_amount_with_align(align: usize, pos: usize) -> usize {
         pos.next_multiple_of(align) - pos
     }
 }
@@ -1135,19 +1025,19 @@ pub use bun_install_types::resolver_hooks::{Features, PreinstallState};
 
 #[derive(Default)]
 pub struct ExtractDataJson {
-    pub path: Box<[u8]>,
-    pub buf: Vec<u8>,
+    pub(crate) path: Box<[u8]>,
+    pub(crate) buf: Vec<u8>,
 }
 
 #[derive(Default)]
 pub struct ExtractData {
-    pub url: Box<[u8]>,
-    pub resolved: Box<[u8]>,
-    pub json: Option<ExtractDataJson>,
+    pub(crate) url: Box<[u8]>,
+    pub(crate) resolved: Box<[u8]>,
+    pub(crate) json: Option<ExtractDataJson>,
     /// Integrity hash computed from the raw tarball bytes.
     /// Used for HTTPS/local tarball dependencies where the hash
     /// is not available from a registry manifest.
-    pub integrity: Integrity,
+    pub(crate) integrity: Integrity,
 }
 
 /// `path` is an owned, growable buffer. An earlier draft modelled it as a
@@ -1156,9 +1046,9 @@ pub struct ExtractData {
 /// and aliases caller memory with no lifetime. Own the buffer.
 #[derive(Clone, Default)]
 pub struct DependencyInstallContext {
-    pub tree_id: lockfile::tree::Id,
-    pub path: Vec<u8>,
-    pub dependency_id: DependencyID,
+    pub(crate) tree_id: lockfile::tree::Id,
+    pub(crate) path: Vec<u8>,
+    pub(crate) dependency_id: DependencyID,
 }
 
 #[derive(Clone)]
@@ -1168,7 +1058,15 @@ pub enum TaskCallbackContext {
     IsolatedPackageInstallContext(isolated_install::EntryId),
     RootDependency(DependencyID),
     RootRequestId(PackageID),
+    /// Install phase, parked on a git clone. `dependency_id` may resolve to another package.
+    GitCheckout {
+        dependency_id: DependencyID,
+        package_id: PackageID,
+    },
 }
+
+// One per waiter in `task_queue`.
+const _: () = assert!(core::mem::size_of::<TaskCallbackContext>() == 32);
 
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:

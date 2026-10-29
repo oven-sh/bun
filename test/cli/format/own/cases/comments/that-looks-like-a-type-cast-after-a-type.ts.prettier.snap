@@ -1,0 +1,47 @@
+------------------
+{ printWidth: 80 }
+------------------
+enum A {
+  a /** @type {T} */ = 1 /** @type {T} */,
+  b,
+}
+type B<T /** @type {T} */ extends C /** @type {T} */ = D> = T;
+type C = [a /** @type {T} */: A, b /** @type {T} */?: B];
+type D = A /** @type {T} */ & B;
+type E = A /** @type {T} */["b"];
+type F = { [K /** @type {T} */ in B /** @type {T} */]: C };
+type G = A /** @type {T} */ extends B ? C : D;
+type H = `${A /** @type {T} */}-${B}`;
+interface I /** @type {T} */ extends J, K /** @type {T} */.L {}
+x = <T /** @type {T} */>a;
+
+type M /** @type {T} */ = N;
+type O = A /** @type {T} */ | B;
+type P = A extends B /** @type {T} */ ? C /** @type {T} */ : D;
+x = a /** @type {T} */ as T;
+class Q /** @type {T} */ implements R {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+enum A {
+  a /** @type {T} */ = 1 /** @type {T} */,
+  b,
+}
+type B<T /** @type {T} */ extends C /** @type {T} */ = D> = T;
+type C = [a /** @type {T} */: A, b /** @type {T} */?: B];
+type D = A /** @type {T} */ & B;
+type E = A /** @type {T} */["b"];
+type F = { [K /** @type {T} */ in B /** @type {T} */]: C };
+type G = A /** @type {T} */ extends B ? C : D;
+type H = `${A /** @type {T} */}-${B}`;
+interface I /** @type {T} */ extends J, K /** @type {T} */.L {}
+x = <T /** @type {T} */>a;
+
+type M /** @type {T} */ = N;
+type O = A /** @type {T} */ | B;
+type P = A extends B /** @type {T} */ ? C /** @type {T} */ : D;
+x = a /** @type {T} */ as T;
+class Q /** @type {T} */ implements R {}
+
+===================== End =====================

@@ -1,29 +1,22 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 use super::throw;
 use super::DiffFormatter;
 use super::Expect;
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
-    pub fn to_strict_equal(
+    pub(crate) fn to_strict_equal(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         let (this, value, not) =
-            self.matcher_prelude(global, frame.this(), "toStrictEqual", "<green>expected<r>")?;
+            self.matcher_prelude(global, this_value.to_js(), "toStrictEqual", "<green>expected<r>")?;
 
-        let _arguments = frame.arguments_old::<1>();
-        let arguments: &[JSValue] = _arguments.slice();
-
-        if arguments.len() < 1 {
-            return Err(global.throw_invalid_arguments(
-                format_args!("toStrictEqual() requires 1 argument"),
-            ));
-        }
-
-        let expected = arguments[0];
+        let expected = expected.to_js();
         let mut pass = value.jest_strict_deep_equals(expected, global)?;
 
         if not {
@@ -34,14 +27,7 @@ impl Expect {
         }
 
         // handle failure
-        let diff_formatter = DiffFormatter {
-            received: Some(value),
-            expected: Some(expected),
-            received_string: None,
-            expected_string: None,
-            global_this: Some(global),
-            not,
-        };
+        let diff_formatter = DiffFormatter::new(global, value, expected, not)?;
 
         if not {
             let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", true);

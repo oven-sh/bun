@@ -1,8 +1,5 @@
 //! bun_threading crate root — thin re-exports.
 
-pub mod error;
-pub use error::{Error, Result};
-
 pub mod channel;
 #[path = "Condition.rs"]
 pub mod condition;
@@ -21,6 +18,8 @@ pub mod thread_pool;
 pub mod work_pool;
 
 pub mod guarded;
+pub mod io_thread_pool;
+pub mod signal_ring;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]
 pub mod wait_group;
@@ -32,12 +31,12 @@ pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
 pub use futex as Futex;
-pub use guarded::RawMutex;
-pub use guarded::{Guarded, GuardedBy, GuardedLock};
+pub use guarded::Guarded;
 pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
-pub use rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
+pub use signal_ring::SignalRing;
 pub use thread_pool::ThreadPool;
 pub use unbounded_queue::{Link, Linked, UnboundedQueue};
 pub use wait_group::WaitGroup;
@@ -55,4 +54,18 @@ pub use work_pool::{IntrusiveWorkTask, OwnedTask, WorkPool};
 #[inline]
 pub fn current_thread_id() -> u64 {
     bun_safety::thread_id::current() as u64
+}
+
+/// For a thread whose work should only use processors that would otherwise be idle. It can't be undone on Linux.
+pub fn lower_current_thread_priority() {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    // SAFETY: no pointers. On Linux, `who == 0` is the calling thread.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, 0, 19);
+    }
+    #[cfg(target_os = "macos")]
+    // SAFETY: no pointers.
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0);
+    }
 }

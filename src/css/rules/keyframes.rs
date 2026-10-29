@@ -1,5 +1,3 @@
-use core::hash::{Hash, Hasher};
-
 use crate as css;
 use crate::css_rules::Location;
 use crate::css_values::ident::{CustomIdent, is_reserved_custom_ident};
@@ -22,32 +20,6 @@ pub enum KeyframesName {
     /// `<string>` of a `@keyframes` name.
     Custom(&'static [u8]),
 }
-
-// A generic type alias keyed by `KeyframesName` with the custom hash/eq below.
-pub type KeyframesNameHashMap<V> = bun_collections::ArrayHashMap<KeyframesName, V>;
-
-impl Hash for KeyframesName {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash only the underlying string bytes; the variant tag does NOT participate.
-        match self {
-            KeyframesName::Ident(ident) => state.write(ident.v()),
-            KeyframesName::Custom(s) => state.write(s),
-        }
-    }
-}
-
-impl PartialEq for KeyframesName {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (KeyframesName::Ident(a), KeyframesName::Ident(b)) => {
-                bun_core::strings::eql(a.v(), b.v())
-            }
-            (KeyframesName::Custom(a), KeyframesName::Custom(b)) => bun_core::strings::eql(a, b),
-            _ => false,
-        }
-    }
-}
-impl Eq for KeyframesName {}
 
 impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -92,7 +64,7 @@ impl KeyframesName {
 }
 
 impl KeyframesName {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `Custom(&'static [u8])` is an arena-owned slice → identity copy.
         match self {
             Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
@@ -105,7 +77,7 @@ impl KeyframesName {
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
         use bun_core::strings;
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match tok {
             css::Token::Ident(s) => {
                 // CSS-wide keywords without quotes throws an error.
@@ -129,6 +101,18 @@ impl KeyframesName {
 // KeyframeSelector
 // ──────────────────────────────────────────────────────────────────────────
 
+/// A [named timeline range](https://drafts.csswg.org/scroll-animations-1/#view-timelines-ranges).
+#[derive(Clone, Copy, css::DefineEnumProperty)]
+pub enum TimelineRangeName {
+    Cover,
+    Contain,
+    Entry,
+    Exit,
+    EntryCrossing,
+    ExitCrossing,
+    Scroll,
+}
+
 pub enum KeyframeSelector {
     /// An explicit percentage.
     Percentage(Percentage),
@@ -136,10 +120,12 @@ pub enum KeyframeSelector {
     From,
     /// The `to` keyword. Equivalent to 100%.
     To,
+    /// A [named timeline range selector](https://drafts.csswg.org/scroll-animations-1/#named-range-keyframes).
+    TimelineRangePercentage(TimelineRangeName, Percentage),
 }
 
 impl KeyframeSelector {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             KeyframeSelector::Percentage(p) => {
                 if dest.minify && p.v == 1.0 {
@@ -158,17 +144,23 @@ impl KeyframeSelector {
             KeyframeSelector::To => {
                 dest.write_str("to")?;
             }
+            KeyframeSelector::TimelineRangePercentage(name, percentage) => {
+                name.to_css(dest)?;
+                dest.write_char(b' ')?;
+                percentage.to_css(dest)?;
+            }
         }
         Ok(())
     }
 }
 
 impl KeyframeSelector {
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         match self {
             Self::Percentage(p) => Self::Percentage(*p),
             Self::From => Self::From,
             Self::To => Self::To,
+            Self::TimelineRangePercentage(name, p) => Self::TimelineRangePercentage(*name, *p),
         }
     }
 }
@@ -176,18 +168,23 @@ impl KeyframeSelector {
 // ─── KeyframeSelector parse ───────────────────────────────────────────────
 
 impl KeyframeSelector {
-    // Try the tuple variant (`Percentage`) first, then fall back to keyword
-    // idents (`from`/`to`).
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
+    fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
         if let Ok(p) = input.try_parse(Percentage::parse) {
             return Ok(KeyframeSelector::Percentage(p));
         }
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         if bun_core::eql_case_insensitive_ascii_check_length(ident, b"from") {
             Ok(KeyframeSelector::From)
         } else if bun_core::eql_case_insensitive_ascii_check_length(ident, b"to") {
             Ok(KeyframeSelector::To)
+        } else if let Some(name) =
+            <TimelineRangeName as css::EnumProperty>::from_ascii_case_insensitive(ident)
+        {
+            Ok(KeyframeSelector::TimelineRangePercentage(
+                name,
+                Percentage::parse(input)?,
+            ))
         } else {
             Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
         }
@@ -203,21 +200,21 @@ impl KeyframeSelector {
 /// See [KeyframesRule](KeyframesRule).
 pub struct Keyframe {
     /// A list of keyframe selectors to associate with the declarations in this keyframe.
-    pub selectors: ArrayList<KeyframeSelector>,
+    pub(crate) selectors: ArrayList<KeyframeSelector>,
     /// The declarations for this keyframe.
     // Lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
-    pub declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'static>,
 }
 
 impl Keyframe {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_comma_separated(self.selectors.iter(), |d, sel| sel.to_css(d))?;
         super::decl_block_to_css(&self.declarations, dest)
     }
 }
 
 impl Keyframe {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -234,11 +231,11 @@ pub struct KeyframesRule {
     /// <keyframes-name> = <custom-ident> | <string>
     pub name: KeyframesName,
     /// A list of keyframes in the animation.
-    pub keyframes: ArrayList<Keyframe>,
+    pub(crate) keyframes: ArrayList<Keyframe>,
     /// A vendor prefix for the rule, e.g. `@-webkit-keyframes`.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl KeyframesRule {
@@ -321,20 +318,19 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
+    use css::{BasicParseErrorKind, Parser, ParserOptions, ParserState, Result};
 
     impl DeclarationParser for KeyframesListParser {
         type Declaration = Keyframe;
 
         fn parse_value(
             _this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
-            // SAFETY: `name` is a sub-slice of the parser input arena; see `src_str`.
             Err(
                 input.new_error(BasicParseErrorKind::unexpected_token(css::Token::Ident(
-                    unsafe { css::css_parser::src_str(name) },
+                    name,
                 ))),
             )
         }
@@ -353,35 +349,6 @@ const _: () = {
     impl AtRuleParser for KeyframesListParser {
         type Prelude = ();
         type AtRule = Keyframe;
-
-        fn parse_prelude(
-            _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Prelude> {
-            Err(
-                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
-                    [u8],
-                >(name))),
-            )
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-        }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl QualifiedRuleParser for KeyframesListParser {
@@ -398,8 +365,9 @@ const _: () = {
             _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::QualifiedRule> {
-            // For now there are no options that apply within @keyframes
-            let options = ParserOptions::default(None);
+            let mut options = ParserOptions::default(None);
+            // Unlike lightningcss: a browser drops an invalid item and keeps the keyframe.
+            options.error_recovery = true;
             let declarations = DeclarationBlock::parse(input, &options)?;
             Ok(Keyframe {
                 selectors: prelude,

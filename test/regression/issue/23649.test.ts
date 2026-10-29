@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/23649
 test("parser should not crash with assertion error on invalid async function syntax", async () => {
   // This used to cause: panic(main thread): reached unreachable code
   // when parsing invalid syntax where async function appears after missing comma
-  const dir = tempDirWithFiles("parser-assertion", {
+  await using dir = tempDir("parser-assertion", {
     "input.js": `
 const object = {
   a(el) {
@@ -66,7 +66,7 @@ const object = {
 
 test("parser should not crash with assertion error on labeled async function statement", async () => {
   // Similar case: labeled statement with async function
-  const dir = tempDirWithFiles("parser-assertion-label", {
+  await using dir = tempDir("parser-assertion-label", {
     "input.js": `
 b: async function(first) {
 }

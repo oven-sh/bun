@@ -1,14 +1,14 @@
 #![warn(unused_must_use)]
 pub mod parse_entry;
-pub mod parse_fn;
-pub mod parse_import_export;
-pub mod parse_jsx;
-pub mod parse_prefix;
-pub mod parse_property;
-pub mod parse_skip_typescript;
-pub mod parse_stmt;
+pub(crate) mod parse_fn;
+pub(crate) mod parse_import_export;
+pub(crate) mod parse_jsx;
+pub(crate) mod parse_prefix;
+pub(crate) mod parse_property;
+pub(crate) mod parse_skip_typescript;
+pub(crate) mod parse_stmt;
 pub mod parse_suffix;
-pub mod parse_typescript;
+pub(crate) mod parse_typescript;
 
 use bun_collections::VecExt;
 
@@ -38,7 +38,7 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline]
-    pub fn parse_expr_or_bindings(
+    pub(crate) fn parse_expr_or_bindings(
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,
@@ -53,7 +53,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
     #[inline]
-    pub fn parse_expr_with_flags(
+    pub(crate) fn parse_expr_with_flags(
         &mut self,
         level: Level,
         flags: EFlags,
@@ -61,7 +61,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         self.parse_expr_common(level, None, flags, expr)
     }
-    pub fn parse_expr_common(
+    pub(crate) fn parse_expr_common(
         &mut self,
         level: Level,
         mut errors: Option<&mut DeferredErrors>,
@@ -99,40 +99,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
+    pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
         let p = self;
-        // Parse a yield-from expression, which yields from an iterator
-        let is_star = p.lexer.token == T::TAsterisk;
-
-        if is_star {
-            if p.lexer.has_newline_before {
-                p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
-            }
-            p.lexer.next()?;
-        }
-
+        let mut is_star = false;
         let mut value: Option<ExprNodeIndex> = None;
-        match p.lexer.token {
-            T::TCloseBrace
-            | T::TCloseParen
-            | T::TCloseBracket
-            | T::TColon
-            | T::TComma
-            | T::TSemicolon => {}
-            _ => {
-                if is_star || !p.lexer.has_newline_before {
-                    value = Some(p.parse_expr(Level::Yield)?);
-                }
+        // Nothing after a line break belongs to the "yield".
+        if !p.lexer.has_newline_before {
+            // Parse a yield-from expression, which yields from an iterator
+            is_star = p.lexer.token == T::TAsterisk;
+            if is_star {
+                p.lexer.next()?;
+            }
+            // After "*" the operand is parsed whatever follows.
+            if is_star || p.is_start_of_expression_or_shift_assign() {
+                value = Some(p.parse_expr(Level::Yield)?);
             }
         }
 
+        // `parseAssignmentExpressionOrHigher` returns it as it is: like the body of an arrow
+        // function it ends the assignment expression.
+        p.after_arrow_body_loc = p.lexer.loc();
         Ok(p.new_expr(E::Yield { value, is_star }, loc))
+    }
+
+    /// `isStartOfExpression`. TypeScript's scanner always produces `>` first and only rescans on request, so until then `>>=` and `>>>=`
+    /// count as binary operators, and a binary operator counts as the start of an expression with a missing left operand.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn is_start_of_expression_or_shift_assign(&mut self) -> bool {
+        self.is_start_of_expression()
+            || matches!(
+                self.lexer.token,
+                T::TGreaterThanGreaterThanEquals | T::TGreaterThanGreaterThanGreaterThanEquals
+            )
     }
 
     // By the time we call this, the identifier and type parameters have already
     // been parsed. We need to start parsing from the "extends" clause.
-    pub fn parse_class(
+    pub(crate) fn parse_class(
         &mut self,
         class_keyword: bun_ast::Range,
         name: Option<js_ast::LocRef>,
@@ -221,6 +225,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // read fields before move (G::Property is not Copy).
                 let prop_kind = property.kind;
                 let prop_key = property.key;
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    let named_at = match property.class_static_block_ref() {
+                        Some(block) => Some(block.loc),
+                        None => prop_key.map(|key| key.loc),
+                    };
+                    if let Some(named_at) = named_at {
+                        starts
+                            .class_elements
+                            .insert(named_at.start, first_decorator_loc.start);
+                    }
+                }
                 properties.push(property);
                 has_auto_accessor =
                     has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
@@ -275,10 +290,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
+            assigns_fields_in_constructor: false,
+            inner_class_ref: js_ast::Ref::NONE,
         })
     }
 
-    pub fn parse_template_parts(
+    pub(crate) fn parse_template_parts(
         &mut self,
         include_raw: bool,
     ) -> Result<(bun_ast::StoreSlice<E::TemplatePart>, bun_ast::Loc), Error> {
@@ -324,7 +341,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
-    pub fn parse_string_literal(&mut self) -> Result<Expr, Error> {
+    pub(crate) fn parse_string_literal(&mut self) -> Result<Expr, Error> {
         let p = self;
         let loc = p.lexer.loc();
         let mut str_ = p.lexer.to_e_string()?;
@@ -335,7 +352,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
-    pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
+    pub(crate) fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
         // Allow "in" inside call arguments; restored on every exit path
         let old_allow_in = self.allow_in;
         self.allow_in = true;
@@ -374,7 +391,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_jsx_prop_value_identifier(
+    pub(crate) fn parse_jsx_prop_value_identifier(
         &mut self,
         previous_string_with_backslash_loc: &mut bun_ast::Loc,
     ) -> Result<Expr, Error> {
@@ -403,7 +420,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// This assumes that the open parenthesis has already been parsed by the caller
-    pub fn parse_paren_expr(
+    pub(crate) fn parse_paren_expr(
         &mut self,
         loc: bun_ast::Loc,
         level: Level,
@@ -498,7 +515,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         // Are these arguments to an arrow function?
-        if p.lexer.token == T::TEqualsGreaterThan
+        let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
+        if is_arrow_fn
             || opts.force_arrow_fn
             || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
         {
@@ -541,17 +559,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
 
+            let mut arrow_data = FnOrArrowDataParse {
+                allow_await: if opts.is_async {
+                    AwaitOrYield::AllowExpr
+                } else {
+                    AwaitOrYield::AllowIdent
+                },
+                ..Default::default()
+            };
+
             // Avoid parsing TypeScript code like "a ? (1 + 2) : (3 + 4)" as an arrow
             // function. The ":" after the ")" may be a return type annotation, so we
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if p.lexer.token == T::TEqualsGreaterThan
-                || (Self::IS_TYPESCRIPT_ENABLED
-                    && invalid_log.is_empty()
-                    && p.try_skip_type_script_arrow_return_type_with_backtracking())
-                || opts.force_arrow_fn
-            {
+            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
+                if opts.is_after_question_and_before_colon {
+                    // Only do this very expensive check if we must
+                    is_arrow_fn = p
+                        .is_type_script_arrow_return_type_after_question_and_before_colon(
+                            &arrow_data,
+                        )?;
+                    if is_arrow_fn {
+                        // We know this will succeed because we've already done it once above
+                        p.lexer.next()?;
+                        p.skip_typescript_return_type()?;
+                    }
+                } else {
+                    // Otherwise, do the less expensive check
+                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
+                }
+            }
+
+            if is_arrow_fn || opts.force_arrow_fn {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
 
@@ -562,14 +602,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc_.add_error(p.log(), p.source);
                     }
                 }
-                let mut arrow_data = FnOrArrowDataParse {
-                    allow_await: if opts.is_async {
-                        AwaitOrYield::AllowExpr
-                    } else {
-                        AwaitOrYield::AllowIdent
-                    },
-                    ..Default::default()
-                };
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
                 let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
                 arrow.is_async = opts.is_async;
@@ -631,7 +663,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Err(crate::Error::SyntaxError)
     }
 
-    pub fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
+    pub(crate) fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
         let p = self;
         if p.lexer.token != T::TIdentifier || p.lexer.has_newline_before {
             return Ok(None);
@@ -645,7 +677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Some(name))
     }
 
-    pub fn parse_class_stmt(
+    pub(crate) fn parse_class_stmt(
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions<'a>,
@@ -723,7 +755,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             if opts.is_typescript_declare {
                 p.pop_and_discard_scope(scope_index);
-                if opts.is_namespace_scope && opts.is_export {
+                if opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
@@ -741,7 +773,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn parse_clause_alias(&mut self, _kind: &[u8]) -> Result<&'a [u8], Error> {
+    pub(crate) fn parse_clause_alias(&mut self, _kind: &[u8]) -> Result<&'a [u8], Error> {
         let p = self;
         let loc = p.lexer.loc();
 
@@ -770,7 +802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(alias)
     }
 
-    pub fn parse_expr_or_let_stmt(
+    pub(crate) fn parse_expr_or_let_stmt(
         &mut self,
         opts: &mut ParseStatementOptions<'a>,
     ) -> Result<ExprOrLetStmt, Error> {
@@ -967,7 +999,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
+    pub(crate) fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
             return Err(crate::Error::StackOverflow);
@@ -1123,6 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.has_newline_before {
                         is_single_line = false;
                     }
+                    let close_brace_loc = p.lexer.loc();
                     p.lexer.expect(T::TCloseBrace)?;
 
                     return Ok(p.b(
@@ -1131,6 +1164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 properties.into_bump_slice_mut(),
                             ),
                             is_single_line,
+                            close_brace_loc,
                         },
                         loc,
                     ));
@@ -1146,7 +1180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
+    pub(crate) fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
         let p = self;
         // Every match arm below assigns `key` (or `return`s) before any read.
         let key: Expr;
@@ -1247,7 +1281,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_and_declare_decls(
+    pub(crate) fn parse_and_declare_decls(
         &mut self,
         kind: js_ast::symbol::Kind,
         opts: &mut ParseStatementOptions<'a>,
@@ -1309,7 +1343,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(G::DeclList::from_arena_slice(&decls))
     }
 
-    pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
+    pub(crate) fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
         let p = self;
         let path_text = p.lexer.to_utf8_e_string()?;
         let mut path = ParsedPath {
@@ -1437,7 +1471,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
-    pub fn parse_stmts_up_to(
+    pub(crate) fn parse_stmts_up_to(
         &mut self,
         eend: T,
         _opts: &mut ParseStatementOptions<'a>,
@@ -1477,22 +1511,54 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
+                        // With `keep_directives`, `("use strict")` is not a directive, and the text
+                        // is kept as written because an escape makes it a different directive.
+                        let keep = p.options.keep_directives;
+                        if !str_.prefer_template
+                            && (!keep || expr.value.loc.start == stmt.loc.start)
+                        {
                             is_directive_prologue = true;
+                            let source: &'a bun_ast::Source<'a> = p.source;
+                            let as_written = keep.then(|| {
+                                let text = &source.contents()[stmt.loc.start as usize..];
+                                let mut end = 1;
+                                while text.get(end).is_some_and(|c| *c != text[0]) {
+                                    end += 1 + usize::from(text[end] == b'\\');
+                                }
+                                &text[1..end.min(text.len())]
+                            });
 
                             if str_.eql_comptime(b"use strict") {
-                                skip = true;
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }
-                            } else if str_.eql_comptime(b"use asm") {
+                                if let Some(as_written) = as_written {
+                                    stmt = Stmt::alloc(
+                                        S::Directive {
+                                            value: bun_ast::StoreStr::new(as_written),
+                                        },
+                                        stmt.loc,
+                                    );
+                                } else {
+                                    skip = true;
+                                }
+                            } else if str_.eql_comptime(b"use asm")
+                                && !p.options.repl_mode
+                                && as_written.is_none()
+                            {
+                                // In the REPL the directive stays a string
+                                // statement so it evaluates as the result,
+                                // like node ('use asm' prints 'use asm').
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
-                                let bytes = str_.string(p.arena).expect("OOM");
+                                let bytes = match as_written {
+                                    Some(as_written) => as_written,
+                                    None => str_.string(p.arena).expect("OOM"),
+                                };
                                 stmt = Stmt::alloc(
                                     S::Directive {
                                         value: bun_ast::StoreStr::new(bytes),
@@ -1540,7 +1606,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// One-token lookahead: advance past the current token, evaluate `pred`,
     /// then unconditionally restore the lexer (including `is_log_disabled`).
     #[inline]
-    pub(crate) fn next_token_matches(&mut self, pred: impl FnOnce(&Self) -> bool) -> bool {
+    fn next_token_matches(&mut self, pred: impl FnOnce(&Self) -> bool) -> bool {
         let old_lexer = self.lexer.snapshot();
         self.lexer.is_log_disabled = true;
         let result = matches!(self.lexer.next(), Ok(())) && pred(self);
@@ -1555,15 +1621,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// This parses an expression. This assumes we've already parsed the "async"
     /// keyword and are currently looking at the following token.
-    pub fn parse_async_prefix_expr(
+    pub(crate) fn parse_async_prefix_expr(
         &mut self,
         async_range: bun_ast::Range,
         level: Level,
+        flags: EFlags,
     ) -> Result<Expr, Error> {
         let p = self;
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts
+                .async_arrow_parameters
+                .insert(async_range.loc.start, p.lexer.loc().start);
+        }
         // "async function() {}"
         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
-            return p.parse_fn_expr(async_range.loc, true, async_range);
+            return p.parse_fn_expr(async_range.loc, true);
         }
 
         // Check the precedence level to avoid parsing an arrow function in
@@ -1651,7 +1723,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         level,
                         ParenExprOpts {
                             is_async: true,
-                            async_range,
+                            is_after_question_and_before_colon: flags
+                                == EFlags::AfterQuestionAndBeforeColon,
                             ..Default::default()
                         },
                     );
@@ -1665,7 +1738,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
-                            ) {
+                            )? {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.lexer.next()?;
@@ -1674,7 +1747,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     level,
                                     ParenExprOpts {
                                         is_async: true,
-                                        async_range,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
                                         ..Default::default()

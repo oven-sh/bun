@@ -15,7 +15,7 @@ pub struct PageSelector {
     // TODO: re-thread `'bump`.
     pub name: Option<&'static [u8]>,
     /// A list of page pseudo classes.
-    pub pseudo_classes: ArrayList<PagePseudoClass>,
+    pub(crate) pseudo_classes: ArrayList<PagePseudoClass>,
 }
 
 impl PageSelector {
@@ -33,7 +33,7 @@ impl PageSelector {
 }
 
 impl PageSelector {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `name` is an arena-owned slice → identity copy; `PagePseudoClass` is `Copy`.
         Self {
             name: self.name,
@@ -49,7 +49,7 @@ impl PageSelector {
 // ─── PageSelector parse ───────────────────────────────────────────────────
 impl PageSelector {
     pub fn parse(input: &mut css::Parser) -> css::Result<PageSelector> {
-        let name: Option<&'static [u8]> = input.try_parse(|i| i.expect_ident_cloned()).ok();
+        let name: Option<&'static [u8]> = input.try_parse(|i| i.expect_ident()).ok();
         let mut pseudo_classes: ArrayList<PagePseudoClass> = ArrayList::new();
 
         loop {
@@ -78,16 +78,16 @@ impl PageSelector {
 
 pub struct PageMarginRule {
     /// The margin box identifier for this rule.
-    pub margin_box: PageMarginBox,
+    pub(crate) margin_box: PageMarginBox,
     /// The declarations within the rule.
     // Lifetime erased to `'static` per the rules/mod.rs `CssRule<R>` note.
-    pub declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl PageMarginRule {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -98,7 +98,7 @@ impl PageMarginRule {
 }
 
 impl PageMarginRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             margin_box: self.margin_box,
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -110,14 +110,14 @@ impl PageMarginRule {
 /// A [@page](https://www.w3.org/TR/css-page-3/#at-page-rule) rule.
 pub struct PageRule {
     /// A list of page selectors.
-    pub selectors: ArrayList<PageSelector>,
+    pub(crate) selectors: ArrayList<PageSelector>,
     /// The declarations within the `@page` rule.
     // Lifetime erased to `'static` per the rules/mod.rs `CssRule<R>` note.
-    pub declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'static>,
     /// The nested margin rules.
-    pub rules: ArrayList<PageMarginRule>,
+    pub(crate) rules: ArrayList<PageMarginRule>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl PageRule {
@@ -252,7 +252,7 @@ pub enum PagePseudoClass {
 
 impl PagePseudoClass {
     #[inline]
-    pub(crate) fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
         // `Copy` enum → identity.
         self
     }
@@ -310,14 +310,14 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserError, ParserState, Result};
+    use css::{Parser, ParserError, ParserState, Result};
 
     impl<'a> DeclarationParser for PageRuleParser<'a> {
         type Declaration = ();
 
         fn parse_value(
             this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             css::declaration::parse_declaration(
@@ -346,7 +346,7 @@ const _: () = {
 
         fn parse_prelude(
             _this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Prelude> {
             let loc = input.current_source_location();
@@ -377,31 +377,10 @@ const _: () = {
             });
             Ok(())
         }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl<'a> QualifiedRuleParser for PageRuleParser<'a> {
         type Prelude = ();
         type QualifiedRule = ();
-
-        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
     }
 };

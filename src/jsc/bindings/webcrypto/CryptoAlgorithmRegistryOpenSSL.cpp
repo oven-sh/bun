@@ -33,10 +33,13 @@
 #include "CryptoAlgorithmAES_CTR.h"
 #include "CryptoAlgorithmAES_GCM.h"
 #include "CryptoAlgorithmAES_KW.h"
+#include "CryptoAlgorithmChaCha20Poly1305.h"
 #include "CryptoAlgorithmECDH.h"
 #include "CryptoAlgorithmECDSA.h"
 #include "CryptoAlgorithmEd25519.h"
 #include "CryptoAlgorithmHKDF.h"
+#include "CryptoAlgorithmMLDSA.h"
+#include "CryptoAlgorithmMLKEM.h"
 #include "CryptoAlgorithmHMAC.h"
 #include "CryptoAlgorithmPBKDF2.h"
 #include "CryptoAlgorithmRSAES_PKCS1_v1_5.h"
@@ -53,13 +56,15 @@
 
 namespace WebCore {
 
-void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
+NEVER_INLINE void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
 {
+    BUN_REMOVABLE_DEFINITION(WebCrypto, &CryptoAlgorithmRegistry::platformRegisterAlgorithms);
     registerAlgorithm<CryptoAlgorithmAES_CBC>();
     registerAlgorithm<CryptoAlgorithmAES_CFB>();
     registerAlgorithm<CryptoAlgorithmAES_CTR>();
     registerAlgorithm<CryptoAlgorithmAES_GCM>();
     registerAlgorithm<CryptoAlgorithmAES_KW>();
+    registerAlgorithm<CryptoAlgorithmChaCha20Poly1305>();
     registerAlgorithm<CryptoAlgorithmECDH>();
     registerAlgorithm<CryptoAlgorithmECDSA>();
     registerAlgorithm<CryptoAlgorithmHKDF>();
@@ -79,6 +84,11 @@ void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
     registerAlgorithm<CryptoAlgorithmSHA3_512>();
     registerAlgorithm<CryptoAlgorithmEd25519>();
     registerAlgorithm<CryptoAlgorithmX25519>();
+    registerAlgorithm<CryptoAlgorithmMLDSA44>();
+    registerAlgorithm<CryptoAlgorithmMLDSA65>();
+    registerAlgorithm<CryptoAlgorithmMLDSA87>();
+    registerAlgorithm<CryptoAlgorithmMLKEM768>();
+    registerAlgorithm<CryptoAlgorithmMLKEM1024>();
 }
 
 } // namespace WebCore

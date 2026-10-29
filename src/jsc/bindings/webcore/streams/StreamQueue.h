@@ -27,6 +27,7 @@
 
 #include "root.h"
 #include "StreamsForward.h"
+#include "VectorSizeLimit.h"
 
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
@@ -68,8 +69,28 @@ struct ByteQueueEntry {
 struct SourceAlgorithmSlots {
     // Which arm runs pull/cancel.
     SourceKind kind { SourceKind::Nothing };
+    // True if that arm pulls and cancels another stream natively (see streamLinkMustDefer).
+    bool linksAnotherStream() const
+    {
+        switch (kind) {
+        case SourceKind::TeeBranch:
+        case SourceKind::ByteTeeBranch:
+        case SourceKind::TextDecode:
+            return true;
+        case SourceKind::JavaScript:
+        case SourceKind::Nothing:
+        case SourceKind::Transform:
+        case SourceKind::FromIterable:
+        case SourceKind::CrossRealm:
+        case SourceKind::Native:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
     // TeeBranch / ByteTeeBranch only: which branch this controller is (0 or 1).
     uint8_t teeBranchIndex { 0 };
+    // TextDecode kind only: the inline streaming-UTF-8 decode state.
+    StreamingUTF8DecodeState textDecodeState;
     // JavaScript kind only: the user underlyingSource object (the call `this`).
     JSC::WriteBarrier<JSC::Unknown> underlyingObject;
     // JavaScript kind only: the converted `pull` method ([[pullAlgorithm]]);
@@ -132,6 +153,11 @@ public:
             JSC::throwRangeError(globalObject, scope, "The queuing strategy's chunk size must be a non-negative, finite number"_s);
             return;
         }
+        // The close sentinel (an empty value) must fit, so values stop a slot early.
+        if (value && m_queue.size() + 1 >= Bun::maxDequeSize<Entry>()) [[unlikely]] {
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
         WTF::Locker locker { owner->cellLock() };
         m_queue.append(Entry { JSC::WriteBarrier<JSC::Unknown>(vm, owner, value), size });
         m_totalSize += size;
@@ -166,8 +192,11 @@ public:
 
     // Byte-queue manual mutators (the byte controller updates its two slots by hand).
     // Callers adjust [[queueTotalSize]] separately via adjustTotalSize().
+    // A caller checks isFull() and throws before it takes the lock. append() assumes room.
+    bool isFull() const { return m_queue.size() >= Bun::maxDequeSize<Entry>(); }
     void append(const WTF::AbstractLocker&, Entry&& entry)
     {
+        ASSERT(!isFull());
         m_queue.append(WTF::move(entry));
     }
     void prepend(const WTF::AbstractLocker&, Entry&& entry)
@@ -186,7 +215,6 @@ public:
     bool isEmpty() const { return m_queue.isEmpty(); }
     size_t size() const { return m_queue.size(); }
     double totalSize() const { return m_totalSize; } // [[queueTotalSize]]
-    void setTotalSize(double totalSize) { m_totalSize = totalSize; }
     void adjustTotalSize(double delta) { m_totalSize += delta; }
 
     // GC: called from the owner's visitChildrenImpl, inside the SAME single

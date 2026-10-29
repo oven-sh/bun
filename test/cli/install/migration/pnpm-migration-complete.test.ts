@@ -1,12 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunExe, bunEnv as harnessEnv, tempDir } from "harness";
 import { join } from "path";
+import { startNpmjs } from "./migration-harness";
+
+const npmjs = await startNpmjs();
+afterAll(() => npmjs.stop());
+const bunEnv = { ...harnessEnv, ...npmjs.env };
 
 describe("PNPM Migration Complete Test Suite", () => {
   test("comprehensive PNPM migration with all edge cases", async () => {
     // ===== SECTION 1: Basic Dependencies =====
-    const basicTest = tempDirWithFiles("pnpm-basic", {
+    await using basicTest = tempDir("pnpm-basic", {
       "package.json": JSON.stringify({
         name: "basic-test",
         version: "1.0.0",
@@ -92,7 +97,7 @@ snapshots:
     expect(basicLockfile).toMatchSnapshot("basic-dependencies");
 
     // ===== SECTION 2: Canary Versions =====
-    const canaryTest = tempDirWithFiles("pnpm-canary", {
+    await using canaryTest = tempDir("pnpm-canary", {
       "package.json": JSON.stringify({
         name: "canary-test",
         dependencies: {
@@ -157,7 +162,7 @@ snapshots:
     expect(canaryLockfile).toMatchSnapshot("canary-versions");
 
     // ===== SECTION 3: Complex Monorepo with Workspaces =====
-    const monorepoTest = tempDirWithFiles("pnpm-monorepo", {
+    await using monorepoTest = tempDir("pnpm-monorepo", {
       "package.json": JSON.stringify({
         name: "monorepo-root",
         private: true,
@@ -242,7 +247,7 @@ snapshots:
     expect(monorepoLockfile).toMatchSnapshot("monorepo-workspaces");
 
     // ===== SECTION 4: Patches and Overrides =====
-    const patchesTest = tempDirWithFiles("pnpm-patches", {
+    await using patchesTest = tempDir("pnpm-patches", {
       "patches/lodash@4.17.21.patch": `diff --git a/lib/application.js b/lib/application.js
 index 1234567..abcdefg 100644
 --- a/lib/application.js
@@ -318,7 +323,7 @@ snapshots:
     expect(patchesLockfile).toMatchSnapshot("patches-overrides");
 
     // ===== SECTION 5: File and Link Dependencies =====
-    const fileLinksTest = tempDirWithFiles("pnpm-file-links", {
+    await using fileLinksTest = tempDir("pnpm-file-links", {
       "shared/config/package.json": JSON.stringify({ name: "hi" }),
       "local-pkg/package.json": JSON.stringify({ name: "hi2" }),
       "package.json": JSON.stringify({
@@ -378,7 +383,7 @@ snapshots:
     expect(fileLinksLockfile).toMatchSnapshot("file-link-deps");
 
     // ===== SECTION 6: Custom Registries =====
-    const registriesTest = tempDirWithFiles("pnpm-registries", {
+    await using registriesTest = tempDir("pnpm-registries", {
       "package.json": JSON.stringify({
         name: "registries-test",
         dependencies: {
@@ -431,7 +436,7 @@ snapshots:
     expect(registriesLockfile).toMatchSnapshot("custom-registries");
 
     // ===== SECTION 7: Peer Dependencies =====
-    const peerDepsTest = tempDirWithFiles("pnpm-peer-deps", {
+    await using peerDepsTest = tempDir("pnpm-peer-deps", {
       "package.json": JSON.stringify({
         name: "peer-deps-test",
         dependencies: {
@@ -534,7 +539,7 @@ snapshots:
     expect(peerDepsLockfile).toMatchSnapshot("peer-dependencies");
 
     // ===== SECTION 9: Duplicate Packages =====
-    const duplicatesTest = tempDirWithFiles("pnpm-duplicates", {
+    await using duplicatesTest = tempDir("pnpm-duplicates", {
       "package.json": JSON.stringify({
         name: "duplicates-test",
         dependencies: {
@@ -624,7 +629,7 @@ snapshots:
     expect(duplicatesLockfile).toMatchSnapshot("duplicate-packages");
 
     // ===== SECTION 10: Catalogs =====
-    const catalogsTest = tempDirWithFiles("pnpm-catalogs", {
+    await using catalogsTest = tempDir("pnpm-catalogs", {
       "pnpm-workspace.yaml": `packages: []
 
 catalog:
@@ -714,16 +719,16 @@ snapshots:
     expect(catalogsExitCode).toBe(0);
     const catalogsLockfile = fs.readFileSync(join(catalogsTest, "bun.lock"), "utf8");
 
-    // Catalogs are resolved to actual versions during migration
-    expect(catalogsLockfile).toContain('"react": "18.2.0"');
-    expect(catalogsLockfile).toContain('"lodash": "4.17.21"');
+    // Importer rows keep their catalog references, as package.json spells them
+    expect(catalogsLockfile).toContain('"react": "catalog:"');
+    expect(catalogsLockfile).toContain('"lodash": "catalog:tools"');
     // The actual packages should be in the lockfile
     expect(catalogsLockfile).toContain('"react@18.2.0"');
     expect(catalogsLockfile).toContain('"lodash@4.17.21"');
     expect(catalogsLockfile).toMatchSnapshot("catalogs");
 
     // ===== SECTION 12: Integrity Hashes =====
-    const integrityTest = tempDirWithFiles("pnpm-integrity", {
+    await using integrityTest = tempDir("pnpm-integrity", {
       "package.json": JSON.stringify({
         name: "integrity-test",
         dependencies: {
@@ -778,7 +783,7 @@ snapshots:
     expect(integrityLockfile).toMatchSnapshot("integrity-hashes");
 
     // ===== SECTION 13: Version Zero Bug Test =====
-    const versionZeroTest = tempDirWithFiles("pnpm-version-zero", {
+    await using versionZeroTest = tempDir("pnpm-version-zero", {
       "package.json": JSON.stringify({
         name: "version-zero-test",
         dependencies: {
@@ -822,7 +827,7 @@ snapshots:
     expect(versionZeroLockfile).toMatchSnapshot("version-zero");
 
     // ===== SECTION 14: Mixed Dependency Types =====
-    const mixedDepsTest = tempDirWithFiles("pnpm-mixed-deps", {
+    await using mixedDepsTest = tempDir("pnpm-mixed-deps", {
       "package.json": JSON.stringify({
         name: "mixed-deps-test",
         dependencies: {
@@ -912,7 +917,7 @@ snapshots:
     expect(mixedDepsLockfile).toMatchSnapshot("mixed-dependency-types");
 
     // ===== SECTION 15: Circular Workspace Dependencies =====
-    const circularTest = tempDirWithFiles("pnpm-circular", {
+    await using circularTest = tempDir("pnpm-circular", {
       "package.json": JSON.stringify({
         name: "circular-test",
         workspaces: ["packages/*"],

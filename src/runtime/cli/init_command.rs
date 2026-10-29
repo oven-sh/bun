@@ -19,7 +19,7 @@ use bun_bundler::options;
 // RadioChoice trait — the choice enums used by `process_radio_button`
 // implement this trait by hand.
 // ──────────────────────────────────────────────────────────────────────────
-pub(crate) trait RadioChoice: Copy + Sized {
+trait RadioChoice: Copy + Sized {
     const COUNT: usize;
     const DEFAULT: Self;
     fn fmt(self) -> &'static str;
@@ -167,7 +167,7 @@ impl InitCommand {
                     // ctrl+c, ctrl+d
                     reprint_menu = false;
                     finish!(reprint_menu, selected);
-                    return Err(crate::Error::EndOfStream);
+                    return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                 }
                 b'1'..=b'9' => {
                     let choice = (byte - b'1') as usize;
@@ -201,13 +201,13 @@ impl InitCommand {
                         Err(_) => {
                             reprint_menu = false;
                             finish!(reprint_menu, selected);
-                            return Err(crate::Error::EndOfStream);
+                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                         }
                     };
                     if next != b'[' {
                         reprint_menu = false;
                         finish!(reprint_menu, selected);
-                        return Err(crate::Error::EndOfStream);
+                        return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                     }
 
                     // Read arrow key
@@ -216,7 +216,7 @@ impl InitCommand {
                         Err(_) => {
                             reprint_menu = false;
                             finish!(reprint_menu, selected);
-                            return Err(crate::Error::EndOfStream);
+                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                         }
                     };
                     match arrow {
@@ -245,7 +245,7 @@ impl InitCommand {
     }
 
     /// `Choices` must implement `RadioChoice`.
-    pub(crate) fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
+    fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
         // Set raw mode to read single characters without echo
         #[cfg(windows)]
         let _restore =
@@ -262,7 +262,7 @@ impl InitCommand {
 
         let selection = match Self::process_radio_button::<C>(label) {
             Ok(s) => s,
-            Err(crate::Error::EndOfStream) => {
+            Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
                 Output::flush();
                 // Add an "x" cancelled
                 bun_core::prettyln!("\n<r><red>x<r> Cancelled");
@@ -313,6 +313,7 @@ impl InitCommand {
 
         let mut template: Template = Template::Blank;
         let mut prev_flag_was_react = false;
+        let mut ca_store_flags: Vec<&[u8]> = Vec::new();
         for arg_ in init_args {
             let arg = arg_.as_bytes();
             if parse_flags && !arg.is_empty() && arg[0] == b'-' {
@@ -351,6 +352,9 @@ impl InitCommand {
                     prev_flag_was_react = false;
                     auto_yes = true;
                 } else {
+                    if Global::is_ca_store_flag(arg) {
+                        ca_store_flags.push(arg);
+                    }
                     prev_flag_was_react = false;
                 }
             } else {
@@ -360,6 +364,15 @@ impl InitCommand {
                     // invalid positional; ignore
                 }
             }
+        }
+
+        Global::set_ca_store_from_flags(|flag| ca_store_flags.contains(&flag));
+
+        // The template picker reads single keystrokes from raw-mode stdin; on a
+        // pipe (CI, `spawn(...,{stdio:'pipe'})`, `foo | bun init`) that blocks
+        // forever. npm init falls back to defaults when stdin is not a TTY.
+        if !auto_yes && !Output::is_stdin_tty() {
+            auto_yes = true;
         }
 
         if let Some(ifdir) = initialize_in_folder {
@@ -570,14 +583,16 @@ impl InitCommand {
                         fields.name = match Self::prompt("<r><cyan>package name<r> ", &fields.name)
                         {
                             Ok(v) => v,
-                            Err(crate::Error::EndOfStream) => return Ok(()),
+                            Err(crate::Error::Core(bun_core::Error::EndOfStream)) => return Ok(()),
                             Err(e) => return Err(e),
                         };
                         fields.name = Self::normalize_package_name(&fields.name)?;
                         fields.entry_point =
                             match Self::prompt("<r><cyan>entry point<r> ", &fields.entry_point) {
                                 Ok(v) => v,
-                                Err(crate::Error::EndOfStream) => return Ok(()),
+                                Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
+                                    return Ok(());
+                                }
                                 Err(e) => return Err(e),
                             };
                         fields.private = false;
@@ -732,46 +747,55 @@ impl InitCommand {
             need_run_bun_install =
                 needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
 
+            // `bun check` needs no script. A script is where people and tools look for how a project is type checked.
+            if !minimal && is_type_script_entry_point(&fields.entry_point) {
+                let mut scripts = dependency_map(object, b"scripts");
+                if scripts.get(b"typecheck").is_none() {
+                    // `bun check` runs a `check` script, if there is one.
+                    let command: &[u8] = match scripts.get(b"check") {
+                        Some(_) => b"bun --check",
+                        None => b"bun check",
+                    };
+                    scripts
+                        .data
+                        .as_e_object_mut()
+                        .put_string(&bump, b"typecheck", command)?;
+                    object.put(&bump, b"scripts", scripts)?;
+                }
+            }
+
             if needs_dependencies {
-                let mut dependencies_object = object.get(b"dependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
+                let mut dependencies_object = dependency_map(object, b"dependencies");
                 let mut iter = needed_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dependencies[index];
-                    dependencies_object
-                        .data
-                        .e_object_mut()
-                        .unwrap()
-                        .put_string(&bump, dep.name, dep.version)?;
+                    dependencies_object.data.as_e_object_mut().put_string(
+                        &bump,
+                        dep.name,
+                        dep.version,
+                    )?;
                 }
                 object.put(&bump, b"dependencies", dependencies_object)?;
             }
 
             if needs_dev_dependencies {
-                let mut obj = object.get(b"devDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
+                let mut obj = dependency_map(object, b"devDependencies");
                 let mut iter = needed_dev_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dev_dependencies[index];
                     obj.data
-                        .e_object_mut()
-                        .unwrap()
+                        .as_e_object_mut()
                         .put_string(&bump, dep.name, dep.version)?;
                 }
                 object.put(&bump, b"devDependencies", obj)?;
             }
 
             if needs_typescript_dependency {
-                let mut peer_dependencies = object.get(b"peerDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
-                peer_dependencies.data.e_object_mut().unwrap().put_string(
-                    &bump,
-                    b"typescript",
-                    b"^6",
-                )?;
+                let mut peer_dependencies = dependency_map(object, b"peerDependencies");
+                peer_dependencies
+                    .data
+                    .as_e_object_mut()
+                    .put_string(&bump, b"typescript", b"^7")?;
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
         }
@@ -867,29 +891,20 @@ impl InitCommand {
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above
-                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");");
+                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");\n");
                     // suppress
                 }
 
                 if steps.write_tsconfig {
                     'brk: {
-                        let extname = bun_paths::extension(&fields.entry_point);
-                        let loader = options::DEFAULT_LOADERS
-                            .get(extname)
-                            .copied()
-                            .unwrap_or(bun_ast::Loader::Ts);
-                        let filename: &[u8] = if loader.is_type_script() {
-                            b"tsconfig.json"
-                        } else {
-                            b"jsconfig.json"
-                        };
-                        if Assets::create_full(
-                            Assets::TSCONFIG_JSON,
-                            filename,
-                            " (for editor autocomplete)",
-                            &[],
-                        )
-                        .is_err()
+                        let (filename, what_for): (&[u8], _) =
+                            if is_type_script_entry_point(&fields.entry_point) {
+                                (b"tsconfig.json", " (for bun check and editor autocomplete)")
+                            } else {
+                                (b"jsconfig.json", " (for editor autocomplete)")
+                            };
+                        if Assets::create_full(Assets::TSCONFIG_JSON, filename, what_for, &[])
+                            .is_err()
                         {
                             break 'brk;
                         }
@@ -923,14 +938,17 @@ impl InitCommand {
                             bstr::BStr::new(&fields.entry_point),
                         );
                     }
+
+                    if is_type_script_entry_point(&fields.entry_point) {
+                        bun_core::pretty!("To type check, run:\n\n    <cyan>bun check<r>\n\n");
+                    }
                 }
 
                 Output::flush();
 
                 if exists_z(b"package.json") && need_run_bun_install {
                     bun_core::prettyln!("");
-                    let self_exe = bun::self_exe_path()?;
-                    let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+                    let _ = bun::spawn_sync_inherit(&bun_install_argv()?)?;
                 }
             }
             _ => {}
@@ -940,18 +958,24 @@ impl InitCommand {
     }
 }
 
+fn bun_install_argv() -> Result<Vec<&'static [u8]>, Error> {
+    let mut argv: Vec<&[u8]> = vec![bun::self_exe_path()?.as_bytes(), b"install"];
+    argv.extend(Global::ca_store_flag().map(ZStr::as_bytes));
+    Ok(argv)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Assets
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Assets;
+pub(crate) struct Assets;
 
 impl Assets {
     // "known" assets
-    pub const GITIGNORE: &'static [u8] = include_bytes!("init/gitignore.default");
-    pub const TSCONFIG_JSON: &'static [u8] = include_bytes!("init/tsconfig.default.json");
-    pub const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
-    pub const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
+    pub(crate) const GITIGNORE: &'static [u8] = include_bytes!("init/gitignore.default");
+    pub(crate) const TSCONFIG_JSON: &'static [u8] = include_bytes!("init/tsconfig.default.json");
+    pub(crate) const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
+    pub(crate) const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
 
     /// Create a new asset file, overriding anything that already exists. Known
     /// assets will have their contents pre-populated; otherwise the file will be empty.
@@ -966,39 +990,13 @@ impl Assets {
         Self::create_full_inner(asset, asset_name, "", is_template, args)
     }
 
-    pub fn create_with_contents(
+    pub(crate) fn create_with_contents(
         asset_name: &[u8],
         contents: &'static [u8],
         args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
         let is_template = !args.is_empty();
         Self::create_full_with_contents(asset_name, contents, "", is_template, args)
-    }
-
-    /// Substitutes named placeholders `{[key]s}` in `template` with the
-    /// corresponding value from `args`.
-    fn substitute(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(template.len());
-        let mut i = 0;
-        'outer: while i < template.len() {
-            if template[i] == b'{' && template.get(i + 1) == Some(&b'[') {
-                for &(key, value) in args {
-                    // "{[" + key + "]s}"
-                    let placeholder_len = 2 + key.len() + 3;
-                    if i + placeholder_len <= template.len()
-                        && &template[i + 2..i + 2 + key.len()] == key
-                        && &template[i + 2 + key.len()..i + placeholder_len] == b"]s}"
-                    {
-                        out.extend_from_slice(value);
-                        i += placeholder_len;
-                        continue 'outer;
-                    }
-                }
-            }
-            out.push(template[i]);
-            i += 1;
-        }
-        out
     }
 
     fn create_new(filename: &ZStr, contents: &[u8]) -> Result<(), Error> {
@@ -1051,7 +1049,7 @@ impl Assets {
 
         // Write contents of known assets to the new file. Template assets get formatted.
         if is_template {
-            let buf = Self::substitute(asset, args);
+            let buf = bun_fmt::substitute_named(asset, args);
             file.write_all(&buf)?;
         } else {
             file.write_all(asset)?;
@@ -1084,7 +1082,7 @@ impl Assets {
         )?;
 
         if is_template {
-            let buf = Self::substitute(contents, args);
+            let buf = bun_fmt::substitute_named(contents, args);
             file.write_all(&buf)?;
         } else {
             file.write_all(contents)?;
@@ -1104,20 +1102,18 @@ impl Assets {
 // PackageJSONFields
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PackageJSONFields {
+pub(crate) struct PackageJSONFields {
     pub name: Vec<u8>,
-    pub type_: &'static [u8],
     /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
-    pub entry_point: Vec<u8>,
-    pub private: bool,
+    pub(crate) entry_point: Vec<u8>,
+    pub(crate) private: bool,
 }
 
 impl Default for PackageJSONFields {
     fn default() -> Self {
         Self {
             name: b"project".to_vec(),
-            type_: b"module",
             object: None,
             entry_point: Vec::new(),
             private: true,
@@ -1201,13 +1197,13 @@ pub(crate) struct DependencyNeeded {
     pub version: &'static [u8],
 }
 
-pub(crate) struct DependencyGroup {
+struct DependencyGroup {
     pub dependencies: &'static [DependencyNeeded],
     pub dev_dependencies: &'static [DependencyNeeded],
 }
 
 impl DependencyGroup {
-    pub(crate) const BLANK: DependencyGroup = DependencyGroup {
+    const BLANK: DependencyGroup = DependencyGroup {
         dependencies: &[],
         dev_dependencies: &[DependencyNeeded {
             name: b"@types/bun",
@@ -1216,7 +1212,7 @@ impl DependencyGroup {
     };
 
     // `const` cannot concat slices; the lists are hand-expanded below.
-    pub(crate) const REACT: DependencyGroup = DependencyGroup {
+    const REACT: DependencyGroup = DependencyGroup {
         dependencies: &[
             DependencyNeeded {
                 name: b"react",
@@ -1244,7 +1240,7 @@ impl DependencyGroup {
         ],
     };
 
-    pub(crate) const TAILWIND: DependencyGroup = DependencyGroup {
+    const TAILWIND: DependencyGroup = DependencyGroup {
         dependencies: &[
             DependencyNeeded {
                 name: b"tailwindcss",
@@ -1281,7 +1277,7 @@ impl DependencyGroup {
         ],
     };
 
-    pub(crate) const SHADCN: DependencyGroup = DependencyGroup {
+    const SHADCN: DependencyGroup = DependencyGroup {
         dependencies: &[
             DependencyNeeded {
                 name: b"class-variance-authority",
@@ -1357,7 +1353,7 @@ impl DependencyGroup {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(u8)]
-pub enum Template {
+pub(crate) enum Template {
     Blank,
     ReactBlank,
     ReactTailwind,
@@ -1365,38 +1361,26 @@ pub enum Template {
     TypescriptLibrary,
 }
 
-pub struct TemplateFile {
+pub(crate) struct TemplateFile {
     pub path: &'static [u8],
-    pub contents: &'static [u8],
-    pub can_skip_if_exists: bool,
+    pub(crate) contents: &'static [u8],
 }
 
 impl TemplateFile {
     const fn new(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self {
-            path,
-            contents,
-            can_skip_if_exists: false,
-        }
-    }
-    const fn new_skip(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self {
-            path,
-            contents,
-            can_skip_if_exists: true,
-        }
+        Self { path, contents }
     }
 }
 
 impl Template {
-    pub(crate) fn is_react(self) -> bool {
+    fn is_react(self) -> bool {
         matches!(
             self,
             Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn
         )
     }
 
-    pub(crate) fn write_to_package_json(
+    fn write_to_package_json(
         self,
         fields: &mut PackageJSONFields,
         bump: &bun_alloc::Arena,
@@ -1430,7 +1414,7 @@ impl Template {
         Ok(())
     }
 
-    pub(crate) fn dependencies(self) -> &'static DependencyGroup {
+    fn dependencies(self) -> &'static DependencyGroup {
         match self {
             Template::Blank => &DependencyGroup::BLANK,
             Template::ReactBlank => &DependencyGroup::REACT,
@@ -1440,7 +1424,7 @@ impl Template {
         }
     }
 
-    pub(crate) fn name(self) -> &'static [u8] {
+    fn name(self) -> &'static [u8] {
         match self {
             Template::Blank => b"bun-blank-template",
             Template::TypescriptLibrary => b"bun-typescript-library-template",
@@ -1450,7 +1434,7 @@ impl Template {
         }
     }
 
-    pub(crate) fn scripts(self) -> &'static [&'static [u8]] {
+    fn scripts(self) -> &'static [&'static [u8]] {
         match self {
             Template::Blank | Template::TypescriptLibrary => &[],
             Template::ReactTailwind | Template::ReactTailwindShadcn => &[
@@ -1496,12 +1480,11 @@ impl Template {
         let Some(path) = env_var::PATH.get() else {
             return false;
         };
-        // SAFETY: FileSystem::instance() returns the process-global singleton.
-        let top_level_dir = Fs::FileSystem::get().top_level_dir;
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 
-    pub(crate) fn create_agent_rule() {
+    fn create_agent_rule() {
         let mut create_claude_md = Self::is_claude_code_installed()
             // Never overwrite CLAUDE.md
             && !exists(b"CLAUDE.md");
@@ -1583,7 +1566,7 @@ impl Template {
             let _ = Assets::create_new(
                 ZStr::from_static(b"CLAUDE.md\0"),
                 // SAFETY: literal is NUL-terminated
-                &Self::AGENT_RULE[end_of_frontmatter..],
+                Self::AGENT_RULE[end_of_frontmatter..].trim_ascii_start(),
             );
         }
     }
@@ -1651,7 +1634,7 @@ impl Template {
         None
     }
 
-    pub(crate) fn files(self) -> &'static [TemplateFile] {
+    fn files(self) -> &'static [TemplateFile] {
         match self {
             Template::ReactBlank => REACT_BLANK_FILES,
             Template::ReactTailwind => REACT_TAILWIND_FILES,
@@ -1660,7 +1643,7 @@ impl Template {
         }
     }
 
-    pub(crate) fn write_files_and_run_bun_dev(self) -> Result<(), Error> {
+    fn write_files_and_run_bun_dev(self) -> Result<(), Error> {
         Self::create_agent_rule();
 
         for file in self.files() {
@@ -1706,8 +1689,7 @@ impl Template {
         bun_core::pretty!("\n");
         Output::flush();
 
-        let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync_inherit_no_stdin(&[self_exe.as_bytes(), b"install"])?;
+        let _ = bun::spawn_sync_inherit_no_stdin(&bun_install_argv()?)?;
 
         bun_core::prettyln!(
             "\n\
@@ -1755,7 +1737,7 @@ static REACT_BLANK_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-app/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-app/src/index.ts"),
@@ -1808,7 +1790,7 @@ static REACT_TAILWIND_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-tailwind/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-tailwind/src/index.ts"),
@@ -1873,7 +1855,7 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-shadcn/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-shadcn/src/index.ts"),
@@ -1942,18 +1924,34 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-pub(crate) fn exists(path: &[u8]) -> bool {
+fn exists(path: &[u8]) -> bool {
     bun_sys::exists(path)
+}
+
+/// The object under `key` in `package_json`, or a new empty object when the
+/// key is absent or holds a value that is not an object (a string, an array,
+/// `null`). The caller `put`s the result back under `key`, which replaces a
+/// non-object value.
+fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Expr {
+    package_json
+        .get(key)
+        .filter(|value| value.data.is_e_object())
+        .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
+}
+
+fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
+    options::DEFAULT_LOADERS
+        .get(bun_paths::extension(entry_point))
+        .copied()
+        .unwrap_or(bun_ast::Loader::Ts)
+        .is_type_script()
 }
 
 /// Refuse entry-point paths that would escape the project directory
 /// (absolute paths or any `..` segment), so `bun init` only creates files
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
-    !bun_paths::is_absolute_loose(path)
-        && !path
-            .split(|&c| c == b'/' || c == b'\\')
-            .any(|seg| seg == b"..")
+    !bun_paths::is_absolute_loose(path) && !strings::split_any(path, b"/\\").any(|seg| seg == b"..")
 }
 
 #[inline]

@@ -1,5 +1,7 @@
-import { bunEnv, runBunInstall } from "harness";
+import { bunEnv, bunExe, githubTarball, isWindows, runBunInstall, tempDir } from "harness";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   createTestContext,
   destroyTestContext,
@@ -24,7 +26,8 @@ function test(
     bunfigScanner?: string | false;
     packages?: string[];
     scannerFile?: string;
-    packageJson?: object;
+    packageJson?: object | ((ctx: TestContext) => object);
+    files?: Record<string, string | Blob>;
     customRegistry?: (urls: string[], ctx: TestContext) => any;
     concurrent?: boolean;
   },
@@ -41,8 +44,15 @@ function test(
           options.customRegistry ? options.customRegistry(urls, ctx) : dummyRegistryForContext(ctx, urls),
         );
 
-        const write = (path: string, content: string | object) =>
-          Bun.write(join(ctx.package_dir, path), typeof content === "string" ? content : JSON.stringify(content));
+        const write = (path: string, content: string | Blob | object) =>
+          Bun.write(
+            join(ctx.package_dir, path),
+            typeof content === "string" || content instanceof Blob ? content : JSON.stringify(content),
+          );
+
+        for (const [path, content] of Object.entries(options.files ?? {})) {
+          await write(path, content);
+        }
 
         const scannerPath = options.scannerFile || "./scanner.ts";
         if (typeof options.scanner === "string") {
@@ -63,7 +73,7 @@ function test(
 
         await write(
           "package.json",
-          options.packageJson ?? {
+          (typeof options.packageJson === "function" ? options.packageJson(ctx) : options.packageJson) ?? {
             name: "my-app",
             version: "1.0.0",
             dependencies: {},
@@ -108,6 +118,25 @@ test("basic", {
       url: "https://example.com/advisory-1",
     },
   ],
+  expect: ({ out }) => {
+    expect(out).toContain("Advisory 1 description");
+    expect(out).toContain("https://example.com/advisory-1");
+  },
+});
+
+test("the scanner process gets --use-openssl-ca", {
+  packages: ["bar", "--use-openssl-ca"],
+  scanner: `import { getCACertificates, rootCertificates } from "node:tls";
+export const scanner = {
+  version: "1",
+  scan: async () => {
+    console.log("trusts the bundled roots:", getCACertificates("default").includes(rootCertificates[0]));
+    return [];
+  },
+};`,
+  expect: ({ out }) => {
+    expect(out).toContain("trusts the bundled roots: false");
+  },
 });
 
 test("shows progress message when scanner takes more than 1 second", {
@@ -600,6 +629,10 @@ describe("Edge Cases", () => {
   test("empty advisories array", {
     scanner: async () => [],
     expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("installed bar@");
+      expect(out).not.toContain("advisory");
+    },
   });
 
   test("special characters in advisory", {
@@ -696,20 +729,333 @@ describe("Package Resolution", () => {
       expect(out).toContain("Latest tag:");
     },
   });
+
+  function scannedPackages(out: string): Bun.Security.Package[] {
+    const line = out.split("\n").find(l => l.startsWith("PACKAGES:"));
+    expect(line).toBeDefined();
+    return JSON.parse(line!.slice("PACKAGES:".length)).sort((a: Bun.Security.Package, b: Bun.Security.Package) =>
+      a.name.localeCompare(b.name),
+    );
+  }
+
+  test("scanner receives packages resolved from folders and tarballs", {
+    scanner: async ({ packages }) => {
+      console.log("PACKAGES:" + JSON.stringify(packages));
+      return [];
+    },
+    files: {
+      "mypkg/package.json": JSON.stringify({ name: "mypkg", version: "1.2.3" }),
+      "bar-0.0.2.tgz": Bun.file(join(import.meta.dir, "bar-0.0.2.tgz")),
+    },
+    packageJson: ctx => ({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        bar: "./bar-0.0.2.tgz",
+        baz: `${ctx.registry_url}baz-0.0.3.tgz`,
+        mypkg: "file:./mypkg",
+      },
+    }),
+    packages: [],
+    expectedExitCode: 0,
+    expect: ({ out, ctx }) => {
+      expect(scannedPackages(out)).toEqual([
+        {
+          name: "bar",
+          version: "./bar-0.0.2.tgz",
+          requestedRange: "./bar-0.0.2.tgz",
+          tarball: "./bar-0.0.2.tgz",
+        },
+        {
+          name: "baz",
+          version: `${ctx.registry_url}baz-0.0.3.tgz`,
+          requestedRange: `${ctx.registry_url}baz-0.0.3.tgz`,
+          tarball: `${ctx.registry_url}baz-0.0.3.tgz`,
+        },
+        {
+          name: "mypkg",
+          version: "file:mypkg",
+          requestedRange: "file:./mypkg",
+          tarball: "",
+        },
+      ]);
+    },
+  });
+
+  test("scanner receives a local tarball added on the command line", {
+    scanner: async ({ packages }) => {
+      console.log("PACKAGES:" + JSON.stringify(packages));
+      return [];
+    },
+    files: {
+      "bar-0.0.2.tgz": Bun.file(join(import.meta.dir, "bar-0.0.2.tgz")),
+    },
+    packages: ["./bar-0.0.2.tgz"],
+    expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(scannedPackages(out)).toEqual([
+        {
+          name: "bar",
+          version: "./bar-0.0.2.tgz",
+          requestedRange: "./bar-0.0.2.tgz",
+          tarball: "./bar-0.0.2.tgz",
+        },
+      ]);
+    },
+  });
+
+  test("scanner receives a tarball that a registry package depends on", {
+    scanner: async ({ packages }) => {
+      console.log("PACKAGES:" + JSON.stringify(packages));
+      return [];
+    },
+    customRegistry: (urls, ctx) =>
+      dummyRegistryForContext(ctx, urls, {
+        "0.0.2": { dependencies: { baz: `${ctx.registry_url}baz-0.0.3.tgz` } },
+      }),
+    packages: ["bar"],
+    expectedExitCode: 0,
+    expect: ({ out, ctx }) => {
+      expect(scannedPackages(out)).toEqual([
+        {
+          name: "bar",
+          version: "0.0.2",
+          requestedRange: "^0.0.2",
+          tarball: `${ctx.registry_url}bar-0.0.2.tgz`,
+        },
+        {
+          name: "baz",
+          version: `${ctx.registry_url}baz-0.0.3.tgz`,
+          requestedRange: `${ctx.registry_url}baz-0.0.3.tgz`,
+          tarball: `${ctx.registry_url}baz-0.0.3.tgz`,
+        },
+      ]);
+    },
+  });
+
+  test("fatal advisory for a folder dependency stops the install", {
+    scanner: async ({ packages }) =>
+      packages
+        .filter(pkg => pkg.version.startsWith("file:"))
+        .map(pkg => ({
+          package: pkg.name,
+          description: `Folder dependency ${pkg.name} is not allowed`,
+          level: "fatal",
+          url: null,
+        })),
+    files: {
+      "mypkg/package.json": JSON.stringify({ name: "mypkg", version: "1.2.3" }),
+    },
+    packageJson: {
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        mypkg: "file:./mypkg",
+      },
+    },
+    packages: [],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Folder dependency mypkg is not allowed");
+    },
+  });
+});
+
+describe("Dependencies that do not come from a registry", () => {
+  // Trusted, so that its postinstall runs whenever the install continues.
+  const depFiles = {
+    "package.json": JSON.stringify({
+      name: "dep",
+      version: "1.0.0",
+      scripts: { postinstall: "echo ran > ran.txt" },
+    }),
+  };
+
+  let server: Bun.Server<undefined>;
+  let origin: string;
+  let depTarball: Uint8Array;
+  let gitFixture: ReturnType<typeof tempDir>;
+  let gitUrl: string;
+  let gitCommit: string;
+
+  beforeAll(async () => {
+    depTarball = await new Bun.Archive(
+      Object.fromEntries(Object.entries(depFiles).map(([path, contents]) => [`package/${path}`, contents])),
+      { compress: "gzip" },
+    ).bytes();
+    const repoTarball = await githubTarball("user-repo-abc1234", depFiles);
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/dep.tgz") return new Response(depTarball);
+        if (pathname === "/repos/user/repo/tarball/main") return new Response(repoTarball);
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+    origin = `localhost:${server.port}`;
+
+    gitFixture = tempDir("scanner-git-repo", depFiles);
+    const git = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: ["git", ...args],
+        cwd: String(gitFixture),
+        env: {
+          ...bunEnv,
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_AUTHOR_NAME: "Test",
+          GIT_AUTHOR_EMAIL: "test@example.com",
+          GIT_COMMITTER_NAME: "Test",
+          GIT_COMMITTER_EMAIL: "test@example.com",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed:\n${stderr}`);
+      return stdout.trim();
+    };
+    await git("init", "--quiet", "--initial-branch=main");
+    await git("add", ".");
+    await git("commit", "--quiet", "--no-gpg-sign", "-m", "init");
+    gitCommit = await git("rev-parse", "HEAD");
+    gitUrl = `git+${pathToFileURL(String(gitFixture))}`;
+  });
+
+  afterAll(() => {
+    server.stop(true);
+    gitFixture[Symbol.dispose]();
+  });
+
+  type Source = { specifier: string } & Omit<Bun.Security.Package, "name">;
+  const sources: Record<string, () => Source> = {
+    "file: folder": () => ({
+      specifier: "file:./dep",
+      requestedRange: "file:./dep",
+      version: "file:dep",
+      tarball: "",
+    }),
+    "link: folder": () => ({
+      specifier: "link:dep",
+      requestedRange: "link:dep",
+      version: "link:dep",
+      tarball: "",
+    }),
+    "link: path": () => ({
+      specifier: "link:./dep",
+      requestedRange: "link:./dep",
+      version: "link:./dep",
+      tarball: "",
+    }),
+    "local tarball": () => ({
+      specifier: "./dep.tgz",
+      requestedRange: "./dep.tgz",
+      version: "./dep.tgz",
+      tarball: "./dep.tgz",
+    }),
+    "remote tarball": () => ({
+      specifier: `http://${origin}/dep.tgz`,
+      requestedRange: `http://${origin}/dep.tgz`,
+      version: `http://${origin}/dep.tgz`,
+      tarball: `http://${origin}/dep.tgz`,
+    }),
+    "remote tarball with credentials in its URL": () => ({
+      specifier: `http://user:s3cret@${origin}/dep.tgz?token=s3cret`,
+      requestedRange: `http://${origin}/dep.tgz`,
+      version: `http://${origin}/dep.tgz`,
+      tarball: `http://${origin}/dep.tgz`,
+    }),
+    "github": () => ({
+      specifier: "github:user/repo#main",
+      requestedRange: "github:user/repo#main",
+      version: "github:user/repo#abc1234",
+      tarball: `http://${origin}/repos/user/repo/tarball/abc1234`,
+    }),
+    "git": () => ({
+      specifier: `${gitUrl}#main`,
+      requestedRange: `${gitUrl}#main`,
+      version: `${gitUrl}#${gitCommit}`,
+      tarball: "",
+    }),
+  };
+
+  async function install(source: Source, linker: "hoisted" | "isolated", level: "fatal" | "none") {
+    const dir = tempDir("scanner-sources", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { dep: source.specifier },
+        trustedDependencies: ["dep"],
+      }),
+      "bunfig.toml": `[install]\nlinker = "${linker}"\n\n[install.security]\nscanner = "./scanner.ts"\n`,
+      "scanner.ts": `export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    console.log("PACKAGES:" + JSON.stringify(packages));
+    return ${level === "fatal"} ? packages.map(pkg => ({ package: pkg.name, level: "fatal", description: null, url: null })) : [];
+  },
+};`,
+      dep: depFiles,
+    });
+    await Bun.write(join(String(dir), "dep.tgz"), depTarball);
+
+    const env = {
+      ...bunEnv,
+      GITHUB_API_URL: `http://${origin}`,
+      BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      BUN_INSTALL_GLOBAL_DIR: join(String(dir), ".global"),
+    };
+    const run = async (cmd: string[], cwd: string) => {
+      await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    };
+    if (source.specifier === "link:dep") {
+      expect(await run([bunExe(), "link"], join(String(dir), "dep"))).toMatchObject({ exitCode: 0 });
+    }
+    const { out, err, exitCode } = await run([bunExe(), "install"], String(dir));
+    const line = out.split("\n").find(l => l.startsWith("PACKAGES:"));
+    expect(line, err).toBeDefined();
+    return { dir, out, exitCode, packages: JSON.parse(line!.slice("PACKAGES:".length)) };
+  }
+
+  describe.each(Object.keys(sources))("%s", name => {
+    it.concurrent("is passed to the scanner", async () => {
+      const { specifier, ...expected } = sources[name]();
+      const result = await install(sources[name](), "hoisted", "none");
+      using dir = result.dir;
+      expect(result.packages).toEqual([{ name: "dep", ...expected }]);
+      expect(existsSync(join(String(dir), "node_modules", "dep", "ran.txt"))).toBe(true);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it.concurrent.each(["hoisted", "isolated"] as const)(
+      "is neither installed nor allowed to run its postinstall after a fatal advisory (%s)",
+      async linker => {
+        const result = await install(sources[name](), linker, "fatal");
+        using dir = result.dir;
+        expect(result.out).toContain("Installation aborted due to fatal security advisories");
+        expect(existsSync(join(String(dir), "node_modules", "dep"))).toBe(false);
+        expect(existsSync(join(String(dir), "dep", "ran.txt"))).toBe(false);
+        expect(result.exitCode).toBe(1);
+      },
+    );
+  });
 });
 
 describe("Large payload via ipc pipe", () => {
-  // Pad package names so the JSON exceeds 1MB with fewer packages. Each
-  // package resolution triggers an HTTP round-trip to the dummy registry,
-  // which is the slow part on Windows aarch64. The name appears twice in
-  // each JSON entry (name field + tarball URL), so 170-char padding gives
-  // ~470 bytes/entry; 2500 entries = ~1.2MB. Filenames stay under 200 chars.
-  const PKG_COUNT = 2500;
-  const NAME_PAD = Buffer.alloc(170, "x").toString();
-  const pkgName = (i: number) => `test-pkg-${NAME_PAD}-${i}`;
+  // The >1MB payload threshold is reached via long tarball URLs (a padded path:
+  // the scanner does not get the query string) rather than many packages. Each package still costs a manifest
+  // fetch + tarball fetch + extract, so fewer packages keeps this test fast on
+  // Windows aarch64 while the IPC pipe still round-trips >1MB of JSON.
+  //
+  // 400 packages x ~3KB tarball URL = ~1.25MB; the scanner returns a fatal
+  // advisory after validating the payload so the subsequent node_modules link
+  // step (which is not under test here) is skipped.
+  const PKG_COUNT = 400;
+  const URL_PAD = Buffer.alloc(3000, "p").toString();
+  const pkgName = (i: number) => `test-pkg-${i}`;
 
-  // Every package resolves to the same tarball bytes, served from memory so
-  // the registry never touches the filesystem.
   let barTarballBytes: Uint8Array;
 
   beforeAll(async () => {
@@ -717,7 +1063,7 @@ describe("Large payload via ipc pipe", () => {
   });
 
   test("handles packages JSON larger than max arg length (>1MB)", {
-    testTimeout: 120_000,
+    testTimeout: 60_000,
     scanner: async ({ packages }) => {
       const jsonSize = JSON.stringify(packages).length;
       console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages`);
@@ -730,7 +1076,9 @@ describe("Large payload via ipc pipe", () => {
         throw new Error("Expected to receive packages");
       }
 
-      return [];
+      // Abort the install after the IPC payload has been validated; linking
+      // hundreds of packages into node_modules is not what is under test here.
+      return [{ package: packages[0].name, description: "abort after IPC payload check", level: "fatal", url: null }];
     },
 
     packageJson: (() => {
@@ -746,13 +1094,12 @@ describe("Large payload via ipc pipe", () => {
       };
     })(),
     packages: [],
-    concurrent: false,
-    customRegistry: (urls, ctx) => {
+    fails: true,
+    customRegistry: (_urls, ctx) => {
       return async (request: Request) => {
-        urls.push(request.url);
         const url = request.url.replaceAll("%2f", "/");
         expect(request.method).toBe("GET");
-        if (url.endsWith(".tgz")) {
+        if (new URL(url).pathname.endsWith(".tgz")) {
           return new Response(barTarballBytes);
         }
         expect(request.headers.get("accept")).toBe(
@@ -765,21 +1112,264 @@ describe("Large payload via ipc pipe", () => {
           JSON.stringify({
             name,
             versions: {
-              "0.0.2": { name, version: "0.0.2", dist: { tarball: `${ctx.registry_url}${name}-0.0.2.tgz` } },
+              "0.0.2": {
+                name,
+                version: "0.0.2",
+                dist: { tarball: `${ctx.registry_url}${URL_PAD}/${name}-0.0.2.tgz` },
+              },
             },
             "dist-tags": { latest: "0.0.2" },
           }),
         );
       };
     },
-    expectedExitCode: 0,
     expect: ({ out }) => {
-      expect(out).toContain("Received JSON payload");
-
-      const match = out.match(/Received JSON payload of (\d+) bytes/);
+      const match = out.match(/Received JSON payload of (\d+) bytes from (\d+) packages/);
       expect(match).not.toBeNull();
       const bytes = parseInt(match![1], 10);
+      const count = parseInt(match![2], 10);
       expect(bytes).toBeGreaterThan(1024 * 1024);
+      expect(count).toBe(PKG_COUNT);
+      expect(out).toContain("abort after IPC payload check");
     },
+  });
+});
+
+describe("every command that installs runs the scanner", () => {
+  const scanner = `export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    console.log("SCANNED", [...new Set(packages.map(p => p.name))].sort().join(" "));
+    return packages
+      .filter(p => p.name === "boba")
+      .map(p => ({ package: p.name, level: "fatal", description: "not this one", url: null }));
+  },
+};`;
+
+  /** The result of `bun ...args` in a project whose lockfile has `boba` and whose node_modules does not. */
+  async function run(args: string[], prepare?: (bun: (...args: string[]) => Promise<unknown>, dir: string) => unknown) {
+    const ctx = await createTestContext();
+    try {
+      const dir = ctx.package_dir;
+      // `bar` accepts any baz. Its baz 0.0.3 stays in the lockfile next to the project's 0.0.5, until `bun dedupe`
+      // merges them.
+      const versions: Record<string, Record<string, object>> = {
+        bar: { "0.0.2": { dependencies: { baz: ">=0.0.3" } } },
+        boba: { "0.0.2": {} },
+        baz: { "0.0.3": {} },
+      };
+      setContextHandler(ctx, async request => {
+        const path = new URL(request.url).pathname.replace(`/${ctx.id}/`, "");
+        if (path.endsWith(".tgz")) return new Response(Bun.file(join(import.meta.dir, path)));
+        const entries = Object.entries(versions[path]).map(([version, rest]) => [
+          version,
+          { name: path, version, dist: { tarball: `${ctx.registry_url}${path}-${version}.tgz` }, ...rest },
+        ]);
+        return Response.json({
+          name: path,
+          versions: Object.fromEntries(entries),
+          "dist-tags": { latest: entries.at(-1)![0] },
+        });
+      });
+      const bun = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: args[0] === "link" && args.length === 1 ? join(dir, "linked") : dir,
+          env: { ...bunEnv, BUN_INSTALL: join(dir, ".bun") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const install = async (dependencies: object) => {
+        await Bun.write(join(dir, "package.json"), JSON.stringify({ name: "my-app", version: "1.0.0", dependencies }));
+        expect(await bun("install")).toMatchObject({ exitCode: 0 });
+      };
+
+      await install({ bar: "0.0.2", boba: "0.0.2" });
+      versions.baz["0.0.5"] = {};
+      await install({ bar: "0.0.2", boba: "0.0.2", baz: "0.0.5" });
+      await prepare?.(bun, dir);
+      rmSync(join(dir, "node_modules", "boba"), { recursive: true, force: true });
+      await Bun.write(join(dir, "scanner.ts"), scanner);
+      const bunfig = await Bun.file(join(dir, "bunfig.toml")).text();
+      await Bun.write(join(dir, "bunfig.toml"), `${bunfig}\n[install.security]\nscanner = "./scanner.ts"\n`);
+
+      const { stdout, exitCode } = await bun(...args);
+      return {
+        scanned: stdout.match(/^SCANNED (.*)$/m)?.[1],
+        aborted: stdout.includes("Installation aborted due to fatal security advisories"),
+        installed: existsSync(join(dir, "node_modules", "boba")),
+        exitCode,
+      };
+    } finally {
+      destroyTestContext(ctx);
+    }
+  }
+
+  const stopped = { scanned: "bar baz boba", aborted: true, installed: false, exitCode: 1 };
+  // Several installs each, all at the same time, like in the tests above.
+  const timeout = 30_000;
+
+  it.concurrent.each(["install", "dedupe", "patch bar", "remove baz", "update"])(
+    "bun %s",
+    async command => {
+      expect(await run(command.split(" "))).toEqual(stopped);
+    },
+    timeout,
+  );
+
+  it.concurrent(
+    "bun patch --commit",
+    async () => {
+      const result = await run(["patch", "--commit", "node_modules/bar"], async (bun, dir) => {
+        expect(await bun("patch", "bar")).toMatchObject({ exitCode: 0 });
+        await Bun.write(join(dir, "node_modules", "bar", "added.js"), "");
+      });
+      expect(result).toEqual(stopped);
+    },
+    timeout,
+  );
+
+  it.concurrent(
+    "bun link <package>",
+    async () => {
+      const result = await run(["link", "linked"], async (bun, dir) => {
+        await Bun.write(join(dir, "linked", "package.json"), JSON.stringify({ name: "linked", version: "1.0.0" }));
+        expect(await bun("link")).toMatchObject({ exitCode: 0 });
+      });
+      expect(result).toEqual({ ...stopped, scanned: expect.stringContaining("bar baz boba") });
+    },
+    timeout,
+  );
+
+  describe.each([
+    ["add baz@0.0.3", "baz"],
+    ["install baz@0.0.3", "baz"],
+    ["update bar", "bar baz"],
+  ])("bun %s", (command, named) => {
+    it.concurrent.each(["node_modules", "bun.lockb"])(
+      "sends every package without %s",
+      async missing => {
+        const result = await run(command.split(" "), (_, dir) => rmSync(join(dir, missing), { recursive: true }));
+        expect(result).toEqual(stopped);
+      },
+      timeout,
+    );
+
+    it.concurrent(
+      "sends every package with the lockfile of another package manager",
+      async () => {
+        const result = await run(command.split(" "), async (_, dir) => {
+          const { registry } = Bun.TOML.parse(await Bun.file(join(dir, "bunfig.toml")).text()).install;
+          const entry = (name: string, version: string, rest = {}) => ({
+            [`node_modules/${name}`]: { version, resolved: `${registry}${name}-${version}.tgz`, ...rest },
+          });
+          rmSync(join(dir, "bun.lockb"));
+          await Bun.write(
+            join(dir, "package-lock.json"),
+            JSON.stringify({
+              name: "my-app",
+              version: "1.0.0",
+              lockfileVersion: 3,
+              requires: true,
+              packages: {
+                "": await Bun.file(join(dir, "package.json")).json(),
+                ...entry("bar", "0.0.2", { dependencies: { baz: ">=0.0.3" } }),
+                ...entry("baz", "0.0.5"),
+                ...entry("boba", "0.0.2"),
+              },
+            }),
+          );
+        });
+        expect(result).toEqual(stopped);
+      },
+      timeout,
+    );
+
+    it.concurrent(
+      "sends what it names with both",
+      async () => {
+        expect(await run(command.split(" "))).toMatchObject({ scanned: named });
+      },
+      timeout,
+    );
+  });
+
+  it.concurrent.each(["install", "dedupe"])(
+    "not bun %s --dry-run, which installs nothing",
+    async command => {
+      expect(await run([command, "--dry-run"])).toEqual({
+        scanned: undefined,
+        aborted: false,
+        installed: false,
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+});
+
+describe.concurrent("where the scanner is looked up", () => {
+  const scannerOf = (owner: string) =>
+    `export const scanner = { version: "1", scan: async () => (console.log("SCANNER OF", ${JSON.stringify(owner)}), []) };`;
+  const bunfig = (scanner: string) => Bun.TOML.stringify({ install: { security: { scanner } } });
+
+  /** Runs `bun install` in `project`. The user's own bunfig is `home/.bunfig.toml`. */
+  async function install(files: Record<string, string>, ...flags: string[]) {
+    using dir = tempDir("scanner-lookup", {
+      "home/.keep": "",
+      "project/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+      "project/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      ...files,
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", ...flags],
+      cwd: join(String(dir), "project"),
+      env: { ...bunEnv, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: stdout.match(/^SCANNER OF (.*)$/m)?.[1] ?? stderr, exitCode };
+  }
+
+  it("a relative path in the project's bunfig.toml starts at the project", async () => {
+    const files = { "project/bunfig.toml": bunfig("./s.ts"), "project/s.ts": scannerOf("the project") };
+    expect(await install(files)).toEqual({ ran: "the project", exitCode: 0 });
+  });
+
+  it("a relative path in the user's bunfig starts at that file", async () => {
+    const files = {
+      "home/.bunfig.toml": bunfig("./s.ts"),
+      "home/s.ts": scannerOf("the user"),
+      "project/s.ts": scannerOf("the project"),
+    };
+    expect(await install(files)).toEqual({ ran: "the user", exitCode: 0 });
+  });
+
+  it("a relative path in a --config file starts at that file", async () => {
+    const files = {
+      "ci/bunfig.toml": bunfig("./s.ts"),
+      "ci/s.ts": scannerOf("ci"),
+      "project/s.ts": scannerOf("the project"),
+    };
+    expect(await install(files, "--config=../ci/bunfig.toml")).toEqual({ ran: "ci", exitCode: 0 });
+  });
+
+  it("a package name in the user's bunfig is a package of the project", async () => {
+    const files = {
+      "home/.bunfig.toml": bunfig("a-scanner"),
+      "project/node_modules/a-scanner/package.json": JSON.stringify({ name: "a-scanner", version: "1.0.0" }),
+      "project/node_modules/a-scanner/index.js": scannerOf("a-scanner"),
+    };
+    expect(await install(files)).toEqual({ ran: "a-scanner", exitCode: 0 });
+  });
+
+  it.skipIf(isWindows)("a file with a quote in its name", async () => {
+    const files = { "project/bunfig.toml": bunfig('./s"q.ts'), 'project/s"q.ts': scannerOf("the project") };
+    expect(await install(files)).toEqual({ ran: "the project", exitCode: 0 });
   });
 });

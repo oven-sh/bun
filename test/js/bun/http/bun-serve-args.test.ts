@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { isWindows, tls, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -217,6 +217,191 @@ describe("Bun.serve websocket options", () => {
     });
     server.stop();
   });
+
+  test("idleTimeout above 960 throws instead of wrapping at 2^16", () => {
+    // 65536 and 65566 used to wrap to 0 and 30 as u16 and be accepted.
+    for (const idleTimeout of [961, 65536, 65566, 2 ** 32 + 30]) {
+      expect(() =>
+        serve({
+          port: 0,
+          websocket: { message() {}, idleTimeout },
+          fetch() {
+            return new Response("ok");
+          },
+        }),
+      ).toThrow("websocket expects idleTimeout to be 960 or less");
+    }
+
+    // 960 itself is still accepted.
+    using server = serve({
+      port: 0,
+      websocket: { message() {}, idleTimeout: 960 },
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    server.stop();
+  });
+
+  test("maxPayloadLength above 2^32 clamps instead of wrapping to a tiny limit", async () => {
+    // 2^32 + 16 used to truncate to 16, so every message over 16 bytes
+    // killed the connection.
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: {
+        maxPayloadLength: 2 ** 32 + 16,
+        message(ws, message) {
+          ws.send(`echo:${message.length}`);
+        },
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Not a websocket", { status: 400 });
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    ws.onopen = () => ws.send(Buffer.alloc(100, "x").toString());
+    ws.onmessage = e => resolve(e.data as string);
+    ws.onerror = () => reject(new Error("websocket errored before echo"));
+    ws.onclose = e => reject(new Error(`closed before echo: code ${e.code}`));
+    try {
+      expect(await promise).toBe("echo:100");
+    } finally {
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.close();
+      server.stop(true);
+    }
+  });
+
+  test("backpressureLimit above 2^32 clamps instead of wrapping to a tiny limit", async () => {
+    // 2^32 + 1 used to truncate to 1 byte, so once a send left anything
+    // buffered, the next send was dropped (returned 0).
+    const { promise, resolve, reject } = Promise.withResolvers<number[]>();
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: {
+        backpressureLimit: 2 ** 32 + 1,
+        open(ws) {
+          const data = new Uint8Array(4 * 1024 * 1024);
+          const results: number[] = [];
+          for (let i = 0; i < 6; i++) {
+            results.push(ws.send(data));
+          }
+          resolve(results);
+        },
+        message() {},
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Not a websocket", { status: 400 });
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    ws.onerror = () => reject(new Error("websocket errored before open"));
+    ws.onclose = e => reject(new Error(`closed before open: code ${e.code}`));
+    try {
+      const results = await promise;
+      // 0 means dropped for exceeding backpressureLimit; a ~4 GiB limit must
+      // never drop 24 MB of queued sends (-1 backpressure and >0 sent are fine).
+      expect(results.filter(r => r === 0)).toEqual([]);
+    } finally {
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.close();
+      server.stop(true);
+    }
+  });
+
+  test.each([
+    ["{}", {}],
+    ["{ perMessageDeflate: true }", { perMessageDeflate: true }],
+    ["{ idleTimeout: 30 }", { idleTimeout: 30 }],
+    ["{ error() {} }", { error() {} }],
+  ])("websocket: %s works without a message handler", async (_label, websocket) => {
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Not a websocket", { status: 400 });
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    ws.onopen = () => {
+      ws.send("ignored");
+      ws.close(1000);
+    };
+    ws.onerror = () => reject(new Error("websocket errored"));
+    ws.onclose = e => resolve(e.code);
+    expect(await promise).toBe(1000);
+  });
+
+  test.each(["compress", "decompress"])("throws on an invalid perMessageDeflate.%s", key => {
+    for (const value of ["1KB", "Shared", 1, {}]) {
+      expect(() =>
+        serve({
+          port: 0,
+          websocket: { message() {}, perMessageDeflate: { [key]: value } as any },
+          fetch() {
+            return new Response("ok");
+          },
+        }),
+      ).toThrow(`websocket expects a valid ${key} option`);
+    }
+  });
+
+  test.each(["open", "message", "ping", "pong", "close"])(
+    "websocket.error is called with (error, ws) when %s throws",
+    async name => {
+      let handlerSocket: unknown;
+      const { promise, resolve } = Promise.withResolvers<unknown[]>();
+      using server = serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        websocket: {
+          [name](ws: unknown) {
+            handlerSocket = ws;
+            throw new Error(`thrown by ${name}`);
+          },
+          error(...args: unknown[]) {
+            resolve(args);
+          },
+        },
+        fetch(req, server) {
+          if (server.upgrade(req)) {
+            return;
+          }
+          return new Response("Not a websocket", { status: 400 });
+        },
+      });
+
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+      ws.onopen = () => {
+        ws.send("x");
+        ws.ping();
+        ws.pong();
+        ws.close();
+      };
+      const args = await promise;
+      expect(args).toEqual([new Error(`thrown by ${name}`), handlerSocket]);
+      expect(args[1]).toBe(handlerSocket);
+    },
+  );
 });
 
 describe("Bun.serve development options", () => {
@@ -267,6 +452,7 @@ describe("Bun.serve static routes", () => {
   test("static route handling", () => {
     using server = serve({
       port: 0,
+      // @ts-expect-error deprecated alias of routes
       static: {
         "/": new Response("Home"),
         "/about": new Response("About"),
@@ -334,15 +520,15 @@ describe("Bun.serve hostname and port validation", () => {
 
   test("hostname with unix should throw", () => {
     expect(() =>
+      // @ts-expect-error - Testing invalid combination
       serve({
-        // @ts-expect-error - Testing invalid combination
         hostname: defaultHostname,
         unix: "test.sock",
         fetch() {
           return new Response("ok");
         },
       }),
-    ).toThrow();
+    ).toThrow("Cannot specify both hostname and unix");
   });
 
   test("unix with no hostname/port is valid", () => {
@@ -397,6 +583,67 @@ describe("Bun.serve hostname and port validation", () => {
         server.stop();
       });
     }
+  });
+
+  describe("invalid port values throw RangeError", () => {
+    const invalidPorts: { port: unknown; received: string }[] = [
+      { port: 65536, received: "65536" },
+      { port: 70000, received: "70000" },
+      { port: 2 ** 32 + 8080, received: "4294975376" },
+      { port: -1, received: "-1" },
+      { port: 1.5, received: "1.5" },
+      { port: "abc", received: "NaN" },
+      { port: NaN, received: "NaN" },
+      { port: Infinity, received: "Infinity" },
+      { port: -Infinity, received: "-Infinity" },
+      { port: "65536", received: "65536" },
+      { port: Number.MAX_SAFE_INTEGER, received: String(Number.MAX_SAFE_INTEGER) },
+    ];
+
+    for (const { port, received } of invalidPorts) {
+      test(`port: ${typeof port === "string" ? JSON.stringify(port) : port}`, () => {
+        let thrown: unknown;
+        try {
+          const server = serve({
+            // @ts-expect-error - Testing invalid port values
+            port,
+            fetch() {
+              return new Response("ok");
+            },
+          });
+          server.stop(true);
+        } catch (e) {
+          thrown = e;
+        }
+        expect(thrown).toBeInstanceOf(RangeError);
+        expect((thrown as RangeError).message).toContain("options.port");
+        expect((thrown as RangeError).message).toContain(received);
+      });
+    }
+
+    test("server.reload() rejects an out-of-range port", () => {
+      using server = serve({
+        port: 0,
+        fetch() {
+          return new Response("ok");
+        },
+      });
+      let thrown: unknown;
+      try {
+        server.reload({
+          // Testing invalid port values
+          port: 65536,
+          fetch() {
+            return new Response("ok");
+          },
+        });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(RangeError);
+      expect((thrown as RangeError).message).toContain("options.port");
+      expect((thrown as RangeError).message).toContain("65536");
+    });
   });
 });
 
@@ -591,15 +838,31 @@ describe("Bun.serve hostname coercion", () => {
 describe("Bun.serve unix socket validation", () => {
   test("unix socket with hostname should throw", () => {
     expect(() =>
+      // @ts-expect-error - Testing invalid combination
       serve({
         unix: "/tmp/test.sock",
-        // @ts-expect-error - Testing invalid combination
         hostname: defaultHostname, // Cannot combine with unix
         fetch() {
           return new Response("ok");
         },
       }),
-    ).toThrow();
+    ).toThrow("Cannot specify both hostname and unix");
+  });
+
+  // HTTP/3 is the only protocol left, and it needs a UDP socket.
+  test("unix socket with http3 and no http1 or http2 should throw", () => {
+    expect(() =>
+      // @ts-expect-error - Testing invalid combination
+      serve({
+        unix: "bun-serve-args-http3-only.sock",
+        http1: false,
+        http3: true,
+        tls,
+        fetch() {
+          return new Response("ok");
+        },
+      }),
+    ).toThrow("Cannot disable http1 with a unix socket");
   });
 
   describe("invalid unix socket paths should throw", () => {

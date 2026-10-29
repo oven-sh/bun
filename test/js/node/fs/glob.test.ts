@@ -3,7 +3,7 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDirWithFiles } from "harness";
+import { isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 
 let tmp: string;
@@ -74,9 +74,13 @@ describe("fs.glob", () => {
 
   describe("invalid arguments", () => {
     it("throws if no callback is provided", () => {
+      // @ts-expect-error
       expect(() => fs.glob("*.txt")).toThrow(TypeError);
+      // @ts-expect-error
       expect(() => fs.glob("*.txt", undefined)).toThrow(TypeError);
+      // @ts-expect-error
       expect(() => fs.glob("*.txt", { cwd: tmp })).toThrow(TypeError);
+      // @ts-expect-error
       expect(() => fs.glob("*.txt", { cwd: tmp }, undefined)).toThrow(TypeError);
     });
   });
@@ -221,7 +225,7 @@ describe("fs.promises.glob", () => {
       const iter = fs.promises.glob("*.txt");
       expect(iter[Symbol.asyncIterator]).toBeDefined();
 
-      const paths = [];
+      const paths: string[] = [];
       for await (const path of iter) {
         paths.push(path);
       }
@@ -270,7 +274,7 @@ describe("fs.promises.glob", () => {
 
 describe("fs.globSync exclude with withFileTypes", () => {
   it("invokes the exclude callback with Dirents when cwd differs from process.cwd()", () => {
-    const dir = tempDirWithFiles("glob-exclude-dirent", {
+    using dir = tempDir("glob-exclude-dirent", {
       "skip/inner.txt": "x",
       "keep/inner.txt": "y",
     });

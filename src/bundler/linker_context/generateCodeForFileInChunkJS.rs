@@ -7,10 +7,11 @@ use bun_collections::{BoundedArray, VecExt};
 use bun_js_printer::renamer;
 use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 
+use crate::analyze_transpiled_module::ModuleInfo;
 use crate::generic_path_with_pretty_initialized;
 use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
-use crate::{Chunk, DeclInfo, DeclInfoKind, Index, LinkerContext, Part, PartRange, WrapKind};
+use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
 
 use bun_ast::StoreRef;
 use bun_ast::binding::ToExprWrapper;
@@ -21,11 +22,11 @@ use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
-    c: &mut LinkerContext,
+pub fn generate_code_for_file_in_chunk_js(
+    c: &LinkerContext,
     writer: &mut js_printer::BufferWriter,
-    r: renamer::Renamer<'r, 'src>,
-    chunk: &mut Chunk,
+    r: renamer::Renamer,
+    chunk: &Chunk,
     part_range: PartRange,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
@@ -33,22 +34,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts: &mut StmtList,
     arena: &Bump,
     temp_arena: &Bump,
-    decl_collector: Option<&mut DeclCollector>,
+    module_info: Option<&mut ModuleInfo>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
-
-    // Grab raw pointers to the SoA columns up front so
-    // subsequent `&mut c` borrows (convert_stmts_for_chunk, print_code_for_file_in_chunk_js)
-    // don't conflict.
-    // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
-    // function (linking has already sized everything).
-    let parts: *mut [Part] = {
-        let list = &mut c.graph.ast.items_parts_mut()[source_index];
-        core::ptr::addr_of_mut!(
-            list.as_mut_slice()
-                [part_range.part_index_begin as usize..part_range.part_index_end as usize]
-        )
-    };
+    let source_ref = &c.parse_graph().input_files.items_source()[source_index];
+    let parts: &[Part] = &c.graph.ast.items_parts()[source_index].as_slice()
+        [part_range.part_index_begin as usize..part_range.part_index_end as usize];
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
     let wrapper_part_index = if flags.wrap != WrapKind::None {
         c.graph.meta.items_wrapper_part_index()[source_index]
@@ -77,8 +68,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
-            // SAFETY: see `parts` raw-pointer note above.
-            for part in unsafe { (*parts).iter() } {
+            for part in parts {
                 let part_stmts: &[Stmt] = part.stmts.slice();
                 if let Err(err) =
                     convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
@@ -179,7 +169,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
-            let source_ref = c.get_source(source_index as u32);
             // `bun_ast::Source` is not `Clone`
             // (its `Cow` fields would deep-copy `Owned` data); instead, build a
             // borrowed-field shadow only when the path needs fixing.
@@ -188,7 +177,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 source_ref.path.text.as_ptr(),
                 source_ref.path.pretty.as_ptr(),
             ) {
-                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
                 let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
                     &source_ref.path,
                     c.options.target,
@@ -197,17 +186,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 ));
                 source_storage = bun_ast::Source {
                     path: new_path,
-                    // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
-                    // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
-                    contents: std::borrow::Cow::Borrowed(unsafe {
-                        &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
-                    }),
+                    contents: std::borrow::Cow::Borrowed(&source_ref.contents),
                     contents_is_recycled: source_ref.contents_is_recycled,
-                    // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
-                    // `Cow` payload as `&'static [u8]` is sound regardless of arm.
-                    identifier_name: std::borrow::Cow::Borrowed(unsafe {
-                        &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
-                    }),
+                    identifier_name: std::borrow::Cow::Borrowed(&source_ref.identifier_name),
                     index: source_ref.index,
                 };
                 &source_storage
@@ -227,6 +208,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 None,
                 part_range.source_index,
                 source,
+                module_info,
             );
         }
     }
@@ -272,20 +254,23 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .expect("unreachable");
     }
 
-    // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
-    // the per-file bitset as a BackRef once. The `parts_live` Vec doesn't
-    // reallocate after `tree_shaking_and_code_splitting` initializes it.
-    let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
-        bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
+    let parts_live = &c.graph.parts_live[source_index];
 
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)
     {
-        // SAFETY: see `parts` raw-pointer note above; index bounded by the range check just above.
-        let ns_part_stmts: &[Stmt] =
-            unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
+        let mut ns_part_stmts: &[Stmt] = parts[namespace_export_part_index as usize].stmts.slice();
+        // Step 5 ends this part of a CommonJS entry point with
+        // `module.exports = __toCommonJS(exports)`. Only the chunk of that entry point runs it.
+        if output_format == OutputFormat::Cjs
+            && flags.force_include_exports_for_entry_point
+            && !chunk.is_entry_point_file(source_index as u32)
+            && let Some((_module_exports, rest)) = ns_part_stmts.split_last()
+        {
+            ns_part_stmts = rest;
+        }
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,
@@ -321,16 +306,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     }
 
     // Add all other parts in this chunk
-    // SAFETY: see `parts` raw-pointer note above.
-    let parts_len = unsafe { (&*parts).len() };
-    for index_ in 0..parts_len {
+    for (index_, part) in parts.iter().enumerate() {
         let index = part_range.part_index_begin + (index_ as u32);
         if !parts_live.is_set(index as usize) {
             // Skip the part if it's not in this chunk
             continue;
         }
-        // SAFETY: index in bounds.
-        let part: &Part = unsafe { &(*parts)[index_] };
 
         if index == namespace_export_part_index {
             // Skip the namespace export part because we already handled it above
@@ -422,8 +403,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     {
                         continue;
                     }
-                    let name = match &mut prop.key.as_mut().unwrap().data {
-                        ExprData::EString(s) => s.slice(temp_arena),
+                    let name: &[u8] = match &prop.key.as_ref().unwrap().data {
+                        ExprData::EString(s) => {
+                            bun_core::handle_oom(s.flattened(temp_arena).string(temp_arena))
+                        }
                         _ => unreachable!(),
                     };
                     if name == b"default" || name == b"__esModule" || !js_lexer::is_identifier(name)
@@ -638,28 +621,60 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // swallow any exceptions thrown during module initialization.
                 let is_async = flags.is_async_or_has_async_dependency;
 
-                struct ExportHoist {
+                struct ExportHoist<'a> {
                     decls: Vec<G::Decl>,
-                    // BackRef: the arena is the caller's `temp_arena: &Bump`,
-                    // which strictly outlives this local helper struct.
-                    arena: bun_ptr::BackRef<Bump>,
+                    arena: &'a Bump,
+                    symbols: &'a bun_ast::symbol::Map,
                 }
 
-                impl ExportHoist {
+                impl ExportHoist<'_> {
                     fn wrap_identifier(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Expr {
-                        // Copy the BackRef so the `&Bump` borrow is detached
-                        // from `&mut self` (needed for `self.decls.push`).
-                        let arena = self.arena;
                         self.decls.push(G::Decl {
-                            binding: Binding::alloc(
-                                arena.get(),
-                                B::Identifier { r#ref: ref_ },
-                                loc,
-                            ),
+                            binding: Binding::alloc(self.arena, B::Identifier { r#ref: ref_ }, loc),
                             value: None,
                         });
 
                         Expr::init_identifier(ref_, loc)
+                    }
+
+                    /// The pattern without the locals the linker bound to exports
+                    /// (`const { a } = await import(…)`): assigning one would
+                    /// overwrite the export.
+                    fn without_bound_items(&self, binding: Binding) -> Binding {
+                        let bun_ast::binding::Data::BObject(object) = binding.data else {
+                            return binding;
+                        };
+                        let symbols = self.symbols;
+                        let is_bound = |property: &&B::Property| {
+                            matches!(property.value.data, bun_ast::binding::Data::BIdentifier(id)
+                                if symbols.get_const(id.get().r#ref)
+                                    .is_some_and(|symbol| symbol.is_bound_import_item()))
+                        };
+                        let properties = object.get().properties.slice();
+                        if !properties.iter().any(|property| is_bound(&property)) {
+                            return binding;
+                        }
+                        let mut kept =
+                            bun_alloc::ArenaVec::with_capacity_in(properties.len(), self.arena);
+                        for property in properties.iter().filter(|property| !is_bound(property)) {
+                            kept.push(B::Property {
+                                flags: property.flags,
+                                key: property.key,
+                                value: property.value,
+                                default_value: property.default_value,
+                            });
+                        }
+                        Binding::alloc(
+                            self.arena,
+                            B::Object {
+                                properties: bun_ast::StoreSlice::new_mut(
+                                    kept.into_bump_slice_mut(),
+                                ),
+                                is_single_line: object.get().is_single_line,
+                                close_brace_loc: object.get().close_brace_loc,
+                            },
+                            binding.loc,
+                        )
                     }
 
                     /// Trampoline matching `ToExprWrapper`'s erased fn-pointer signature.
@@ -669,14 +684,15 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         ref_: Ref,
                     ) -> Expr {
                         // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
-                        let this = unsafe { bun_ptr::callback_ctx::<ExportHoist>(ctx) };
+                        let this = unsafe { bun_ptr::callback_ctx::<ExportHoist<'_>>(ctx) };
                         this.wrap_identifier(loc, ref_)
                     }
                 }
 
                 let mut hoist = ExportHoist {
                     decls: Vec::new(),
-                    arena: bun_ptr::BackRef::new(temp_arena),
+                    arena: temp_arena,
+                    symbols: &c.graph.symbols,
                 };
                 let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 
@@ -703,19 +719,20 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 let mut value = Expr::EMPTY;
                                 for decl in local.decls.slice() {
                                     if let Some(initializer) = decl.value {
-                                        let can_be_moved = initializer.can_be_moved();
-                                        if can_be_moved {
-                                            // if the value can be moved, move the decl directly to preserve destructuring
-                                            // ie `const { main } = class { static main() {} }` => `var {main} = class { static main() {} }`
+                                        // Keep in sync with `needs_wrapper_ref` in the parser.
+                                        if initializer.can_be_moved()
+                                            && matches!(decl.binding.data, B::B::BIdentifier(_))
+                                        {
+                                            // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {
                                                 binding: decl.binding,
                                                 value: decl.value,
                                             });
                                         } else {
-                                            // if the value cannot be moved, add every destructuring key separately
+                                            // A pattern runs getters or the iterator, so it stays inside the wrapper
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
                                             let binding = Binding::to_expr(
-                                                &decl.binding,
+                                                &hoist.without_bound_items(decl.binding),
                                                 (&raw mut hoist).cast::<core::ffi::c_void>(),
                                                 hoist_wrapper,
                                             );
@@ -726,7 +743,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                         }
                                     } else {
                                         let _ = Binding::to_expr(
-                                            &decl.binding,
+                                            &hoist.without_bound_items(decl.binding),
                                             (&raw mut hoist).cast::<core::ffi::c_void>(),
                                             hoist_wrapper,
                                         );
@@ -915,20 +932,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
-    // Collect top-level declarations from the converted statements.
-    // This is done here (after convertStmtsForChunk) rather than in
-    // postProcessJSChunk, because convertStmtsForChunk transforms the AST
-    // (e.g. export default expr → var, export stripping) and the converted
-    // statements reflect what actually gets printed.
-    let mut r = r;
-    if let Some(dc) = decl_collector {
-        dc.collect_from_stmts(out_stmts, &mut r, c);
-    }
-
-    // `get_source` returns `&'static Source` (parse_graph SoA is append-only and
-    // outlives the link step), so it does not borrow `c` — no split-borrow needed
-    // across the `&mut self` call below.
-    let source: &bun_ast::Source = c.get_source(source_index as u32);
     c.print_code_for_file_in_chunk_js(
         r,
         arena,
@@ -940,114 +943,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         to_common_js_ref,
         runtime_require_ref,
         part_range.source_index,
-        source,
+        source_ref,
+        module_info,
     )
-}
-
-pub struct DeclCollector {
-    pub decls: Vec<DeclInfo>,
-    pub arena: *const Bump,
-}
-
-impl Default for DeclCollector {
-    fn default() -> Self {
-        Self {
-            decls: Vec::new(),
-            arena: core::ptr::null(),
-        }
-    }
-}
-
-impl DeclCollector {
-    /// Collect top-level declarations from **converted** statements (after
-    /// `convertStmtsForChunk`). At that point, export statements have already
-    /// been transformed:
-    /// - `s_export_default` → `s_local` / `s_function` / `s_class`
-    /// - `s_export_clause` → removed entirely
-    /// - `s_export_from` / `s_export_star` → removed or converted to `s_import`
-    ///
-    /// Remaining `s_import` statements (external, non-bundled) don't need
-    /// handling here; their bindings are recorded separately in
-    /// `postProcessJSChunk` by scanning the original AST import records.
-    pub fn collect_from_stmts(
-        &mut self,
-        stmts: &[Stmt],
-        r: &mut renamer::Renamer<'_, '_>,
-        c: &LinkerContext,
-    ) {
-        for stmt in stmts {
-            match stmt.data {
-                StmtData::SLocal(s) => {
-                    let kind: DeclInfoKind = if s.kind == LocalKind::KVar {
-                        DeclInfoKind::Declared
-                    } else {
-                        DeclInfoKind::Lexical
-                    };
-                    for decl in s.decls.slice() {
-                        self.collect_from_binding(decl.binding, kind, r, c);
-                    }
-                }
-                StmtData::SFunction(s) => {
-                    if let Some(name_loc_ref) = s.func.name {
-                        if let Some(name_ref) = name_loc_ref.ref_.to_nullable() {
-                            self.add_ref(name_ref, DeclInfoKind::Lexical, r, c);
-                        }
-                    }
-                }
-                StmtData::SClass(s) => {
-                    if let Some(class_name) = s.class.class_name {
-                        if let Some(name_ref) = class_name.ref_.to_nullable() {
-                            self.add_ref(name_ref, DeclInfoKind::Lexical, r, c);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn collect_from_binding(
-        &mut self,
-        binding: Binding,
-        kind: DeclInfoKind,
-        r: &mut renamer::Renamer<'_, '_>,
-        c: &LinkerContext,
-    ) {
-        match binding.data {
-            BindingData::BIdentifier(b) => {
-                self.add_ref(b.r#ref, kind, r, c);
-            }
-            BindingData::BArray(b) => {
-                for item in b.items() {
-                    self.collect_from_binding(item.binding, kind, r, c);
-                }
-            }
-            BindingData::BObject(b) => {
-                for prop in b.properties() {
-                    self.collect_from_binding(prop.value, kind, r, c);
-                }
-            }
-            BindingData::BMissing(_) => {}
-        }
-    }
-
-    fn add_ref(
-        &mut self,
-        ref_: Ref,
-        kind: DeclInfoKind,
-        r: &mut renamer::Renamer<'_, '_>,
-        c: &LinkerContext,
-    ) {
-        let followed = c.graph.symbols.follow(ref_);
-        let name = r.name_for_symbol(followed);
-        if name.is_empty() {
-            return;
-        }
-        self.decls.push(DeclInfo {
-            name: name.to_vec().into_boxed_slice(),
-            kind,
-        });
-    }
 }
 
 fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
@@ -1087,8 +985,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                             S::Local {
                                 decls: Vec::move_from_list(clone),
                                 is_export: before.is_export,
-                                was_commonjs_export: before.was_commonjs_export,
-                                was_ts_import_equals: before.was_ts_import_equals,
+                                origin: before.origin,
                                 kind: before.kind,
                             },
                             prev_loc,
@@ -1107,7 +1004,5 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
 }
 
 // Type aliases / re-imports for readability of match arms.
-use bun_ast::LocalKind;
-use bun_ast::binding::Data as BindingData;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;

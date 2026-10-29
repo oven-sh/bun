@@ -11,9 +11,8 @@ use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, SEP_STR};
 use bun_resolver::fs;
 use bun_sys as sys;
 use bun_url::URL;
@@ -47,10 +46,10 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
 // the un-exported `fs_full` module. Shim it locally — open
 // `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
 pub(crate) trait FileSystemTmpdirExt {
-    fn tmpdir(&mut self) -> crate::Result<sys::Dir>;
+    fn tmpdir(&self) -> crate::Result<sys::Dir>;
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
-    fn tmpdir(&mut self) -> crate::Result<sys::Dir> {
+    fn tmpdir(&self) -> crate::Result<sys::Dir> {
         sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
     }
 }
@@ -65,16 +64,15 @@ fn argv_contains(target: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Version {
-    pub zip_url: Box<[u8]>,
-    pub tag: Box<[u8]>,
-    pub buf: MutableString,
-    pub size: u32,
-    pub digest: Integrity,
+pub(crate) struct Version {
+    pub(crate) zip_url: Box<[u8]>,
+    pub(crate) tag: Box<[u8]>,
+    pub(crate) size: u32,
+    pub(crate) digest: Integrity,
 }
 
 impl Version {
-    pub fn name(&self) -> Option<Vec<u8>> {
+    pub(crate) fn name(&self) -> Option<Vec<u8>> {
         if self.tag.len() <= b"bun-v".len() || !self.tag.starts_with(b"bun-v") {
             if &*self.tag == b"canary" {
                 use crate::cli as Cli;
@@ -97,14 +95,14 @@ impl Version {
 
     // "windows" not "win32"; Android folds to "linux" (`SUFFIX_ABI` below adds
     // "-android", matching `bun-linux-aarch64-android.zip` on the release page).
-    pub const PLATFORM_LABEL: &'static str = bun_core::env::OS_NAME_NPM;
+    pub(crate) const PLATFORM_LABEL: &'static str = bun_core::env::OS_NAME_NPM;
 
-    pub const ARCH_LABEL: &'static str = if cfg!(target_arch = "aarch64") {
+    pub(crate) const ARCH_LABEL: &'static str = if cfg!(target_arch = "aarch64") {
         "aarch64"
     } else {
         "x64"
     };
-    pub const TRIPLET: &'static str =
+    pub(crate) const TRIPLET: &'static str =
         const_format::concatcp!(Version::PLATFORM_LABEL, "-", Version::ARCH_LABEL);
     const SUFFIX_ABI: &'static str = if Environment::IS_MUSL {
         "-musl"
@@ -114,23 +112,24 @@ impl Version {
         ""
     };
     const SUFFIX: &'static str = Version::SUFFIX_ABI;
-    pub const FOLDER_NAME: &'static str =
+    pub(crate) const FOLDER_NAME: &'static str =
         const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX);
-    pub const ZIP_FILENAME: &'static str = const_format::concatcp!(Version::FOLDER_NAME, ".zip");
+    pub(crate) const ZIP_FILENAME: &'static str =
+        const_format::concatcp!(Version::FOLDER_NAME, ".zip");
 
-    pub const PROFILE_FOLDER_NAME: &'static str =
+    pub(crate) const PROFILE_FOLDER_NAME: &'static str =
         const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX, "-profile");
-    pub const PROFILE_ZIP_FILENAME: &'static str =
+    pub(crate) const PROFILE_ZIP_FILENAME: &'static str =
         const_format::concatcp!(Version::PROFILE_FOLDER_NAME, ".zip");
 
     const CURRENT_VERSION: &'static str =
         const_format::concatcp!("bun-v", Global::package_json_version);
 
-    pub fn is_current(&self) -> bool {
+    pub(crate) fn is_current(&self) -> bool {
         &*self.tag == Self::CURRENT_VERSION.as_bytes()
     }
 
-    pub fn parse_asset_digest(buf: &[u8]) -> Integrity {
+    pub(crate) fn parse_asset_digest(buf: &[u8]) -> Integrity {
         const PREFIX: &[u8] = b"sha256:";
         const HEX_LEN: usize = 64;
         if buf.len() != PREFIX.len() + HEX_LEN || !strings::starts_with(buf, PREFIX) {
@@ -150,10 +149,6 @@ impl Version {
 
         digest
     }
-
-    pub fn export() {
-        // force-reference — drop in Rust (linker keeps #[no_mangle])
-    }
 }
 
 // Exported C symbol — null-terminated
@@ -162,7 +157,7 @@ impl Version {
 // (same pattern as `Bun__userAgent` in bun_core::Global) so the C++ side still sees a
 // single `const char*`-sized symbol.
 #[unsafe(no_mangle)]
-pub(crate) static Bun__githubURL: SyncCStr = SyncCStr(
+static Bun__githubURL: SyncCStr = SyncCStr(
     const_format::concatcp!(
         "https://github.com/oven-sh/bun/releases/download/bun-v",
         Global::package_json_version,
@@ -176,12 +171,12 @@ pub(crate) static Bun__githubURL: SyncCStr = SyncCStr(
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct UpgradeCommand;
+pub(crate) struct UpgradeCommand;
 
 impl UpgradeCommand {
     const DEFAULT_GITHUB_HEADERS: &'static [u8] = b"Acceptapplication/vnd.github.v3+json";
 
-    pub fn get_latest_version<const SILENT: bool>(
+    pub(crate) fn get_latest_version<const SILENT: bool>(
         env_loader: &mut DotEnv::Loader,
         refresher: Option<&mut Progress::Progress>,
         mut progress: Option<&mut Progress::Node>,
@@ -201,7 +196,6 @@ impl UpgradeCommand {
             },
         };
         header_entries.append(accept).expect("oom");
-        // defer if SILENT header_entries.deinit() — Drop handles this
 
         // Incase they're using a GitHub proxy in e.g. China
         let mut github_api_domain: &[u8] = b"api.github.com";
@@ -268,10 +262,9 @@ impl UpgradeCommand {
             api_url,
             header_entries,
             headers_buf,
-            std::ptr::from_mut::<MutableString>(metadata_body),
             b"",
             http_proxy,
-            None,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -282,9 +275,9 @@ impl UpgradeCommand {
             // frame returns, so the pointee outlives every use.
             async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
         }
-        let response = async_http.send_sync()?;
+        let response = async_http.send_sync(metadata_body)?;
 
-        match response.status_code {
+        match response.status_code() {
             404 => return Err(crate::Error::HTTP404),
             403 => return Err(crate::Error::HTTPForbidden),
             429 => return Err(crate::Error::HTTPTooManyRequests),
@@ -338,7 +331,6 @@ impl UpgradeCommand {
         let mut version = Version {
             zip_url: Box::default(),
             tag: Box::default(),
-            buf: MutableString::init_empty(),
             size: 0,
             digest: Integrity::default(),
         };
@@ -513,7 +505,7 @@ impl UpgradeCommand {
     };
 
     #[cold]
-    pub fn exec(ctx: Command::Context) -> crate::Result<()> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         let args = bun_core::argv();
         if args.len() > 2 {
             for arg in args.iter().skip(2) {
@@ -544,12 +536,9 @@ impl UpgradeCommand {
     fn _exec(ctx: Command::Context) -> crate::Result<()> {
         HTTP::http_thread::init(&Default::default());
 
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        let mut env_loader: DotEnv::Loader = {
-            // Allocate in the process-lifetime CLI arena.
-            DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))
-        };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::get();
+        let mut env_loader = DotEnv::Loader::init();
         env_loader.load_process()?;
 
         let use_canary: bool = 'brk: {
@@ -638,7 +627,6 @@ impl UpgradeCommand {
                 .as_bytes()
                 .into(),
                 size: 0,
-                buf: MutableString::init_empty(),
                 digest: Integrity::default(),
             }
         };
@@ -666,10 +654,9 @@ impl UpgradeCommand {
                 zip_url,
                 headers::EntryList::default(),
                 b"",
-                std::ptr::from_mut::<MutableString>(zip_file_buffer),
                 b"",
                 http_proxy,
-                None,
+                HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
             ));
             // `progress` is intentionally leaked (process-lifetime), so the
@@ -678,9 +665,9 @@ impl UpgradeCommand {
                 Some(NonNull::new(progress).expect("leaked Box is non-null"));
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-            let response = async_http.send_sync()?;
+            let response = async_http.send_sync(zip_file_buffer)?;
 
-            match response.status_code {
+            match response.status_code() {
                 404 => {
                     if use_canary {
                         bun_core::pretty_errorln!(
@@ -698,6 +685,9 @@ impl UpgradeCommand {
                 200 => {}
                 _ => return Err(crate::Error::HTTPError),
             }
+            // Release the immutable borrow of `env_loader` (via `http_proxy`)
+            // before the map mutations below.
+            drop(async_http);
 
             let bytes = zip_file_buffer.slice();
 
@@ -767,7 +757,7 @@ impl UpgradeCommand {
             let save_dir: sys::Dir = save_dir_it;
 
             // Reshaped for borrowck — use a stack-local PathBuffer instead of thread_local
-            let mut tmpdir_path_buf = PathBuffer::uninit();
+            let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
             let tmpdir_path = match sys::get_fd_path(save_dir.fd(), &mut tmpdir_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
@@ -827,11 +817,11 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let mut unzip_path_buf = PathBuffer::uninit();
+                    let mut unzip_path_buf = bun_paths::path_buffer_pool::get();
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
-                        filesystem.top_level_dir,
+                        filesystem.top_level_dir(),
                         b"unzip",
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);
@@ -855,8 +845,6 @@ impl UpgradeCommand {
                         stdin: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stderr: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
                         ..Default::default()
                     }) {
                         Ok(Ok(r)) => r,
@@ -907,10 +895,10 @@ impl UpgradeCommand {
                     )
                     .expect("oom");
 
-                    let mut buf = PathBuffer::uninit();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     // Separate fallback buffer — borrowck holds `buf` for the lifetime
                     // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
-                    let mut buf2 = PathBuffer::uninit();
+                    let mut buf2 = bun_paths::path_buffer_pool::get();
                     let powershell_path: &ZStr = match which(
                         &mut buf,
                         bun_core::env_var::PATH.get().unwrap_or(b""),
@@ -958,7 +946,6 @@ impl UpgradeCommand {
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
                         windows: spawn_windows_options(),
                         ..Default::default()
                     });
@@ -1090,10 +1077,12 @@ impl UpgradeCommand {
             // Keep the `&ZStr` form for Windows `sys::rename` (needs
             // a NUL-terminated path); `destination_executable` (bytes view) is
             // used everywhere else.
-            #[cfg_attr(not(windows), allow(unused_variables))]
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
                 .map_err(|_| crate::Error::UpgradeFailedMissingExecutable)?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();
+            if destination_executable.len() >= bun_paths::MAX_PATH_BYTES {
+                return Err(crate::Error::PathTooLong);
+            }
             // Reshaped for borrowck — use stack-local buffer.
             // Stacked Borrows: take ONE `*mut u8` over the buffer up front and
             // route every read/write through it. Indexing the `PathBuffer`
@@ -1101,7 +1090,7 @@ impl UpgradeCommand {
             // or `&mut [u8]` over the *whole* array, retagging it and
             // invalidating the raw-pointer-derived `&ZStr` views below. The
             // single `buf_ptr` is the shared provenance root.
-            let mut current_executable_buf = PathBuffer::uninit();
+            let mut current_executable_buf = bun_paths::path_buffer_pool::get();
             let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
             // SAFETY: `buf_ptr` covers `MAX_PATH_BYTES`; `destination_executable`
             // came from `self_exe_path()` which is bounded by that.
@@ -1153,7 +1142,7 @@ impl UpgradeCommand {
 
             // `move_file_z` wants `&ZStr`; pre-compute a NUL-terminated
             // copy of `exe`.
-            let mut exe_z_buf = PathBuffer::uninit();
+            let mut exe_z_buf = bun_paths::path_buffer_pool::get();
             exe_z_buf[..exe.len()].copy_from_slice(exe);
             exe_z_buf[exe.len()] = 0;
             // SAFETY: NUL written above.
@@ -1390,7 +1379,8 @@ impl UpgradeCommand {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub mod upgrade_js_bindings {
+pub(crate) mod upgrade_js_bindings {
+    #[cfg(windows)]
     use super::*;
 
     // Process-global, not threadlocal: if open/close are invoked from different
@@ -1400,56 +1390,19 @@ pub mod upgrade_js_bindings {
     #[cfg(windows)]
     static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
 
-    pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 2);
-        obj.put(
-            global,
-            b"openTempDirWithoutSharingDelete",
-            jsc::JSFunction::create(
-                global,
-                b"openTempDirWithoutSharingDelete",
-                // `#[bun_jsc::host_fn]` emits the C-ABI shim with a
-                // `__jsc_host_` prefix.
-                __jsc_host_js_open_temp_dir_without_sharing_delete,
-                1,
-                Default::default(),
-            ),
-        );
-        obj.put(
-            global,
-            b"closeTempDirHandle",
-            jsc::JSFunction::create(
-                global,
-                b"closeTempDirHandle",
-                __jsc_host_js_close_temp_dir_handle,
-                1,
-                Default::default(),
-            ),
-        );
-        obj
-    }
-
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_open_temp_dir_without_sharing_delete(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        #[cfg(not(windows))]
-        {
-            return Ok(JSValue::UNDEFINED);
-        }
+    pub(crate) fn open_temp_dir_without_sharing_delete() {
         #[cfg(windows)]
         {
             use sys::windows as w;
 
-            let mut buf = bun_paths::WPathBuffer::uninit();
+            let mut buf = bun_paths::w_path_buffer_pool::get();
             let tmpdir_path = fs::RealFS::get_default_temp_dir();
-            let mut wtmp = bun_paths::WPathBuffer::uninit();
+            let mut wtmp = bun_paths::w_path_buffer_pool::get();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
-                sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),
+                sys::Result::Err(_) => return,
                 sys::Result::Ok(norm) => norm,
             };
 
@@ -1507,20 +1460,10 @@ pub mod upgrade_js_bindings {
                 }
                 _ => {}
             }
-
-            Ok(JSValue::UNDEFINED)
         }
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_close_temp_dir_handle(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        #[cfg(not(windows))]
-        {
-            return Ok(JSValue::UNDEFINED);
-        }
+    pub(crate) fn close_temp_dir_handle() {
         #[cfg(windows)]
         {
             use bun_sys::FdExt as _;
@@ -1530,8 +1473,6 @@ pub mod upgrade_js_bindings {
             if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
                 fd.close();
             }
-
-            Ok(JSValue::UNDEFINED)
         }
     }
 }

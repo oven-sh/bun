@@ -10,6 +10,7 @@ use crate::hir::{
 };
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
+use std::rc::Rc;
 
 use super::super::hir_builder::{HirBuilder, convert_loc};
 use super::FunctionNode;
@@ -36,7 +37,7 @@ pub(super) fn lower_function_to_value(
     })
 }
 
-pub(super) fn lower_function(
+fn lower_function(
     builder: &mut HirBuilder<'_>,
     func: FunctionNode<'_>,
     func_loc: Loc,
@@ -54,10 +55,9 @@ pub(super) fn lower_function(
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
 
-    let parent_bindings = builder.bindings().clone();
-    let parent_used_refs = builder.used_refs().clone();
-    let context_ids = builder.context_identifiers().clone();
-    let import_bindings = builder.import_bindings().clone();
+    let parent_bindings = builder.take_bindings();
+    let context_ids = Rc::clone(builder.context_identifiers());
+    let import_bindings = builder.import_bindings();
 
     // Gather captured context
     let captured_context = gather_captured_context(
@@ -65,7 +65,7 @@ pub(super) fn lower_function(
         &func,
         builder.current_scope(),
         component_scope,
-    );
+    )?;
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {
@@ -76,24 +76,22 @@ pub(super) fn lower_function(
 
     // Use host_and_env_mut to avoid conflicting borrows
     let (host, env) = builder.host_and_env_mut();
-    let (hir_func, child_used_refs, child_bindings) = lower_inner(
+    let (hir_func, child_bindings) = lower_inner(
         &func,
         id,
         loc,
         host,
         env,
         Some(parent_bindings),
-        Some(parent_used_refs),
-        &merged_context,
+        merged_context,
         parent_function_scope,
         component_scope,
-        &context_ids,
-        &import_bindings,
+        context_ids,
+        import_bindings,
         false, // nested function
     )?;
 
-    builder.merge_used_refs(&child_used_refs);
-    builder.merge_bindings(child_bindings);
+    builder.put_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
     Ok(LoweredFunction { func: func_id })
@@ -114,10 +112,9 @@ pub(super) fn lower_function_declaration(
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
 
-    let parent_bindings = builder.bindings().clone();
-    let parent_used_refs = builder.used_refs().clone();
-    let context_ids = builder.context_identifiers().clone();
-    let import_bindings = builder.import_bindings().clone();
+    let parent_bindings = builder.take_bindings();
+    let context_ids = Rc::clone(builder.context_identifiers());
+    let import_bindings = builder.import_bindings();
 
     // Gather captured context
     let captured_context = gather_captured_context(
@@ -125,7 +122,7 @@ pub(super) fn lower_function_declaration(
         &func,
         builder.current_scope(),
         component_scope,
-    );
+    )?;
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {
@@ -135,24 +132,22 @@ pub(super) fn lower_function_declaration(
     };
 
     let (host, env) = builder.host_and_env_mut();
-    let (hir_func, child_used_refs, child_bindings) = lower_inner(
+    let (hir_func, child_bindings) = lower_inner(
         &func,
         func_name,
         loc,
         host,
         env,
         Some(parent_bindings),
-        Some(parent_used_refs),
-        &merged_context,
+        merged_context,
         parent_function_scope,
         component_scope,
-        &context_ids,
-        &import_bindings,
+        context_ids,
+        import_bindings,
         false, // nested function
     )?;
 
-    builder.merge_used_refs(&child_used_refs);
-    builder.merge_bindings(child_bindings);
+    builder.put_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
     let lowered_func = LoweredFunction { func: func_id };
@@ -231,7 +226,7 @@ pub(super) fn lower_function_declaration(
 }
 
 /// Lower a function expression used as an object method.
-pub(super) fn lower_function_for_object_method(
+fn lower_function_for_object_method(
     builder: &mut HirBuilder<'_>,
     method: &G::Fn,
     method_loc: Loc,
@@ -242,17 +237,16 @@ pub(super) fn lower_function_for_object_method(
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
 
-    let parent_bindings = builder.bindings().clone();
-    let parent_used_refs = builder.used_refs().clone();
-    let context_ids = builder.context_identifiers().clone();
-    let import_bindings = builder.import_bindings().clone();
+    let parent_bindings = builder.take_bindings();
+    let context_ids = Rc::clone(builder.context_identifiers());
+    let import_bindings = builder.import_bindings();
 
     let captured_context = gather_captured_context(
         builder.host(),
         &func,
         builder.current_scope(),
         component_scope,
-    );
+    )?;
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {
@@ -262,24 +256,22 @@ pub(super) fn lower_function_for_object_method(
     };
 
     let (host, env) = builder.host_and_env_mut();
-    let (hir_func, child_used_refs, child_bindings) = lower_inner(
+    let (hir_func, child_bindings) = lower_inner(
         &func,
         None,
         func_loc,
         host,
         env,
         Some(parent_bindings),
-        Some(parent_used_refs),
-        &merged_context,
+        merged_context,
         parent_function_scope,
         component_scope,
-        &context_ids,
-        &import_bindings,
+        context_ids,
+        import_bindings,
         false, // nested function
     )?;
 
-    builder.merge_used_refs(&child_used_refs);
-    builder.merge_bindings(child_bindings);
+    builder.put_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
     Ok(LoweredFunction { func: func_id })
@@ -360,7 +352,7 @@ pub(super) fn lower_object_method(
     }))
 }
 
-pub(super) fn lower_object_property_key(
+fn lower_object_property_key(
     builder: &mut HirBuilder<'_>,
     key: &Expr,
     computed: bool,

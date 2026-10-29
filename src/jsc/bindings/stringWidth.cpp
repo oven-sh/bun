@@ -25,6 +25,7 @@
 #include "root.h"
 #include "stringWidth.h"
 #include "ANSIHelpers.h"
+#include <unicode/uchar.h>
 #include "ObjectBindings.h"
 #include "stringWidthTables.h"
 
@@ -822,6 +823,10 @@ struct UTF16WidthAccumulator {
     GraphemeBreakState breakState = GraphemeBreakState::Default;
     bool hasPrevVisible = false;
     const bool ambiguousAsWide;
+    // Result of addRun()'s last ESC scan: the ESC it found, or the end of the
+    // text. Kept until the text before it is consumed, so many short ASCII runs
+    // cost one scan of the text overall instead of one scan each.
+    const char16_t* nextEsc = nullptr;
 
     explicit UTF16WidthAccumulator(bool ambiguousAsWide)
         : ambiguousAsWide(ambiguousAsWide)
@@ -864,8 +869,8 @@ struct UTF16WidthAccumulator {
     // caller then hands to the escape recognizer. Returns the number of code
     // units consumed. ESC is below 0x20 and the C1 introducers are above 0x7F
     // outside the bulk kernel's allowlist, so both bulk kernels already stop on
-    // them; only the ASCII run needs an extra scan, over a span that is already
-    // in cache.
+    // them; only the ASCII run needs an extra scan. Every `stopAtEscape` call on
+    // one accumulator must pass a later suffix of the same text (see nextEsc).
     size_t addRun(std::span<const char16_t> input, bool stopAtEscape = false)
     {
         const char16_t* const begin = input.data();
@@ -900,15 +905,20 @@ struct UTF16WidthAccumulator {
                 break;
 
             // Length of the leading all-ASCII (<= 0x7F) run, bounded by the
-            // next escape when `stopAtEscape` so neither scan reads past the
-            // current visible run. Peek the first unit before scanning — a
-            // non-ASCII lead (CJK, emoji) would scan a zero-length prefix.
+            // next ESC when `stopAtEscape`. Peek the first unit before
+            // scanning — a non-ASCII lead (CJK, emoji) would scan a
+            // zero-length prefix.
             size_t idx = 0;
             if (input[0] <= 0x7F) {
                 size_t bound = input.size();
                 if (stopAtEscape) {
-                    if (const char16_t* const esc = ANSI::scanForAnyByte<0x1b>(input.data(), input.data() + input.size()))
-                        bound = static_cast<size_t>(esc - input.data());
+                    const char16_t* const end = input.data() + input.size();
+                    if (!nextEsc || nextEsc < input.data()) {
+                        const char16_t* const esc = ANSI::scanForAnyByte<0x1b>(input.data(), end);
+                        nextEsc = esc ? esc : end;
+                    }
+                    ASSERT(nextEsc <= end);
+                    bound = static_cast<size_t>(nextEsc - input.data());
                 }
                 idx = highway_first_non_ascii16(reinterpret_cast<const uint16_t*>(input.data()), bound);
             }
@@ -1031,6 +1041,73 @@ static void applyTruthyBooleanOption(JSC::JSGlobalObject* globalObject, JSC::JSV
     out = value.toBoolean(globalObject);
 }
 
+namespace StringWidth {
+
+// node's per-code-point column width: EAW first, Emoji_Presentation on the neutral/narrow-
+// ambiguous path, then zero-width categories (Cc/Cf/Me/Mn or Emoji_Modifier), SOFT HYPHEN = 1.
+// https://github.com/nodejs/node/blob/main/src/node_i18n.cc (GetColumnWidth)
+static uint32_t perCodePointColumnWidth(char32_t cp, bool ambiguousAsWide)
+{
+    switch (u_getIntPropertyValue(static_cast<UChar32>(cp), UCHAR_EAST_ASIAN_WIDTH)) {
+    case U_EA_FULLWIDTH:
+    case U_EA_WIDE:
+        return 2;
+    case U_EA_AMBIGUOUS:
+        if (ambiguousAsWide)
+            return 2;
+        [[fallthrough]];
+    case U_EA_NEUTRAL:
+        if (u_hasBinaryProperty(static_cast<UChar32>(cp), UCHAR_EMOJI_PRESENTATION))
+            return 2;
+        [[fallthrough]];
+    default: {
+        constexpr uint32_t zeroWidthMask = U_GC_CC_MASK | U_GC_CF_MASK | U_GC_ME_MASK | U_GC_MN_MASK;
+        if (cp != 0x00AD
+            && ((U_MASK(u_charType(static_cast<UChar32>(cp))) & zeroWidthMask)
+                || u_hasBinaryProperty(static_cast<UChar32>(cp), UCHAR_EMOJI_MODIFIER)))
+            return 0;
+        return 1;
+    }
+    }
+}
+
+static size_t perCodePointLatin1Width(std::span<const uint8_t> input, bool excludeAnsiColors, bool ambiguousAsWide)
+{
+    size_t width = 0;
+    const uint8_t* p = input.data();
+    const uint8_t* const end = p + input.size();
+    while (p != end) {
+        if (excludeAnsiColors && ANSI::isEscapeCharacter(*p)) {
+            p = ANSI::consumeANSI(p, end); // always makes progress
+            continue;
+        }
+        width += perCodePointColumnWidth(*p++, ambiguousAsWide);
+    }
+    return width;
+}
+
+static size_t perCodePointUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors, bool ambiguousAsWide)
+{
+    size_t width = 0;
+    const char16_t* p = input.data();
+    const char16_t* const end = p + input.size();
+    while (p != end) {
+        if (excludeAnsiColors && ANSI::isEscapeCharacter(*p)) {
+            p = ANSI::consumeANSI(p, end); // always makes progress
+            continue;
+        }
+        char32_t cp = *p++;
+        if (U16_IS_LEAD(cp) && p != end && U16_IS_TRAIL(*p)) {
+            cp = U16_GET_SUPPLEMENTARY(static_cast<char16_t>(cp), *p);
+            p++;
+        }
+        width += perCodePointColumnWidth(cp, ambiguousAsWide);
+    }
+    return width;
+}
+
+} // namespace StringWidth
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStringWidth, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -1049,6 +1126,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStringWidth, (JSC::JSGlobalObject * global
 
     bool countAnsiEscapeCodes = false;
     bool ambiguousIsNarrow = true;
+    bool perCodePoint = false;
 
     const JSC::JSValue optionsValue = callFrame->argument(1);
     if (optionsValue.isObject()) {
@@ -1063,9 +1141,27 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStringWidth, (JSC::JSGlobalObject * global
         JSC::JSValue ambiguousIsNarrowValue = getIfPropertyExistsPrototypePollutionMitigation(globalObject, optionsObject, JSC::Identifier::fromString(vm, "ambiguousIsNarrow"_s));
         RETURN_IF_EXCEPTION(scope, {});
         applyTruthyBooleanOption(globalObject, ambiguousIsNarrowValue, ambiguousIsNarrow);
+
+        JSC::JSValue perCodePointValue = getIfPropertyExistsPrototypePollutionMitigation(globalObject, optionsObject, JSC::Identifier::fromString(vm, "perCodePoint"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        applyTruthyBooleanOption(globalObject, perCodePointValue, perCodePoint);
     }
 
     const bool ambiguousAsWide = !ambiguousIsNarrow;
+    if (perCodePoint) {
+        // node's ICU column-width algorithm: every code point measured
+        // individually (an emoji ZWJ sequence counts each member), instead
+        // of the grapheme clustering above.
+        size_t width;
+        if (view->is8Bit()) {
+            const auto span = view->span8();
+            width = StringWidth::perCodePointLatin1Width({ reinterpret_cast<const uint8_t*>(span.data()), span.size() }, !countAnsiEscapeCodes, ambiguousAsWide);
+        } else {
+            const auto span = view->span16();
+            width = StringWidth::perCodePointUTF16Width({ span.data(), span.size() }, !countAnsiEscapeCodes, ambiguousAsWide);
+        }
+        return JSC::JSValue::encode(JSC::jsNumber(static_cast<double>(width)));
+    }
     size_t width;
     if (view->is8Bit()) {
         // 8-bit JSC strings are Latin-1.

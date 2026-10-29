@@ -1,4 +1,5 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 use super::throw;
 use super::DiffFormatter;
@@ -6,24 +7,17 @@ use super::Expect;
 
 impl Expect {
     /// Object.is()
-    #[bun_jsc::host_fn(method)]
-    pub fn to_be(
+    pub(crate) fn to_be(
         &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global_this = cx.global();
         let (this, left, not) =
-            self.matcher_prelude(global_this, callframe.this(), "toBe", "<green>expected<r>")?;
+            self.matcher_prelude(global_this, this_value.to_js(), "toBe", "<green>expected<r>")?;
 
-        let arguments_ = callframe.arguments_old::<2>();
-        let arguments = arguments_.slice();
-
-        if arguments.len() < 1 {
-            return Err(global_this.throw_invalid_arguments(format_args!("toBe() takes 1 argument")));
-        }
-
-        let right = arguments[0];
-        right.ensure_still_alive();
+        let right = expected.to_js();
         let mut pass = right.is_same_value(left, global_this)?;
 
         if not {
@@ -81,7 +75,7 @@ impl Expect {
         }
 
         if right.is_string() && left.is_string() {
-            let diff_format = DiffFormatter { expected: Some(right), received: Some(left), expected_string: None, received_string: None, global_this: Some(global_this), not };
+            let diff_format = DiffFormatter::new(global_this, left, right, not)?;
             return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
         }
 

@@ -6,12 +6,19 @@ import url from "node:url";
 process.emitWarning = () => {};
 
 describe("Invalid IPv6 addresses", () => {
-  it.each(["https://[::1", "https://[:::1]", "https://[\n::1]", "http://[::banana]"])(
-    "Invalid hostnames - parsing '%s' fails",
-    input => {
-      expect(() => url.parse(input)).toThrowError(TypeError);
-    },
-  );
+  it.each(["https://[::1"])("Invalid hostnames - parsing '%s' fails", input => {
+    expect(() => url.parse(input)).toThrowError(TypeError);
+  });
+
+  // Node only rejects the forbiddenHostCharsIpv6 set inside brackets; these
+  // parse (matching node), with tab/CR/LF stripped like the WHATWG parser.
+  it.each([
+    ["https://[:::1]", "[:::1]"],
+    ["https://[\n::1]", "[::1]"],
+    ["http://[::banana]", "[::banana]"],
+  ])("Lenient hostnames - parsing '%s'", (input, host) => {
+    expect(url.parse(input).host).toBe(host);
+  });
 
   it.each(["https://[::1]::", "https://[::1]:foo"])("Invalid ports - parsing '%s' fails", input => {
     expect(() => url.parse(input)).toThrowError(TypeError);

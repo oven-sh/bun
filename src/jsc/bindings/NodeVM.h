@@ -5,12 +5,17 @@
 #include "BunGlobalScope.h"
 
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSGlobalProxy.h>
 #include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallFrame.h>
 #include <JavaScriptCore/Nodes.h>
+
+namespace JSC {
+class ParserError;
+}
 
 namespace Bun {
 
@@ -20,13 +25,27 @@ class CompileFunctionOptions;
 
 namespace NodeVM {
 
-RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::ProgramExecutable* executable, const JSC::SourceCode& source);
-RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::ModuleProgramExecutable* executable, const JSC::SourceCode& source);
+RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::SourceCodeType, const JSC::SourceCode& source);
 bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData);
+JSC::JSUint8Array* createCachedDataBuffer(JSGlobalObject* globalObject, std::span<const uint8_t> bytecode);
+// Returns null unless `cachedData` is intact output from createCachedDataBuffer().
+// Copies the bytecode because a decoded code block keeps reading it after decodeCodeBlock() returns.
+RefPtr<JSC::CachedBytecode> unwrapCachedData(std::span<const uint8_t> cachedData);
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
-std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey, JSValue* importer);
+// `url` must be caller-resolved: `new Script` falls back to evalmachine.<anonymous>
+// when no filename was provided; compileFunction has no such default.
+void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset);
+inline NodeVMOptionNames& optionNames(JSC::VM& vm) { return WebCore::clientData(vm)->nodeVMOptionNames(); }
+// The file: URL that code compiled under `filename` has as its origin.
+const WTF::URL& sourceOriginURL(JSC::VM&, const String& filename);
+// Lowers offset if needed so that offset + 1 + sourceLength fits in an int, JSC's position type.
+OrdinalNumber clampOffsetForSource(OrdinalNumber offset, unsigned sourceLength);
+// JSC adds a provider's start position to derived lines and columns as unsigned numbers, so this clamps at zero.
+TextPosition providerStartPosition(OrdinalNumber lineOffset, OrdinalNumber columnOffset);
+// `codeGenerationKey`: optionNames(vm).codeGeneration(vm) or optionNames(vm).contextCodeGeneration(vm).
+void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, const JSC::Identifier& codeGenerationKey, JSValue* importer);
 NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow);
 JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value);
 // For vm.compileFunction we need to return an anonymous function expression. This code is adapted from/inspired by JSC::constructFunction, which is used for function declarations.
@@ -48,7 +67,6 @@ public:
 
     BaseVMOptions() = default;
     BaseVMOptions(String filename);
-    BaseVMOptions(String filename, OrdinalNumber lineOffset, OrdinalNumber columnOffset);
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);
     bool validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool& outProduceCachedData);
@@ -62,6 +80,7 @@ public:
     JSGlobalObject* parsingContext = nullptr;
     JSValue contextExtensions {};
     bool produceCachedData = false;
+    bool cachedDataProvided = false;
 
     using BaseVMOptions::BaseVMOptions;
 
@@ -77,33 +96,6 @@ public:
     // queue, drained only after each script/module evaluation (Node's
     // own_microtask_queue contextify behavior).
     bool ownMicrotaskQueue = false;
-};
-
-class NodeVMGlobalObject;
-
-class NodeVMSpecialSandbox final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot;
-
-    static NodeVMSpecialSandbox* create(VM& vm, NodeVMGlobalObject* globalObject);
-
-    DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
-
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
-
-    NodeVMGlobalObject* parentGlobal() const { return m_parentGlobal.get(); }
-
-private:
-    WriteBarrier<NodeVMGlobalObject> m_parentGlobal;
-
-    NodeVMSpecialSandbox(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject);
-
-    void finishCreation(VM&);
 };
 
 // This class represents a sandboxed global object for vm contexts
@@ -128,15 +120,11 @@ public:
     static void destroy(JSCell* cell);
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
     JSObject* contextifiedObject() const { return m_sandbox.get(); }
-    void clearContextifiedObject();
-    void sigintReceived();
     bool isNotContextified() const { return m_contextOptions.notContextified; }
     bool hasOwnMicrotaskQueue() const { return m_contextOptions.ownMicrotaskQueue; }
     // Performs a microtask checkpoint on this context's own queue
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
     void drainOwnMicrotasks();
-    NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
-    void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object
@@ -151,12 +139,34 @@ public:
 private:
     // The contextified object that acts as the global proxy
     WriteBarrier<JSObject> m_sandbox;
-    // A special object used when the context is not contextified.
-    WriteBarrier<NodeVMSpecialSandbox> m_specialSandbox;
     WriteBarrier<Unknown> m_dynamicImportCallback;
     NodeVMContextOptions m_contextOptions {};
 
     NodeVMGlobalObject(VM& vm, Structure* structure, NodeVMContextOptions contextOptions, JSValue importer);
+
+    bool putOwnOrInherited(JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+};
+
+// The `globalThis` of a vm context. JSC doesn't support a Proxy in the prototype chain of a global object,
+// so the global object has no prototype, and its proxy has the prototype that scripts see and set.
+class NodeVMGlobalProxy final : public JSC::JSGlobalProxy {
+public:
+    using Base = JSC::JSGlobalProxy;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags & ~JSC::OverridesGetPrototype;
+
+    DECLARE_INFO;
+
+    static NodeVMGlobalProxy* create(JSC::VM&, NodeVMGlobalObject* target);
+
+    using JSC::JSObject::getPrototype;
+    using JSC::JSObject::setPrototype;
+
+private:
+    NodeVMGlobalProxy(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* target)
+        : Base(vm, structure, target)
+    {
+    }
 };
 
 // Helper functions to create vm contexts and run code
@@ -167,7 +177,5 @@ void configureNodeVM(JSC::VM&, Zig::GlobalObject*);
 // VM module functions
 JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);
 JSC_DECLARE_HOST_FUNCTION(vmModule_isContext);
-JSC_DECLARE_HOST_FUNCTION(vmModuleRunInNewContext);
-JSC_DECLARE_HOST_FUNCTION(vmModuleRunInThisContext);
 
 } // namespace Bun

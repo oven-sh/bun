@@ -1,0 +1,142 @@
+---
+title: "Compatibility"
+description: "What behaves differently in an executable built with bun compile, and what to change in your program"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+Most programs behave the same under [`bun compile`](/compiler/aot) as under `bun run`. The language, every `node:` and `bun:` module, Workers, native addons, macros, `Bun.build` plugins and nearly all npm packages work. A value that doesn't match its TypeScript type [is slower, not wrong](/compiler/types#when-a-value-doesnt-match-its-type).
+
+What differs: [built-in objects are read-only](#built-in-objects-are-read-only), [code from a string is interpreted](#code-from-strings), [a dynamic import only finds what the build found](#dynamic-imports), and [nothing can hook the module loader](#loader-hooks-and-the-module-cache). The build also checks your types, and [a type error stops it](/compiler/aot#type-errors-stop-the-build).
+
+## Built-in objects are read-only
+
+```js patch.js icon="/icons/javascript.svg"
+Array.prototype.last = last; // works: a new method
+Array.prototype.push = push; // TypeError: replaces a built-in method
+Object.prototype.extra = 1; // TypeError: nothing can be added here
+```
+
+```txt
+TypeError: Cannot assign to Array.prototype.push because built-in objects
+are read-only in a compiled executable
+```
+
+Compiled code calls `push` directly. It doesn't check first whether something replaced it, so nothing can.
+
+- You can't replace, redefine or delete an existing member of the language's own objects: `Object`, `Array`, `String`, `Map`, `Set`, `Promise`, `RegExp`, `Date`, `Math`, `JSON`, `Buffer`, the typed arrays, and their prototypes.
+- You can add a new member to most of them: `Array.prototype.last`, `Math.tau`, `BigInt.prototype.toJSON`.
+- You can't add anything to `Object.prototype`, `Function.prototype`, `Promise.prototype` or `RegExp.prototype`.
+- The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams` are read-only. Write a subclass: `class Upper extends Response {}`.
+
+What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
+
+The build reports the assignments it can see as `TS100014`. The others throw when they run, and the stack trace points at the line. If that line is in a package, look it up in [Packages that don't work](/compiler/libraries#packages-that-dont-work).
+
+## Code from strings
+
+```ts strings.ts icon="/icons/typescript.svg"
+const add = new Function("a", "b", "return a + b");
+const local = 5;
+console.log(add(2, 3), eval("local * 2"), (0, eval)("typeof Bun"));
+```
+
+```bash terminal icon="terminal"
+bun compile ./strings.ts && ./strings
+```
+
+```txt
+5 10 object
+```
+
+`eval`, `new Function` and `node:vm` work. The build can't see that code and the executable has no JIT, so Bun interprets it. Call them directly. The build doesn't follow `globalThis[name](code)`, which throws an `EvalError` if it's the only such call in your program.
+
+`ShadowRealm` isn't supported. The build stops at code that uses it, and an executable has no such global. Use a `node:vm` context.
+
+Interpreted code is fine for a template or a config file. It costs you when a library generates its hot code this way, as zod 4, ajv, fast-json-stringify and Elysia do.
+
+- zod 4: call `z.config({ jitless: true })` before you create a schema.
+- Fastify: call `app.setSerializerCompiler(() => JSON.stringify)`, and write the validators to files with the standalone mode of `@fastify/ajv-compiler`.
+
+If your program needs no code from strings, build with [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings). `eval` then throws an `EvalError`, and the compiler can optimize more.
+
+## WebAssembly
+
+A `.wasm` file that you import is compiled at build time. Bytes that your program downloads, decodes from a string or assembles itself are interpreted, and a tight loop in them runs much slower than under `bun run`.
+
+## Dynamic imports
+
+```ts app.ts icon="/icons/typescript.svg"
+await import("./plugins/" + name + ".ts"); // finds plugins/*.ts
+await import(name); // only finds the entry points of the build
+```
+
+The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `path.join()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works. Anything else isn't in the executable:
+
+```txt
+error: Cannot load '/home/me/late.ts': it isn't in this executable ...
+```
+
+| You want to load                     | Do this                              |
+| ------------------------------------ | ------------------------------------ |
+| One of your files                    | Pass it as another entry point       |
+| A package with a dynamic name        | Pass its main file as an entry point |
+| A `node:` module with a dynamic name | `import "node:dgram"` somewhere      |
+| JSON, TOML, YAML or text             | Nothing. Data files load from disk   |
+| One package from disk                | `--external <package>`               |
+| Any file from disk                   | `--aot-allow-code-from-disk`         |
+
+```bash terminal icon="terminal"
+bun compile ./app.ts './extra/*.ts' ./node_modules/pg/lib/index.js
+```
+
+Code that's loaded from disk is interpreted, and both flags make the executable larger.
+
+Workers follow the same rule. The build finds `new Worker("./worker.ts")` and `new Worker(new URL("./worker.ts", import.meta.url))` in your own files. Pass any other worker as an entry point, including one that a package in `node_modules` starts.
+
+Next.js and Angular load your pages by dynamic paths. [Frameworks](/compiler/libraries#frameworks) shows what to pass.
+
+## Loader hooks and the module cache
+
+Every `import`, and every `require()` of a constant path, is resolved at build time. Nothing in `node:module` runs on the way. If your program depends on a hook, build it with `--no-aot`.
+
+- `Module._resolveFilename` and `Module.prototype.require` can be replaced, but Bun only calls them for dynamic paths. For aliases, use `paths` in `tsconfig.json` or `imports` in `package.json`.
+- `Module._extensions[".js"] = loader` throws. You don't need `@babel/register` or anything like it, because the build compiles TypeScript and JSX.
+- A tracer that patches modules as they load, like OpenTelemetry's auto-instrumentation, sees none of them.
+- A module runs once, as in every executable. `require.cache` doesn't list compiled modules, and `delete require.cache[path]` does nothing.
+
+## Error messages
+
+The class of an error, its line and its stack trace are the same. Where `bun run` quotes your source in the message, an executable quotes less.
+
+```txt
+bun run      TypeError: null is not an object (evaluating 'o.a.c')
+bun compile  TypeError: null is not an object (evaluating 'null.c')
+```
+
+Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
+
+## Garbage collection
+
+A local variable stops keeping its value alive after its last use, even while the function waits at an `await`. Under `bun run`, a variable that a closure captures lives as long as the function's other variables.
+
+```ts watch.ts icon="/icons/typescript.svg"
+async function watch(target: object) {
+  const registry = new FinalizationRegistry(() => console.log("collected"));
+  registry.register(target, 0);
+  await finished; // the registry can be collected here, and then its callback never runs
+}
+```
+
+Keep a `FinalizationRegistry` at module level, or somewhere your program reads it again later.
+
+## Not supported
+
+| Feature                                     | Instead                                    |
+| ------------------------------------------- | ------------------------------------------ |
+| `--target` for another platform             | Build on that platform, or pass `--no-aot` |
+| `--preload`, `--import` in `BUN_OPTIONS`    | Import the file from your entry point      |
+| `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT` | Build with `--compile-inspector`           |
+| Breakpoints and `debugger`                  | `bun --inspect-brk ./app.ts`               |
+| `cc()` from `bun:ffi`, on Linux             | Compile the C file first, then `dlopen()`  |
+| Over 32 GB of objects in a thread           | `--aot-huge-heap`                          |

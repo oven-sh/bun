@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+export /* prettier-ignore */ type  A = 1 ;
+export /* prettier-ignore */ import b  = c.d ;
+export /* prettier-ignore */ declare function e  (): void ;
+export /* prettier-ignore */ const f  = 1 ;
+export /* prettier-ignore */ type  G = 1
+export /* prettier-ignore */ const h  = 1
+export /* prettier-ignore */ declare function i  (): void
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export /* prettier-ignore */ type  A = 1 ;
+export /* prettier-ignore */ import b  = c.d ;
+export /* prettier-ignore */ declare function e  (): void ;
+export /* prettier-ignore */ const f  = 1 ;
+export /* prettier-ignore */ type  G = 1
+export /* prettier-ignore */ const h  = 1
+export /* prettier-ignore */ declare function i  (): void
+
+===================== End =====================

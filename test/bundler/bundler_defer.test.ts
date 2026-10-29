@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import * as path from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -137,7 +137,7 @@ describe("defer", () => {
   {
     let action: string[] = [];
     test("onstart throwing an error works", async () => {
-      const folder = tempDirWithFiles("plugin", {
+      await using folder = tempDir("plugin", {
         "index.ts": "export const foo = {}",
       });
       try {
@@ -467,7 +467,7 @@ console.log("FOOOO", foo);
   });
 
   test("integration", async () => {
-    const folder = tempDirWithFiles("integration", {
+    await using folder = tempDir("integration", {
       "module_data.json": "{}",
       "package.json": `{
     "name": "integration-test",
@@ -655,4 +655,75 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
     }
     expect(onFinalizeCallCount).toBe(3);
   });
+
+  test("defer() called after the build settled is refused", async () => {
+    using dir = tempDir("defer-after-settle", {
+      "index.ts": `import "./a.ts"; console.log("index");`,
+      "a.ts": `console.log("a");`,
+    });
+    let late: (() => Promise<void>) | undefined;
+    const build = await Bun.build({
+      entrypoints: [path.join(String(dir), "index.ts")],
+      plugins: [
+        {
+          name: "keeps-defer",
+          setup(build) {
+            build.onLoad({ filter: /a\.ts$/ }, ({ defer }) => {
+              late = defer;
+              return { contents: `console.log("replaced");`, loader: "ts" };
+            });
+          },
+        },
+      ],
+    });
+    expect(build.success).toBe(true);
+    expect(late).toBeFunction();
+    expect(() => late!()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  });
+
+  // A plugin that calls defer() without awaiting it and answers straight away must not corrupt the pass's
+  // accounting or let the pass finish under its own defer hop (use-after-free under ASAN). Run in a child so
+  // a regression fails the child instead of taking this file down.
+  test("an un-awaited defer() with an immediate answer neither corrupts the queue nor outlives the pass", async () => {
+    using dir = tempDir("defer-unawaited", {
+      "entry.ts": `import { x, foo } from "./shared"; console.log(x, foo());`,
+      "shared.ts": `export const x: number = 0; export function foo() { return "s"; }`,
+      "build.js": `
+        const path = require("path");
+        // Many builds at once (they queue on the one bundle thread) while this thread stays busy, so a
+        // defer hop is still in flight when its pass could otherwise finish.
+        (async () => {
+          const busy = setInterval(() => { const t = Date.now(); while (Date.now() - t < 2); }, 1);
+          const results = await Promise.all(Array.from({ length: 24 }, () => {
+            let n = 0;
+            return Bun.build({
+              entrypoints: [path.join(__dirname, "entry.ts")],
+              plugins: [{ name: "defer", setup(b) {
+                b.onLoad({ filter: /\\.ts$/ }, async a => {
+                  if (n++ === 0) a.defer();   // not awaited
+                  return { contents: "export const x: number = " + n + "; export function foo() { return 'd' }", loader: "ts" };
+                });
+              } }],
+            });
+          }));
+          clearInterval(busy);
+          console.log(results.map(r => (r.success ? "." : "x")).join(""));
+        })();
+      `,
+    });
+    await Promise.all(
+      [false, true].map(async inWorker => {
+        const script = inWorker
+          ? `const { Worker } = require("worker_threads");
+           const w = new Worker(require("path").join(${JSON.stringify(String(dir))}, "build.js"));
+           w.on("exit", c => process.exit(c));`
+          : `require(require("path").join(${JSON.stringify(String(dir))}, "build.js"))`;
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(".".repeat(24) + "\n");
+        expect(exitCode).toBe(0);
+      }),
+    );
+  }, 30_000);
 });

@@ -15,12 +15,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForBakeGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBakeGlobalScope = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForBakeGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForBakeGlobalScope = std::forward<decltype(space)>(space); },
+        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBakeGlobalScope, m_subspaceForBakeGlobalScope),
             [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForBakeGlobalObject; });
     }
 

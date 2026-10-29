@@ -23,7 +23,6 @@ use bun_core::strings::{CodepointIterator, Cursor};
 pub enum StringEncoding {
     Ascii,
     Wtf8,
-    Utf16,
 }
 
 // ─── SrcAscii ──────────────────────────────────────────────────────────────
@@ -40,14 +39,13 @@ struct SrcAscii {
 // encoding if profiling shows it matters.
 #[derive(Copy, Clone)]
 pub struct InputChar {
-    pub char: u32,
-    pub escaped: bool,
+    pub(crate) char: u32,
+    pub(crate) escaped: bool,
 }
 
 #[derive(Copy, Clone)]
 struct AsciiIndexValue {
     char: u32,
-    escaped: bool,
 }
 
 impl SrcAscii {
@@ -71,7 +69,6 @@ impl SrcAscii {
         }
         Some(AsciiIndexValue {
             char: u32::from(b[self.i]),
-            escaped: false,
         })
     }
     #[inline]
@@ -82,7 +79,6 @@ impl SrcAscii {
         }
         Some(AsciiIndexValue {
             char: u32::from(b[self.i + 1]),
-            escaped: false,
         })
     }
     #[inline]
@@ -102,7 +98,6 @@ struct SrcUnicode {
 #[derive(Copy, Clone)]
 struct UnicodeIndexValue {
     char: u32,
-    width: u8,
 }
 
 impl SrcUnicode {
@@ -137,7 +132,6 @@ impl SrcUnicode {
         }
         Some(UnicodeIndexValue {
             char: self.cursor.c as u32,
-            width: self.cursor.width,
         })
     }
     #[inline]
@@ -147,7 +141,6 @@ impl SrcUnicode {
         }
         Some(UnicodeIndexValue {
             char: self.next_cursor.c as u32,
-            width: self.next_cursor.width,
         })
     }
     #[inline]
@@ -167,13 +160,6 @@ impl SrcUnicode {
 
 // ─── ShellCharIter ─────────────────────────────────────────────────────────
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ShellCharIterState {
-    Normal,
-    Single,
-    Double,
-}
-
 // PERF: Rust const
 // generics can't pick a field type from an enum value without an aux trait, so we
 // store both arms in a small enum and branch at runtime. Could split into three
@@ -186,33 +172,16 @@ enum ShellSrc {
 
 pub struct ShellCharIter<const E: StringEncoding> {
     src: ShellSrc,
-    pub state: ShellCharIterState,
-    pub prev: Option<InputChar>,
-    pub current: Option<InputChar>,
 }
 
 /// Surface trait so callers can name `<ShellCharIter<E> as CharIter>::InputChar` /
 /// `::CodepointType` without inherent associated types.
-pub trait CharIter: Sized {
+trait CharIter: Sized {
     type CodepointType: Copy;
     type InputChar: Copy;
     fn init(bytes: &[u8]) -> Self;
     fn eat(&mut self) -> Option<Self::InputChar>;
-    fn peek(&mut self) -> Option<Self::InputChar>;
     fn read_char(&mut self) -> Option<Self::InputChar>;
-    fn src_bytes(&self) -> &[u8];
-    fn src_bytes_at_cursor(&self) -> &[u8];
-    fn cursor_pos(&self) -> usize;
-}
-
-impl<const E: StringEncoding> ShellCharIter<E> {
-    #[inline]
-    pub fn is_whitespace(c: InputChar) -> bool {
-        matches!(
-            c.char,
-            0x09 /* \t */ | 0x0D /* \r */ | 0x0A /* \n */ | 0x20 /* ' ' */
-        )
-    }
 }
 
 impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
@@ -226,50 +195,11 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
         } else {
             ShellSrc::Unicode(SrcUnicode::init(bytes))
         };
-        Self {
-            src,
-            state: ShellCharIterState::Normal,
-            prev: None,
-            current: None,
-        }
-    }
-
-    fn src_bytes(&self) -> &[u8] {
-        match &self.src {
-            ShellSrc::Ascii(a) => a.bytes(),
-            ShellSrc::Unicode(u) => u.iter.bytes,
-        }
-    }
-
-    fn src_bytes_at_cursor(&self) -> &[u8] {
-        let bytes = self.src_bytes();
-        match &self.src {
-            ShellSrc::Ascii(a) => {
-                if a.i >= bytes.len() {
-                    return b"";
-                }
-                &bytes[a.i..]
-            }
-            ShellSrc::Unicode(u) => {
-                if u.cursor.i as usize >= bytes.len() {
-                    return b"";
-                }
-                &bytes[u.cursor.i as usize..]
-            }
-        }
-    }
-
-    fn cursor_pos(&self) -> usize {
-        match &self.src {
-            ShellSrc::Ascii(a) => a.i,
-            ShellSrc::Unicode(u) => u.cursor.i as usize,
-        }
+        Self { src }
     }
 
     fn eat(&mut self) -> Option<InputChar> {
         if let Some(result) = self.read_char() {
-            self.prev = self.current;
-            self.current = Some(result);
             match &mut self.src {
                 ShellSrc::Ascii(a) => a.eat(result.escaped),
                 ShellSrc::Unicode(u) => u.eat(result.escaped),
@@ -279,25 +209,12 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
         None
     }
 
-    fn peek(&mut self) -> Option<InputChar> {
-        self.read_char()
-    }
-
     fn read_char(&mut self) -> Option<InputChar> {
-        let (mut ch, _width_or_escaped);
-        match &self.src {
-            ShellSrc::Ascii(a) => {
-                let iv = a.index()?;
-                ch = iv.char;
-                _width_or_escaped = iv.escaped as u8;
-            }
-            ShellSrc::Unicode(u) => {
-                let iv = u.index()?;
-                ch = iv.char;
-                _width_or_escaped = iv.width;
-            }
-        }
-        if ch != u32::from(b'\\') || self.state == ShellCharIterState::Single {
+        let mut ch = match &self.src {
+            ShellSrc::Ascii(a) => a.index()?.char,
+            ShellSrc::Unicode(u) => u.index()?.char,
+        };
+        if ch != u32::from(b'\\') {
             return Some(InputChar {
                 char: ch,
                 escaped: false,
@@ -305,43 +222,10 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
         }
 
         // Handle backslash
-        match self.state {
-            ShellCharIterState::Normal => {
-                let peeked = match &self.src {
-                    ShellSrc::Ascii(a) => a.index_next()?.char,
-                    ShellSrc::Unicode(u) => u.index_next()?.char,
-                };
-                ch = peeked;
-            }
-            ShellCharIterState::Double => {
-                let peeked = match &self.src {
-                    ShellSrc::Ascii(a) => a.index_next()?.char,
-                    ShellSrc::Unicode(u) => u.index_next()?.char,
-                };
-                match peeked {
-                    // Backslash only applies to these characters
-                    c if c == u32::from(b'$')
-                        || c == u32::from(b'`')
-                        || c == u32::from(b'"')
-                        || c == u32::from(b'\\')
-                        || c == u32::from(b'\n')
-                        || c == u32::from(b'#') =>
-                    {
-                        ch = peeked;
-                    }
-                    _ => {
-                        return Some(InputChar {
-                            char: ch,
-                            escaped: false,
-                        });
-                    }
-                }
-            }
-            // We checked `self.state == .Single` above so this is impossible.
-            // was `unreachable_unchecked()`; the lexer is on a
-            // cold path so trade the elided check for a defined panic.
-            ShellCharIterState::Single => unreachable!(),
-        }
+        ch = match &self.src {
+            ShellSrc::Ascii(a) => a.index_next()?.char,
+            ShellSrc::Unicode(u) => u.index_next()?.char,
+        };
 
         Some(InputChar {
             char: ch,
@@ -379,8 +263,8 @@ impl ExpansionVariant {
 
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
 pub struct ExpansionVariants {
-    pub idx: u16,
-    pub end: u16,
+    pub(crate) idx: u16,
+    pub(crate) end: u16,
 }
 
 #[derive(bun_core::EnumTag)]
@@ -450,7 +334,7 @@ pub enum TokenTag {
 }
 
 impl Token {
-    pub fn to_text(&self) -> SmolStr {
+    pub(crate) fn to_text(&self) -> SmolStr {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),
             Token::Comma => SmolStr::from_char(b','),
@@ -587,25 +471,15 @@ pub mod ast {
 
     pub struct Group {
         /// BACKREF: child points back to owning parent Group (LIFETIMES.tsv).
-        pub bubble_up: *mut Group,
-        pub bubble_up_next: Option<u16>,
-        pub atoms: GroupAtoms,
-    }
-
-    impl Default for Group {
-        fn default() -> Self {
-            Self {
-                bubble_up: ptr::null_mut(),
-                bubble_up_next: None,
-                atoms: GroupAtoms::Single(Atom::Text(SmolStr::empty())),
-            }
-        }
+        pub(crate) bubble_up: *mut Group,
+        pub(crate) bubble_up_next: Option<u16>,
+        pub(crate) atoms: GroupAtoms,
     }
 
     pub struct Expansion {
         // bump-owned mutable slice; raw because expand_nested writes
         // bubble_up backrefs into elements while recursing through the parent.
-        pub variants: *mut [Group],
+        pub(crate) variants: *mut [Group],
     }
 }
 
@@ -656,7 +530,7 @@ pub fn expand(
     contains_nested: bool,
 ) -> Result<(), ExpandError> {
     check_brace_group_count(tokens)?;
-    let mut out_key_counter: u16 = 1;
+    let mut out_key_counter: usize = 1;
     if !contains_nested {
         let expansions_table = build_expansion_table_alloc(tokens)?;
 
@@ -698,8 +572,8 @@ pub fn expand(
 unsafe fn expand_nested(
     root: *mut ast::Group,
     out: &mut [Vec<u8>],
-    out_key: u16,
-    out_key_counter: &mut u16,
+    out_key: usize,
+    out_key_counter: &mut usize,
     start: u32,
 ) -> Result<(), ExpandError> {
     // SAFETY: see fn doc comment —
@@ -723,7 +597,7 @@ unsafe fn expand_nested(
 
             match &(*root).atoms {
                 ast::GroupAtoms::Single(ast::Atom::Text(txt)) => {
-                    out[usize::from(out_key)].extend_from_slice(txt.slice());
+                    out[out_key].extend_from_slice(txt.slice());
                     if !(*root).bubble_up.is_null() {
                         let bubble_up = (*root).bubble_up;
                         let next = (*root).bubble_up_next.unwrap();
@@ -738,10 +612,7 @@ unsafe fn expand_nested(
                     return Ok(());
                 }
                 ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
-                    let length = out[usize::from(out_key)].len();
-                    // reshaped for borrowck — snapshot prefix once.
-                    // PERF: extra Vec alloc for prefix snapshot — profile if hot.
-                    let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
+                    let length = out[out_key].len();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
                     for j in 0..variants_len {
@@ -752,7 +623,11 @@ unsafe fn expand_nested(
                             out_key
                         } else {
                             let new_key = *out_key_counter;
-                            out[usize::from(new_key)].extend_from_slice(&prefix);
+                            // new_key > out_key always (counter is bumped past out_key before
+                            // any recursion into it), and the j==0 recursion only appends to
+                            // out[out_key], so its [..length] prefix is stable.
+                            let (lo, hi) = out.split_at_mut(new_key);
+                            hi[0].extend_from_slice(&lo[out_key][..length]);
                             *out_key_counter += 1;
                             new_key
                         };
@@ -785,12 +660,10 @@ unsafe fn expand_nested(
             let atom: &ast::Atom = &(*many)[i_];
             match atom {
                 ast::Atom::Text(txt) => {
-                    out[usize::from(out_key)].extend_from_slice(txt.slice());
+                    out[out_key].extend_from_slice(txt.slice());
                 }
                 ast::Atom::Expansion(expansion) => {
-                    let length = out[usize::from(out_key)].len();
-                    // reshaped for borrowck — see above.
-                    let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
+                    let length = out[out_key].len();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
                     for j in 0..variants_len {
@@ -801,7 +674,8 @@ unsafe fn expand_nested(
                             out_key
                         } else {
                             let new_key = *out_key_counter;
-                            out[usize::from(new_key)].extend_from_slice(&prefix);
+                            let (lo, hi) = out.split_at_mut(new_key);
+                            hi[0].extend_from_slice(&lo[out_key][..length]);
                             *out_key_counter += 1;
                             new_key
                         };
@@ -829,8 +703,8 @@ fn expand_flat(
     tokens: &[Token],
     expansion_table: &[ExpansionVariant],
     out: &mut [Vec<u8>],
-    out_key: u16,
-    out_key_counter: &mut u16,
+    out_key: usize,
+    out_key_counter: &mut usize,
     depth_: u8,
     start: usize,
     end: usize,
@@ -844,7 +718,7 @@ fn expand_flat(
     for atom in tokens[start..end].iter() {
         match atom {
             Token::Text(txt) => {
-                out[usize::from(out_key)].extend_from_slice(txt.slice());
+                out[out_key].extend_from_slice(txt.slice());
             }
             Token::Close => {
                 depth -= 1;
@@ -857,15 +731,16 @@ fn expand_flat(
                     [usize::from(expansion_variants.idx)..usize::from(expansion_variants.end)];
                 let skip_over_idx = variants[variants.len() - 1].end();
 
-                let starting_len = out[usize::from(out_key)].len();
-                // reshaped for borrowck — snapshot prefix once.
-                let prefix: Vec<u8> = out[usize::from(out_key)][..starting_len].to_vec();
+                let starting_len = out[out_key].len();
                 for (i, variant) in variants.iter().enumerate() {
                     let new_key = if i == 0 {
                         out_key
                     } else {
                         let new_key = *out_key_counter;
-                        out[usize::from(new_key)].extend_from_slice(&prefix);
+                        // new_key > out_key always; the i==0 recursion only appends to
+                        // out[out_key], so its [..starting_len] prefix is stable.
+                        let (lo, hi) = out.split_at_mut(new_key);
+                        hi[0].extend_from_slice(&lo[out_key][..starting_len]);
                         *out_key_counter += 1;
                         new_key
                     };
@@ -1101,7 +976,6 @@ fn build_expansion_table(
     #[derive(Copy, Clone)]
     struct BraceState {
         tok_idx: u16,
-        variants: u16,
         prev_tok_end: u16,
     }
     let mut brace_stack: SmallVec<[BraceState; MAX_NESTED_BRACES]> = SmallVec::new();
@@ -1111,7 +985,6 @@ fn build_expansion_table(
     }
 
     let mut i: u16 = 0;
-    let mut prev_close = false;
     while (i as usize) < tokens.len() {
         match &mut tokens[i as usize] {
             Token::Open(open) => {
@@ -1119,40 +992,29 @@ fn build_expansion_table(
                 open.idx = table_idx;
                 brace_stack.push(BraceState {
                     tok_idx: i,
-                    variants: 0,
                     prev_tok_end: i,
                 });
             }
             Token::Close => {
-                let mut top = brace_stack.pop().unwrap();
+                let top = brace_stack.pop().unwrap();
 
                 table.push(ExpansionVariant::new(top.prev_tok_end + 1, i));
-
-                top.prev_tok_end = i;
-                top.variants += 1;
 
                 if let Token::Open(open) = &mut tokens[top.tok_idx as usize] {
                     open.end = u16::try_from(table.len()).expect("int cast");
                 }
-                prev_close = true;
             }
             Token::Comma => {
                 let top = brace_stack.last_mut().unwrap();
 
                 table.push(ExpansionVariant::new(top.prev_tok_end + 1, i));
 
-                prev_close = false;
-
                 top.prev_tok_end = i;
-                top.variants += 1;
             }
-            _ => {
-                prev_close = false;
-            }
+            _ => {}
         }
         i += 1;
     }
-    let _ = prev_close;
 
     if cfg!(debug_assertions) {
         for variant in table.iter() {
@@ -1266,9 +1128,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 }
             }
 
-            // if (char_stack.push(char) == char_stack.Error.StackFull) {
-            //     try self.app
-            // }
             self.append_char(char)?;
         }
 
@@ -1321,7 +1180,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             debug_assert!(matches!(first, Token::Open(_)));
         }
 
-        let mut braces: u8 = 0;
+        let mut braces: u32 = 0;
 
         self.replace_token_with_string(starting_idx);
         let mut i: u32 = starting_idx + 1;
@@ -1370,7 +1229,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             if let Token::Text(last) = &mut self.tokens[last_idx] {
                 if ENCODING == Encoding::Ascii {
                     // SAFETY: ascii codepoint is u8
-                    last.append_char(char as u8)?;
+                    last.append_slice(&[char as u8])?;
                     return Ok(());
                 }
                 let mut buf = [0u8; 4];

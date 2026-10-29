@@ -25,7 +25,6 @@
 #include "CryptoAlgorithmX25519Params.h"
 #include "CryptoKeyOKP.h"
 #include "ScriptExecutionContext.h"
-#include "CryptoDigest.h"
 #include <openssl/curve25519.h>
 #include <wtf/CryptographicUtilities.h>
 
@@ -43,7 +42,7 @@ CryptoAlgorithmIdentifier CryptoAlgorithmX25519::identifier() const
 
 void CryptoAlgorithmX25519::generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
-    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey)) {
+    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
         exceptionCallback(ExceptionCode::SyntaxError, ""_s);
         return;
     }
@@ -118,9 +117,9 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
     // the result validation and callback dispatch into unifiedCallback.
     workQueue.dispatch(
         context.globalObject(),
-        [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey, unifiedCallback = WTF::move(unifiedCallback), contextIdentifier = context.identifier()]() mutable {
+        [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey, unifiedCallback = WTF::move(unifiedCallback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
             auto derivedKey = platformDeriveBits(downcast<CryptoKeyOKP>(baseKey.get()), downcast<CryptoKeyOKP>(*publicKey));
-            ScriptExecutionContext::postTaskTo(contextIdentifier, [derivedKey = WTF::move(derivedKey), unifiedCallback = WTF::move(unifiedCallback)](auto&) mutable {
+            ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [derivedKey = WTF::move(derivedKey), unifiedCallback = WTF::move(unifiedCallback)](auto&) mutable {
                 unifiedCallback(WTF::move(derivedKey));
             });
         });
@@ -131,6 +130,11 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
     RefPtr<CryptoKeyOKP> result;
     bool keyTypeMismatch = false;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto when applicable
+    case CryptoKeyFormat::RawSeed:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
 
@@ -201,6 +205,11 @@ void CryptoAlgorithmX25519::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
 
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto when applicable
+    case CryptoKeyFormat::RawSeed:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         auto jwk = ecKey.exportJwk();
         if (jwk.hasException()) {

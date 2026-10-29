@@ -79,8 +79,7 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
     bool isPublicKeyExtractable = true;
     auto publicKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(public_key), isPublicKeyExtractable, usages);
     ASSERT(publicKey);
-    auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, Vector<uint8_t>(std::span { private_key.begin(), isEd25519 ? (unsigned int)ED25519_PRIVATE_KEY_LEN : (unsigned int)X25519_PRIVATE_KEY_LEN }), extractable, usages);
-    ASSERT(privateKey);
+    RefPtr<CryptoKeyOKP> privateKey = adoptRef(*new CryptoKeyOKP(identifier, namedCurve, CryptoKeyType::Private, Vector<uint8_t>(std::span { private_key.begin(), isEd25519 ? (unsigned int)ED25519_PRIVATE_KEY_LEN : (unsigned int)X25519_PRIVATE_KEY_LEN }), extractable, usages));
     return CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) };
 }
 

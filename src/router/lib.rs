@@ -14,16 +14,14 @@ use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
-use bun_paths::{self, PathBuffer, SEP, SEP_STR};
-use bun_sys::Fd;
-use bun_url::PathnameScanner;
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 
 use bun_http_types::URLPath::URLPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Cross-crate name aliases. These are pure re-exports of real lower-tier types
 // (no shadow structs); kept as a private module so the aliased paths
-// (`bun_ast::Log`, `Fs::Entry`, `api::LoadedRouteConfig`) read naturally.
+// (`bun_ast::Log`, `Fs::Entry`) read naturally.
 // ──────────────────────────────────────────────────────────────────────────
 // Wyhash with seed 0. NOT Wyhash11 (different algo).
 #[inline]
@@ -38,15 +36,9 @@ use bun_resolver::DirInfoRef;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::FileSystem;
 
-// peechy schema types: `StringPointer` lives in `bun_core::schema::api` (T0);
-// the route-config pair lives in `bun_options_types::schema::api`.
-mod api {
-    pub(crate) use bun_core::schema::api::StringPointer;
-    pub(crate) use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
-}
-
 type CoreError = crate::Error;
 
+use bun_collections::index_sort;
 use bun_core::HashedString;
 use bun_ptr::Interned;
 
@@ -59,11 +51,6 @@ use bun_ptr::Interned;
 #[derive(Debug, Clone, Default)]
 pub struct RouteConfig {
     pub dir: Box<[u8]>,
-    pub possible_dirs: Box<[Box<[u8]>]>,
-
-    /// Frameworks like Next.js (and others) use a special prefix for bundled/transpiled assets.
-    /// This is combined with "origin" when printing import paths.
-    pub asset_prefix_path: Box<[u8]>,
 
     // TODO: do we need a separate list for data-only extensions?
     // e.g. /foo.json just to get the data for the route, without rendering the html
@@ -71,120 +58,6 @@ pub struct RouteConfig {
     // I would consider using a custom binary format to minimize request size
     // maybe like CBOR
     pub extensions: Box<[Box<[u8]>]>,
-    pub routes_enabled: bool,
-
-    pub static_dir: Box<[u8]>,
-    pub static_dir_enabled: bool,
-}
-
-impl RouteConfig {
-    pub const DEFAULT_DIR: &'static [u8] = b"pages";
-    pub const DEFAULT_STATIC_DIR: &'static [u8] = b"public";
-    pub const DEFAULT_EXTENSIONS: &'static [&'static [u8]] =
-        &[b"tsx", b"ts", b"mjs", b"jsx", b"js"];
-
-    pub fn to_api(&self) -> api::LoadedRouteConfig {
-        api::LoadedRouteConfig {
-            asset_prefix: self.asset_prefix_path.clone(),
-            dir: if self.routes_enabled {
-                self.dir.clone()
-            } else {
-                Box::default()
-            },
-            extensions: self.extensions.clone(),
-            static_dir: if self.static_dir_enabled {
-                self.static_dir.clone()
-            } else {
-                Box::default()
-            },
-        }
-    }
-
-    #[inline]
-    pub fn zero() -> RouteConfig {
-        RouteConfig {
-            dir: Box::from(Self::DEFAULT_DIR),
-            extensions: Self::DEFAULT_EXTENSIONS
-                .iter()
-                .map(|s| Box::<[u8]>::from(*s))
-                .collect(),
-            static_dir: Box::from(Self::DEFAULT_STATIC_DIR),
-            routes_enabled: false,
-            ..Default::default()
-        }
-    }
-
-    pub fn from_loaded_routes(loaded: api::LoadedRouteConfig) -> RouteConfig {
-        RouteConfig {
-            extensions: loaded.extensions,
-            routes_enabled: !loaded.dir.is_empty(),
-            static_dir_enabled: !loaded.static_dir.is_empty(),
-            dir: loaded.dir,
-            asset_prefix_path: loaded.asset_prefix,
-            static_dir: loaded.static_dir,
-            possible_dirs: Box::default(),
-        }
-    }
-
-    pub fn from_api(router_: &api::RouteConfig) -> Result<RouteConfig, CoreError> {
-        use bun_core::strings::{trim_left, trim_right};
-
-        let mut router = Self::zero();
-
-        let static_dir: &[u8] = trim_right(router_.static_dir.as_deref().unwrap_or(b""), b"/\\");
-        let asset_prefix: &[u8] =
-            trim_right(router_.asset_prefix.as_deref().unwrap_or(b""), b"/\\");
-
-        match router_.dir.len() {
-            0 => {}
-            1 => {
-                router.dir = Box::from(trim_right(&router_.dir[0], b"/\\"));
-                router.routes_enabled = !router.dir.is_empty();
-            }
-            _ => {
-                router.possible_dirs.clone_from(&router_.dir);
-                for dir in router_.dir.iter() {
-                    let trimmed = trim_right(dir, b"/\\");
-                    if !trimmed.is_empty() {
-                        router.dir = Box::from(trimmed);
-                    }
-                }
-                router.routes_enabled = !router.dir.is_empty();
-            }
-        }
-
-        if !static_dir.is_empty() {
-            router.static_dir = Box::from(static_dir);
-        }
-
-        if !asset_prefix.is_empty() {
-            router.asset_prefix_path = Box::from(asset_prefix);
-        }
-
-        if !router_.extensions.is_empty() {
-            let mut count: usize = 0;
-            for _ext in router_.extensions.iter() {
-                let ext = trim_left(_ext, b".");
-                if ext.is_empty() {
-                    continue;
-                }
-                count += 1;
-            }
-
-            let mut extensions: Vec<Box<[u8]>> = Vec::with_capacity(count);
-            for _ext in router_.extensions.iter() {
-                let ext = trim_left(_ext, b".");
-                if ext.is_empty() {
-                    continue;
-                }
-                extensions.push(Box::from(ext));
-            }
-
-            router.extensions = extensions.into_boxed_slice();
-        }
-
-        Ok(router)
-    }
 }
 
 // `hash_const` is byte-identical to the runtime `bun_wyhash::hash` (seed 0);
@@ -202,48 +75,26 @@ const INDEX_ROUTE_HASH: u32 =
 pub use bun_url::route_param;
 pub use route_param::Param;
 
-pub struct Router<'a> {
-    pub dir: Fd,
+pub struct Router {
     pub routes: Routes,
-    pub loaded_routes: bool,
-    // allocator dropped — global mimalloc
-    pub fs: &'a FileSystem,
+    pub(crate) loaded_routes: bool,
     pub config: RouteConfig,
 }
 
-impl<'a> Router<'a> {
-    pub fn init(fs: &'a FileSystem, config: RouteConfig) -> Result<Router<'a>, CoreError> {
+impl Router {
+    pub fn init(config: RouteConfig) -> Result<Router, CoreError> {
         Ok(Router {
-            dir: Fd::INVALID,
             routes: Routes {
-                config: config.clone(),
                 static_: StringHashMap::new(),
                 ..Routes::default()
             },
             loaded_routes: false,
-            fs,
             config,
         })
     }
 
     pub fn get_entry_points(&self) -> &[&'static [u8]] {
         self.routes.list.items_filepath()
-    }
-
-    pub fn get_public_paths(&self) -> &[&'static [u8]] {
-        self.routes.list.items_public_path()
-    }
-
-    pub fn route_index_by_hash(&self, hash: u32) -> Option<usize> {
-        if hash == INDEX_ROUTE_HASH {
-            return self.routes.index_id;
-        }
-
-        self.routes
-            .list
-            .items_hash()
-            .iter()
-            .position(|&h| h == hash)
     }
 
     pub fn get_names(&self) -> &[&'static [u8]] {
@@ -267,63 +118,6 @@ impl<'a> Router<'a> {
         self.loaded_routes = true;
         Ok(())
     }
-
-    pub fn match_<S: ServerLike, C: RequestContextLike>(
-        app: &mut Self,
-        server: &mut S,
-        ctx: &mut C,
-    ) -> Result<(), CoreError> {
-        ctx.set_matched_route(None);
-
-        // If there's an extname assume it's an asset and not a page
-        match ctx.url().extname.len() {
-            0 => {}
-            // json is used for updating the route client-side without a page reload
-            4 /* "json".len */ => {
-                if ctx.url().extname != b"json" {
-                    ctx.handle_request()?;
-                    return Ok(());
-                }
-            }
-            _ => {
-                ctx.handle_request()?;
-                return Ok(());
-            }
-        }
-
-        // PERF: a borrowed `List<'a>` cannot soundly live in a `'static` thread_local,
-        // so we allocate per-request; revisit with an arena/SmallVec if hot.
-        {
-            let mut params_list = route_param::List::default();
-            if let Some(route) = app
-                .routes
-                .match_page(&app.config.dir, ctx.url(), &mut params_list)
-            {
-                if let Some(redirect) = route.redirect_path {
-                    ctx.handle_redirect(redirect)?;
-                    return Ok(());
-                }
-
-                debug_assert!(!route.path.is_empty());
-
-                if let Some(watcher) = server.watcher_mut() {
-                    if watcher.watchloop_handle().is_none() {
-                        let _ = watcher.start();
-                    }
-                }
-
-                // ctx.matched_route = route;
-                // RequestContextType.JavaScriptHandler.enqueue(ctx, server, &params_list) catch {
-                //     server.javascript_enabled = false;
-                // };
-            }
-        }
-
-        if !ctx.controlled() && !ctx.has_called_done() {
-            ctx.handle_request()?;
-        }
-        Ok(())
-    }
 }
 
 pub const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
@@ -333,15 +127,13 @@ struct RouteIndex {
     name: &'static [u8],
     match_name: &'static [u8],
     filepath: &'static [u8],
-    public_path: &'static [u8],
-    hash: u32,
 }
 
 // TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
 // yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
 // accessors. Hand-rolled SoA struct until the derive exists.
 #[derive(Default)]
-pub struct RouteIndexList {
+struct RouteIndexList {
     // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
     // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
     // would dangle them on `Vec` realloc.
@@ -350,86 +142,64 @@ pub struct RouteIndexList {
     name: Vec<&'static [u8]>,
     match_name: Vec<&'static [u8]>,
     filepath: Vec<&'static [u8]>,
-    public_path: Vec<&'static [u8]>,
-    hash: Vec<u32>,
 }
 
 impl RouteIndexList {
-    pub fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
+    pub(crate) fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
         self.route.reserve_exact(cap);
         self.name.reserve_exact(cap);
         self.match_name.reserve_exact(cap);
         self.filepath.reserve_exact(cap);
-        self.public_path.reserve_exact(cap);
-        self.hash.reserve_exact(cap);
         Ok(())
     }
-    pub(crate) fn push(&mut self, item: RouteIndex) {
+    fn push(&mut self, item: RouteIndex) {
         self.route.push(item.route);
         self.name.push(item.name);
         self.match_name.push(item.match_name);
         self.filepath.push(item.filepath);
-        self.public_path.push(item.public_path);
-        self.hash.push(item.hash);
     }
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.route.len()
     }
     #[inline]
-    pub fn items_route(&self) -> &[Box<Route>] {
+    pub(crate) fn items_route(&self) -> &[Box<Route>] {
         &self.route
     }
     #[inline]
-    pub fn items_name(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_name(&self) -> &[&'static [u8]] {
         &self.name
     }
     #[inline]
-    pub fn items_match_name(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_match_name(&self) -> &[&'static [u8]] {
         &self.match_name
     }
     #[inline]
-    pub fn items_filepath(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_filepath(&self) -> &[&'static [u8]] {
         &self.filepath
-    }
-    #[inline]
-    pub fn items_public_path(&self) -> &[&'static [u8]] {
-        &self.public_path
-    }
-    #[inline]
-    pub fn items_hash(&self) -> &[u32] {
-        &self.hash
     }
 }
 
 pub struct Routes {
-    pub list: RouteIndexList,
+    pub(crate) list: RouteIndexList,
     /// Index into `list`'s columns where dynamic routes begin (sorted after
     /// static). Stored as an offset+len instead of materialized slices to avoid
     /// a self-referential struct; we re-slice on each `match_dynamic` call.
-    pub dynamic_start: Option<usize>,
-    pub dynamic_len: usize,
+    pub(crate) dynamic_start: Option<usize>,
+    pub(crate) dynamic_len: usize,
 
     /// completely static children of indefinite depth
     /// `"blog/posts"`
     /// `"dashboard"`
     /// `"profiles"`
     /// this is a fast path?
-    pub static_: StringHashMap<*const Route>,
+    pub(crate) static_: StringHashMap<*const Route>,
 
     /// Corresponds to "index.js" on the filesystem.
     /// A raw pointer co-owned with `list` (points into a `Box<Route>` owned by
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
     /// no borrow it doesn't actually take; matches `static_` above.
-    pub index: Option<NonNull<Route>>,
-    pub index_id: Option<usize>,
-
-    // allocator dropped — global mimalloc
-    pub config: RouteConfig,
-
-    // This is passed here and propagated through Match
-    // We put this here to avoid loading the FrameworkConfig for the client, on the server.
-    pub client_framework_enabled: bool,
+    pub(crate) index: Option<NonNull<Route>>,
 }
 
 impl Default for Routes {
@@ -440,19 +210,15 @@ impl Default for Routes {
             dynamic_len: 0,
             static_: StringHashMap::new(),
             index: None,
-            index_id: Some(0),
-            config: RouteConfig::default(),
-            client_framework_enabled: false,
         }
     }
 }
 
 impl Routes {
     pub fn match_page_with_allocator<'p>(
-        &mut self,
-        _: &[u8],
+        &self,
         url_path: &URLPath,
-        params: &'p mut route_param::List<'p>,
+        params: &mut route_param::List<'p>,
     ) -> Option<Match<'p>> {
         // Trim trailing slash
         let mut path = url_path.path;
@@ -495,16 +261,10 @@ impl Routes {
                 // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
                 let index = unsafe { index_ptr.as_ref() };
                 return Some(Match {
-                    params: std::ptr::from_mut(params),
                     name: index.name,
-                    path: index.abs_path.as_bytes(),
                     pathname: url_path.pathname,
-                    basename: index.basename,
-                    hash: INDEX_ROUTE_HASH,
                     file_path: index.abs_path.as_bytes(),
                     query_string: url_path.query_string,
-                    client_framework_enabled: self.client_framework_enabled,
-                    redirect_path: None,
                 });
             }
 
@@ -516,29 +276,14 @@ impl Routes {
             // self.list, which outlives self.
             let route = unsafe { &*route_ptr };
             return Some(Match {
-                params: std::ptr::from_mut(params),
                 name: route.name,
-                path: route.abs_path.as_bytes(),
                 pathname: url_path.pathname,
-                basename: route.basename,
-                hash: route.full_hash,
                 file_path: route.abs_path.as_bytes(),
                 query_string: url_path.query_string,
-                client_framework_enabled: self.client_framework_enabled,
-                redirect_path: None,
             });
         }
 
         None
-    }
-
-    pub fn match_page<'p>(
-        &mut self,
-        _: &[u8],
-        url_path: &URLPath,
-        params: &'p mut route_param::List<'p>,
-    ) -> Option<Match<'p>> {
-        self.match_page_with_allocator(b"", url_path, params)
     }
 
     fn match_dynamic<'p>(
@@ -560,6 +305,8 @@ impl Routes {
             if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
                 return Some(&raw const **route);
             }
+            // A failed match can leave params behind.
+            params.clear();
         }
 
         None
@@ -602,7 +349,7 @@ struct RouteLoader<'a> {
 }
 
 impl<'a> RouteLoader<'a> {
-    pub(crate) fn append_route(&mut self, route: Route) {
+    fn append_route(&mut self, route: Route) {
         use bun_collections::hash_map::Entry;
 
         // /index.js
@@ -703,7 +450,7 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub(crate) fn load_all<R: ResolverLike>(
+    fn load_all<R: ResolverLike>(
         config: RouteConfig,
         log: &'a mut bun_ast::Log,
         resolver: &mut R,
@@ -722,7 +469,7 @@ impl<'a> RouteLoader<'a> {
         let mut this = RouteLoader {
             log,
             fs: resolver.fs(),
-            config: config.clone(),
+            config,
             static_list: StringHashMap::new(),
             dedupe_dynamic: ArrayHashMap::new(),
             all_routes: Vec::new(),
@@ -733,13 +480,13 @@ impl<'a> RouteLoader<'a> {
         if this.all_routes.is_empty() {
             return Routes {
                 static_: this.static_list,
-                config,
                 ..Routes::default()
             };
         }
 
-        this.all_routes
-            .sort_unstable_by(|a, b| sorter::sort_by_name_cmp(a, b));
+        index_sort::sort_slice_unstable_by(&mut this.all_routes, |a, b| {
+            sorter::sort_by_name_cmp(a, b)
+        });
 
         let mut route_list = RouteIndexList::default();
         route_list
@@ -758,17 +505,11 @@ impl<'a> RouteLoader<'a> {
                 index_id = Some(i);
             }
 
-            let (filepath, match_name, public_path) = (
-                route.abs_path.as_bytes(),
-                route.match_name.as_bytes(),
-                route.public_path.as_bytes(),
-            );
+            let (filepath, match_name) = (route.abs_path.as_bytes(), route.match_name.as_bytes());
             route_list.push(RouteIndex {
                 name: route.name,
                 filepath,
                 match_name,
-                public_path,
-                hash: route.full_hash,
                 route,
             });
         }
@@ -793,13 +534,10 @@ impl<'a> RouteLoader<'a> {
             // Points into a Box<Route> now owned by `route_list`; co-owned raw
             // pointer.
             index: this.index,
-            config,
-            index_id,
-            client_framework_enabled: false,
         }
     }
 
-    pub(crate) fn load<R: ResolverLike>(
+    fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
         root_dir_info: &DirInfo,
@@ -813,34 +551,20 @@ impl<'a> RouteLoader<'a> {
         let entry_ptrs: Vec<*mut Fs::Entry> = {
             let _entries_lock = fs.fs.entries_mutex.lock_guard();
             match root_dir_info.get_entries_const() {
-                Some(entries) => entries.iter().collect(),
+                Some(entries) => entries.data.values().copied().collect(),
                 None => return,
             }
         };
         // NOTE: the guard is dropped before this loop on purpose — the
         // `read_dir_info_ignore_error` recursion below re-acquires `entries_mutex`.
         'outer: for entry_ptr in entry_ptrs {
-            // NOTE: the snapshot yields raw `*mut Entry`. Reborrow locally for
-            // each access so `&` reads and the `kind()` call do not
-            // overlap; the lazy-stat rewrite inside `kind()` is serialized on
-            // the per-entry `Entry.mutex`.
             // SAFETY: EntryStore-owned, valid for process lifetime.
-            if unsafe { &*entry_ptr }.base()[0] == b'.' {
+            let entry: &Fs::Entry = unsafe { &*entry_ptr };
+            if entry.base()[0] == b'.' {
                 continue 'outer;
             }
 
-            // Thread the resolver's fs `Implementation` through —
-            // `Entry.kind` derefs it to lazily stat when `need_stat` is
-            // true, so null would be a latent crash / silent route-drop
-            // once the stub forwards it.
-            // SAFETY: no other live borrow of `*entry_ptr` here;
-            // `resolver.fs_impl()` points at the process-global RealFS.
-            let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
-            // SAFETY: shared read-only borrow for the match arms; the only
-            // subsequent mutation is via `Route::parse` which takes the raw
-            // pointer and reborrows internally.
-            let entry: &Fs::Entry = unsafe { &*entry_ptr };
-            match kind {
+            match entry.kind(&fs.fs, false) {
                 Fs::EntryKind::Dir => {
                     for banned_dir in BANNED_DIRS.iter() {
                         if entry.base() == *banned_dir {
@@ -879,18 +603,14 @@ impl<'a> RouteLoader<'a> {
                             // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
                             let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
-                            // SAFETY: `entry_ptr` is EntryStore-owned (process
-                            // lifetime) with no other live `&mut` borrow here.
-                            let route = unsafe {
-                                Route::parse(
-                                    entry.base(),
-                                    extname,
-                                    entry_ptr,
-                                    self.log,
-                                    public_dir,
-                                    self.route_dirname_len,
-                                )
-                            };
+                            let route = Route::parse(
+                                entry.base(),
+                                extname,
+                                entry,
+                                self.log,
+                                public_dir,
+                                self.route_dirname_len,
+                            );
                             if let Some(route) = route {
                                 self.append_route(route);
                             }
@@ -898,6 +618,8 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
                 }
+
+                Fs::EntryKind::Dangling => {}
             }
         }
     }
@@ -910,61 +632,29 @@ pub struct TinyPtr(u32);
 
 impl TinyPtr {
     #[inline]
-    pub const fn new(offset: u16, len: u16) -> Self {
-        Self((offset as u32) | ((len as u32) << 16))
-    }
-    #[inline]
-    pub const fn offset(self) -> u16 {
+    pub(crate) const fn offset(self) -> u16 {
         self.0 as u16
     }
     #[inline]
-    pub const fn len(self) -> u16 {
+    pub(crate) const fn len(self) -> u16 {
         (self.0 >> 16) as u16
     }
     #[inline]
-    pub fn set_offset(&mut self, offset: u16) {
+    pub(crate) fn set_offset(&mut self, offset: u16) {
         self.0 = (self.0 & 0xFFFF_0000) | (offset as u32);
     }
     #[inline]
-    pub fn set_len(&mut self, len: u16) {
+    pub(crate) fn set_len(&mut self, len: u16) {
         self.0 = (self.0 & 0x0000_FFFF) | ((len as u32) << 16);
     }
 
     #[inline]
-    pub fn str<'s>(self, slice: &'s [u8]) -> &'s [u8] {
+    pub(crate) fn str<'s>(self, slice: &'s [u8]) -> &'s [u8] {
         if self.len() > 0 {
             &slice[self.offset() as usize..(self.offset() as usize + self.len() as usize)]
         } else {
             b""
         }
-    }
-
-    #[inline]
-    pub fn to_string_pointer(self) -> api::StringPointer {
-        api::StringPointer {
-            offset: self.offset() as u32,
-            length: self.len() as u32,
-        }
-    }
-
-    #[inline]
-    pub fn eql(a: TinyPtr, b: TinyPtr) -> bool {
-        a == b
-    }
-
-    pub fn from(parent: &[u8], in_: &[u8]) -> TinyPtr {
-        if in_.is_empty() || parent.is_empty() {
-            return TinyPtr::default();
-        }
-
-        let right = in_.as_ptr() as usize + in_.len();
-        let end = parent.as_ptr() as usize + parent.len();
-        debug_assert!(end < right);
-
-        let length = end.max(right) - right;
-        let offset =
-            (in_.as_ptr() as usize).max(parent.as_ptr() as usize) - parent.as_ptr() as usize;
-        TinyPtr::new(offset as u16, length as u16)
     }
 }
 
@@ -980,64 +670,54 @@ pub struct Route {
     /// "/", "/index" is "/"
     /// "/foo/index.js" becomes "/foo"
     /// case-sensitive, has leading slash
-    pub name: &'static [u8],
+    pub(crate) name: &'static [u8],
 
     /// Name used for matching.
     /// - Omits leading slash
     /// - Lowercased
     /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
-    pub match_name: Interned,
+    pub(crate) match_name: Interned,
 
-    pub basename: &'static [u8],
-    pub full_hash: u32,
-    pub param_count: u16,
+    pub(crate) full_hash: u32,
+    pub(crate) param_count: u16,
 
-    pub abs_path: AbsPath,
+    pub(crate) abs_path: AbsPath,
 
-    /// URL-safe path for the route's transpiled script relative to project's top level directory
-    /// - It might not share a prefix with the absolute path due to symlinks.
-    /// - It has a leading slash
-    pub public_path: Interned,
+    pub(crate) kind: pattern::Tag,
 
-    pub kind: pattern::Tag,
-
-    pub has_uppercase: bool,
+    pub(crate) has_uppercase: bool,
 }
 
 // TODO(b1): inherent assoc types unstable; module-level alias instead.
-pub type RoutePtr = TinyPtr;
 
 impl Route {
-    pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
+    pub(crate) const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
-    /// # Safety
-    /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
-    /// other active `&mut` borrow for the duration of the call. `base_` and
-    /// `extname` may borrow `(*entry).base_`; see the NOTE below.
-    pub unsafe fn parse(
+    pub(crate) fn parse(
         base_: &[u8],
         extname: &[u8],
-        entry: *mut Fs::Entry,
+        entry: &Fs::Entry,
         log: &mut bun_ast::Log,
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // NOTE: `entry` is a raw `*mut Entry`
-        // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
-        // string) and a `&mut Entry` parameter would alias them.
-        // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
-        // `base_`/`extname` are no longer used.
-        // SAFETY: caller passes an EntryStore-owned pointer valid for the
-        // process lifetime; no other live `&mut` to it during this call.
-        let entry_abs_path = unsafe { &*entry }.abs_path().as_bytes();
-        let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
-            b""
-        } else {
-            entry_abs_path
-        };
-
         let base = &base_[0..base_.len() - extname.len()];
+
+        // The public path and the longer absolute path are both built in `route_file_buf`.
+        let dir = strings::without_trailing_slash(entry.dir());
+        if dir.len() + 1 + base_.len() >= MAX_PATH_BYTES {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "ENAMETOOLONG opening route: {}{}{}",
+                    bstr::BStr::new(dir),
+                    SEP_STR,
+                    bstr::BStr::new(base_)
+                ),
+            );
+            return None;
+        }
 
         let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
 
@@ -1105,58 +785,47 @@ impl Route {
             // (process-lifetime arena → `&'static`), so the post-if bindings are
             // 'static and the route_file_buf borrow is dropped before the
             // abs-path block below needs it mutably.
-            let (public_path, name, match_name): (&'static [u8], &'static [u8], &'static [u8]) =
-                if !name.is_empty() {
-                    validation_result = match Pattern::validate(&name[1..], log) {
-                        Some(v) => v,
-                        None => return None,
-                    };
-
-                    let mut name_i: usize = 0;
-                    while !has_uppercase && name_i < public_path.len() {
-                        has_uppercase = public_path[name_i] >= b'A' && public_path[name_i] <= b'Z';
-                        name_i += 1;
-                    }
-
-                    let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
-                    let name_len = name.len();
-
-                    // NOTE: DirnameStore::append returns `&'static [u8]` (process-
-                    // lifetime arena), so rebinding here drops the borrow on
-                    // `route_file_buf` and avoids needing lifetime transmutes
-                    // below.
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
-                    let name: &'static [u8] = &public_path[name_offset..][0..name_len];
-                    let match_name: &'static [u8] = if has_uppercase {
-                        dirname_store
-                            .append_lower_case(&name[1..])
-                            .expect("unreachable")
-                    } else {
-                        &name[1..]
-                    };
-
-                    debug_assert!(match_name[0] != b'/');
-                    debug_assert!(name[0] == b'/');
-                    (public_path, name, match_name)
-                } else {
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
-                    (
-                        public_path,
-                        Route::INDEX_ROUTE_NAME,
-                        Route::INDEX_ROUTE_NAME,
-                    )
+            let (name, match_name): (&'static [u8], &'static [u8]) = if !name.is_empty() {
+                validation_result = match Pattern::validate(&name[1..], log) {
+                    Some(v) => v,
+                    None => return None,
                 };
 
-            if abs_path_str.is_empty() {
-                // The reads of `cache().fd` and the `set_abs_path` write below
-                // rewrite the cached `Entry`; serialize them on the per-entry
-                // mutex (the same lock every other `Entry` rewrite path takes).
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
+                let mut name_i: usize = 0;
+                while !has_uppercase && name_i < public_path.len() {
+                    has_uppercase = public_path[name_i] >= b'A' && public_path[name_i] <= b'Z';
+                    name_i += 1;
+                }
+
+                let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
+                let name_len = name.len();
+
+                // NOTE: DirnameStore::append returns `&'static [u8]` (process-
+                // lifetime arena), so rebinding here drops the borrow on
+                // `route_file_buf` and avoids needing lifetime transmutes
+                // below.
+                let dirname_store = FileSystem::get().dirname_store();
+                let public_path: &'static [u8] =
+                    dirname_store.append(public_path).expect("unreachable");
+                let name: &'static [u8] = &public_path[name_offset..][0..name_len];
+                let match_name: &'static [u8] = if has_uppercase {
+                    dirname_store
+                        .append_lower_case(&name[1..])
+                        .expect("unreachable")
+                } else {
+                    &name[1..]
+                };
+
+                debug_assert!(match_name[0] != b'/');
+                debug_assert!(name[0] == b'/');
+                (name, match_name)
+            } else {
+                (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
+            };
+
+            // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
+            let Ok(entry_abs_path) = entry.abs_path_or_try_fill(|| {
+                let mut abs_path_str: &[u8] = b"";
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
                 // Cell so the drop closure can read it while the body still mutates.
@@ -1172,15 +841,12 @@ impl Route {
                     }
                 });
 
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
+                if let Some(valid) = entry.cache().fd.unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {
-                    // SAFETY: see fn-level NOTE — read-only reborrow.
-                    let entry_r = unsafe { &*entry };
-                    let parts = [entry_r.dir(), entry_r.base()];
-                    let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
+                    let parts = [entry.dir(), entry.base()];
+                    let abs_len = FileSystem::get().abs_buf(&parts, route_file_buf).len();
                     // Rebind so the later getFdPath error
                     // message prints the computed path instead of `b""`.
                     // SAFETY: lifetime-laundered raw view into route_file_buf
@@ -1206,7 +872,7 @@ impl Route {
                                     bstr::BStr::new(&route_file_buf[..abs_len])
                                 ),
                             );
-                            return None;
+                            return Err(());
                         }
                     }
                     FileSystem::set_max_fd(file.as_ref().unwrap().handle().native());
@@ -1225,19 +891,20 @@ impl Route {
                                 bstr::BStr::new(abs_path_str)
                             ),
                         );
-                        return None;
+                        return Err(());
                     }
                 };
 
-                abs_path_str = FileSystem::instance()
-                    .dirname_store()
-                    .append(_abs)
-                    .expect("unreachable");
-
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
-                // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(Interned::from_static(abs_path_str));
-            }
+                Ok(Interned::from_static(
+                    FileSystem::get()
+                        .dirname_store()
+                        .append(_abs)
+                        .expect("unreachable"),
+                ))
+            }) else {
+                return None;
+            };
+            let abs_path_str = entry_abs_path.as_bytes();
 
             #[cfg(windows)]
             let abs_path: AbsPath = {
@@ -1247,7 +914,7 @@ impl Route {
                     abs_path_str,
                     &mut bufs.normalized_abs_path_buf,
                 );
-                let interned: &'static [u8] = FileSystem::instance()
+                let interned: &'static [u8] = FileSystem::get()
                     .dirname_store()
                     .append(normalized)
                     .expect("unreachable");
@@ -1259,27 +926,13 @@ impl Route {
             #[cfg(all(debug_assertions, windows))]
             {
                 debug_assert!(!strings::index_of_char(name, b'\\').is_some());
-                debug_assert!(!strings::index_of_char(public_path, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
-                // SAFETY: read-only reborrow; the `&mut` write above is dead.
-                debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
+                debug_assert!(!strings::index_of_char(entry.base(), b'\\').is_some());
             }
-
-            // NOTE: name/match_name/public_path are already `&'static` via
-            // DirnameStore::append above. `entry.base()` borrows the entry (it
-            // may be inline-stored for ≤31-byte names); intern it
-            // explicitly to get `&'static` without a lifetime transmute.
-            // SAFETY: read-only reborrow; the `&mut` write above is dead.
-            let basename: &'static [u8] = FileSystem::instance()
-                .dirname_store()
-                .append(unsafe { &*entry }.base())
-                .expect("unreachable");
 
             Some(Route {
                 name,
-                basename,
-                public_path: Interned::from_static(public_path),
                 match_name: Interned::from_static(match_name),
                 full_hash: if is_index {
                     INDEX_ROUTE_HASH
@@ -1295,7 +948,7 @@ impl Route {
     }
 }
 
-pub mod sorter {
+pub(crate) mod sorter {
     use super::*;
 
     const fn build_sort_table() -> [u8; 256] {
@@ -1315,7 +968,7 @@ pub mod sorter {
 
     static SORT_TABLE: [u8; 256] = build_sort_table();
 
-    pub fn sort_by_name_string(lhs: &[u8], rhs: &[u8]) -> bool {
+    pub(crate) fn sort_by_name_string(lhs: &[u8], rhs: &[u8]) -> bool {
         let n = lhs.len().min(rhs.len());
         for (lhs_i, rhs_i) in lhs[0..n].iter().zip(&rhs[0..n]) {
             match SORT_TABLE[*lhs_i as usize].cmp(&SORT_TABLE[*rhs_i as usize]) {
@@ -1327,7 +980,7 @@ pub mod sorter {
         lhs.len().cmp(&rhs.len()) == Ordering::Less
     }
 
-    pub fn sort_by_name(a: &Route, b: &Route) -> bool {
+    pub(crate) fn sort_by_name(a: &Route, b: &Route) -> bool {
         let a_name = a.match_name.as_bytes();
         let b_name = b.match_name.as_bytes();
 
@@ -1354,7 +1007,7 @@ pub mod sorter {
     }
 
     /// Adapter for slice::sort_by which expects an Ordering.
-    pub fn sort_by_name_cmp(a: &Route, b: &Route) -> Ordering {
+    pub(crate) fn sort_by_name_cmp(a: &Route, b: &Route) -> Ordering {
         if sort_by_name(a, b) {
             Ordering::Less
         } else if sort_by_name(b, a) {
@@ -1382,114 +1035,13 @@ thread_local! {
 }
 
 pub struct Match<'a> {
-    /// normalized url path from the request
-    pub path: &'a [u8],
     /// raw url path from the request
     pub pathname: &'a [u8],
     /// absolute filesystem path to the entry point
     pub file_path: &'a [u8],
     /// route name, like `"posts/[id]"`
     pub name: &'a [u8],
-
-    pub client_framework_enabled: bool,
-
-    /// basename of the route in the file system, including file extension
-    pub basename: &'a [u8],
-
-    pub hash: u32,
-    // NOTE: raw `*mut` (not `&'a mut`).
-    // `MatchedRoute` (bun_runtime) stores this self-referentially — a
-    // `&'a mut List` here would be invalidated under Stacked Borrows the
-    // moment any `&mut MatchedRoute` is taken. Callers that need a borrow
-    // go through `params()`/`params_mut()`.
-    pub params: *mut route_param::List<'a>,
-    pub redirect_path: Option<&'a [u8]>,
     pub query_string: &'a [u8],
-}
-
-impl<'a> Match<'a> {
-    /// SAFETY: caller guarantees `self.params` is live and not mutably aliased.
-    #[inline]
-    pub unsafe fn params(&self) -> &route_param::List<'a> {
-        // SAFETY: caller contract — `self.params` is live and not mutably aliased.
-        unsafe { &*self.params }
-    }
-
-    /// SAFETY: caller guarantees `self.params` is live and uniquely accessed.
-    #[inline]
-    pub unsafe fn params_mut(&mut self) -> &mut route_param::List<'a> {
-        // SAFETY: caller contract — `self.params` is live and uniquely borrowed.
-        unsafe { &mut *self.params }
-    }
-
-    /// Widen all borrowed slices to `'static` for self-referential storage.
-    ///
-    /// Field-by-field move (no bitwise reinterpret). Used by `MatchedRoute`
-    /// (bun_runtime), which moves the backing `pathname_backing` buffer into
-    /// the same heap-stable `Box` that holds this `Match` — see the SAFETY
-    /// note at that call site for the full invariant.
-    ///
-    /// # Safety
-    /// Caller guarantees every borrowed slice (and `*params`' element slices)
-    /// outlives the returned value.
-    #[inline]
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn detach_lifetime(self) -> Match<'static> {
-        // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
-        // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
-        // so the direct call sites below need no per-line `unsafe { }`. The
-        // `.map` closure body is not an unsafe context, so that one site spells
-        // `unsafe { d(s) }` explicitly.
-        #[inline(always)]
-        unsafe fn d(s: &[u8]) -> &'static [u8] {
-            // SAFETY: caller contract on `detach_lifetime` — every borrowed
-            // slice outlives the returned `Match<'static>`.
-            unsafe { &*core::ptr::from_ref::<[u8]>(s) }
-        }
-        Match {
-            path: d(self.path),
-            pathname: d(self.pathname),
-            file_path: d(self.file_path),
-            name: d(self.name),
-            client_framework_enabled: self.client_framework_enabled,
-            basename: d(self.basename),
-            hash: self.hash,
-            // Raw pointer; lifetime parameter on the pointee is phantom for the
-            // pointer value itself.
-            params: self.params.cast::<route_param::List<'static>>(),
-            redirect_path: self.redirect_path.map(|s| {
-                // SAFETY: caller contract on `detach_lifetime` — every borrowed
-                // slice outlives the returned `Match<'static>`.
-                unsafe { d(s) }
-            }),
-            query_string: d(self.query_string),
-        }
-    }
-
-    #[inline]
-    pub fn has_params(&self) -> bool {
-        // SAFETY: producers (`Routes::match_page*`) always set `params` to a
-        // live caller-provided list that outlives the `Match`.
-        unsafe { (*self.params).len() > 0 }
-    }
-
-    pub fn params_iterator(&self) -> PathnameScanner<'_> {
-        // SAFETY: see `has_params`.
-        PathnameScanner::init(self.pathname, self.name, unsafe { &*self.params })
-    }
-
-    pub fn name_with_basename<'s>(file_path: &'s [u8], dir: &[u8]) -> &'s [u8] {
-        let mut name = file_path;
-        if let Some(i) = strings::index_of(name, dir) {
-            name = &name[i + dir.len()..];
-        }
-
-        &name[0..name.len() - bun_paths::extension(name).len()]
-    }
-
-    pub fn pathname_without_leading_slash(&self) -> &[u8] {
-        strings::trim_left(self.pathname, b"/")
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1503,32 +1055,9 @@ pub trait ResolverLike {
     // `bun_resolver::fs::FileSystem` is a process-global singleton, so `'static`
     // here is faithful and avoids threading the resolver borrow into RouteLoader<'a>.
     fn fs(&self) -> &'static FileSystem;
-    /// The resolver's `Implementation` field, passed to
-    /// `Entry.kind` for lazy stat.
-    fn fs_impl(&self) -> *mut Fs::Implementation;
     /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
     /// borrow ends before the recursive `load()` re-borrows it.
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
-}
-
-pub trait WatcherLike {
-    fn watchloop_handle(&self) -> Option<Fd>;
-    fn start(&mut self) -> Result<(), CoreError>;
-}
-
-pub trait ServerLike {
-    type Watcher: WatcherLike;
-    /// Returns Some if the server has a watcher (replaces `@hasField`).
-    fn watcher_mut(&mut self) -> Option<&mut Self::Watcher>;
-}
-
-pub trait RequestContextLike {
-    fn url(&self) -> &URLPath;
-    fn controlled(&self) -> bool;
-    fn has_called_done(&self) -> bool;
-    fn set_matched_route(&mut self, m: Option<Match<'_>>);
-    fn handle_request(&mut self) -> Result<(), CoreError>;
-    fn handle_redirect(&mut self, redirect: &[u8]) -> Result<(), CoreError>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1538,17 +1067,17 @@ pub trait RequestContextLike {
 pub mod pattern {
     use super::*;
 
-    pub type RoutePathInt = u16;
+    type RoutePathInt = u16;
 
     #[derive(Clone, Copy)]
     pub struct Pattern {
-        pub value: Value,
-        pub len: RoutePathInt,
+        pub(crate) value: Value,
+        pub(crate) len: RoutePathInt,
     }
 
     impl Pattern {
         /// Match a filesystem route pattern to a URL path.
-        pub fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
+        pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],
             // case-sensitive, must not have a leading slash
@@ -1565,8 +1094,8 @@ pub mod pattern {
 
                 match pattern.value {
                     Value::Static(str_) => {
-                        let segment =
-                            &path_[0..path_.iter().position(|&b| b == b'/').unwrap_or(path_.len())];
+                        let segment = &path_
+                            [0..strings::index_of_char_usize(path_, b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
                             params.clear(); // shrinkRetainingCapacity(0)
                             return false;
@@ -1583,7 +1112,7 @@ pub mod pattern {
                         }
                     }
                     Value::Dynamic(dynamic) => {
-                        if let Some(i) = path_.iter().position(|&b| b == b'/') {
+                        if let Some(i) = strings::index_of_char_usize(path_, b'/') {
                             params.push(Param {
                                 name: dynamic.str(name),
                                 value: &path_[0..i],
@@ -1612,9 +1141,11 @@ pub mod pattern {
                                 });
                                 path_ = b"";
                                 let _ = path_;
+                                return true;
                             }
 
-                            return true;
+                            params.clear(); // shrinkRetainingCapacity(0)
+                            return false;
                         }
 
                         if !ALLOW_OPTIONAL_CATCH_ALL {
@@ -1655,7 +1186,7 @@ pub mod pattern {
         /// Validate a Route pattern, returning the number of route parameters.
         /// `None` means invalid. Error messages are logged.
         /// That way, we can provide a list of all invalid routes rather than failing the first time.
-        pub fn validate(input: &[u8], log: &mut bun_ast::Log) -> Option<ValidationResult> {
+        pub(crate) fn validate(input: &[u8], log: &mut bun_ast::Log) -> Option<ValidationResult> {
             if strings::CodepointIterator::needs_utf8_decoding(input) {
                 let source = bun_ast::Source::init_empty_file(input);
                 log.add_error_fmt(
@@ -1741,19 +1272,18 @@ pub mod pattern {
             })
         }
 
-        pub fn eql(a: Pattern, b: Pattern) -> bool {
-            a.len == b.len && Value::eql(&a.value, &b.value)
-        }
-
-        pub fn init(input: &[u8], offset_: RoutePathInt) -> Result<Pattern, PatternParseError> {
+        pub(crate) fn init(
+            input: &[u8],
+            offset_: RoutePathInt,
+        ) -> Result<Pattern, PatternParseError> {
             Self::init_maybe_hash::<true>(input, offset_)
         }
 
-        pub fn is_end(self, input: &[u8]) -> bool {
+        pub(crate) fn is_end(self, input: &[u8]) -> bool {
             self.len as usize >= input.len() - 1
         }
 
-        pub fn init_unhashed(
+        pub(crate) fn init_unhashed(
             input: &[u8],
             offset_: RoutePathInt,
         ) -> Result<Pattern, PatternParseError> {
@@ -1912,8 +1442,8 @@ pub mod pattern {
 
     #[derive(Clone, Copy, Default)]
     pub struct ValidationResult {
-        pub param_count: u16,
-        pub kind: Tag,
+        pub(crate) param_count: u16,
+        pub(crate) kind: Tag,
     }
 
     #[derive(strum::IntoStaticStr, Debug, Clone, Copy)]
@@ -1945,297 +1475,17 @@ pub mod pattern {
         CatchAll(TinyPtr),
         OptionalCatchAll(TinyPtr),
     }
-
-    impl Value {
-        pub fn eql(a: &Value, b: &Value) -> bool {
-            a.tag() == b.tag()
-                && match (a, b) {
-                    (Value::Static(a), Value::Static(b)) => a.eql(b),
-                    (Value::Dynamic(a), Value::Dynamic(b)) => TinyPtr::eql(*a, *b),
-                    (Value::CatchAll(a), Value::CatchAll(b)) => TinyPtr::eql(*a, *b),
-                    (Value::OptionalCatchAll(a), Value::OptionalCatchAll(b)) => {
-                        TinyPtr::eql(*a, *b)
-                    }
-                    _ => false,
-                }
-        }
-    }
 }
 
-pub use pattern::Pattern;
+pub(crate) use pattern::Pattern;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Tests + test helpers
+// Tests
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct MockRequestContextType {
-        controlled: bool,
-        url: URLPath,
-        match_file_path_buf: [u8; 1024],
-
-        handle_request_called: bool,
-        redirect_called: bool,
-        matched_route: Option<Match<'static>>,
-        has_called_done: bool,
-    }
-
-    impl Default for MockRequestContextType {
-        fn default() -> Self {
-            Self {
-                controlled: false,
-                url: URLPath::default(),
-                match_file_path_buf: [0; 1024],
-                handle_request_called: false,
-                redirect_called: false,
-                matched_route: None,
-                has_called_done: false,
-            }
-        }
-    }
-
-    impl MockRequestContextType {
-        fn handle_request(&mut self) -> crate::Result<()> {
-            self.handle_request_called = true;
-            Ok(())
-        }
-
-        fn handle_redirect(&mut self, _: &[u8]) -> crate::Result<()> {
-            self.redirect_called = true;
-            Ok(())
-        }
-    }
-
-    struct JavaScriptHandler;
-    impl JavaScriptHandler {
-        fn enqueue(
-            _: &mut MockRequestContextType,
-            _: &mut MockServer,
-            _: &mut route_param::List<'_>,
-        ) -> crate::Result<()> {
-            Ok(())
-        }
-    }
-
-    pub struct MockServer {
-        watchloop_handle: Option<Fd>,
-        watcher: MockWatcher,
-    }
-
-    impl Default for MockServer {
-        fn default() -> Self {
-            Self {
-                watchloop_handle: None,
-                watcher: MockWatcher::default(),
-            }
-        }
-    }
-
-    #[derive(Default)]
-    pub struct MockWatcher {
-        watchloop_handle: Option<Fd>,
-    }
-    impl MockWatcher {
-        pub fn start(&mut self) -> crate::Result<()> {
-            Ok(())
-        }
-    }
-
-    fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> crate::Result<()> {
-        Output::init_test();
-        debug_assert!(cwd_path.len() > 1 && cwd_path != b"/" && !cwd_path.ends_with(b"bun"));
-        let bun_tests_dir = bun_sys::Dir::cwd()
-            .make_open_path(b"bun-test-scratch", bun_sys::OpenDirOptions::default())?;
-        let _ = bun_tests_dir.delete_tree(cwd_path);
-
-        let cwd = bun_tests_dir.make_open_path(cwd_path, bun_sys::OpenDirOptions::default())?;
-        bun_sys::fchdir(cwd.fd())?;
-
-        for (name, value) in data {
-            let name_b = name.as_bytes();
-            // NOTE: paths without a '/' have no parent dir to create;
-            // rposition on '/' finds the parent (test fixture paths are
-            // always forward-slash).
-            if let Some(slash) = name_b.iter().rposition(|&c| c == b'/') {
-                if slash > 0 {
-                    cwd.make_path(&name_b[..slash])?;
-                }
-            }
-            let file = bun_sys::File::create(cwd.fd(), name_b, true)?;
-            file.write_all(value.as_bytes())?;
-            let _ = file.close();
-        }
-        Ok(())
-    }
-
-    /// Newtype so the orphan rule lets us `impl ResolverLike` for a
-    /// foreign-crate type.
-    struct TestResolver<'a>(bun_resolver::Resolver<'a>);
-
-    impl<'a> ResolverLike for TestResolver<'a> {
-        fn fs(&self) -> &'static FileSystem {
-            // SAFETY: process-static singleton (see `FileSystem::instance`).
-            unsafe { &*self.0.fs() }
-        }
-        fn fs_impl(&self) -> *mut Fs::Implementation {
-            // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-            unsafe { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
-        }
-        fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-            self.0.read_dir_info_ignore_error(path)
-        }
-    }
-
-    pub struct Test;
-
-    impl Test {
-        pub fn make_routes(
-            test_name: &'static str,
-            data: &[(&str, &str)],
-        ) -> crate::Result<Routes> {
-            Output::init_test();
-            make_test(test_name.as_bytes(), data)?;
-            bun_ast::initialize_store();
-            // const fs = try FileSystem.init(null);
-            let _ = bun_resolver::fs::FileSystem::init(None)?;
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-
-            // var pages_parts = [_]string{ top_level_dir, "pages" };
-            // const pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
-            let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
-            let pages_dir = bun_resolver::fs::FileSystem::instance()
-                .abs_alloc(&pages_parts)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-
-            // const router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
-            // SAFETY: process-static singleton just initialized above.
-            let fs_opaque: &'static FileSystem = unsafe { &*fs };
-            let router = Router::init(
-                fs_opaque,
-                RouteConfig {
-                    dir: pages_dir.to_vec().into_boxed_slice(),
-                    routes_enabled: true,
-                    extensions: vec![b"js".as_slice().into()].into_boxed_slice(),
-                    ..RouteConfig::default()
-                },
-            )?;
-
-            let mut log = bun_ast::Log::init();
-            // NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
-            // no errdefer; the test harness panics on error anyway, but the guard
-            // still flushes diagnostics on early-return for parity.
-            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
-                // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
-            });
-
-            // const opts = Options.BundleOptions{ .target = .browser, ... };
-            // NOTE: the resolver-side `BundleOptions` subset omits
-            // `loaders`/`define`/`log`/`routes`/`entry_points`/`out_extensions`/
-            // `transform_options` — none are read by `Resolver::init1` or the
-            // dir-info walk, so `Default` + `target` is the faithful projection.
-            let opts = bun_resolver::options::BundleOptions {
-                target: bun_ast::Target::Browser,
-                external: bun_resolver::options::ExternalModules::default(),
-                ..Default::default()
-            };
-
-            // var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
-            let mut resolver = TestResolver(bun_resolver::Resolver::init1(
-                core::ptr::NonNull::from(&mut log),
-                fs,
-                opts,
-            ));
-
-            // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
-            let root_dir = resolver
-                .0
-                .read_dir_info(pages_dir)?
-                .ok_or_else(|| crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
-
-            // return RouteLoader.loadAll(..., opts.routes, &logger, Resolver, &resolver, root_dir);
-            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
-            let routes = RouteLoader::load_all(
-                router.config.clone(),
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
-                &mut resolver,
-                &root_dir,
-                top_level_dir,
-            );
-            scopeguard::ScopeGuard::into_inner(_err_dump);
-            Ok(routes)
-        }
-
-        pub fn make(
-            test_name: &'static str,
-            data: &[(&str, &str)],
-        ) -> crate::Result<Router<'static>> {
-            make_test(test_name.as_bytes(), data)?;
-            bun_ast::initialize_store();
-            // const fs = try FileSystem.initWithForce(null, true);
-            let _ = bun_resolver::fs::FileSystem::init_with_force::<true>(None)?;
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-
-            let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
-            let pages_dir = bun_resolver::fs::FileSystem::instance()
-                .abs_alloc(&pages_parts)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-
-            // var router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
-            // SAFETY: process-static singleton just initialized above.
-            let fs_opaque: &'static FileSystem = unsafe { &*fs };
-            let mut router = Router::init(
-                fs_opaque,
-                RouteConfig {
-                    dir: pages_dir.to_vec().into_boxed_slice(),
-                    routes_enabled: true,
-                    extensions: vec![b"js".as_slice().into()].into_boxed_slice(),
-                    ..RouteConfig::default()
-                },
-            )?;
-
-            let mut log = bun_ast::Log::init();
-            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
-                // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
-            });
-
-            let opts = bun_resolver::options::BundleOptions {
-                target: bun_ast::Target::Browser,
-                external: bun_resolver::options::ExternalModules::default(),
-                ..Default::default()
-            };
-
-            let mut resolver = TestResolver(bun_resolver::Resolver::init1(
-                core::ptr::NonNull::from(&mut log),
-                fs,
-                opts,
-            ));
-
-            // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
-            let root_dir = resolver
-                .0
-                .read_dir_info(pages_dir)?
-                .ok_or_else(|| crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
-
-            // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
-            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
-            router.load_routes(
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
-                &root_dir,
-                &mut resolver,
-                top_level_dir,
-            )?;
-            let entry_points = router.get_entry_points();
-
-            assert_eq!(data.len(), entry_points.len());
-            scopeguard::ScopeGuard::into_inner(_err_dump);
-            Ok(router)
-        }
-    }
 
     #[test]
     fn pattern_match() {

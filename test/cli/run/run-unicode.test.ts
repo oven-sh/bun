@@ -24,9 +24,9 @@ describe.concurrent("run-unicode", () => {
     expect(stdout).toEqual("hello world\n");
   });
 
-  test("ts enum with utf16 works", () => {
-    const result = bunRun(join(import.meta.dir, "ts-enum-fixture.ts"));
-    expect(result.stdout).toBe(`{
+  test("ts enum with utf16 works", async () => {
+    const result = await bunRun(join(import.meta.dir, "ts-enum-fixture.ts"));
+    expect(result).toSpawn(`{
   "1": "aaaa\u5FEB\u00E9\u00E9",
   "123": "bbb",
   "\u5B89\u5168\u4E32\u884C": "\u5B89\u5168\u4E32\u884C",

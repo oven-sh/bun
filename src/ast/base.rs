@@ -40,11 +40,6 @@ impl IntoIndexInt for i32 {
 
 impl Index {
     #[inline]
-    pub fn set(&mut self, val: IndexInt) {
-        self.0 = val;
-    }
-
-    #[inline]
     pub const fn value(self) -> IndexInt {
         self.0
     }
@@ -157,7 +152,10 @@ impl SymbolTable for Vec<symbol::Symbol> {
 /// `Ref` methods that need `Symbol` / JSON writer.
 impl Ref {
     #[inline]
-    pub fn get_symbol<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> &mut symbol::Symbol {
+    pub(crate) fn get_symbol<T: SymbolTable + ?Sized>(
+        self,
+        symbol_table: &mut T,
+    ) -> &mut symbol::Symbol {
         symbol_table.get_symbol(self)
     }
 }

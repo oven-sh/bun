@@ -145,6 +145,59 @@ test("sequential test 2", async () => {
     expect(lines).toEqual(["seq1-start", "seq1-end", "seq2-start", "seq2-end"]);
   });
 
+  test("negated glob pattern selects non-matching files", async () => {
+    const testFile = `
+import { test, expect } from "bun:test";
+import { appendFileSync } from "fs";
+import { join } from "path";
+
+const logFile = join(import.meta.dir, "execution.log");
+
+test("test 1", async () => {
+  appendFileSync(logFile, "test1-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "test1-end\\n");
+  expect(1).toBe(1);
+});
+
+test("test 2", async () => {
+  appendFileSync(logFile, "test2-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "test2-end\\n");
+  expect(2).toBe(2);
+});
+`;
+
+    using dir = tempDir("negated-glob", {
+      "bunfig.toml": `[test]\nconcurrentTestGlob = "!**/sequential-*.test.ts"`,
+      "fast.test.ts": testFile,
+      "execution.log": "",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout + stderr).toContain("2 pass");
+
+    const logPath = join(String(dir), "execution.log");
+    const log = await Bun.file(logPath).text();
+    const lines = log.trim().split("\n").filter(Boolean);
+
+    // fast.test.ts does not match sequential-*.test.ts, so the negated
+    // pattern selects it and its tests should interleave.
+    const firstEndIndex = lines.findIndex(line => line.includes("-end"));
+    const startsBeforeFirstEnd = lines.slice(0, firstEndIndex).filter(line => line.includes("-start")).length;
+
+    expect(startsBeforeFirstEnd).toBeGreaterThan(1);
+  });
+
   test("multiple glob patterns work correctly", async () => {
     const testFile1 = `
 import { test, expect } from "bun:test";
@@ -220,6 +273,61 @@ test("test 4", async () => {
     const startsBeforeFirstEnd = lines.slice(0, firstEndIndex).filter(line => line.includes("-start")).length;
 
     // With concurrent execution, we expect multiple starts before the first end
+    expect(startsBeforeFirstEnd).toBeGreaterThan(1);
+  });
+
+  test("negated glob pattern selects non-matching files", async () => {
+    const testFile = `
+import { test, expect } from "bun:test";
+import { appendFileSync } from "fs";
+import { join } from "path";
+
+const logFile = join(import.meta.dir, "execution.log");
+
+test("test 1", async () => {
+  appendFileSync(logFile, "test1-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "test1-end\\n");
+  expect(1).toBe(1);
+});
+
+test("test 2", async () => {
+  appendFileSync(logFile, "test2-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "test2-end\\n");
+  expect(2).toBe(2);
+});
+`;
+
+    // "!**/sequential-*.test.ts" means: every file that is NOT sequential-*.test.ts
+    // should run concurrently. fast.test.ts doesn't match the inner pattern, so
+    // the negated glob selects it.
+    using dir = tempDir("negated-glob", {
+      "bunfig.toml": `[test]\nconcurrentTestGlob = "!**/sequential-*.test.ts"`,
+      "fast.test.ts": testFile,
+      "execution.log": "",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout + stderr).toContain("2 pass");
+    expect(exitCode).toBe(0);
+
+    const logPath = join(String(dir), "execution.log");
+    const log = await Bun.file(logPath).text();
+    const lines = log.trim().split("\n").filter(Boolean);
+
+    // Concurrent execution: both tests start before either finishes.
+    const firstEndIndex = lines.findIndex(line => line.includes("-end"));
+    const startsBeforeFirstEnd = lines.slice(0, firstEndIndex).filter(line => line.includes("-start")).length;
     expect(startsBeforeFirstEnd).toBeGreaterThan(1);
   });
 

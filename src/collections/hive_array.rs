@@ -1,5 +1,4 @@
 use core::cell::{Cell, UnsafeCell};
-use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit, size_of};
 use core::ops::Deref;
 use core::ptr::NonNull;
@@ -281,8 +280,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         asan::unpoison(slot.as_ptr().cast(), size_of::<T>());
         Some(HiveSlot {
             slot,
-            owner: core::ptr::from_ref(self),
-            _marker: PhantomData,
+            owner: Some(self),
         })
     }
 
@@ -330,35 +328,6 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         Some(u32::try_from(index).expect("int cast"))
     }
 
-    /// Drop every occupied slot in place and mark it free. Runs from
-    /// [`Drop`]; also callable explicitly when an owner wants to release
-    /// slot payloads earlier than the hive itself is dropped.
-    ///
-    /// # Safety
-    /// Every slot whose `used` bit is set must hold a fully-initialized `T`
-    /// (the invariant [`get_init`](Self::get_init) /
-    /// [`claim`](Self::claim)+[`write`](HiveSlot::write) maintain). A slot
-    /// claimed but never written violates this and makes the
-    /// `drop_in_place` UB.
-    pub(crate) unsafe fn drop_all(&mut self) {
-        if core::mem::needs_drop::<T>() {
-            // `iter_set` snapshots the bitset, so `unset` inside the loop is
-            // invisible to it. Unsetting before `drop_in_place` means a later
-            // `drop_all` (e.g. from `Drop` after an explicit call) never
-            // revisits an already-dropped slot.
-            let mut iter = self.used.iter_set();
-            while let Some(index) = iter.next() {
-                let slot = self.ptr_at(index);
-                self.used.unset(index);
-                // SAFETY: caller contract — `used` bit set ⇒ slot is a fully
-                // initialized `T` (see fn doc).
-                unsafe { core::ptr::drop_in_place(slot) };
-                asan::poison(slot.cast(), size_of::<T>());
-            }
-        }
-        self.used = HiveBitSet::init_empty();
-    }
-
     /// Return a slot to the pool, dropping the contained `T` in place.
     ///
     /// Returns `false` (and drops nothing) if `value` does not point into
@@ -393,11 +362,22 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: `get_init` sets `used` and writes the slot in one `&self`
-        // call, and `claim()` hands out a `HiveSlot<'_>` that borrows the pool
-        // (its Drop unsets the bit if never written), so by the time
-        // `&mut self` is obtainable every `used` slot is fully initialized.
-        unsafe { self.drop_all() };
+        if core::mem::needs_drop::<T>() {
+            // `iter_set` snapshots the bitset, so `unset` inside the loop is invisible to it.
+            let mut iter = self.used.iter_set();
+            while let Some(index) = iter.next() {
+                let slot = self.ptr_at(index);
+                self.used.unset(index);
+                // SAFETY: `get_init` sets `used` and writes the slot in one `&self`
+                // call, and `claim()` hands out a `HiveSlot<'_>` that borrows the pool
+                // (its Drop unsets the bit if never written). Whoever forgets the token
+                // instead (`assume_init`, `ManuallyDrop`) has written the slot. So by the
+                // time `&mut self` is obtainable every `used` slot is fully initialized.
+                unsafe { core::ptr::drop_in_place(slot) };
+                asan::poison(slot.cast(), size_of::<T>());
+            }
+        }
+        self.used = HiveBitSet::init_empty();
     }
 }
 
@@ -420,16 +400,11 @@ impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
 /// dropped (early return, `?`, panic) the slot is released **without** running
 /// `T::drop` — it was never written.
 ///
-/// Two-pointer-sized; `owner` discriminates release behavior:
-///   - non-null ⇒ `*const HiveArray<T, CAP>` (release = unset `used` bit + poison),
-///   - null     ⇒ heap `Box<MaybeUninit<T>>` (release = dealloc, no `T::drop`).
+/// Two-pointer-sized. `owner` is `slot`'s hive, or `None` for a heap `Box<MaybeUninit<T>>`.
 #[must_use = "claimed hive slot is leaked if neither written nor dropped"]
 pub struct HiveSlot<'h, T, const CAPACITY: usize> {
     slot: NonNull<MaybeUninit<T>>,
-    /// Typed `*const` (not `usize` + low-bit tag) so provenance survives `Drop`.
-    /// Null = heap-fallback sentinel (`from_ref(self)` is never null).
-    owner: *const HiveArray<T, CAPACITY>,
-    _marker: PhantomData<&'h HiveArray<T, CAPACITY>>,
+    owner: Option<&'h HiveArray<T, CAPACITY>>,
 }
 
 impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
@@ -470,19 +445,14 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
 
 impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
     fn drop(&mut self) {
-        if !self.owner.is_null() {
+        if let Some(hive) = self.owner {
             // Inline hive slot: unset the `used` bit and re-poison. Do NOT
             // `drop_in_place` — the slot was never `.write()`n.
-            let hive = self.owner;
-            // SAFETY: `owner` was set from `from_ref(self)` in `HiveArray::claim`
-            // and the hive outlives `'h` (PhantomData lifetime).
-            unsafe {
-                let index = (*hive)
-                    .index_of(self.slot.as_ptr().cast::<T>())
-                    .expect("HiveSlot points outside its owning hive");
-                asan::poison(self.slot.as_ptr().cast(), size_of::<T>());
-                (*hive).used.unset(index as usize);
-            }
+            let index = hive
+                .index_of(self.slot.as_ptr().cast::<T>())
+                .expect("HiveSlot points outside its owning hive");
+            asan::poison(self.slot.as_ptr().cast(), size_of::<T>());
+            hive.used.unset(index as usize);
         } else {
             // Heap fallback slot: reclaim the `Box<MaybeUninit<T>>` allocation.
             // `MaybeUninit<T>` has no drop glue, so this deallocates without
@@ -620,10 +590,8 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         let slot = NonNull::from(Box::leak(Box::<T>::new_uninit()));
         HiveSlot {
             slot,
-            // Null ⇒ heap slot. The hive pointer is not needed on the release
-            // path (dealloc is `Box::from_raw(slot)`).
-            owner: core::ptr::null(),
-            _marker: PhantomData,
+            // The hive is not needed on the release path (dealloc is `Box::from_raw(slot)`).
+            owner: None,
         }
     }
 
@@ -945,7 +913,7 @@ mod tests {
         assert!(!f.hive.used.is_set(0));
 
         // Heap token (CAP=0 forces it): dropping deallocates without touching
-        // the hive — its `owner` is null. Pin the inline slot first so the
+        // the hive — its `owner` is `None`. Pin the inline slot first so the
         // bit-stays-set assertion is meaningful for the CAP>0 case too.
         let f = Fallback::<u64, 1>::init();
         let inline = f.get_init(1);

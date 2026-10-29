@@ -1,1 +1,0 @@
-{ "entryPoints": ["./strings.ts", "./fractions.js", "./untyped.ts"] }

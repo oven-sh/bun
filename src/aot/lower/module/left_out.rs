@@ -2,7 +2,7 @@
 mod tests;
 
 use bun_sema::bind::SymbolId;
-use bun_sema::hir::{self, ClassId, StmtId, StmtKind, VarDeclId};
+use bun_sema::hir::{self, ClassId, MemberId, StmtId, StmtKind, VarDeclId};
 use bun_sema::program::FileId;
 use rustc_hash::FxHashSet;
 
@@ -11,6 +11,9 @@ enum Declaration {
     Declarator(VarDeclId),
     Class(ClassId),
     Statement(StmtId),
+    // Not left out, where the class itself is: the check of what it extends, the conversion of a computed key to a property key.
+    HeritageCheck(ClassId),
+    KeyConversion(MemberId),
     // Not left out by itself: the variable of an enum or of the value of a module of data, whose object nothing that the program can run gets hold of.
     ObjectNeverHandedOn(SymbolId),
 }
@@ -35,6 +38,14 @@ impl LeftOutDeclarations {
 
     pub fn leave_out_class(&mut self, file: FileId, class: ClassId) {
         self.0.insert((file, Declaration::Class(class)));
+    }
+
+    pub fn keep_heritage_check(&mut self, file: FileId, class: ClassId) {
+        self.0.insert((file, Declaration::HeritageCheck(class)));
+    }
+
+    pub fn keep_key_conversion(&mut self, file: FileId, member: MemberId) {
+        self.0.insert((file, Declaration::KeyConversion(member)));
     }
 
     pub fn leave_out_statement(&mut self, file: FileId, hir: &hir::File<'_>, statement: StmtId) {
@@ -69,6 +80,14 @@ impl LeftOutDeclarations {
 
     pub fn is_class_left_out(&self, file: FileId, class: ClassId) -> bool {
         self.0.contains(&(file, Declaration::Class(class)))
+    }
+
+    pub fn is_heritage_check_kept(&self, file: FileId, class: ClassId) -> bool {
+        self.0.contains(&(file, Declaration::HeritageCheck(class)))
+    }
+
+    pub fn is_key_conversion_kept(&self, file: FileId, member: MemberId) -> bool {
+        self.0.contains(&(file, Declaration::KeyConversion(member)))
     }
 
     pub fn is_statement_left_out(&self, file: FileId, statement: StmtId) -> bool {

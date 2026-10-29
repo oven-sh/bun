@@ -91,8 +91,11 @@ fn needs_what_some_texts_need(case: &Case<'_, '_>) -> bool {
     let lists = table::entry(BuiltinId::EventEmitterPrototypeOn).calls_for_texts();
     let mut functions = lists.iter().flat_map(|listed| listed.calls).peekable();
     assert!(functions.peek().is_some());
-    let used = &case.resolved.uses().functions;
-    let found = functions.filter(|function| used.contains(function)).count();
+    let (used, guessed) = (case.resolved.uses(), case.resolved.guessed_uses());
+    let is_used = |function: &table::RuntimeFunction| {
+        used.functions.contains(function) || guessed.functions.contains(function)
+    };
+    let found = functions.filter(|function| is_used(function)).count();
     assert!(
         found == 0 || found == lists.iter().map(|listed| listed.calls.len()).sum::<usize>(),
         "{}",

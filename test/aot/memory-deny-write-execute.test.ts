@@ -23,7 +23,7 @@ console.log(JSON.stringify({ bits, isGranted, compiler }));
 `;
 
 const child = `const { stdout } = Bun.spawnSync({ cmd: [process.argv[2], "-e", "console.log(1 + 1)"], stdout: "pipe" });
-process.stdout.write(stdout);
+console.write(stdout);
 `;
 
 async function run(cmd: string[]) {

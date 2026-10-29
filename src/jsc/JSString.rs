@@ -45,7 +45,6 @@ mod layout {
     pub(super) const FIBER: usize = 8;
     pub(super) const IS_ROPE: usize = 1;
     pub(super) const IS_SUBSTRING: usize = 2;
-    pub(super) const IS_8BIT: usize = 4;
     pub(super) const ROPE_LENGTH: usize = 16;
     /// The base of a substring is its second fiber, a pointer in two parts.
     pub(super) const FIBER1_LOWER: usize = 20;
@@ -146,10 +145,11 @@ impl JSString {
         })
     }
 
+    /// The width of a substring's characters is that of its base's storage now: a string that is used as a
+    /// property key takes the storage of an equal key, of either width.
     #[inline]
     fn latin1_characters_of_substring(&self, fiber: usize) -> Option<Latin1Characters<'_>> {
-        const SUBSTRING_OF_8BIT: usize = layout::IS_SUBSTRING | layout::IS_8BIT;
-        if fiber & SUBSTRING_OF_8BIT != SUBSTRING_OF_8BIT {
+        if fiber & layout::IS_SUBSTRING == 0 {
             return None;
         }
         // SAFETY: `fiber` says that this cell is a JSRopeString, which has these fields. The
@@ -161,15 +161,13 @@ impl JSString {
             let upper: u16 = self.read_at(layout::FIBER1_UPPER);
             let offset: u32 = self.read_at(layout::FIBER2_LOWER);
             let owner = &*(((upper as usize) << 32 | lower as usize) as *const JSString);
-            let text =
-                &*(owner.read_at::<usize>(layout::FIBER) as *const bun_core::WTFStringImplStruct);
+            let start = offset as usize;
             Some(Latin1Characters {
                 owner,
                 offset,
-                characters: core::slice::from_raw_parts(
-                    text.m_ptr.latin1.add(offset as usize),
-                    length as usize,
-                ),
+                characters: owner
+                    .flat_latin1_characters()?
+                    .get_unchecked(start..start + length as usize),
             })
         }
     }

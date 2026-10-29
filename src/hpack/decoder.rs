@@ -27,9 +27,7 @@ pub struct Decoder {
     /// Oldest first.
     entries: VecDeque<Entry>,
     storage: Storage,
-    /// What the entries add up to (§4.1).
-    size: usize,
-    /// What `size` may reach. The peer picks it, up to `max_capacity`.
+    /// What [`Self::table_size`] may reach. The peer picks it, up to `max_capacity`.
     capacity: u32,
     max_capacity: u32,
 }
@@ -39,7 +37,6 @@ impl Decoder {
         Self {
             entries: VecDeque::new(),
             storage: Storage::default(),
-            size: 0,
             capacity: DEFAULT_TABLE_CAPACITY,
             max_capacity: DEFAULT_TABLE_CAPACITY,
         }
@@ -59,7 +56,7 @@ impl Decoder {
 
     /// The size of the dynamic table as §4.1 counts it.
     pub fn table_size(&self) -> usize {
-        self.size
+        self.storage.entries_len() + self.entries.len() * ENTRY_OVERHEAD
     }
 
     #[cfg(test)]
@@ -95,16 +92,12 @@ impl Decoder {
         Ok(())
     }
 
-    fn decode_field(&mut self, src: &[u8], field_pos: &mut usize) -> Result<Field<'_>> {
+    fn decode_field(&mut self, src: &[u8], pos: &mut usize) -> Result<Field<'_>> {
         use Error::Invalid;
 
-        self.storage.clear_scratch();
-        let mut pos = *field_pos;
-        let first = *src.get(pos).ok_or(Invalid)?;
-
+        let first = *src.get(*pos).ok_or(Invalid)?;
         if first & 0x80 != 0 {
-            let index = integer::decode(src, &mut pos, 7).ok_or(Invalid)?;
-            *field_pos = pos;
+            let index = integer::decode(src, pos, 7).ok_or(Invalid)?;
             return self.indexed_field(index);
         }
 
@@ -115,12 +108,13 @@ impl Decoder {
             0x10.. => (Indexing::Never, 4),
             _ => (Indexing::Skip, 4),
         };
-        let index = integer::decode(src, &mut pos, prefix_bits).ok_or(Invalid)?;
+        let index = integer::decode(src, pos, prefix_bits).ok_or(Invalid)?;
 
         // The name and then the value go to the scratch space, which is how an entry has them.
+        self.storage.clear_scratch();
         let mut static_index = 0;
         if index == 0 {
-            self.decode_string(src, &mut pos, MAX_FIELD_LEN)?;
+            self.decode_string(src, pos, MAX_FIELD_LEN)?;
             if self.storage.scratch_len() == 0 {
                 return Err(Invalid);
             }
@@ -133,19 +127,17 @@ impl Decoder {
             self.storage.append_name_of(entry.span).ok_or(Invalid)?;
         }
         let name_len = self.storage.scratch_len();
-        let room = MAX_FIELD_LEN.checked_sub(name_len).ok_or(Error::TooLarge)?;
-        self.decode_string(src, &mut pos, room)?;
+        let room = MAX_FIELD_LEN.saturating_sub(name_len);
+        self.decode_string(src, pos, room)?;
         let span = self.storage.scratch(name_len);
 
         if indexing == Indexing::Add {
             self.storage.keep_scratch();
-            self.size += span.size();
             self.entries.push_back(Entry { span, static_index });
             // May evict the new entry, whose bytes stay readable for now.
             self.evict();
         }
 
-        *field_pos = pos;
         let (name, value) = self.storage.name_and_value(span).ok_or(Invalid)?;
         Ok(Field {
             name,
@@ -210,11 +202,10 @@ impl Decoder {
     }
 
     fn evict(&mut self) {
-        while self.size > self.capacity as usize {
+        while self.table_size() > self.capacity as usize {
             let Some(entry) = self.entries.pop_front() else {
                 return;
             };
-            self.size -= entry.span.size();
             self.storage.release(entry.span);
         }
     }

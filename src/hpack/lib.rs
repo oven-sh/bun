@@ -162,6 +162,9 @@ mod tests {
         let fields = decode(&mut decoder, &hex("0003782d610131 4003782d620132 be")).unwrap();
         assert_eq!(fields[2], (b"x-b".to_vec(), b"2".to_vec(), false));
         assert_eq!(decoder.table_size(), 36);
+        // Nor does it count while the block goes on.
+        assert!(decoder.next(&hex("0003782d610131 be"), &mut 0).is_some());
+        assert_eq!(decoder.table_size(), 36);
     }
 
     #[test]

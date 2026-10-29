@@ -1,7 +1,5 @@
 //! The names and values of a dynamic table, back to back in one allocation.
 
-use crate::ENTRY_OVERHEAD;
-
 #[derive(Default)]
 pub(crate) struct Storage {
     /// `bytes[start..end]` belongs to entries, oldest first. What follows is scratch space.
@@ -21,13 +19,6 @@ pub(crate) struct Span {
     value_len: usize,
 }
 
-impl Span {
-    /// What an entry adds to the size of its table (§4.1).
-    pub(crate) fn size(self) -> usize {
-        self.name_len + self.value_len + ENTRY_OVERHEAD
-    }
-}
-
 const SPARE_CAPACITY: usize = 4096;
 
 impl Storage {
@@ -36,11 +27,10 @@ impl Storage {
         self.bytes.truncate(self.end);
         // Moves fewer bytes than it frees, so this is O(1) per byte kept.
         if self.start > 0 && self.start >= self.end - self.start {
-            self.bytes.copy_within(self.start..self.end, 0);
+            self.bytes.drain(..self.start);
             self.origin += self.start as u64;
             self.end -= self.start;
             self.start = 0;
-            self.bytes.truncate(self.end);
         }
         if self.bytes.capacity() / 4 > self.end + SPARE_CAPACITY {
             self.bytes.shrink_to(self.end + SPARE_CAPACITY);
@@ -63,6 +53,11 @@ impl Storage {
 
     pub(crate) fn scratch_len(&self) -> usize {
         self.bytes.len() - self.end
+    }
+
+    /// How many bytes the names and values of the entries have.
+    pub(crate) fn entries_len(&self) -> usize {
+        self.end - self.start
     }
 
     #[cfg(test)]

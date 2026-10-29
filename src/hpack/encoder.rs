@@ -64,6 +64,7 @@ struct Bucket {
 }
 
 /// The hashes of the `max_len` fields sent last. Once full, only a field found here enters the table.
+#[derive(Default)]
 struct History {
     hashes: Vec<u32>,
     max_len: usize,
@@ -72,16 +73,6 @@ struct History {
 }
 
 impl History {
-    fn new(table_capacity: u32) -> Self {
-        let mut history = Self {
-            hashes: Vec::new(),
-            max_len: 0,
-            oldest: 0,
-        };
-        history.resize(table_capacity);
-        history
-    }
-
     fn resize(&mut self, table_capacity: u32) {
         // ls-hpack's `henc_hist_size`: a third of the entries the table has room for if they are all empty.
         self.max_len = table_capacity as usize / ENTRY_OVERHEAD / 3;
@@ -112,8 +103,6 @@ pub struct Encoder {
     next_id: Id,
     /// A power of two of them.
     buckets: Vec<Bucket>,
-    /// What the entries add up to (§4.1).
-    size: usize,
     capacity: u32,
     /// The capacity changed since the last field. Holds the lowest it has been since.
     unannounced_capacity: Option<u32>,
@@ -128,7 +117,6 @@ impl Encoder {
             // About to wrap, as in ls-hpack, so that the tests cross the wrap.
             next_id: Id::MAX - 3,
             buckets: vec![Bucket::default(); 4],
-            size: 0,
             capacity: DEFAULT_TABLE_CAPACITY,
             unannounced_capacity: None,
             history: None,
@@ -137,15 +125,17 @@ impl Encoder {
 
     /// One-off fields stay out of the dynamic table: after the first few dozen, only a field sent lately enters.
     pub fn with_history() -> Self {
+        let mut history = History::default();
+        history.resize(DEFAULT_TABLE_CAPACITY);
         Self {
-            history: Some(History::new(DEFAULT_TABLE_CAPACITY)),
+            history: Some(history),
             ..Self::new()
         }
     }
 
     /// The size of the dynamic table as §4.1 counts it.
     pub fn table_size(&self) -> usize {
-        self.size
+        self.storage.entries_len() + self.entries.len() * ENTRY_OVERHEAD
     }
 
     #[cfg(test)]
@@ -317,7 +307,6 @@ impl Encoder {
         self.storage.bytes_mut().extend_from_slice(value);
         let span = self.storage.scratch(name.len());
         self.storage.keep_scratch();
-        self.size += span.size();
         self.entries.push_back(Entry {
             span,
             name_hash,
@@ -360,9 +349,7 @@ impl Encoder {
     }
 
     fn grow_buckets(&mut self) {
-        let len = self.buckets.len() * 2;
-        self.buckets.clear();
-        self.buckets.resize(len, Bucket::default());
+        self.buckets = vec![Bucket::default(); self.buckets.len() * 2];
         for entry in &mut self.entries {
             entry.next_by_field = None;
             entry.next_by_name = None;
@@ -373,11 +360,10 @@ impl Encoder {
     }
 
     fn evict(&mut self) {
-        while self.size > self.capacity as usize {
+        while self.table_size() > self.capacity as usize {
             let Some(entry) = self.entries.pop_front() else {
                 return;
             };
-            self.size -= entry.span.size();
             self.storage.release(entry.span);
             if let Some(chain) = self.by_field(entry.field_hash) {
                 chain.pop(entry.next_by_field);

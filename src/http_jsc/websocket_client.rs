@@ -1843,7 +1843,7 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
 
 /// `None` for a unix socket or a closed socket.
 pub(crate) fn remote_address_of<const SSL: bool>(socket: Socket<SSL>) -> Option<(IpAddr, u16)> {
-    let mut buf = [0u8; 64];
+    let mut buf = [0u8; 16];
     let bytes = socket.remote_address(&mut buf)?;
     let ip = <[u8; 4]>::try_from(bytes)
         .map(IpAddr::from)

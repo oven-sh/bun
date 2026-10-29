@@ -2431,7 +2431,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return JSValue::UNDEFINED;
         }
 
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 16];
         let Some(address_bytes) = self.socket.get().local_address(&mut buf) else {
             return JSValue::UNDEFINED;
         };
@@ -2448,7 +2448,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 16];
         let mut text_buf = [0u8; 512];
 
         let Some(address_bytes) = self.socket.get().local_address(&mut buf) else {
@@ -2486,7 +2486,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return JSValue::UNDEFINED;
         }
 
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 16];
         let Some(address_bytes) = self.socket.get().remote_address(&mut buf) else {
             return JSValue::UNDEFINED;
         };
@@ -2503,7 +2503,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 16];
         let mut text_buf = [0u8; 512];
 
         let Some(address_bytes) = self.socket.get().remote_address(&mut buf) else {

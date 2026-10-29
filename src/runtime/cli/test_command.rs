@@ -1260,6 +1260,7 @@ impl CommandLineReporter {
         let writer = &mut output_buf;
 
         let result = sequence.result;
+        let reporter = file.reporter.get();
         if result != bun_test::Execution::Result::SkippedBecauseLabel {
             // SAFETY: `FileInfo.reporter` is `NonNull<CommandLineReporter>` with write
             // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
@@ -1267,7 +1268,7 @@ impl CommandLineReporter {
             // before the `&mut` derived from the same `NonNull` below
             // (stacked-borrows hygiene).
             let reporter_ref: Option<&CommandLineReporter> =
-                file.reporter.map(|p| unsafe { &*p.as_ptr() });
+                reporter.map(|p| unsafe { &*p.as_ptr() });
             let basic = result.basic_result();
             let dots_branch = reporter_ref.is_some_and(|r| r.reporters.dots)
                 && matches!(
@@ -1331,7 +1332,7 @@ impl CommandLineReporter {
         }
         let formatted_line = &output_buf[initial_length..];
 
-        let Some(this) = file.reporter else {
+        let Some(this) = reporter else {
             let _ = Output::error_writer().write_all(formatted_line);
             return;
         };

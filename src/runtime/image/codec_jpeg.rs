@@ -254,7 +254,7 @@ pub(crate) fn decode(
     // SAFETY: src ptr/len come from a valid `&[u8]`. dst is
     // `out`'s exclusive `w*ht*4` bytes of capacity: the pitch and the cropping
     // region bound libjpeg-turbo's writes to it. TurboJPEG refuses the region
-    // for a lossless stream and for unknown subsampling (turbojpeg.c:2093), and
+    // for a lossless stream and for unknown subsampling (turbojpeg.c:2105-2108), and
     // the row count then comes from the second parse (turbojpeg-mp.c:233). That
     // path decodes unscaled (libjpeg ignores the factor for a lossless stream,
     // jdmaster.c:539) with pitch 0, which packs the rows at that parse's width,

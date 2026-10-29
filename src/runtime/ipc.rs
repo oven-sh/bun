@@ -1176,49 +1176,31 @@ impl SendQueue {
     }
 
     /// `task_tag::SendQueueDeferred` dispatch: drain the pending flags, then
-    /// release the task's ref as the tail (nothing touches `*this` after).
-    ///
-    /// # Safety
-    /// `this` is the queued root pointer, live via the ref taken at schedule.
-    pub(crate) unsafe fn run_deferred(this: *mut SendQueue) {
-        {
-            // SAFETY: caller contract — the queued task owns a ref on `this`.
-            let sq = unsafe { &*this };
-            sq.deferred_scheduled.set(false);
-            if sq.pending_close.replace(false) {
-                log!("SendQueue#closeSocketTask");
-                sq.close_socket(CloseReason::Normal, CloseFrom::User);
-            }
-            if sq.pending_after_close.replace(false) {
-                log!("SendQueue#_onAfterIPCClosed");
-                if !sq.close_event_sent.replace(true) {
-                    let global = sq.get_global_this();
-                    if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
-                        item.complete(&global);
-                    }
-                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
-                    for item in sq.queue.with_mut(std::mem::take) {
-                        item.abort_unsent(&global);
-                    }
-                    if let Some(owner) = sq.owner.get() {
-                        owner.handle_ipc_close();
-                    }
+    /// release `sq`, the ref taken at schedule, as the tail.
+    pub(crate) fn run_deferred(sq: RefPtr<SendQueue>) {
+        sq.deferred_scheduled.set(false);
+        if sq.pending_close.replace(false) {
+            log!("SendQueue#closeSocketTask");
+            sq.close_socket(CloseReason::Normal, CloseFrom::User);
+        }
+        if sq.pending_after_close.replace(false) {
+            log!("SendQueue#_onAfterIPCClosed");
+            if !sq.close_event_sent.replace(true) {
+                let global = sq.get_global_this();
+                if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
+                    item.complete(&global);
+                }
+                // on_write_complete already dequeued everything fully written; the rest was never delivered.
+                for item in sq.queue.with_mut(std::mem::take) {
+                    item.abort_unsent(&global);
+                }
+                if let Some(owner) = sq.owner.get() {
+                    owner.handle_ipc_close();
                 }
             }
         }
         // Release the task's ref; the SendQueue may be freed here.
-        // SAFETY: `this` is live and owns the ref taken at schedule.
-        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
-    }
-
-    /// `Taskable::release_unrun`: a scheduled deferred task that will never
-    /// run still owns a ref; drop it (skipping the JS callbacks).
-    ///
-    /// # Safety
-    /// `this` is the queued root pointer, live via the ref taken at schedule.
-    pub(crate) unsafe fn release_deferred_unrun(this: *mut SendQueue) {
-        // SAFETY: caller contract.
-        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+        drop(sq);
     }
 
     /// `uv::open_handles` closes the channel's pipe through here at a thread
@@ -1970,7 +1952,7 @@ impl bun_event_loop::Taskable for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the SendQueue root queued with a held ref.
-        unsafe { SendQueue::release_deferred_unrun(this) }
+        drop(unsafe { RefPtr::from_raw(this) });
     }
     /// The channel's own close hop.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

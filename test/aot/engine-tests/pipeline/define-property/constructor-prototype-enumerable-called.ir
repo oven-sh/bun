@@ -1,0 +1,53 @@
+# A definition without a value makes `constructor` of the object under `prototype` of a function enumerable. Object.values() of the object then lists the function.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="constructor-prototype-enumerable-called.js" displayPath="constructor-prototype-enumerable-called.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = PropGet v1 key="prototype"
+    v5 = String string="constructor"
+    v6 = NewObject layout=L0
+    v7 = FinishObject v6
+    v8 = Call v3, v2, v4, v5, v7 calleeName="Object.defineProperty"
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectValues
+    v11 = PropGet v1 key="prototype"
+    v12 = Convert v11 declared={type=undefined|null|object flags=[IsExpected]}
+    v13 = CopyObject v12
+    v14 = Call v10, v9, v13 calleeName="Object.values"
+    v15 = Undefined
+    Return v15
+}
+function f1 name="F" module=m0 position=165 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v1: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v2: builtin(ObjectDefineProperty) = Builtin builtin=ObjectDefineProperty
+# CHECK-NEXT: v3: anything = PropGet v0 key="prototype" accessSite=0
+# CHECK-NEXT: v15: object = AssumeType v3 provenType=object
+# CHECK-NEXT: v4: "constructor" = String string="constructor"
+# CHECK-NEXT: v5: L0 = NewObject layout=L0 allocationSite=1 allocationClass=0
+# CHECK-NEXT: v6: L0 = FinishObject v5
+# CHECK-NEXT: v7: anything = Call v2, v1, v15, v4, v6 calleeName="Object.defineProperty" accessSite=1 callees=[builtin(ObjectDefineProperty)]
+# CHECK-NEXT: v8: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v9: builtin(ObjectValues) = Builtin builtin=ObjectValues
+# CHECK-NEXT: v10: anything = PropGet v0 key="prototype" accessSite=2
+# CHECK-NEXT: v16: object = AssumeType v10 provenType=object
+# CHECK-NEXT: v11: object = Upcast v16 castType=anything
+# CHECK-NEXT: v17: object = AssumeType v11 provenType=object
+# CHECK-NEXT: v12: object = CopyObject v17
+# CHECK-NEXT: v18: Object = AssumeType v12 provenType=Object
+# CHECK-NEXT: v13: anything = Call v9, v8, v18 calleeName="Object.values" accessSite=3 callees=[builtin(ObjectValues)]
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
+# CHECK-NEXT: }

@@ -14,6 +14,7 @@ use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
 use bun_core::{MutableString, strings};
 use bun_options_types::Format;
+use bun_ptr::BackRef;
 use enum_map::EnumMap;
 
 /// Renamed-name strings are either borrowed from `Symbol.original_name` (AST
@@ -85,11 +86,11 @@ pub struct NoOpRenamer<'a> {
     // leak the output source code" — `await import()` re-transpiles each
     // iteration, so the leak compounds to OOM).
     pub(crate) symbols: symbol::Map,
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
 }
 
 impl<'a> NoOpRenamer<'a> {
-    pub(crate) fn init(symbols: symbol::Map, source: &'a bun_ast::Source) -> NoOpRenamer<'a> {
+    pub(crate) fn init(symbols: symbol::Map, source: &'a bun_ast::Source<'a>) -> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 
@@ -113,23 +114,21 @@ impl<'a> NoOpRenamer<'a> {
         }
     }
 
-    pub(crate) fn to_renamer(&mut self) -> Renamer<'_, 'a> {
+    pub(crate) fn to_renamer(&self) -> Renamer<'_> {
         Renamer::NoOpRenamer(self)
     }
 }
 
-// Two lifetime params — `'r` is the borrow of the underlying renamer,
-// `'src` is `NoOpRenamer`'s borrow of the `Source`. Erasing both with a
-// single lifetime via `&'a mut NoOpRenamer<'a>` would make
-// `'a` invariant and lock the source borrow to the renamer borrow.
-pub enum Renamer<'r, 'src> {
-    NumberRenamer(&'r mut NumberRenamer),
-    NoOpRenamer(&'r mut NoOpRenamer<'src>),
-    MinifyRenamer(&'r mut MinifyRenamer),
+/// The names are assigned before printing starts, so the printer only reads them.
+#[derive(Clone, Copy)]
+pub enum Renamer<'a> {
+    NumberRenamer(&'a NumberRenamer),
+    NoOpRenamer(&'a NoOpRenamer<'a>),
+    MinifyRenamer(&'a MinifyRenamer),
 }
 
-impl<'r, 'src> Renamer<'r, 'src> {
-    pub(crate) fn symbols(&self) -> &symbol::Map {
+impl<'a> Renamer<'a> {
+    pub(crate) fn symbols(self) -> &'a symbol::Map {
         match self {
             Renamer::NumberRenamer(r) => &r.symbols,
             Renamer::NoOpRenamer(r) => &r.symbols,
@@ -137,7 +136,7 @@ impl<'r, 'src> Renamer<'r, 'src> {
         }
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
+    pub fn name_for_symbol(self, ref_: Ref) -> &'a [u8] {
         match self {
             Renamer::NumberRenamer(r) => r.name_for_symbol(ref_),
             Renamer::NoOpRenamer(r) => r.name_for_symbol(ref_),
@@ -194,10 +193,7 @@ impl InlineString {
         this
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    fn slice(&mut self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         &self.bytes[0..self.len as usize]
     }
 }
@@ -219,10 +215,7 @@ impl TinyString {
         }
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    fn slice(&mut self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         match self {
             TinyString::InlineString(s) => s.slice(),
             // `StoreStr::slice` centralises the arena-backed deref; the payload
@@ -285,7 +278,7 @@ impl MinifyRenamer {
         }))
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
+    pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         let ref_ = self.symbols.follow(ref_);
         let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
 
@@ -546,10 +539,30 @@ impl SlotAndCount {
     }
 }
 
+/// The linker's one name for each binding that crosses chunks. Values live in the linker arena.
+pub type CrossChunkNames = HashMap<Ref, &'static [u8]>;
+
+type FileRowMap =
+    bun_collections::hashbrown::HashMap<u32, u32, core::hash::BuildHasherDefault<IdHasher>>;
+
+/// Source index -> row of `NumberRenamer::names`.
+enum RowOfSource {
+    /// The linker's table for all chunks, where the files of a chunk have consecutive rows.
+    Shared(BackRef<[u32]>),
+    /// A file is in several chunks (no code splitting): this chunk's files only.
+    Own(FileRowMap),
+}
+
 pub struct NumberRenamer {
     // See `NoOpRenamer.symbols` — non-owning view.
     pub(crate) symbols: ManuallyDrop<symbol::Map>,
+    row_of_source: RowOfSource,
+    /// The row of the chunk's first file. Row `first_row + i` is `names[i]`.
+    first_row: u32,
+    /// By file of the chunk, then inner index.
     pub(crate) names: Box<[Vec<NameStr>]>,
+    /// Names of symbols of other chunks' files. This renamer reserves them and stores no copy.
+    cross_chunk_names: BackRef<CrossChunkNames>,
     /// Backs top-level renamed-name slices in `names` and interned keys.
     pub(crate) arena: Bump,
     /// Every name seen in the chunk's root scope → index into `slots`.
@@ -811,24 +824,39 @@ impl NameScopes for NumberRenamer {
 }
 
 impl NumberRenamer {
-    /// `symbols_in_chunk`: how many symbols the chunk's files declare, to size
+    /// `files_in_chunk`: the files whose symbols the chunk declares, to size
     /// the name table. `symbols` spans the whole bundle and every chunk's
     /// renamer is alive at once, so sizing from it costs a bundle-sized table
     /// per chunk.
     pub fn init(
         symbols: symbol::Map,
         root_names: &StringHashMap<u32>,
-        symbols_in_chunk: usize,
+        files_in_chunk: &[u32],
+        shared_rows: Option<&[u32]>,
+        cross_chunk_names: &CrossChunkNames,
     ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
-        let len = symbols.symbols_for_source.len();
-        let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
-            .take(len)
-            .collect();
+        let (row_of_source, first_row) = match (shared_rows, files_in_chunk.first()) {
+            (Some(rows), Some(&first)) => (
+                RowOfSource::Shared(BackRef::new(rows)),
+                rows[first as usize],
+            ),
+            _ => {
+                let rows = files_in_chunk.iter().copied().zip(0u32..).collect();
+                (RowOfSource::Own(rows), 0)
+            }
+        };
+        let symbols_in_chunk: usize = files_in_chunk
+            .iter()
+            .map(|&i| symbols.symbols_for_source[i as usize].len())
+            .sum();
         let capacity = root_names.len() + symbols_in_chunk / 4;
 
         let mut r = Box::new(NumberRenamer {
             symbols: ManuallyDrop::new(symbols),
-            names,
+            row_of_source,
+            first_row,
+            names: vec![Vec::new(); files_in_chunk.len()].into_boxed_slice(),
+            cross_chunk_names: BackRef::new(cross_chunk_names),
             arena: Bump::new(),
             ids: NameIds::with_capacity_and_hasher(capacity, Default::default()),
             slots: Vec::with_capacity(capacity),
@@ -853,11 +881,32 @@ impl NumberRenamer {
         Ok(r)
     }
 
+    /// The row of `names` for a file of the chunk. `None`: the file is in another chunk.
+    #[inline]
+    fn row(&self, source_index: u32) -> Option<usize> {
+        let row = match &self.row_of_source {
+            RowOfSource::Shared(rows) => rows.get().get(source_index as usize)?,
+            RowOfSource::Own(rows) => rows.get(&source_index)?,
+        };
+        let row = row.wrapping_sub(self.first_row) as usize;
+        (row < self.names.len()).then_some(row)
+    }
+
+    /// (rows, name slots) this renamer holds, for the `ChunkRenamer` debug log.
+    pub fn table_size(&self) -> (usize, usize) {
+        (self.names.len(), self.names.iter().map(Vec::len).sum())
+    }
+
     pub fn add_top_level_symbol(&mut self, input_ref: Ref) {
         let ref_ = self.symbols.follow(input_ref);
 
+        // A symbol of another chunk's file prints under its `cross_chunk_names` entry.
+        let Some(row) = self.row(ref_.source_index()) else {
+            return;
+        };
+
         // Don't rename the same symbol more than once
-        let inner: &Vec<NameStr> = &self.names[ref_.source_index() as usize];
+        let inner: &Vec<NameStr> = &self.names[row];
         if inner.len() > ref_.inner_index() as usize && inner[ref_.inner_index() as usize].len() > 0
         {
             return;
@@ -873,33 +922,27 @@ impl NumberRenamer {
         let name = self
             .find_unused_name(original_name, ref_)
             .unwrap_or(original_name);
-        store_name(
-            &mut self.names[ref_.source_index() as usize],
-            ref_.inner_index(),
-            name,
-        );
+        store_name(&mut self.names[row], ref_.inner_index(), name);
     }
 
     /// Gives top-level symbol `ref_` the name `name` (taken to be free in the
     /// root scope) so later symbols are numbered around it. Used for bindings
     /// that cross chunks, so every chunk calls them the same.
-    pub fn pin_top_level_symbol(&mut self, ref_: Ref, name: &[u8]) {
+    pub fn pin_top_level_symbol(&mut self, ref_: Ref, name: &'static [u8]) {
         let ref_ = self.symbols.follow(ref_);
         if self.symbols.get_const(ref_).unwrap().slot_namespace() != SlotNamespace::Default {
             return;
         }
-        let name = NameStr::new(self.arena.alloc_slice_copy(name));
+        let name = NameStr::new(name);
         let id = self.intern(name);
         self.slots[id as usize] = NameSlot {
             scope: ROOT_SCOPE,
             count: 1,
             owner: ref_,
         };
-        store_name(
-            &mut self.names[ref_.source_index() as usize],
-            ref_.inner_index(),
-            name,
-        );
+        if let Some(row) = self.row(ref_.source_index()) {
+            store_name(&mut self.names[row], ref_.inner_index(), name);
+        }
     }
 
     pub fn add_top_level_declared_symbols(
@@ -913,7 +956,9 @@ impl NumberRenamer {
 
     /// Takes the names a `NestedRenamer` over this renamer assigned.
     pub fn absorb(&mut self, nested: NestedNames) {
-        self.names[nested.source_index as usize] = nested.names;
+        if let Some(row) = self.row(nested.source_index) {
+            self.names[row] = nested.names;
+        }
     }
 
     pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
@@ -926,7 +971,17 @@ impl NumberRenamer {
         let source_index = resolved.source_index();
         let inner_index = resolved.inner_index();
 
-        let renamed_list = &self.names[source_index as usize];
+        let Some(row) = self.row(source_index) else {
+            let symbol =
+                &self.symbols.symbols_for_source[source_index as usize][inner_index as usize];
+            if symbol.slot_namespace() == SlotNamespace::Default {
+                if let Some(&name) = self.cross_chunk_names.get().get(&resolved) {
+                    return name;
+                }
+            }
+            return symbol.original_name.slice();
+        };
+        let renamed_list = &self.names[row];
 
         if renamed_list.len() > inner_index as usize {
             let renamed: NameStr = renamed_list[inner_index as usize];
@@ -1050,7 +1105,9 @@ impl<'r> NestedRenamer<'r> {
     ) -> Self {
         let symbol_count = root.symbols.symbols_for_source[source_index as usize].len();
         let mut names = Vec::with_capacity(symbol_count);
-        names.extend_from_slice(&root.names[source_index as usize]);
+        if let Some(row) = root.row(source_index) {
+            names.extend_from_slice(&root.names[row]);
+        }
         names.resize(symbol_count, name_str_empty());
         NestedRenamer {
             root,
@@ -1415,12 +1472,11 @@ pub fn compute_reserved_names_for_scope(
         }
     }
 
-    // If there's a direct "eval" somewhere inside the current scope, continue
-    // traversing down the scope tree until we find it to get all reserved names
-    if scope.contains_direct_eval {
+    // Keep traversing down the scope tree toward a direct "eval" or a "with" to get all reserved names
+    if scope.contains_direct_eval || scope.contains_with {
         for child in scope.children.slice() {
             // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
-            if child.contains_direct_eval {
+            if child.contains_direct_eval || child.contains_with {
                 compute_reserved_names_for_scope(child, symbols, names);
             }
         }

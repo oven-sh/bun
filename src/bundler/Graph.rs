@@ -29,7 +29,7 @@ pub struct Graph<'a> {
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub(crate) entry_point_original_names: IndexStringMap,
     /// Every source index has an associated InputFile
-    pub input_files: MultiArrayList<InputFile>,
+    pub input_files: MultiArrayList<InputFile<'a>>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
     // `JSAst<'a>` borrows from the arena behind `self.heap`; `'a` ties the AST
@@ -91,9 +91,6 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
-
-    /// Do any input_files have a key_loader? Helps skip a loop.
-    pub(crate) has_any_key_loaders: bool,
 }
 
 #[derive(Default)]
@@ -104,8 +101,8 @@ pub struct HtmlImports {
     pub(crate) html_source_indices: Vec<IndexInt>,
 }
 
-pub struct InputFile {
-    pub(crate) source: bun_ast::Source,
+pub struct InputFile<'a> {
+    pub(crate) source: bun_ast::Source<'a>,
     pub(crate) secondary_path: AstVec<u8>,
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
@@ -115,11 +112,9 @@ pub struct InputFile {
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
-    /// The loader part of this module's `PathToSourceIndexMap` key. See `ModuleMap`.
-    pub key_loader: Option<options::Loader>,
 }
 
-impl Default for InputFile {
+impl Default for InputFile<'_> {
     fn default() -> Self {
         Self {
             source: bun_ast::Source::default(),
@@ -130,7 +125,6 @@ impl Default for InputFile {
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
-            key_loader: None,
         }
     }
 }
@@ -139,8 +133,8 @@ impl Default for InputFile {
 // Field name + type are checked against `InputFile`'s reflected layout at
 // compile time by the underlying `items::<"name", T>()`.
 bun_collections::multi_array_columns! {
-    pub trait InputFileColumns for InputFile {
-        source: bun_ast::Source,
+    pub trait InputFileColumns ['a] for InputFile<'a> {
+        source: bun_ast::Source<'a>,
         secondary_path: AstVec<u8>,
         loader: options::Loader,
         side_effects: SideEffects,
@@ -148,7 +142,6 @@ bun_collections::multi_array_columns! {
         unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
-        key_loader: Option<options::Loader>,
     }
 }
 
@@ -157,6 +150,8 @@ bitflags::bitflags! {
     pub struct InputFileFlags: u8 {
         /// Set when a barrel-eligible file has `export * from` this file.
         const IS_EXPORT_STAR_TARGET = 1 << 1;
+        /// `source.contents` is what an `onLoad` plugin returned, not what is in the file.
+        const IS_LOADED_BY_PLUGIN = 1 << 2;
     }
 }
 
@@ -184,7 +179,6 @@ impl<'a> Graph<'a> {
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
-            has_any_key_loaders: false,
         }
     }
 }
@@ -225,17 +219,6 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
-    }
-
-    pub(crate) fn set_key_loader(
-        &mut self,
-        source_index: IndexInt,
-        key_loader: Option<options::Loader>,
-    ) {
-        if key_loader.is_some() {
-            self.input_files.items_key_loader_mut()[source_index as usize] = key_loader;
-            self.has_any_key_loaders = true;
-        }
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

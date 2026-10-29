@@ -1,0 +1,182 @@
+# A for-in loop in a try assigns a parameter taken out of a pattern while its body removes, adds and replaces properties of the object.
+# FORM: AsRead
+# RUN: lower-to-air size f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="try-assigns-destructured-param-object.js" displayPath="try-assigns-destructured-param-object.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="c" declared={type=undefined|null|string flags=[IsExpected]}}] ownFieldCount=1
+layout L1 module=m0 position=202 fields=[{key="k1" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="k2" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L2 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L3 module=m0 position=984 fields=[{key="inherited" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="c" value=String{value="given"}}]} module=m0
+data d1 root=Object{layout=L0} module=m0
+data d2 root=Object{layout=L1 members=[{key="k1" value=Number{value=1}}, {key="k2" value=Number{value=2}}]} module=m0
+data d3 root=Object{layout=L3 members=[{key="inherited" value=Number{value=1}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f4
+    v5 = NewClosure function=f5
+    v6 = NewClosure function=f6
+    v7 = NewClosure function=f7
+    v8 = NewClosure function=f8
+    v9 = NewClosure function=f9
+    v10 = NewArray v2, v3, v4, v5, v6, v7, v8, v9 contents=undefined|null|function|f2|f3|f4|f5|f6|f7|f8|f9
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|function|f2|f3|f4|f5|f6|f7|f8|f9> flags=[IsExpected]}
+    v12 = IteratorOpen v11
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = IteratorResume v12
+    v15 = ResultAt v14 index=1
+    Jump -> next b2()
+  b2() handler=b3():
+    v16 = Convert v15 declared={type=undefined|null|function|f2|f3|f4|f5|f6|f7|f8|f9 flags=[IsExpected]}
+    v17 = Undefined
+    v18 = Call v1, -, v17, v16 calleeName="walk"
+    v19 = Data data=d0
+    v20 = Call v1, -, v19, v16 calleeName="walk"
+    Jump -> next b1()
+  b3() role=IterationCleanup subject=v12:
+    v21 = CatchException
+    Rethrow v21
+}
+function f1 name="walk" module=m0 position=137 flags=[HasExplicitName] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0, v1: undefined|null|function):
+    v2 = TypeTest v0 testedType=undefined
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = Data data=d1
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}
+    Jump -> next b3(v5)
+  b2(v6):
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = PropGet v7 key="c"
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
+    v10 = Data data=d2
+    v11 = Convert v10 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v12 = String string=""
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b4()
+  b4() handler=b14(v13, v9):
+    v14 = ForInOpen v11
+    Jump -> next b5(v9, v13)
+  b5(v15, v16) handler=b14(v16, v15):
+    LoopHint
+    v18 = ForInStep v14, v11
+    v19 = ResultAt v18
+    v20 = ResultAt v18 index=1
+    Branch v19 -> taken b6(), notTaken b11()
+  b6() handler=b14(v16, v15):
+    Jump -> next b7(v15)
+  b7(v21) handler=b14(v16, v21):
+    v22 = String string="!"
+    v23 = Add v21, v22
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b8()
+  b8() handler=b14(v16, v24):
+    Jump -> next b9(v24)
+  b9(v25) handler=b14(v16, v25):
+    Jump -> next b10()
+  b10():
+    Jump -> next b15(v16, v25)
+  b11() handler=b14(v16, v15):
+    v26 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b12()
+  b12() handler=b14(v16, v26):
+    v27 = String string=" "
+    v28 = Add v26, v27
+    v29 = Add v16, v28
+    v30 = Convert v29 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b13()
+  b13() handler=b14(v30, v26):
+    v31 = Call v1, -, v11, v26 calleeName="change"
+    Jump -> next b5(v26, v30)
+  b14(v32, v33) role=CatchHandler:
+    v34 = String string="caught at "
+    v35 = Add v34, v33
+    v36 = String string=" "
+    v37 = Add v35, v36
+    v38 = Add v32, v37
+    v39 = Convert v38 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b15(v39, v33)
+  b15(v40, v41):
+    v42 = Builtin builtin=Object
+    v43 = Builtin builtin=ObjectKeys
+    v44 = Call v43, v42, v11 calleeName="Object.keys"
+    v45 = Convert v44 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v46 = PropGet v45 key="join"
+    v47 = Convert v46 declared={type=undefined|null|function flags=[IsExpected]}
+    v48 = Call v47, v45 calleeKey="join" calleeName="join"
+    v49 = Undefined
+    Return v49
+}
+function f2 module=m0 position=489 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 module=m0 position=501 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f4 module=m0 position=569 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f5 module=m0 position=634 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f6 module=m0 position=733 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f7 module=m0 position=801 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = String string="k2"
+    v5 = NewObject layout=L2
+    v6 = FinishObject v5
+    v7 = Call v3, v2, v0, v4, v6 calleeName="Object.defineProperty"
+    v8 = Undefined
+    Return v8
+}
+function f8 module=m0 position=911 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectSetPrototypeOf
+    v4 = Data data=d3
+    v5 = Call v3, v2, v0, v4 calleeName="Object.setPrototypeOf"
+    v6 = Undefined
+    Return v6
+}
+function f9 module=m0 position=1010 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Error" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Error) flags=[IsExpected]}
+    v5 = String string="stop"
+    v6 = Construct v4, -, v5 calleeName="Error"
+    v7 = Convert v6 declared={type=undefined|null|Error flags=[IsExpected]}
+    Throw v7
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+# -- generated: walk
+# CHECK-LABEL: function {{*}}name="walk"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 264, patchpoints: 18, rare instructions: 147
+# CHECK-NEXT: end of function f19

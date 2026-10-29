@@ -39,8 +39,8 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
 /// `__chunks(import.meta.url, ids, nodes, 0)` for a browser entry chunk of a
 /// split bundle: the chunk graph `__preload` walks (see runtime.js).
 fn module_preload_registration(
-    c: &mut LinkerContext,
-    chunk: &mut Chunk,
+    c: &LinkerContext,
+    chunk: &Chunk,
     chunk_index: usize,
     chunks: &[Chunk],
 ) -> Result<Vec<u8>, crate::Error> {
@@ -67,11 +67,10 @@ fn module_preload_registration(
         local[chunk_index as usize] = i as u32;
     }
 
-    let mut renamer = chunk.renamer.as_renamer();
     write!(
         &mut code,
         "{}(import.meta.url,[",
-        bstr::BStr::new(renamer.name_for_symbol(chunks_ref))
+        bstr::BStr::new(chunk.renamer.as_renamer().name_for_symbol(chunks_ref))
     )
     .unwrap();
     for (i, &chunk_index) in reached.iter().enumerate() {
@@ -135,8 +134,8 @@ pub(crate) fn post_process_js_chunk(
 
     let runtime_input_file =
         c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
-    let runtime_scope: &mut Scope = &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
-    let runtime_members = &mut runtime_scope.members;
+    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[runtime_input_file];
+    let runtime_members = &runtime_scope.members;
     let to_common_js_ref = c
         .graph
         .symbols
@@ -247,8 +246,6 @@ pub(crate) fn post_process_js_chunk(
         let source = c.get_source(chunk.entry_point.source_index());
         let target = c.resolver().opts.target;
 
-        // Hoist the StoreSlice extraction so the two `&mut chunk` borrows below
-        // (content vs renamer) don't overlap inside a single expression.
         let prefix_stmts = bun_ast::StoreSlice::new_mut(
             chunk
                 .content
@@ -660,10 +657,7 @@ pub(crate) fn post_process_js_chunk(
                 if c.options.source_maps != options::SourceMapOption::None {
                     bun_core::handle_oom(compile_results_for_source_map.append(
                         CompileResultForSourceMap {
-                            // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
-                            // (read-only and outlives this fn); slab-only MAL drop means
-                            // the alias is never freed — original keeps the single owner.
-                            source_map_chunk: unsafe { source_map_chunk.alias() },
+                            source_map_chunk,
                             generated_offset: match line_offset {
                                 SourceMap::LineColumnOffsetOptional::Value(v) => v,
                                 SourceMap::LineColumnOffsetOptional::Null => Default::default(),
@@ -816,19 +810,15 @@ pub(crate) fn post_process_js_chunk(
     Ok(())
 }
 
-// `js_printer::print` ties bump/Options/import_records/renamer to a
-// single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
-// renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
-// share that lifetime.
-pub(crate) fn generate_entry_point_tail_js<'a>(
-    c: &'a mut LinkerContext,
+pub(crate) fn generate_entry_point_tail_js(
+    c: &LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     source_index: IndexInt,
-    arena: &'a Arena,
+    arena: &Arena,
     temp_arena: &Arena,
-    r: js_printer::renamer::Renamer<'a, 'a>,
-    module_info: Option<&'a mut ModuleInfo>,
+    r: js_printer::renamer::Renamer,
+    module_info: Option<&mut ModuleInfo>,
     cross_chunk_exports: &[bun_ast::ClauseItem],
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
@@ -1074,12 +1064,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         }
 
                         let own_len = items.len();
-                        items.extend(cross_chunk_exports.iter().map(|item| bun_ast::ClauseItem {
-                            alias: item.alias,
-                            alias_loc: item.alias_loc,
-                            name: item.name,
-                            original_name: item.original_name,
-                        }));
+                        items.extend_from_slice(cross_chunk_exports);
                         // arena-owned `*mut [ClauseItem]` — move the
                         // collected Vec into the linker arena. The arena slice is also iterated
                         // below for the synthetic-default-export path.
@@ -1275,9 +1260,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
-        require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaCallback::init::<
-            LinkerContext,
-        >(c),
+        require_or_import_meta_for_source_callback: Some(
+            js_printer::RequireOrImportMetaCallback::init(c),
+        ),
 
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,
@@ -1289,11 +1274,6 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     };
 
     let ast_view = core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
-    // SAFETY: `import_records` is a `Vec` pointing into the bundler arena,
-    // which outlives `'a` (the chunk-processing scope). Detach the borrow from
-    // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
-    let import_records: &'a [ImportRecord] =
-        unsafe { bun_ptr::detach_lifetime(ast_view.import_records.as_slice()) };
 
     CompileResult::Javascript {
         result: js_printer::print::<false>(
@@ -1302,7 +1282,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
             &ast_view,
             c.get_source(source_index),
             print_options,
-            import_records,
+            ast_view.import_records.as_slice(),
             &[Part {
                 stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
                 ..Default::default()

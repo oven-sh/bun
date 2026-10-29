@@ -1,20 +1,42 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
-import { join } from "path";
+import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, tempDir } from "harness";
+import { randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
-function ustarHeader(name: string | Buffer, size: number, typeflag: string = "0"): Buffer {
+// `fields` overwrites the raw 8-byte mode / 12-byte mtime fields, for values the
+// octal text form cannot hold (see `base256`).
+function ustarHeader(
+  name: string | Buffer,
+  size: number,
+  typeflag: string = "0",
+  fields: { mode?: Uint8Array; mtime?: Uint8Array } = {},
+): Buffer {
   const nameBytes = typeof name === "string" ? Buffer.from(name) : name;
   if (nameBytes.length > 99) throw new Error("ustar name too long: " + name);
   const h = Buffer.alloc(512);
   nameBytes.copy(h, 0);
   h.write("0000644\0", 100);
+  if (fields.mode) h.set(fields.mode.subarray(0, 8), 100);
   h.write("0000000\0", 108);
   h.write("0000000\0", 116);
   h.write(size.toString(8).padStart(11, "0") + "\0", 124);
   h.write("00000000000\0", 136);
+  if (fields.mtime) h.set(fields.mtime.subarray(0, 12), 136);
   h.write("        ", 148);
   h.write(typeflag, 156);
   h.write("ustar\0", 257);
@@ -28,6 +50,30 @@ function ustarHeader(name: string | Buffer, size: number, typeflag: string = "0"
 function ustarEntry(name: string | Buffer, data: Buffer): Buffer {
   const pad = Buffer.alloc((512 - (data.length % 512)) % 512);
   return Buffer.concat([ustarHeader(name, data.length), data, pad]);
+}
+
+function ustarSymlink(name: string, target: string): Buffer {
+  const h = ustarHeader(name, 0, "2");
+  h.write(target, 157);
+  h.write("        ", 148);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += h[i];
+  h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  return h;
+}
+
+// GNU tar base-256 ("binary") form of a numeric header field: the top bit of
+// the first byte set, then `value` as big-endian two's complement in the rest.
+// Writers use it when a value does not fit the field's octal digits, so a
+// reader can see numbers far outside what the field normally carries.
+function base256(value: bigint, width: number): Uint8Array {
+  const out = new Uint8Array(width);
+  for (let i = width - 1; i >= 0; i--) {
+    out[i] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  out[0] |= 0x80;
+  return out;
 }
 
 function buildTarball(entries: Array<{ name: string | Buffer; data: Buffer | string }>): Uint8Array {
@@ -63,8 +109,85 @@ function buildPaxTarball(entries: Array<{ name: string; data: Buffer | string }>
   return new Uint8Array(Buffer.concat(parts));
 }
 
+// Sparse members, as `tar --sparse` writes them. Such a member stores only its
+// data chunks and a map of where they go; `realSize` is the length of the
+// extracted file, so a member whose last chunk ends before `realSize` ends in
+// a hole.
+type SparseChunk = { offset: number; data: Buffer };
+
+function sparseMap(realSize: number, chunks: SparseChunk[]): [number, number][] {
+  const map = chunks.map(c => [c.offset, c.data.length] as [number, number]);
+  const end = chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.data.length : 0;
+  // GNU tar closes the map with an empty entry at the real size.
+  if (end < realSize) map.push([realSize, 0]);
+  return map;
+}
+
+// Old GNU format, the `tar --sparse` default: typeflag 'S', magic "ustar  \0",
+// four map entries at offset 386, the real size at 483. The size field counts
+// the stored bytes only.
+function oldGnuSparseEntry(name: string, realSize: number, chunks: SparseChunk[]): Buffer {
+  const field = (n: number) => n.toString(8).padStart(11, "0") + "\0";
+  const map = sparseMap(realSize, chunks);
+  if (map.length > 4) throw new Error("the old GNU header holds four sparse entries");
+  const body = Buffer.concat(chunks.map(c => c.data));
+  const h = ustarHeader(name, body.length, "S");
+  h.write("ustar  \0", 257, "latin1");
+  map.forEach(([offset, length], i) => {
+    h.write(field(offset), 386 + i * 24);
+    h.write(field(length), 398 + i * 24);
+  });
+  h.write(field(realSize), 483);
+  h.write("        ", 148);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += h[i];
+  h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  return Buffer.concat([h, body, Buffer.alloc((512 - (body.length % 512)) % 512)]);
+}
+
+// PAX format 1.0, what `tar --sparse --format=posix` writes: an 'x' header
+// carries the name and the real size, and the data area starts with the map as
+// decimal lines, NUL-padded to a block, followed by the chunks.
+function paxSparseEntry(name: string, realSize: number, chunks: SparseChunk[]): Buffer {
+  const record = (key: string, value: string | number) => {
+    const body = ` ${key}=${value}\n`;
+    const bodyBytes = Buffer.byteLength(body);
+    let len = bodyBytes + 1;
+    while (String(len).length + bodyBytes !== len) len++;
+    return `${len}${body}`;
+  };
+  const pax = Buffer.from(
+    record("GNU.sparse.major", 1) +
+      record("GNU.sparse.minor", 0) +
+      record("GNU.sparse.name", name) +
+      record("GNU.sparse.realsize", realSize),
+  );
+  const map = sparseMap(realSize, chunks);
+  const mapText = Buffer.from(`${map.length}\n` + map.map(([offset, length]) => `${offset}\n${length}\n`).join(""));
+  const mapPad = Buffer.alloc((512 - (mapText.length % 512)) % 512);
+  return Buffer.concat([
+    ustarHeader("PaxHeaders/sparse", pax.length, "x"),
+    pax,
+    Buffer.alloc((512 - (pax.length % 512)) % 512),
+    ustarEntry(`GNUSparseFile.0/${name}`, Buffer.concat([mapText, mapPad, ...chunks.map(c => c.data)])),
+  ]);
+}
+
 describe("Bun.Archive", () => {
   describe("new Archive()", () => {
+    test("reads new.target.prototype before it looks for the realm of new.target", () => {
+      const { proxy, revoke } = Proxy.revocable(function () {}, {});
+      revoke();
+      const keys: PropertyKey[] = [];
+      const newTarget = new Proxy(proxy, {
+        get(target, key) {
+          keys.push(key);
+        },
+      });
+      expect(() => Reflect.construct(Bun.Archive, [{}], newTarget)).toThrow(TypeError);
+      expect(keys).toEqual(["prototype"]);
+    });
+
     test("creates archive from object with string values", async () => {
       const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
@@ -577,9 +700,112 @@ describe("Bun.Archive", () => {
         }
       }
     });
+
+    test("extracts entries whose mode field has bits above the permission bits", async () => {
+      // The tar reader hands back whatever the header's mode field encoded, and a
+      // base-256 field can encode far more than the 12 mode bits. Only the
+      // permission bits may reach mkdirat()/openat(); the rest are dropped.
+      const high = 1n << 31n;
+      const tarball = Buffer.concat([
+        ustarHeader("dir/", 0, "5", { mode: base256(high | 0o755n, 8) }),
+        ustarHeader("dir/inner.txt", 5, "0", { mode: base256(high | 0o644n, 8) }),
+        Buffer.concat([Buffer.from("inner"), Buffer.alloc(512 - 5)]),
+        ustarEntry("top.txt", Buffer.from("top")),
+        Buffer.alloc(1024),
+      ]);
+
+      using dir = tempDir("archive-extract-wide-mode", {
+        "input.tar": tarball,
+        "extract.ts": `
+          const fs = require("node:fs");
+          const count = await new Bun.Archive(fs.readFileSync("input.tar")).extract("out");
+          console.log(JSON.stringify({
+            count,
+            dir: fs.statSync("out/dir").isDirectory(),
+            inner: fs.readFileSync("out/dir/inner.txt", "utf8"),
+            top: fs.readFileSync("out/top.txt", "utf8"),
+          }));
+        `,
+      });
+
+      // In a child process: the failure mode is a process abort.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ count: 3, dir: true, inner: "inner", top: "top" });
+      expect(exitCode).toBe(0);
+    });
+
+    // `bun install` skips the symlink entries of a GitHub tarball; that is an option of its own calls.
+    test.skipIf(isWindows)("creates symlink entries", async () => {
+      using dir = tempDir("archive-extract-symlink", {});
+
+      const tarball = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("index.js", Buffer.from("module.exports = 1;")),
+          ustarSymlink("link.js", "index.js"),
+          Buffer.alloc(1024),
+        ]),
+      );
+
+      await new Bun.Archive(tarball).extract(String(dir));
+
+      const linkPath = join(String(dir), "link.js");
+      expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(linkPath)).toBe("index.js");
+    });
+
+    // `tar --acls` stores these. GNU tar and node-tar take the permissions from the header.
+    describe("ACL records", () => {
+      const withAcl = (acl: string, mode: string, typeflag = "0", name = "run.sh") => {
+        const body = ` SCHILY.acl.access=${acl}\n`;
+        let length = body.length + 1;
+        while (String(length).length + body.length !== length) length++;
+        const records = Buffer.from(`${length}${body}`);
+        return Buffer.concat([
+          ustarHeader("PaxHeaders/0", records.length, "x"),
+          records,
+          Buffer.alloc(512 - records.length),
+          ustarHeader(name, 0, typeflag, { mode: Buffer.from(mode + "\0") }),
+          Buffer.alloc(1024),
+        ]);
+      };
+
+      test.skipIf(isWindows)("do not change the permissions of a file", async () => {
+        using dir = tempDir("archive-acl-file", {});
+        await new Bun.Archive(withAcl("user::rw-,group::r--,other::r--", "0000755")).extract(String(dir));
+        expect(statSync(join(String(dir), "run.sh")).mode & 0o100).toBe(0o100);
+      });
+
+      test.skipIf(isWindows)("do not change the permissions of a directory", async () => {
+        using dir = tempDir("archive-acl-dir", {});
+        await new Bun.Archive(withAcl("user::---,group::---,other::---", "0000755", "5", "d/")).extract(String(dir));
+        expect(statSync(join(String(dir), "d")).mode & 0o700).toBe(0o700);
+      });
+    });
   });
 
   describe("corrupted archives", () => {
+    test("a damaged block between two files is skipped, and Bun.inspect counts what files() returns", async () => {
+      const archive = new Bun.Archive(
+        Buffer.concat([
+          ustarEntry("a", Buffer.from("a")),
+          Buffer.alloc(512, "junk"),
+          ustarEntry("b", Buffer.from("b")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      expect([...(await archive.files()).keys()]).toEqual(["a", "b"]);
+      expect(Bun.inspect(archive)).toContain("files: 2");
+    });
+
     test("throws when extracting corrupted archive data", async () => {
       // Create garbage data that's not a valid archive
       const corruptedData = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
@@ -644,7 +870,7 @@ describe("Bun.Archive", () => {
 
     test("files() does not leak entries when readData fails mid-stream", async () => {
       // Regression test: a tarball with two valid 64KB entries followed by a third
-      // entry whose header advertises 64KB but whose data is truncated. libarchive
+      // entry whose header advertises 64KB but whose data is truncated. The reader
       // successfully reads the first two entries (allocating path + data for each),
       // then readData() fails on the third. The already-collected entries must be
       // freed on that error path; previously they were leaked on every call.
@@ -719,6 +945,43 @@ describe("Bun.Archive", () => {
       expect(stderr).toBe("");
       expect(stdout).toContain("RSS growth:");
       expect(exitCode).toBe(0);
+    });
+
+    describe("every way to read a damaged archive rejects", () => {
+      const member = ustarEntry("a.bin", randomBytes(300_000));
+      const tar = Buffer.concat([member, ustarEntry("b.bin", randomBytes(300_000)), Buffer.alloc(1024)]);
+      // Level 0 stores the bytes as they are, so only the CRC32 in the trailer can tell that one changed.
+      const wrongCrc = Buffer.from(Bun.gzipSync(tar, { level: 0 }));
+      wrongCrc[5000] ^= 0xff;
+
+      test.concurrent.each([
+        ["a gzip CRC32 that does not match", wrongCrc],
+        ["a tar cut inside a file", tar.subarray(0, member.length + 512 + 1000)],
+        ["a tar cut inside a header", tar.subarray(0, member.length + 200)],
+      ])("%s", async (_, bytes) => {
+        using dir = tempDir("archive-damaged", {});
+        const archive = new Bun.Archive(bytes);
+        const settled = (promise: Promise<unknown>) =>
+          promise.then(
+            () => "resolved",
+            () => "rejected",
+          );
+        expect({
+          "extract()": await settled(archive.extract(join(String(dir), "all"))),
+          "extract() with a glob": await settled(archive.extract(join(String(dir), "glob"), { glob: "**" })),
+          "extract() with a glob that matches nothing": await settled(
+            archive.extract(join(String(dir), "none"), { glob: "nothing" }),
+          ),
+          "files()": await settled(archive.files()),
+          "files() with a glob": await settled(archive.files("a.bin")),
+        }).toEqual({
+          "extract()": "rejected",
+          "extract() with a glob": "rejected",
+          "extract() with a glob that matches nothing": "rejected",
+          "files()": "rejected",
+          "files() with a glob": "rejected",
+        });
+      });
     });
   });
 
@@ -935,6 +1198,496 @@ describe("Bun.Archive", () => {
       expect(existsSync(join(extractPath, "safe_dir"))).toBe(true);
       // The normalized "escaped_dir" may or may not exist inside extractPath
       // (depending on whether normalization keeps it), but it must NOT be outside
+    });
+
+    // Where a path leads depends on the symlinks already on disk, whether the
+    // user made them or an earlier archive did. Windows still follows the ones
+    // a user made, and no archive makes one there.
+    describe.skipIf(isWindows)("symlinks in the destination", () => {
+      const file = (name: string) => ustarEntry(name, Buffer.from("from the archive"));
+      const directory = (name: string) => ustarHeader(name + "/", 0, "5");
+      type Case = {
+        /** `[path, target]`, made in the destination before anything is extracted. `$` is the directory it is in. */
+        links?: [string, string][];
+        /** Extracted one after the other. */
+        archives: Buffer[][];
+      };
+      /** What each `extract()` resolves to, or the message it rejects with, after its `code` and `path` if it has them. */
+      type Expected = { plain: (number | string)[]; glob: (number | string)[] };
+      const refused = (path: string) =>
+        `EXDEV ${path}: A symlink in the destination is absolute or leads outside of it`;
+      const leaving: Record<string, Case & Expected> = {
+        "a file through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[file("out/new.txt")]],
+          plain: [refused("out/new.txt")],
+          glob: [0],
+        },
+        "a file through an absolute symlink": {
+          links: [["out", "$/outside"]],
+          archives: [[file("out/new.txt")]],
+          plain: [refused("out/new.txt")],
+          glob: [0],
+        },
+        "a file and its parents through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[file("out/a/b/new.txt")]],
+          plain: [refused("out/a/b/new.txt")],
+          glob: [0],
+        },
+        "a file through a symlink below a directory": {
+          links: [["deep/er/out", "../../../outside"]],
+          archives: [[file("deep/er/out/new.txt")]],
+          plain: [refused("deep/er/out/new.txt")],
+          glob: [0],
+        },
+        "a file through a symlink that comes back": {
+          links: [["back", "../dest/real"]],
+          archives: [[directory("real"), file("back/new.txt")]],
+          plain: [refused("back/new.txt")],
+          glob: [1],
+        },
+        "a file through a symlink that goes down first": {
+          links: [
+            ["deep/er/unused", "unused"],
+            ["deep/out", "er/../../../outside"],
+          ],
+          archives: [[file("deep/out/new.txt")]],
+          plain: [refused("deep/out/new.txt")],
+          glob: [0],
+        },
+        "a file through a symlink through a symlink": {
+          links: [
+            ["a/up", ".."],
+            ["out", "a/up/../outside"],
+          ],
+          archives: [[file("out/new.txt")]],
+          plain: [refused("out/new.txt")],
+          glob: [0],
+        },
+        "a file over a symlink": {
+          links: [["victim.txt", "../outside/victim.txt"]],
+          archives: [[file("victim.txt")]],
+          plain: [refused("victim.txt")],
+          glob: [0],
+        },
+        "a file over a dangling symlink": {
+          links: [["new.txt", "../outside/new.txt"]],
+          archives: [[file("new.txt")]],
+          plain: [refused("new.txt")],
+          glob: [0],
+        },
+        "a directory through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[directory("out/new")]],
+          plain: [1],
+          glob: [0],
+        },
+        "a directory and its parents through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[directory("out/a/b/new")]],
+          plain: [1],
+          glob: [0],
+        },
+        "a symlink through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[ustarSymlink("out/new", "victim.txt")]],
+          plain: [1],
+          glob: [0],
+        },
+        // Each target stays inside going by the path of its symlink. The second
+        // symlink is not where its path says: `a/up` is the destination, so
+        // its `..` is the directory above.
+        "a symlink through the symlink of an earlier archive": {
+          archives: [[ustarSymlink("a/up", "..")], [ustarSymlink("a/up/esc", "..")], [file("esc/new.txt")]],
+          plain: [1, 1, 1],
+          glob: [0, 0, 1],
+        },
+        // macOS follows the last name of a path that ends in a slash, which the name of a directory entry does.
+        "a directory over a dangling symlink": {
+          links: [["new", "../outside/new"]],
+          archives: [[directory("new")]],
+          plain: [1],
+          glob: [1],
+        },
+        "a directory over a dangling symlink below a directory": {
+          links: [["deep/new", "../../outside/new"]],
+          archives: [[directory("deep/new")]],
+          plain: [1],
+          glob: [1],
+        },
+        "a symlink whose name ends in a slash over a dangling symlink": {
+          links: [["new", "../outside/new"]],
+          archives: [[ustarSymlink("new/", "victim.txt")]],
+          plain: [1],
+          glob: [0],
+        },
+        "a symlink whose name ends in a slash over the symlink of an earlier archive": {
+          archives: [[ustarSymlink("a/l", "../b")], [ustarSymlink("a/l/", "..")], [file("b/new.txt")]],
+          plain: [1, 1, 1],
+          glob: [0, 0, 1],
+        },
+        "a symlink whose name ends in a slash": {
+          archives: [[ustarSymlink("a/l/", "../..")], [file("a/l/new.txt")]],
+          plain: [1, 1],
+          glob: [0, 1],
+        },
+      };
+
+      function tree(root: string, prefix = "", out: Record<string, string> = {}): Record<string, string> {
+        for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
+          const path = join(prefix, entry.name);
+          if (entry.isSymbolicLink()) out[path] = "-> " + readlinkSync(join(root, path));
+          else if (!entry.isDirectory()) out[path] = readFileSync(join(root, path), "utf8");
+          else tree(root, path, Object.assign(out, { [path]: "directory" }));
+        }
+        return out;
+      }
+
+      const fixture = {
+        "extract-fixture.ts": `
+          import { readFileSync } from "node:fs";
+          process.umask(0);
+          const { options, cases } = JSON.parse(readFileSync("cases.json", "utf8"));
+          const results = {};
+          for (const { name, dest, archives } of cases) {
+            results[name] = [];
+            for (const path of archives) {
+              results[name].push(
+                await new Bun.Archive(readFileSync(path))
+                  .extract(dest, options)
+                  .catch(e => (e.code ? e.code + " " + e.path + ": " : "") + e.message),
+              );
+            }
+          }
+          console.log(JSON.stringify(results));
+        `,
+      };
+
+      /** `dir` is a `tempDir` of `fixture`. Case number `i` is extracted to `i/dest`, next to `i/outside`. */
+      async function extractAll(
+        dir: string,
+        cases: Record<string, Case>,
+        mode: "plain" | "glob",
+        env: Record<string, string>,
+      ) {
+        const list = Object.entries(cases).map(([name, { links = [], archives }], i) => {
+          const root = join(dir, String(i));
+          mkdirSync(join(root, "dest"), { recursive: true });
+          mkdirSync(join(root, "outside"));
+          writeFileSync(join(root, "outside", "victim.txt"), "original");
+          for (const [path, target] of links) {
+            mkdirSync(dirname(join(root, "dest", path)), { recursive: true });
+            symlinkSync(target.replace("$", root), join(root, "dest", path));
+          }
+          return {
+            name,
+            root,
+            dest: join(root, "dest"),
+            archives: archives.map((entries, j) => {
+              writeFileSync(join(root, `${j}.tar`), Buffer.concat([...entries, Buffer.alloc(1024)]));
+              return join(root, `${j}.tar`);
+            }),
+          };
+        });
+        writeFileSync(
+          join(dir, "cases.json"),
+          JSON.stringify({ options: mode === "glob" ? { glob: "**" } : undefined, cases: list }),
+        );
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "extract-fixture.ts"],
+          env: { ...bunEnv, ...env },
+          cwd: dir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.slice(0, 1), stderr, exitCode }).toEqual({ stdout: "{", stderr: "", exitCode: 0 });
+        return { list, results: JSON.parse(stdout) as Record<string, (number | string)[]> };
+      }
+
+      /** `count` symlinks, each to the next, and the last to `real`. */
+      const chain = (count: number): [string, string][] =>
+        Array.from({ length: count }, (_, i) => [`link${i}`, i + 1 < count ? `link${i + 1}` : "real"]);
+
+      describe.each([
+        ["by default", {}],
+        ["when the kernel is not asked", { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" }],
+      ] as const)("%s", (_, env) => {
+        test.concurrent.each(["plain", "glob"] as const)("nothing is written outside of it (%s)", async mode => {
+          using dir = tempDir("archive-symlinks", fixture);
+          const { list, results } = await extractAll(String(dir), leaving, mode, env);
+          const untouched = { "victim.txt": "original" };
+          expect(
+            Object.fromEntries(
+              list.map(({ name, root, archives }) => [
+                name,
+                {
+                  results: results[name],
+                  outside: tree(join(root, "outside")),
+                  siblings: readdirSync(root).length - archives.length,
+                },
+              ]),
+            ),
+          ).toEqual(
+            Object.fromEntries(
+              Object.entries(leaving).map(([name, expected]) => [
+                name,
+                { results: expected[mode], outside: untouched, siblings: 2 },
+              ]),
+            ),
+          );
+        });
+
+        test.concurrent.each(["plain", "glob"] as const)("one that stays inside (%s)", async mode => {
+          using dir = tempDir("archive-symlinks", fixture);
+          const cases: Record<string, Case & { followed: boolean; message?: string }> = {
+            "file": {
+              followed: true,
+              links: [["alias", "real"]],
+              archives: [[directory("real"), file("alias/new.txt")]],
+            },
+            "up": {
+              followed: true,
+              links: [["a/up", ".."]],
+              archives: [[directory("real"), file("a/up/real/new.txt")]],
+            },
+            "down and up": {
+              followed: true,
+              links: [["a/b/alias", "../b/./../../real//"]],
+              archives: [[directory("real"), file("a/b/alias/new.txt")]],
+            },
+            "over one": {
+              followed: true,
+              links: [["alias.txt", "real/new.txt"]],
+              archives: [[directory("real"), file("alias.txt")]],
+            },
+            // macOS follows 32 for one path and Linux 40.
+            "30 of them": {
+              followed: true,
+              links: chain(30),
+              archives: [[directory("real"), file("link0/new.txt")]],
+            },
+            "41 of them": {
+              followed: false,
+              links: chain(41),
+              archives: [[directory("real"), file("link0/new.txt")]],
+            },
+            "to itself": {
+              followed: false,
+              links: [["alias", "alias"]],
+              archives: [[directory("real"), file("alias/new.txt")]],
+            },
+            // The kernels refuse every absolute one.
+            "absolute": {
+              followed: false,
+              message: refused("alias/new.txt"),
+              links: [["alias", "$/dest/real"]],
+              archives: [[directory("real"), file("alias/new.txt")]],
+            },
+          };
+          const { list, results } = await extractAll(String(dir), cases, mode, env);
+          const before = (root: string, links: [string, string][]) =>
+            Object.fromEntries(
+              links.flatMap(([path, target]) => {
+                const names = path.split("/");
+                const parents = names.slice(1).map((_, i) => [join(...names.slice(0, i + 1)), "directory"]);
+                return [...parents, [join(...names), "-> " + target.replace("$", root)]];
+              }),
+            );
+          expect(
+            Object.fromEntries(list.map(({ name, dest }) => [name, { results: results[name], tree: tree(dest) }])),
+          ).toEqual(
+            Object.fromEntries(
+              list.map(({ name, root }) => [
+                name,
+                {
+                  results: [cases[name].followed ? 2 : mode === "plain" ? (cases[name].message ?? "ReadError") : 1],
+                  tree: {
+                    ...before(root, cases[name].links!),
+                    "real": "directory",
+                    ...(cases[name].followed && { [join("real", "new.txt")]: "from the archive" }),
+                  },
+                },
+              ]),
+            ),
+          );
+        });
+
+        // Below a symlink, a symlink entry is not where its path says. Its target is judged from where it is.
+        test.concurrent.each(["plain", "glob"] as const)(
+          "a symlink entry below one that stays inside (%s)",
+          async mode => {
+            using dir = tempDir("archive-symlinks", fixture);
+            /** What is in the destination afterwards, besides `links`. With a glob, no target has a `..`. */
+            const cases: Record<
+              string,
+              Case & Record<"plain" | "glob", { result: number; tree: Record<string, string> }>
+            > = {
+              "to a name beside it": {
+                links: [["alias", "real"]],
+                archives: [[directory("real"), ustarSymlink("alias/link", "new.txt")]],
+                plain: { result: 2, tree: { "real": "directory", "real/link": "-> new.txt" } },
+                glob: { result: 2, tree: { "real": "directory", "real/link": "-> new.txt" } },
+              },
+              "in directories that are not there yet": {
+                links: [["alias", "real"]],
+                archives: [[directory("real"), ustarSymlink("alias/a/b/link", "new.txt")]],
+                plain: {
+                  result: 2,
+                  tree: {
+                    "real": "directory",
+                    "real/a": "directory",
+                    "real/a/b": "directory",
+                    "real/a/b/link": "-> new.txt",
+                  },
+                },
+                glob: {
+                  result: 2,
+                  tree: {
+                    "real": "directory",
+                    "real/a": "directory",
+                    "real/a/b": "directory",
+                    "real/a/b/link": "-> new.txt",
+                  },
+                },
+              },
+              "to the directory above, which is inside": {
+                links: [["alias", "real/deep"]],
+                archives: [[directory("real"), directory("real/deep"), ustarSymlink("alias/link", "../new.txt")]],
+                plain: {
+                  result: 3,
+                  tree: { "real": "directory", "real/deep": "directory", "real/deep/link": "-> ../new.txt" },
+                },
+                glob: { result: 2, tree: { "real": "directory", "real/deep": "directory" } },
+              },
+              "to the directory above, which is outside": {
+                links: [["a/up", ".."]],
+                archives: [[ustarSymlink("a/up/link", "..")]],
+                plain: { result: 1, tree: { "a": "directory" } },
+                glob: { result: 0, tree: { "a": "directory" } },
+              },
+            };
+            const { list, results } = await extractAll(String(dir), cases, mode, env);
+            expect(
+              Object.fromEntries(list.map(({ name, dest }) => [name, { results: results[name], tree: tree(dest) }])),
+            ).toEqual(
+              Object.fromEntries(
+                list.map(({ name }) => [
+                  name,
+                  {
+                    results: [cases[name][mode].result],
+                    tree: {
+                      ...cases[name][mode].tree,
+                      ...Object.fromEntries(cases[name].links!.map(([path, target]) => [path, "-> " + target])),
+                    },
+                  },
+                ]),
+              ),
+            );
+          },
+        );
+
+        test.concurrent.each(["plain", "glob"] as const)("one that goes back and forth 400 times (%s)", async mode => {
+          using dir = tempDir("archive-symlinks", fixture);
+          const deep = Buffer.alloc(80, "d/").toString();
+          const backAndForth = Buffer.alloc(200 * 5, "x/../").toString();
+          const { list, results } = await extractAll(
+            String(dir),
+            {
+              "long": {
+                links: [
+                  [deep + "first", backAndForth + "second"],
+                  [deep + "second", backAndForth + "real"],
+                ],
+                archives: [[directory(deep + "x"), directory(deep + "real"), file(deep + "first/new")]],
+              },
+            },
+            mode,
+            env,
+          );
+          expect({ results, written: existsSync(join(list[0].dest, deep, "real", "new")) }).toEqual({
+            results: { long: [3] },
+            written: true,
+          });
+        });
+
+        test.concurrent.each(["plain", "glob"] as const)(
+          "a symlink whose name ends in a slash is not made (%s)",
+          async mode => {
+            using dir = tempDir("archive-symlinks", fixture);
+            const { list, results } = await extractAll(
+              String(dir),
+              { "slash": { archives: [[ustarSymlink("a/l/", "b")]] } },
+              mode,
+              env,
+            );
+            expect({ results, dest: tree(list[0].dest) }).toEqual({
+              results: { slash: [mode === "plain" ? 1 : 0] },
+              dest: { "a": "directory", ...(mode === "plain" && { [join("a", "l")]: "directory" }) },
+            });
+          },
+        );
+
+        test.concurrent.each(["plain", "glob"] as const)(
+          "directories that no entry names are 0755 (%s)",
+          async mode => {
+            using dir = tempDir("archive-symlinks", fixture);
+            const { list } = await extractAll(
+              String(dir),
+              { "implied": { archives: [[file("a/b/new.txt"), ustarSymlink("c/d/link", "new.txt")]] } },
+              mode,
+              env,
+            );
+            const paths = ["a", "a/b", "c", "c/d"];
+            expect(paths.map(path => (statSync(join(list[0].dest, path)).mode & 0o7777).toString(8))).toEqual(
+              paths.map(() => "755"),
+            );
+          },
+        );
+
+        // Only its search permission is needed to create something in a directory. Root needs no permission, so it shows nothing there.
+        (isRoot ? test.skip : test.concurrent).each(["plain", "glob"] as const)(
+          "in a directory that cannot be listed (%s)",
+          async mode => {
+            using dir = tempDir("archive-symlinks", fixture);
+            const unlisted = join(String(dir), "0", "dest", "d");
+            using _ = { [Symbol.dispose]: () => existsSync(unlisted) && chmodSync(unlisted, 0o700) };
+            // With a glob, `extract()` makes every directory 0755, whatever its entry says.
+            mkdirSync(unlisted, { recursive: true });
+            chmodSync(unlisted, 0o300);
+            const { list, results } = await extractAll(
+              String(dir),
+              {
+                "unlisted": {
+                  archives: [
+                    [
+                      ustarHeader("d/", 0, "5", { mode: Buffer.from("0000300\0") }),
+                      directory("d/e"),
+                      file("d/e/new.txt"),
+                      ustarSymlink("d/link", "e"),
+                    ],
+                  ],
+                },
+              },
+              mode,
+              env,
+            );
+            const permissions = statSync(unlisted).mode & 0o777;
+            chmodSync(unlisted, 0o700);
+            expect({ permissions, results, tree: tree(list[0].dest) }).toEqual({
+              permissions: 0o300,
+              results: { unlisted: [4] },
+              tree: {
+                "d": "directory",
+                [join("d", "e")]: "directory",
+                [join("d", "e", "new.txt")]: "from the archive",
+                [join("d", "link")]: "-> e",
+              },
+            });
+          },
+        );
+      });
     });
   });
 
@@ -1343,7 +2096,7 @@ describe("Bun.Archive", () => {
     });
 
     test.skipIf(isWindows)("files() keys an entry whose name is not even valid UTF-8", async () => {
-      // "foo\xff\xfe.txt": 0xFF and 0xFE are never valid UTF-8, so libarchive
+      // "foo\xff\xfe.txt": 0xFF and 0xFE are never valid UTF-8, so the reader
       // hands the raw header bytes back verbatim. They must not collapse onto
       // an empty Map key.
       const invalidUtf8Name = Buffer.from([0x66, 0x6f, 0x6f, 0xff, 0xfe, 0x2e, 0x74, 0x78, 0x74]);
@@ -1380,6 +2133,63 @@ describe("Bun.Archive", () => {
       expect(dataFile).toBeInstanceOf(File);
       expect(dataFile!.name).toBe("data.json");
       expect(await dataFile!.text()).toBe(JSON.stringify({ foo: "bar" }));
+    });
+
+    describe.each([
+      ["a tar", (tar: Buffer) => tar],
+      ["a tar.gz", (tar: Buffer) => Buffer.from(Bun.gzipSync(tar))],
+    ])("the files of %s", (_, wrap) => {
+      const a = Buffer.alloc(3000, "a");
+      const b = randomBytes(70_000);
+      const archive = () =>
+        new Bun.Archive(
+          wrap(Buffer.concat([ustarEntry("a", a), ustarEntry("empty", Buffer.alloc(0)), ustarEntry("b", b), end])),
+        );
+      const end = Buffer.alloc(1024);
+
+      test("can be read in every way a File can", async () => {
+        const files = await archive().files();
+        expect([...files].map(([name, file]) => [name, file.name, file.size])).toEqual([
+          ["a", "a", a.length],
+          ["empty", "empty", 0],
+          ["b", "b", b.length],
+        ]);
+        expect(await files.get("a")!.text()).toBe(a.toString());
+        expect(await files.get("empty")!.text()).toBe("");
+        expect(Buffer.from(await files.get("b")!.arrayBuffer())).toEqual(b);
+        expect(Buffer.from(await files.get("b")!.bytes())).toEqual(b);
+        expect(Buffer.from(await new Response(files.get("b")!.stream()).arrayBuffer())).toEqual(b);
+        expect(Buffer.from(await files.get("b")!.slice(10, 5000).arrayBuffer())).toEqual(b.subarray(10, 5000));
+        expect(Buffer.from(await new Blob([files.get("a")!, files.get("b")!]).arrayBuffer())).toEqual(
+          Buffer.concat([a, b]),
+        );
+      });
+
+      test("print like any other File", async () => {
+        const [whole, one] = [await archive().files(), await archive().files("a")];
+        const shown = (file: Blob) => Bun.inspect(file).replace(/\s+/g, " ");
+        expect(shown(whole.get("a")!)).toBe('File (3.0 KB) { name: "a" }');
+        expect(shown(one.get("a")!)).toBe(shown(whole.get("a")!));
+        expect(shown(whole.get("a")!.slice(1, 3))).toContain("offset: 1 ");
+      });
+
+      test("outlive the archive", async () => {
+        const files = await archive().files();
+        Bun.gc(true);
+        expect(Buffer.from(await files.get("b")!.arrayBuffer())).toEqual(b);
+      });
+
+      test("are the same whether one or all are asked for", async () => {
+        const [[name, file], ...rest] = await archive().files("a");
+        expect(rest).toEqual([]);
+        expect([name, await file.text()]).toEqual(["a", a.toString()]);
+      });
+
+      test("can be written to disk", async () => {
+        using dir = tempDir("archive-files-write", {});
+        await Bun.write(join(String(dir), "b"), (await archive().files()).get("b")!);
+        expect(readFileSync(join(String(dir), "b"))).toEqual(b);
+      });
     });
 
     test("returns empty Map for empty archive", async () => {
@@ -1493,6 +2303,42 @@ describe("Bun.Archive", () => {
       expect(file!.lastModified).toBeLessThanOrEqual(afterTime);
     });
 
+    test("lastModified is computed without overflow for any mtime the header can encode", async () => {
+      // A base-256 mtime field holds a full signed 64-bit value; seconds to
+      // milliseconds must not go through a 64-bit integer multiply.
+      const tarball = Buffer.concat([
+        ustarHeader("huge.txt", 0, "0", { mtime: base256(1n << 62n, 12) }),
+        ustarHeader("negative.txt", 0, "0", { mtime: base256(-1n, 12) }),
+        ustarHeader("epoch.txt", 0, "0"),
+        Buffer.alloc(1024),
+      ]);
+
+      using dir = tempDir("archive-files-wide-mtime", { "input.tar": tarball });
+
+      // In a child process: the failure mode is a process abort.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const files = await new Bun.Archive(await Bun.file("input.tar").bytes()).files();
+           console.log(JSON.stringify(Object.fromEntries([...files].map(([name, file]) => [name, file.lastModified]))));`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        "huge.txt": 2 ** 62 * 1000,
+        "negative.txt": -1000,
+        "epoch.txt": 0,
+      });
+      expect(exitCode).toBe(0);
+    });
+
     test("throws with non-string glob argument", async () => {
       const archive = new Bun.Archive({
         "file.txt": "content",
@@ -1545,11 +2391,33 @@ describe("Bun.Archive", () => {
       expect(files.size).toBe(1);
       expect(await files.get("test.txt")!.text()).toBe("GC test content");
     });
+
+    // As `tar --ignore-zeros`: `cat a.tar b.tar` is read as one archive.
+    test.each([1, 2, 20])("reads the entries behind %d zero blocks", async blocks => {
+      const archive = new Bun.Archive(
+        Buffer.concat([
+          ustarEntry("a.txt", Buffer.from("first")),
+          Buffer.alloc(blocks * 512),
+          ustarEntry("b.txt", Buffer.from("second")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      const files = await archive.files();
+      expect(await Promise.all([...files].map(async ([name, file]) => [name, await file.text()]))).toEqual([
+        ["a.txt", "first"],
+        ["b.txt", "second"],
+      ]);
+
+      using dir = tempDir("archive-zero-blocks", {});
+      expect(await archive.extract(String(dir))).toBe(2);
+      expect(readdirSync(String(dir)).sort()).toEqual(["a.txt", "b.txt"]);
+    });
   });
 
   describe("sparse files", () => {
-    // These test sparse tar files created with GNU tar --sparse
-    // They exercise the pwrite/lseek/writeZeros code paths in readDataIntoFd
+    // Files with runs of zeros, archived with GNU tar --sparse. The runs were
+    // not holes on disk, so tar stored each file whole (typeflag '0'): these
+    // cover a plain member. "sparse members" below has members with a map.
     const fixturesDir = join(import.meta.dir, "fixtures", "sparse-tars");
 
     test("extracts sparse file with small hole (< 1 tar block)", async () => {
@@ -1643,6 +2511,277 @@ describe("Bun.Archive", () => {
       // Verify the 64KB hole is zeros
       expect(extracted.slice(1024, 66560)).toEqual(new Uint8Array(65536).fill(0));
     });
+  });
+
+  describe("sparse members", () => {
+    // Both formats, every layout, below and above the size from which
+    // extraction used to preallocate the output file (1 MB).
+    const layouts = (size: number): Record<string, SparseChunk[]> => {
+      const lastBlock = Math.floor((size - 1) / 512) * 512;
+      return {
+        "data-hole": [{ offset: 0, data: Buffer.alloc(512, 0x41) }],
+        "hole-data": [{ offset: lastBlock, data: Buffer.alloc(size - lastBlock, 0x42) }],
+        "data-hole-data-hole": [
+          { offset: 0, data: Buffer.alloc(512, 0x43) },
+          { offset: Math.floor(size / 2 / 512) * 512, data: Buffer.alloc(1024, 0x44) },
+        ],
+        "data-hole-data": [
+          { offset: 0, data: Buffer.alloc(512, 0x45) },
+          { offset: lastBlock, data: Buffer.alloc(size - lastBlock, 0x46) },
+        ],
+        "hole": [],
+      };
+    };
+    const members: { name: string; size: number; chunks: SparseChunk[] }[] = [];
+    const parts: Buffer[] = [];
+    for (const [format, build] of [
+      ["gnu", oldGnuSparseEntry],
+      ["pax", paxSparseEntry],
+    ] as const) {
+      for (const size of [300_000, 3_000_000]) {
+        for (const [layout, chunks] of Object.entries(layouts(size))) {
+          const name = `${format}-${layout}-${size}.bin`;
+          parts.push(build(name, size, chunks));
+          members.push({ name, size, chunks });
+        }
+      }
+    }
+    parts.push(Buffer.alloc(1024));
+    const bytes = new Uint8Array(Buffer.concat(parts));
+
+    test.each([
+      ["without a glob", undefined],
+      ["with a glob", { glob: "**" }],
+    ] as const)("extract() writes each member whole and leaves its holes unallocated (%s)", async (_, options) => {
+      using dir = tempDir("sparse-members", {});
+      expect(await new Bun.Archive(bytes).extract(String(dir), options)).toBe(members.length);
+
+      const wrong: { name: string; length: number }[] = [];
+      let allocated = 0;
+      for (const { name, size, chunks } of members) {
+        const expected = Buffer.alloc(size, 0);
+        for (const c of chunks) c.data.copy(expected, c.offset);
+        const got = readFileSync(join(String(dir), name));
+        if (!got.equals(expected)) wrong.push({ name, length: got.length });
+        allocated += statSync(join(String(dir), name)).blocks * 512;
+      }
+      // The length of a member comes from the end of its data, not from the
+      // last block that was written: a member that ends in a hole is whole.
+      expect(wrong).toEqual([]);
+      // 33 MB of file for 24 chunks of data. A hole takes no disk where the
+      // file system has sparse files and reports them: every Linux CI file
+      // system, and NTFS, which rounds a chunk up to 64 KiB.
+      const chunkCount = members.reduce((n, m) => n + m.chunks.length, 0);
+      if (isLinux || isWindows) expect(allocated).toBeLessThan(chunkCount * 64 * 1024 + 1024 * 1024);
+    });
+
+    test("files() returns each member whole, as extract() writes it", async () => {
+      using dir = tempDir("sparse-members-files", {});
+      await new Bun.Archive(bytes).extract(String(dir));
+      const files = await new Bun.Archive(bytes).files();
+
+      const wrong: { name: string; length?: number }[] = [];
+      for (const { name, size, chunks } of members) {
+        const expected = Buffer.alloc(size, 0);
+        for (const c of chunks) c.data.copy(expected, c.offset);
+        const got = await files.get(name)?.bytes();
+        if (!got || !expected.equals(got) || !readFileSync(join(String(dir), name)).equals(got)) {
+          wrong.push({ name, length: got?.length });
+        }
+      }
+      expect(wrong).toEqual([]);
+    });
+
+    // Old tar writers repeat the size of the file in the header of a hard link, which has no body.
+    test("files() and extract() give a hard link whose header states a size no bytes", async () => {
+      const archive = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("a.txt", Buffer.from("AAAA")),
+          ustarHeader("link", 5000, "1"),
+          ustarEntry("z.txt", Buffer.from("ZZ")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      const sizes = [
+        ["a.txt", 4],
+        ["link", 0],
+        ["z.txt", 2],
+      ];
+      const files = await new Bun.Archive(archive).files();
+      expect([...files].map(([name, file]) => [name, file.size])).toEqual(sizes);
+
+      using dir = tempDir("archive-hard-link-size", {});
+      await new Bun.Archive(archive).extract(String(dir));
+      expect(sizes.map(([name]) => [name, statSync(join(String(dir), String(name))).size])).toEqual(sizes);
+    });
+
+    test("extract() does not size a file from a header that declares more than the archive holds", async () => {
+      // The header declares 16 MiB. The archive ends 100 bytes into the body.
+      const lying = new Uint8Array(
+        Buffer.concat([
+          ustarHeader("big.bin", 16 * 1024 * 1024),
+          Buffer.alloc(100, 0x78),
+          Buffer.alloc(412),
+          Buffer.alloc(1024),
+        ]),
+      );
+      using dir = tempDir("sparse-lying-header", {});
+      await expect(async () => {
+        await new Bun.Archive(lying).extract(String(dir));
+      }).toThrow("ReadError");
+
+      // What stays is the part of the body that was there.
+      const left = join(String(dir), "big.bin");
+      const stat = existsSync(left) ? statSync(left) : { size: 0, blocks: 0 };
+      expect(stat.size).toBeLessThan(64 * 1024);
+      expect(stat.blocks * 512).toBeLessThan(64 * 1024);
+    });
+
+    // A sparse map can put a chunk where the file system cannot seek: ext4
+    // stops at 16 TiB. The child runs with a file size limit, so a build that
+    // writes zeros up to the offset stops at the limit and not at a full disk.
+    test.skipIf(isWindows)("extract() writes nothing to reach an offset the file system cannot seek to", async () => {
+      const offset = 17 * 2 ** 40;
+      using dir = tempDir("sparse-far-offset", {
+        "far.tar": Buffer.concat([
+          paxSparseEntry("far.bin", offset + 512, [{ offset, data: Buffer.alloc(512, 0x41) }]),
+          Buffer.alloc(1024),
+        ]),
+        "extract.mjs": `
+          import { existsSync, statSync } from "node:fs";
+          const settled = await new Bun.Archive(await Bun.file("far.tar").bytes()).extract(".").then(
+            () => "resolved",
+            () => "rejected",
+          );
+          const stat = existsSync("far.bin") ? statSync("far.bin") : { blocks: 0 };
+          console.log(JSON.stringify({ settled, allocated: stat.blocks * 512 }));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        // A write past the limit raises SIGXFSZ, which must not end the child.
+        // Without the limit the child must not run.
+        cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 65536 && exec "$@"`, "sh", bunExe(), "extract.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+      // The limit is below the offset, so no file system can place the chunk.
+      expect(JSON.parse(stdout)).toEqual({ settled: "rejected", allocated: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    // Holes are the only bytes of a member that the archive does not hold, so
+    // a member of any size takes a few hundred bytes of archive. In memory
+    // they are zeros that have to be written. On disk they are nothing.
+    // 1,024 times the size of the archive, but not less than 64 MiB or more than 1 GiB.
+    describe("more holes than files() reads", () => {
+      const limit = 64 * 2 ** 20;
+      const data = Buffer.alloc(512, 0x41);
+      const member = (build: typeof paxSparseEntry, name: string, holes: number) =>
+        build(name, data.length + holes, [{ offset: 0, data }]);
+      const tooLarge = (limit: number) =>
+        `The holes of sparse files add up to more than ${limit} bytes, the most that is read into memory from an archive of this size`;
+      const message = tooLarge(limit);
+
+      test.each([
+        ["gnu", oldGnuSparseEntry],
+        ["pax", paxSparseEntry],
+      ] as const)("files() rejects them in one member (%s)", async (_, build) => {
+        const bytes = Buffer.concat([member(build, "big.bin", limit + 1), Buffer.alloc(1024)]);
+        expect(await new Bun.Archive(bytes).files().catch(e => e.message)).toBe(message);
+      });
+
+      test("files() rejects them in all members together", async () => {
+        const first = 2 ** 20;
+        const bytes = Buffer.concat([
+          member(paxSparseEntry, "small.bin", first),
+          member(paxSparseEntry, "big.bin", limit - first + 1),
+          Buffer.alloc(1024),
+        ]);
+        expect(await new Bun.Archive(bytes).files().catch(e => e.message)).toBe(message);
+        // A member that is not read does not count.
+        const files = await new Bun.Archive(bytes).files("small.bin");
+        expect([...files].map(([name, file]) => [name, file.size])).toEqual([["small.bin", data.length + first]]);
+      });
+
+      test("how many of them files() reads depends on the size of the archive", async () => {
+        const sizes = async (padding: number, holes: (length: number) => number) => {
+          const archive = (holes: number) =>
+            Buffer.concat([
+              ustarEntry("padding.bin", Buffer.alloc(padding)),
+              member(paxSparseEntry, "big.bin", holes),
+              Buffer.alloc(1024),
+            ]);
+          const files = await new Bun.Archive(archive(holes(archive(limit).length))).files("big.bin");
+          return [...files].map(([, file]) => file.size - data.length);
+        };
+        const length = 68 * 1024;
+        expect({
+          "8 MiB, 4 KiB of archive": await sizes(0, () => 8 * 2 ** 20),
+          "1,024 times an archive of 68 KiB": await sizes(64 * 1024, length => length * 1024),
+          "and 1 byte": await sizes(64 * 1024, length => length * 1024 + 1).catch(e => e.message),
+          "1 GiB and 1 byte, 2 MiB of archive": await sizes(2 * 2 ** 20, () => 2 ** 30 + 1).catch(e => e.message),
+        }).toEqual({
+          "8 MiB, 4 KiB of archive": [8 * 2 ** 20],
+          "1,024 times an archive of 68 KiB": [length * 1024],
+          "and 1 byte": tooLarge(length * 1024),
+          "1 GiB and 1 byte, 2 MiB of archive": tooLarge(2 ** 30),
+        });
+      });
+
+      test.each([
+        ["without a glob", undefined],
+        ["with a glob", { glob: "**" }],
+      ] as const)("extract() writes them (%s)", async (_, options) => {
+        using dir = tempDir("sparse-many-holes", {});
+        const holes = 2 ** 30 + 1;
+        const bytes = Buffer.concat([member(paxSparseEntry, "big.bin", holes), Buffer.alloc(1024)]);
+        expect(await new Bun.Archive(bytes).extract(String(dir), options)).toBe(1);
+        const stat = statSync(join(String(dir), "big.bin"));
+        expect(stat.size).toBe(data.length + holes);
+        if (isLinux || isWindows) expect(stat.blocks * 512).toBeLessThan(1024 * 1024);
+      });
+    });
+  });
+
+  // A full disk, a quota or a file size limit refuses a write in the middle of
+  // a file. The write loop then went on with `write()` at the start of the
+  // file: the file was cut, its first bytes were those of the refused block,
+  // and extract() resolved.
+  test.skipIf(isWindows)("extract() rejects when the file system refuses a write in the middle of a file", async () => {
+    // 6,000,000 bytes where no file can grow past 4 MiB. Gzip, so that the
+    // member arrives in many blocks: the first ones fit.
+    const data = randomBytes(6_000_000);
+    using dir = tempDir("archive-refused-write", {
+      "big.tar.gz": Buffer.from(Bun.gzipSync(Buffer.concat([ustarEntry("big.bin", data), Buffer.alloc(1024)]))),
+      "extract.mjs": `
+        const archive = new Bun.Archive(await Bun.file("big.tar.gz").bytes());
+        console.log(await archive.extract("out").then(() => "resolved", e => "rejected " + e.message));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      // 8192 blocks of 512 bytes; the sh of macOS (bash 3.2) counts blocks of 1024.
+      // A write past the limit raises SIGXFSZ, which must not end the child.
+      // Without the limit the child must not run.
+      cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f ${isMacOS ? 4096 : 8192} && exec "$@"`, "sh", bunExe(), "extract.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("rejected ReadError");
+
+    // What stays of the file is its start, byte for byte.
+    const left = join(String(dir), "out", "big.bin");
+    const written = existsSync(left) ? readFileSync(left) : Buffer.alloc(0);
+    expect(written.equals(data.subarray(0, written.length))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   describe("extract with glob patterns", () => {
@@ -1959,7 +3098,6 @@ describe("Bun.Archive", () => {
     test("level without compress is TypeScript error but no runtime error", async () => {
       const files = { "hello.txt": "Hello, World!" };
 
-      // @ts-expect-error - level without compress is a TypeScript error
       const archive = new Bun.Archive(files, { level: 9 });
 
       // Should not throw at runtime - level is silently ignored, no compression used

@@ -1,0 +1,27 @@
+# import imported from "node:module"; let Module = imported; copy = {}; copy[globalThis.key] = Module[globalThis.key]; copy[globalThis.other]("/app/main.js")(globalThis.name)
+# Nothing names createRequire, the read takes the module out of a variable, and the call reads its callee from the copy, so it returns no require function and nothing is loaded by name.
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen LoadsCodeByName
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+variable g0 name="Module" module=m0 declared={type=anything} initialization=Undefined
+layout L0 module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = PropGet v0 key="other" [isFreeName]
+    v4 = Builtin builtin=NodeModule
+    PutModuleVariable v4 variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = ElemGet v6, v1
+    v8 = NewObject layout=L0
+    ElemSet v8, v1, v7 mode=Strict
+    v10 = ElemGet v8, v3
+    v11 = String string="/app/main.js"
+    v12 = Call v10, v8, v11
+    v13 = Call v12, -, v2
+    Return v13
+}

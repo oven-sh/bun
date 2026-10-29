@@ -1,0 +1,73 @@
+// The private names of JavaScriptCore that src/js may spell `$name`, by what `@name` is to JavaScriptCore.
+export const jscNames = {
+  // JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME in bytecode/BytecodeIntrinsicRegistry.h
+  intrinsic: [
+    "argument",
+    "argumentCount",
+    "arrayPush",
+    "getByIdDirect",
+    "getByIdDirectPrivate",
+    "getInternalField",
+    "getProxyInternalField",
+    "isCallable",
+    "isJSArray",
+    "isMap",
+    "isObject",
+    "isPromise",
+    "isProxyObject",
+    "isRegExpObject",
+    "isSet",
+    "isUndefinedOrNull",
+    "newArrayWithSize",
+    "newPromise",
+    "putByIdDirectPrivate",
+    "putByValDirect",
+    "putInternalField",
+    "throwRangeError",
+    "throwTypeError",
+  ],
+  // JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME in bytecode/BytecodeIntrinsicRegistry.h
+  constant: ["Infinity", "proxyFieldHandler", "proxyFieldTarget", "undefined"],
+  // JSC_FOREACH_LINK_TIME_CONSTANTS in bytecode/LinkTimeConstant.h
+  link_time: [
+    "Array",
+    "Promise",
+    "RegExp",
+    "String",
+    "Uint8Array",
+    "isArray",
+    "isFinite",
+    "isTypedArrayView",
+    "makeTypeError",
+    "min",
+    "rejectPromise",
+    "rejectPromiseWithFirstResolvingFunctionCallCheck",
+    "resolvePromise",
+    "resolvePromiseWithFirstResolvingFunctionCallCheck",
+    "toLength",
+  ],
+  // JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME in builtins/BuiltinNames.h, and the functions of builtins/*.js
+  private: [
+    "ArrayBuffer",
+    "add",
+    "apply",
+    "asyncContext",
+    "call",
+    "charCodeAt",
+    "clear",
+    "defineProperty",
+    "delete",
+    "forEach",
+    "get",
+    "has",
+    "keys",
+    "reject",
+    "resolve",
+    "set",
+    "size",
+    "then",
+  ],
+};
+
+// Types and namespaces of src/js/*.d.ts. They have no value.
+export const typeNames = ["AnyObject", "Bindgen"];

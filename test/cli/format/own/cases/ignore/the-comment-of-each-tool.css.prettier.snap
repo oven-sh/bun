@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+/* prettier-ignore */
+a   {  color : red  }
+/* oxfmt-ignore */
+b {
+  color: red;
+}
+c {
+  /* prettier-ignore */
+  color  :  red;
+  /* oxfmt-ignore */
+  color: blue;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+/* prettier-ignore */
+a   {  color : red  }
+/* oxfmt-ignore */
+b {
+  color: red;
+}
+c {
+  /* prettier-ignore */
+  color  :  red;
+  /* oxfmt-ignore */
+  color: blue;
+}
+
+===================== End =====================

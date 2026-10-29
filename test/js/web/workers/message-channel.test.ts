@@ -3,7 +3,7 @@ test("simple usage", done => {
   const port1 = channel.port1;
   const port2 = channel.port2;
 
-  port2.onmessage = (e: MessageEvent) => {
+  port2.onmessage = e => {
     expect(e.data).toEqual("hello");
     done();
   };
@@ -17,7 +17,7 @@ test("transfer message port", done => {
   const port1 = channel.port1;
   const port2 = channel.port2;
 
-  port2.onmessage = (e: MessageEvent) => {
+  port2.onmessage = e => {
     expect(e.data).toEqual("hello");
     expect(e.ports).toHaveLength(1);
     expect(e.ports[0]).toBeInstanceOf(MessagePort);
@@ -32,7 +32,7 @@ test("transfer array buffer", done => {
   const port1 = channel.port1;
   const port2 = channel.port2;
 
-  port2.onmessage = (e: MessageEvent) => {
+  port2.onmessage = e => {
     expect(e.data).toBeInstanceOf(ArrayBuffer);
     expect(e.data.byteLength).toEqual(8);
     done();
@@ -62,25 +62,25 @@ test("transfer message ports and post messages", done => {
   const c1 = new MessageChannel();
   const c2 = new MessageChannel();
 
-  c1.port1.onmessage = (e: MessageEvent) => {
+  c1.port1.onmessage = e => {
     const port = e.ports[0];
     expect(port).toBeInstanceOf(MessagePort);
     expect(e.data).toEqual("hello from channel 1 port 2");
-    port.onmessage = (e: MessageEvent) => {
+    port.onmessage = e => {
       expect(e.data).toEqual("hello from channel 1 port 2");
       done();
     };
     port.postMessage("hello from channel 1 port 1", [c1.port1]);
   };
 
-  c1.port2.onmessage = (e: MessageEvent) => {
+  c1.port2.onmessage = e => {
     const port = e.ports[0];
     expect(port).toBeInstanceOf(MessagePort);
     expect(e.data).toEqual("hello from channel 2 port 1");
     port.postMessage("hello from channel 1 port 2");
   };
 
-  c2.port1.onmessage = (e: MessageEvent) => {
+  c2.port1.onmessage = e => {
     const port = e.ports[0];
     expect(port).toBeInstanceOf(MessagePort);
     expect(e.data).toEqual("hello from channel 1 port 1");
@@ -101,7 +101,7 @@ test("message channel created on main thread", done => {
     done();
   };
   const channel = new MessageChannel();
-  channel.port1.onmessage = (e: MessageEvent) => {
+  channel.port1.onmessage = e => {
     if (e.data === "done!") return done();
     expect(e.data).toEqual("received port!");
     channel.port1.postMessage("more message!");
@@ -215,7 +215,7 @@ test("many message channels", done => {
     c4.port1.postMessage("Should succeed");
     channel0.port1.postMessage({ id: "done" });
 
-    channel0.port2.onmessage = function (event: MessageEvent) {
+    channel0.port2.onmessage = function (event) {
       if (event.data.id == "send-port") {
         expect(event.ports.length).toBeGreaterThan(0);
         expect(event.ports[0]).toBe(event.data.port);
@@ -239,7 +239,7 @@ test("many message channels", done => {
     };
   }
 
-  channel.port2.onmessage = function (event: MessageEvent) {
+  channel.port2.onmessage = function (event) {
     if (event.data == "noport" || event.data == "zero ports") {
       expect(event.ports).toBeDefined();
       expect(event.ports.length).toBe(0);
@@ -294,7 +294,7 @@ test("cloneable and non-transferable equals (BunFile)", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   mc.port1.onmessage = ({ data }) => {
     try {
-      expect(data).toBeInstanceOf(file.__proto__.constructor);
+      expect(data).toBeInstanceOf((file as any).__proto__.constructor);
       expect(data.name).toEqual(import.meta.filename);
       expect(data.type).toEqual("text/javascript;charset=utf-8");
       // expect(data).not.toBeEmptyObject();

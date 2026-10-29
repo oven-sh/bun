@@ -2,11 +2,8 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::String as BunString;
 
-use crate::jsc::JSGlobalObject;
-
-pub struct EVP {
+pub(crate) struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
     // FFI: BoringSSL EVP_MD singletons are static for the process lifetime.
     md: *const boringssl::EVP_MD,
@@ -17,10 +14,10 @@ pub struct EVP {
 // The `Algorithm` enum + `md()` live in
 // `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
 // can name it without depending upward on bun_runtime. Re-export the canonical
-// enum here; the higher-tier extras (`names`, `lookup`, `tag_cstr`) that need
-// bun_str live below as an extension trait / free fns on the re-exported type.
+// enum here; the higher-tier extras (`lookup`, `tag_cstr`) live below as an
+// extension trait / free fns on the re-exported type.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_sha_hmac::evp::Algorithm;
+pub(crate) use bun_sha_hmac::evp::Algorithm;
 
 /// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
 /// inherent `impl` on a foreign type, so callers `use evp::AlgorithmExt as _;`).
@@ -28,10 +25,6 @@ pub(crate) trait AlgorithmExt: Copy + Sized {
     /// NUL-terminated tag name. Needed for `EVP_get_digestbyname` which reads
     /// a C string.
     fn tag_cstr(self) -> &'static CStr;
-
-    /// `bun.String` view of every algorithm tag name; returned as a flat slice
-    /// since the enum is foreign and cannot derive `enum_map::Enum`.
-    fn names() -> &'static [BunString];
 }
 
 impl AlgorithmExt for Algorithm {
@@ -61,20 +54,11 @@ impl AlgorithmExt for Algorithm {
             _ => unreachable!("unhandled EVP algorithm variant"),
         }
     }
-
-    fn names() -> &'static [BunString] {
-        static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
-        NAMES
-            .get_or_init(|| {
-                core::array::from_fn(|i| BunString::static_(ALL[i].tag_cstr().to_bytes()))
-            })
-            .as_slice()
-    }
 }
 
 /// Stable iteration order over every `Algorithm` variant — the lowered enum is
 /// foreign + `#[non_exhaustive]`, so we can't derive an iterator for it.
-const ALL: [Algorithm; 19] = [
+pub(crate) const ALL: [Algorithm; 19] = [
     Algorithm::Blake2b256,
     Algorithm::Blake2b512,
     Algorithm::Blake2s256,
@@ -162,59 +146,40 @@ pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
 }
 
 impl EVP {
-    pub fn algorithm(&self) -> Algorithm {
+    pub(crate) fn algorithm(&self) -> Algorithm {
         self.algorithm
     }
 
     /// # Safety
-    /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton) and
-    /// `engine` must be either null or a valid `ENGINE` pointer.
-    // Forwards `md`/`engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn init(
-        algorithm: Algorithm,
-        md: *const boringssl::EVP_MD,
-        engine: *mut boringssl::ENGINE,
-    ) -> EVP {
+    /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton).
+    pub(crate) fn init(algorithm: Algorithm, md: *const boringssl::EVP_MD) -> EVP {
         bun_boringssl::load();
 
         let mut ctx: boringssl::EVP_MD_CTX = bun_core::ffi::zeroed();
         boringssl::EVP_MD_CTX_init(&mut ctx);
-        // SAFETY: FFI into BoringSSL; ctx is initialised above. md/engine are
-        // caller-validated (md is a static singleton, engine may be null).
+        // SAFETY: FFI into BoringSSL; ctx is initialised above. md is
+        // caller-validated (a static singleton). BoringSSL never reads the `ENGINE`.
         unsafe {
-            let _ = boringssl::EVP_DigestInit_ex(&raw mut ctx, md, engine);
+            let _ = boringssl::EVP_DigestInit_ex(&raw mut ctx, md, core::ptr::null_mut());
         }
         EVP { ctx, md, algorithm }
     }
 
-    /// # Safety
-    /// `engine` must be either null or a valid `ENGINE` pointer.
-    // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn reset(&mut self, engine: *mut boringssl::ENGINE) {
+    pub(crate) fn reset(&mut self) {
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx was
         // initialized in init() and remains valid for the lifetime of EVP; self.md is a
-        // static singleton.
+        // static singleton. BoringSSL never reads the `ENGINE`.
         unsafe {
             boringssl::ERR_clear_error();
-            let _ = boringssl::EVP_DigestInit_ex(&raw mut self.ctx, self.md, engine);
+            let _ = boringssl::EVP_DigestInit_ex(&raw mut self.ctx, self.md, core::ptr::null_mut());
         }
     }
 
-    /// # Safety
-    /// `engine` must be either null or a valid `ENGINE` pointer.
-    // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn hash(
-        &mut self,
-        engine: *mut boringssl::ENGINE,
-        input: &[u8],
-        output: &mut [u8],
-    ) -> Option<u32> {
+    pub(crate) fn hash(&mut self, input: &[u8], output: &mut [u8]) -> Option<u32> {
         boringssl::ERR_clear_error();
         let mut outsize: c_uint = (output.len() as u16).min(self.size()) as c_uint;
         // SAFETY: input/output point to valid slices of the given lengths; outsize bounded by output.len().
+        // BoringSSL never reads the `ENGINE`.
         if unsafe {
             boringssl::EVP_Digest(
                 input.as_ptr().cast(),
@@ -222,7 +187,7 @@ impl EVP {
                 output.as_mut_ptr(),
                 &raw mut outsize,
                 self.md,
-                engine,
+                core::ptr::null_mut(),
             )
         } != 1
         {
@@ -232,13 +197,7 @@ impl EVP {
         Some(outsize)
     }
 
-    /// # Safety
-    /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub(crate) fn r#final<'a>(
-        &mut self,
-        engine: *mut boringssl::ENGINE,
-        output: &'a mut [u8],
-    ) -> &'a mut [u8] {
+    pub(crate) fn r#final<'a>(&mut self, output: &'a mut [u8]) -> &'a mut [u8] {
         boringssl::ERR_clear_error();
         let mut outsize: u32 = (output.len() as u16).min(self.size()) as u32;
         // SAFETY: output points to a valid mutable slice; outsize bounded by output.len().
@@ -249,7 +208,7 @@ impl EVP {
             return &mut output[..0];
         }
 
-        self.reset(engine);
+        self.reset();
 
         &mut output[..outsize as usize]
     }
@@ -270,12 +229,9 @@ impl EVP {
         unsafe { boringssl::EVP_MD_CTX_size(&raw const self.ctx) as u16 }
     }
 
-    /// # Safety
-    /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub(crate) fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
+    pub(crate) fn copy(&self) -> Result<EVP, AllocError> {
         boringssl::ERR_clear_error();
-        // SAFETY: self.md is a static singleton; caller upholds `engine`.
-        let mut new = EVP::init(self.algorithm, self.md, engine);
+        let mut new = EVP::init(self.algorithm, self.md);
         // SAFETY: FFI into BoringSSL; both new.ctx and self.ctx are initialized EVP_MD_CTX
         // values (new.ctx via EVP::init above, self.ctx via the invariant on EVP).
         if unsafe { boringssl::EVP_MD_CTX_copy_ex(&raw mut new.ctx, &raw const self.ctx) } == 0 {
@@ -284,16 +240,10 @@ impl EVP {
         Ok(new)
     }
 
-    /// # Safety
-    /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub(crate) fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
+    pub(crate) fn by_name(name: &[u8]) -> Option<EVP> {
         if let Some(algorithm) = lookup_ignore_case(name) {
             if let Some(md) = algorithm.md() {
-                // `Algorithm::md()` lives in `bun_sha_hmac`
-                // and returns that crate's opaque `EVP_MD`; both name the same C
-                // `struct env_md_st`, so a pointer cast is the correct unification.
-                // SAFETY: md is a BoringSSL static singleton; caller upholds `engine`.
-                return Some(EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine));
+                return Some(EVP::init(algorithm, md));
             }
 
             // strum's `<&'static str>::from(algorithm)` is NOT NUL-terminated, so use the
@@ -302,28 +252,11 @@ impl EVP {
             // C string, which `tag_cstr()` guarantees.
             let md = unsafe { boringssl::EVP_get_digestbyname(algorithm.tag_cstr().as_ptr()) };
             if !md.is_null() {
-                // SAFETY: md is non-null from EVP_get_digestbyname; caller upholds `engine`.
-                return Some(EVP::init(algorithm, md, engine));
+                return Some(EVP::init(algorithm, md));
             }
         }
 
         None
-    }
-
-    pub(crate) fn by_name(name: &[u8], global: &JSGlobalObject) -> Option<EVP> {
-        // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
-        // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
-        // struct, so cast to the real bindgen type for the FFI call.
-        // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
-        // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
-        let engine = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .boring_engine()
-            .cast::<boringssl::ENGINE>();
-        // SAFETY: `boring_engine()` returns the VM's lazily-initialized ENGINE (valid or null).
-        Self::by_name_and_engine(engine, name)
     }
 }
 

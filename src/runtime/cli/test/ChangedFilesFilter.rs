@@ -11,7 +11,6 @@
 //! Only those test entry points are returned.
 
 use bun_bundler::mal_prelude::*;
-use core::ffi::{c_char, c_int};
 
 use bstr::BStr;
 
@@ -68,7 +67,7 @@ pub(crate) fn filter<'a>(
     test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, crate::Error> {
-    let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
     // If this process was restarted by the --watch file watcher, it
     // recorded exactly which files changed in this env var before
@@ -223,12 +222,7 @@ pub(crate) fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        let first = bun_core::handle_oom(path_to_index.get_or_put(path_text));
-        if first.found_existing {
-            // One file under two `with { type }` loaders is two modules. An entry point is enqueued first.
-            continue;
-        }
-        *first.value_ptr = u32::try_from(idx).unwrap();
+        path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
         graph_files.push(Box::<[u8]>::from(path_text));
@@ -261,10 +255,14 @@ pub(crate) fn filter<'a>(
     let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
     let mut queue: Vec<u32> = Vec::new();
 
-    for (idx, source) in sources.iter().enumerate() {
-        if source.path.is_file() && changed_files.contains(source.path.text) {
-            affected.set(idx);
-            queue.push(u32::try_from(idx).unwrap());
+    {
+        for changed_path in changed_files.keys() {
+            if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
+                if !affected.is_set(idx as usize) {
+                    affected.set(idx as usize);
+                    queue.push(idx);
+                }
+            }
         }
     }
 
@@ -363,7 +361,7 @@ pub(crate) fn init_watch_trigger() {
             // iterates the startup-captured slice in this process.
             // SAFETY: both strings are NUL-terminated; setenv copies into libc env storage.
             unsafe {
-                setenv(TRIGGER_FILE_ENV_VAR_Z.as_ptr(), fresh.as_ptr(), 1);
+                libc::setenv(TRIGGER_FILE_ENV_VAR_Z.as_ptr(), fresh.as_ptr(), 1);
             }
             fresh
         };
@@ -379,11 +377,6 @@ pub(crate) fn init_watch_trigger() {
         let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
             .set(jsc::hot_reloader::WatchChangedPaths::new(set));
     }
-}
-
-unsafe extern "C" {
-    #[allow(dead_code)]
-    pub(crate) fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
 }
 
 /// If the previous process's watcher recorded which files triggered

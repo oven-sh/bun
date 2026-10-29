@@ -1519,6 +1519,87 @@ test.concurrent("serves a page request during a rebuild that fails a linked styl
   expect(stderr).toContain(`Could not resolve: "./missing.css"`);
 });
 
+// An edit of b.css makes b.css and a.css, which imports it, the entry points of the rebuild. The
+// plugin gets the entry point b.css and declines. The import in a.css used to make the module of
+// b.css first in some rebuilds: b.css then had no chunk, and the server kept its old rules.
+test.concurrent("a stylesheet that an onResolve plugin declines has its new rules after each edit", async () => {
+  using dir = tempDir("bun-serve-html-declined-stylesheet", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": `<!DOCTYPE html><html><head><title>one</title><link rel="stylesheet" href="./a.css"><link rel="stylesheet" href="./b.css"></head><body></body></html>`,
+    "a.css": `@import "./b.css";\n.a { color: green; }\n`,
+    "b.css": `.b { color: red; }\n`,
+    "plugin.ts": /*ts*/ `
+      export default {
+        name: "declines-b",
+        setup(build) {
+          // Matches the entry point, an absolute path, and not the import "./b.css".
+          build.onResolve({ filter: /^[^.].*b\\.css$/ }, () => undefined);
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import { writeFileSync } from "node:fs";
+      import index from "./index.html";
+
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": index } });
+      // The color of ".b" in the two stylesheets of the page. The one of a.css has the rules of b.css too.
+      async function colors() {
+        const text = await (await fetch(server.url)).text();
+        const found = { a: null, b: null };
+        for (const link of text.match(/<link rel="stylesheet"[^>]*>/g) ?? []) {
+          const css = await (await fetch(new URL(link.match(/href="([^"]*)"/)[1], server.url))).text();
+          found[css.includes(".a {") ? "a" : "b"] = css.match(/\\.b \\{\\s*color: (\\w+)/)?.[1] ?? null;
+        }
+        return found;
+      }
+      const seen = [await colors()];
+
+      // The HMR socket reports when a rebuild ends: 'u' is a hot update.
+      const url = new URL("/_bun/hmr", server.url);
+      url.protocol = "ws:";
+      const ws = new WebSocket(url);
+      ws.binaryType = "arraybuffer";
+      let awaited = null;
+      ws.onmessage = ({ data }) => {
+        if (awaited?.kind === String.fromCharCode(new Uint8Array(data)[0])) awaited.resolve();
+      };
+      function nextMessage(kind) {
+        const { promise, resolve } = Promise.withResolvers();
+        awaited = { kind, resolve };
+        return promise;
+      }
+      // The server replies to "set url" ('n' + route) with 'n' after it has read the subscription ('s' + topics).
+      const subscribed = nextMessage("n");
+      ws.onopen = () => {
+        ws.send("she");
+        ws.send("n/");
+      };
+      await subscribed;
+
+      // Color names that the printer keeps.
+      for (const color of ["navy", "purple", "orange", "teal"]) {
+        let rebuilt = nextMessage("u");
+        writeFileSync("b.css", ".b { color: " + color + "; }\\n");
+        // One write can make two rebuilds. The stylesheet of a.css tells which rebuild has the edit.
+        let found;
+        do {
+          await rebuilt;
+          rebuilt = nextMessage("u");
+          found = await colors();
+        } while (found.a !== color);
+        seen.push(found);
+      }
+      ws.close();
+      console.log(JSON.stringify(seen));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify(["red", "navy", "purple", "orange", "teal"].map(color => ({ a: color, b: color }))),
+    exitCode: 0,
+  });
+});
+
 test("wildcard static routes", async () => {
   await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `

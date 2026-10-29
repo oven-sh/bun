@@ -190,6 +190,16 @@ plugin({
 });
 ```
 
+#### Entry points
+
+`Bun.build` also runs the callback for each entry point that matches the filter. Bun gets the answer for every entry point first. It loads no module until each of these callbacks has returned. The entry points then enter the build in the order of `entrypoints`, and `outputs` has the same order.
+
+<Note>
+  An `onResolve()` callback for an entry point must not wait for an `onLoad()` callback of the same build, or for the
+  `onResolve()` callback of an import. Bun runs those after every entry point has its answer, so the build never
+  finishes. esbuild has the same rule.
+</Note>
+
 ### onLoad
 
 ```ts

@@ -489,6 +489,100 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
+  // An onResolve plugin gets some entry points of the build. Each route is still prerendered from
+  // the module of its own file, because the entry points enter the graph in the order of the
+  // request and not in the order of the answers.
+  describe("every route is prerendered from its own module", () => {
+    const page = (text: string) => `export default () => ${JSON.stringify(text)};`;
+    const pages = ["a", "b", "d", "e", "f", "g", "h"];
+    const ownPages = { "/": "homepage", ...Object.fromEntries(pages.map(name => [`/${name}`, `page-${name}`])) };
+
+    /** `plugins` is spliced into the config of the app. A plugin calls `asked(args)` to record a call. */
+    const appFiles = (plugins: string) => ({
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "/index.html": meta.pageModule.default() } };
+        }
+      `,
+      "app.ts": `
+        import fs from "node:fs";
+        import path from "node:path";
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", layouts: true };
+        const asked = args =>
+          fs.appendFileSync(path.join(import.meta.dir, "asked.txt"), args.kind + " " + path.basename(args.path) + "\\n");
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] }, plugins: [${plugins}] } };
+      `,
+      "routes/index.ts": page("homepage"),
+      ...Object.fromEntries(pages.map(name => [`routes/${name}.ts`, page(`page-${name}`)])),
+      // Entry points that are not pages.
+      ...Object.fromEntries(["c.ts", "za", "zb"].map(name => [`routes/${name}/_layout.ts`, page(`layout-${name}`)])),
+    });
+
+    /** Builds the app in `dir`. `asked` is the sorted calls of the plugin. */
+    async function prerender(dir: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const dist = path.join(dir, "dist");
+      const prerendered: Record<string, string> = {};
+      for (const file of existsSync(dist) ? new Bun.Glob("**/index.html").scanSync(dist) : []) {
+        const route = normalizePath(path.dirname(file));
+        prerendered[route === "." ? "/" : "/" + route] = await Bun.file(path.join(dist, file)).text();
+      }
+      const calls = await Bun.file(path.join(dir, "asked.txt"))
+        .text()
+        .catch(() => "");
+      return { pages: prerendered, asked: calls.split("\n").filter(Boolean).sort(), exitCode, stderr };
+    }
+
+    test.concurrent("when an onResolve plugin passes on the server entry point and a route", async () => {
+      const plugins = `{
+        name: "passes",
+        setup(build) {
+          build.onResolve({ filter: /[\\\\/](server|a)\\.ts$/ }, args => void asked(args));
+        },
+      }`;
+      using dir = tempDir("bake-production-plugin-passes", appFiles(plugins));
+      const { pages, asked, exitCode, stderr } = await prerender(String(dir));
+      expect({ pages, asked, exitCode }, stderr).toEqual({
+        pages: ownPages,
+        asked: ["entry-point-build a.ts", "entry-point-build server.ts"],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("when an onResolve plugin answers for four routes in the reverse of the order asked", async () => {
+      const plugins = `{
+        name: "reverse",
+        setup(build) {
+          const answers = [];
+          build.onResolve({ filter: /[\\\\/]routes[\\\\/][bdeh]\\.ts$/ }, args => {
+            asked(args);
+            const answer = Promise.withResolvers();
+            answers.push(answer);
+            if (answers.length === 4) for (const last of answers.reverse()) last.resolve();
+            return answer.promise;
+          });
+        },
+      }`;
+      using dir = tempDir("bake-production-plugin-reverse", appFiles(plugins));
+      const { pages, asked, exitCode, stderr } = await prerender(String(dir));
+      expect({ pages, asked, exitCode }, stderr).toEqual({
+        pages: ownPages,
+        asked: ["b", "d", "e", "h"].map(name => `entry-point-build ${name}.ts`),
+        exitCode: 0,
+      });
+    });
+  });
+
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

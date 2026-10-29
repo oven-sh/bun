@@ -1910,6 +1910,7 @@ describe("bundler", () => {
       "entry.js": `console.log("entry");`,
       "live.js": `console.log("live");`,
       "disabled.js": `console.log("disabled");`,
+      "thrown.js": `console.log("thrown");`,
       "build.mjs": `
         const declined = [];
         const plugins = [
@@ -1927,12 +1928,21 @@ describe("bundler", () => {
               });
             },
           },
+          {
+            name: "throw-for-thrown",
+            setup(build) {
+              build.onResolve({ filter: /thrown\\.js$/ }, () => {
+                throw new Error("onResolve threw for the entry point");
+              });
+            },
+          },
         ];
         const results = {};
         for (const [name, entrypoints] of Object.entries({
           external: ["./entry.js"],
           externalNextToLiveEntryPoint: ["./entry.js", "./live.js"],
           declinedThenDisabledByBrowserField: ["./disabled.js"],
+          thrownNextToLiveEntryPoint: ["./live.js", "./thrown.js"],
         })) {
           const result = await Bun.build({ entrypoints, target: "browser", plugins, throw: false });
           results[name] = {
@@ -1972,38 +1982,313 @@ describe("bundler", () => {
         logs: ['"./disabled.js" is disabled due to "browser" field in package.json (entry point)'],
         outputs: [],
       },
+      thrownNextToLiveEntryPoint: {
+        success: false,
+        logs: ["onResolve threw for the entry point"],
+        outputs: [],
+      },
       declined: ["./disabled.js"],
     });
     expect(exitCode).toBe(0);
   });
 
-  // Two entry point names that onResolve maps to one file make one output file.
+  // Two entry point names that onResolve maps to one file make one output file. It has the last
+  // name in `entrypoints`, also when the answer for that name is the first to arrive.
   for (const splitting of [false, true]) {
-    test.concurrent(`plugin/two entry points that resolve to one file (splitting: ${splitting})`, async () => {
-      using dir = tempDir("plugin-two-entry-points-one-file", {
-        "entry.ts": `console.log("entry");`,
+    for (const answers of ["in order", "in reverse"]) {
+      test.concurrent(
+        `plugin/two entry points that resolve to one file (splitting: ${splitting}, answers ${answers})`,
+        async () => {
+          using dir = tempDir("plugin-two-entry-points-one-file", {
+            "entry.ts": `console.log("entry");`,
+          });
+          const secondAsked = Promise.withResolvers<void>();
+          const result = await Bun.build({
+            entrypoints: ["first-name", "second-name"],
+            outdir: join(String(dir), "out"),
+            splitting,
+            throw: false,
+            plugins: [
+              {
+                name: "alias",
+                setup(build) {
+                  build.onResolve({ filter: /-name$/ }, args => {
+                    const answer = { path: join(String(dir), "entry.ts") };
+                    if (answers === "in order") return answer;
+                    if (args.path === "second-name") {
+                      secondAsked.resolve();
+                      return answer;
+                    }
+                    return secondAsked.promise.then(() => answer);
+                  });
+                },
+              },
+            ],
+          });
+          expect({
+            success: result.success,
+            logs: result.logs.map(log => log.message),
+            outputs: result.outputs.map(output => path.basename(output.path)),
+          }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
+        },
+      );
+    }
+  }
+
+  // An entry point that goes to an onResolve plugin is in the graph only when every entry point has
+  // its answer, as in esbuild. Before, the other entry points were loaded at once, and an import of
+  // the same file made its module first: not the module of an entry point.
+  describe("plugin/entry point that onResolve gets", () => {
+    const redirect = {
+      "esm.mjs": `export const version = "1.2.3"; export default { label: "d" };`,
+      "index.cjs": `module.exports = require("./esm.mjs");`,
+    };
+    const cases: Record<
+      string,
+      { files: Record<string, string>; entrypoints: string[]; through: string; options?: object; textHasNames?: true }
+    > = {
+      "a module": {
+        files: {
+          "app.mjs": `import { value } from "./lib.mjs"; console.log(value);`,
+          "lib.mjs": `export const value = 1;`,
+        },
+        entrypoints: ["app.mjs", "lib.mjs"],
+        through: "lib.mjs",
+      },
+      "import.meta.main": {
+        files: {
+          "app.mjs": `import { main } from "./lib.mjs"; console.log(main);`,
+          "lib.mjs": `export const main = import.meta.main;`,
+        },
+        entrypoints: ["app.mjs", "lib.mjs"],
+        through: "lib.mjs",
+      },
+      "module.exports = require(), default import": {
+        files: { ...redirect, "app.mjs": `import lib from "./index.cjs"; console.log(Object.keys(lib).join());` },
+        entrypoints: ["app.mjs", "index.cjs"],
+        through: "index.cjs",
+      },
+      "module.exports = require(), named import": {
+        files: { ...redirect, "app.mjs": `import { version } from "./index.cjs"; console.log(version);` },
+        entrypoints: ["app.mjs", "index.cjs"],
+        through: "index.cjs",
+      },
+      "module.exports = require(), require()": {
+        files: { ...redirect, "app.cjs": `const lib = require("./index.cjs"); console.log(lib.version);` },
+        entrypoints: ["app.cjs", "index.cjs"],
+        through: "index.cjs",
+      },
+      "CommonJS of a React package": {
+        files: {
+          "app.mjs": `import { render } from "react-dom"; console.log(render());`,
+          "node_modules/react-dom/package.json": `{ "name": "react-dom", "version": "18.2.0", "main": "index.js" }`,
+          "node_modules/react-dom/index.js": `function checkDCE() {}\ncheckDCE();\nmodule.exports = require("./cjs/production.js");`,
+          "node_modules/react-dom/cjs/production.js": `exports.render = function render() { return "rendered"; };`,
+        },
+        entrypoints: ["app.mjs", "node_modules/react-dom/index.js"],
+        through: "node_modules/react-dom/index.js",
+      },
+      "barrel without side effects": {
+        files: {
+          "app.mjs": `import { a } from "./lib/index.mjs"; console.log(a);`,
+          "lib/package.json": `{ "name": "lib", "sideEffects": false }`,
+          "lib/index.mjs": `export { a } from "./a.mjs"; export { b } from "./b.mjs";`,
+          "lib/a.mjs": `export const a = "A";`,
+          "lib/b.mjs": `export const b = "B";`,
+        },
+        entrypoints: ["app.mjs", "lib/index.mjs"],
+        through: "lib/index.mjs",
+      },
+      // The hashbang of the first entry point makes `bun` the target of that file.
+      "first entry point with a bun hashbang": {
+        files: {
+          "cli.mjs": `#!/usr/bin/env bun\nimport { version } from "bun"; console.log(version);`,
+          "other.mjs": `console.log("other");`,
+        },
+        entrypoints: ["cli.mjs", "other.mjs"],
+        through: "cli.mjs",
+      },
+      "html page in a build for bun": {
+        files: {
+          "server.ts": `import page from "./index.html"; console.log(typeof page);`,
+          "index.html": `<!doctype html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
+          "client.ts": `console.log("client");`,
+        },
+        entrypoints: ["server.ts", "index.html"],
+        through: "index.html",
+        options: { target: "bun", naming: { chunk: "[name]-chunk.[ext]" } },
+        textHasNames: true,
+      },
+    };
+
+    for (const [name, { files, entrypoints, through, options, textHasNames }] of Object.entries(cases)) {
+      // A hashbang counts in the first entry point only.
+      const listings = name.includes("hashbang") ? [entrypoints] : [entrypoints, entrypoints.toReversed()];
+      for (const listing of listings) {
+        test(`${name} (${listing.join(", ")})`, async () => {
+          using dir = tempDir("plugin-entry-point", files);
+          const root = String(dir);
+          // "declines": the filter matches the entry point, an absolute path, and not an import of the
+          // file. The callback returns nothing. "names": the plugin sends a made-up name to the file.
+          const build = async (how?: "declines" | "names") => {
+            const calls: string[] = [];
+            const result = await Bun.build({
+              entrypoints: listing.map(file =>
+                how === "names" && file === through ? "made-up-name" : join(root, file),
+              ),
+              target: "node",
+              throw: false,
+              ...options,
+              plugins: how && [
+                {
+                  name: how,
+                  setup(build) {
+                    const filter =
+                      how === "names"
+                        ? /^made-up-name$/
+                        : new RegExp(`^[^.].*${path.basename(through).replaceAll(".", "\\.")}$`);
+                    build.onResolve({ filter }, () => {
+                      calls.push(`resolve ${through}`);
+                      return how === "names" ? { path: join(root, through) } : undefined;
+                    });
+                    build.onLoad({ filter: /.*/ }, args => {
+                      calls.push(`load ${path.relative(root, args.path).replaceAll("\\", "/")}`);
+                    });
+                  },
+                },
+              ],
+            });
+            return {
+              // The files that the entry points import are loaded in no fixed order.
+              calls: calls.slice(0, 1 + listing.length),
+              logs: result.logs.map(log => log.message),
+              paths: result.outputs.map(output => output.path),
+              texts: await Promise.all(result.outputs.map(output => output.text())),
+            };
+          };
+          const plain = await build();
+          const calls = [`resolve ${through}`, ...listing.map(file => `load ${file}`)];
+          expect(plain).toMatchObject({ calls: [], logs: [] });
+          expect(await build("declines")).toEqual({ ...plain, calls });
+          const named = await build("names");
+          expect({ ...named, paths: named.paths.length, texts: textHasNames || named.texts }).toEqual({
+            ...plain,
+            calls,
+            paths: plain.paths.length,
+            texts: textHasNames || plain.texts,
+          });
+        });
+      }
+    }
+
+    test("a file of `files` that the plugin declines", async () => {
+      const build = (plugins?: Bun.BunPlugin[]) =>
+        Bun.build({
+          entrypoints: ["/virtual/entry.js"],
+          files: { "/virtual/entry.js": `console.log(1);` },
+          plugins,
+          throw: false,
+        });
+      const describe = async (result: Bun.BuildOutput) => ({
+        logs: result.logs.map(log => log.message),
+        outputs: await Promise.all(result.outputs.map(async output => `${output.path}\n${await output.text()}`)),
       });
+      const plain = await describe(await build());
+      expect(plain.outputs).toHaveLength(1);
+      expect(
+        await describe(
+          await build([
+            {
+              name: "declines",
+              setup(build) {
+                build.onResolve({ filter: /entry\.js$/ }, () => undefined);
+              },
+            },
+          ]),
+        ),
+      ).toEqual(plain);
+    });
+
+    test("outputs are in the order of `entrypoints`, not in the order of the answers", async () => {
+      using dir = tempDir("plugin-entry-point-order", {
+        "a.mjs": `console.log("a");`,
+        "b.mjs": `console.log("b");`,
+        "c.mjs": `console.log("c");`,
+      });
+      const secondAsked = Promise.withResolvers<void>();
       const result = await Bun.build({
-        entrypoints: ["first-name", "second-name"],
-        outdir: join(String(dir), "out"),
-        splitting,
+        entrypoints: ["virtual-a", "virtual-b", join(String(dir), "c.mjs")],
+        target: "node",
         throw: false,
         plugins: [
           {
-            name: "alias",
+            name: "virtual",
             setup(build) {
-              build.onResolve({ filter: /-name$/ }, () => ({ path: join(String(dir), "entry.ts") }));
+              // The answer for `virtual-a` arrives after the answer for `virtual-b`.
+              build.onResolve({ filter: /^virtual-/ }, args => {
+                const answer = { path: join(String(dir), `${args.path.slice("virtual-".length)}.mjs`) };
+                if (args.path === "virtual-b") {
+                  secondAsked.resolve();
+                  return answer;
+                }
+                return secondAsked.promise.then(() => answer);
+              });
             },
           },
         ],
       });
       expect({
-        success: result.success,
         logs: result.logs.map(log => log.message),
         outputs: result.outputs.map(output => path.basename(output.path)),
-      }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
+      }).toEqual({ logs: [], outputs: ["virtual-a.js", "virtual-b.js", "c.js"] });
     });
-  }
+
+    // The build of the worker holds `held.mjs` while the plugin has the other entry point. The one
+    // bundle thread of the process is free again when the worker is gone.
+    test("a worker that stops before the answer frees the bundle thread", async () => {
+      using dir = tempDir("plugin-entry-point-worker", {
+        "held.mjs": `console.log("held");`,
+        "fixture.mjs": /* js */ `
+          import { join } from "node:path";
+          import { Worker, isMainThread, parentPort } from "node:worker_threads";
+          const held = join(import.meta.dir, "held.mjs");
+          if (isMainThread) {
+            const worker = new Worker(import.meta.filename);
+            await new Promise(resolve => worker.once("message", resolve));
+            await worker.terminate();
+            const result = await Bun.build({ entrypoints: [held], throw: false });
+            console.log(JSON.stringify({ success: result.success, outputs: result.outputs.length }));
+          } else {
+            Bun.build({
+              entrypoints: [held, "never-answered"],
+              throw: false,
+              plugins: [
+                {
+                  name: "never answers",
+                  setup(build) {
+                    build.onResolve({ filter: /^never-answered$/ }, () => {
+                      parentPort.postMessage("asked");
+                      return new Promise(() => {});
+                    });
+                  },
+                },
+              ],
+            });
+          }
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `{"success":true,"outputs":1}\n`, stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+  });
 
   test.concurrent("plugin/internal plugin object checks its receiver and rejects new filters after setup", async () => {
     using dir = tempDir("plugin-private-object", {

@@ -2217,6 +2217,44 @@ describe("compiled binary validity", () => {
     expect(stdout.trim()).toBe("compile-test-output");
     expect(exitCode).toBe(0);
   });
+
+  // The first entry point is the main module of the executable. An entry point that an onResolve
+  // plugin gets used to enter the build when its answer arrived, behind the other entry points.
+  test("the first entry point is the main module when an onResolve plugin gets it", async () => {
+    using dir = tempDir("build-compile-plugin-main", {
+      "main.mjs": `console.log("main.mjs runs");`,
+      "worker.mjs": `console.log("worker.mjs runs");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "main.mjs"), join(dir + "", "worker.mjs")],
+      compile: {
+        outfile: join(dir + "", "app-plugin-main"),
+      },
+      plugins: [
+        {
+          name: "declines main",
+          setup(build) {
+            build.onResolve({ filter: /main\.mjs$/ }, () => undefined);
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("main.mjs runs");
+    expect(exitCode).toBe(0);
+  });
 });
 
 if (isLinux) {

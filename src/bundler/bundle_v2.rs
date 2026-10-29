@@ -58,6 +58,46 @@ pub struct PendingImport {
     pub(crate) import_record_index: u32,
 }
 
+/// An entry point that has its module and no place in the graph yet: `BundleV2::admit_entry_point`.
+pub(crate) struct ReadyEntryPoint<'a> {
+    /// Arena-owned and not scheduled: its `source_index` is `Index::INVALID`. `None` once
+    /// `admit_entry_point` has scheduled it.
+    pub(crate) task: Option<NonNull<crate::parse_task::ParseTask<'a>>>,
+    /// The path of the graph row. `task.path` is another path when the file is disabled: see
+    /// `BundleV2::parse_task_path`.
+    pub(crate) path: crate::bun_fs::Path<'a>,
+    /// What the onResolve plugins were asked about. It names the output file.
+    pub(crate) original_name: Option<Box<[u8]>>,
+}
+
+impl Drop for ReadyEntryPoint<'_> {
+    /// The arena runs no `Drop`: a task that never ran has heap-owned fields to free. Drop it while
+    /// the arena of the pass is alive.
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            // SAFETY: a live arena slot that was never scheduled. Nothing reads it after this.
+            unsafe { core::ptr::drop_in_place(task.as_ptr()) };
+        }
+    }
+}
+
+/// One entry point of a pass in which the onResolve plugins have an entry point.
+pub(crate) enum EntrySlot<'a> {
+    /// The onResolve plugins have it.
+    Asked,
+    Ready(ReadyEntryPoint<'a>),
+    /// The answer leaves nothing to bundle. The reason is in the log.
+    Dropped,
+}
+
+/// `BundleV2::pending_entry_points`.
+pub(crate) struct PendingEntryPoints<'a> {
+    /// In the order of the request.
+    pub(crate) slots: Vec<EntrySlot<'a>>,
+    /// How many slots are `Asked`.
+    pub(crate) asked: u32,
+}
+
 pub struct BundleV2<'a> {
     // `ssr_transpiler` may alias this same transpiler when the SSR graph
     // isn't separate, so it stays `*mut`; `transpiler` is `&'a mut` for
@@ -112,6 +152,11 @@ pub struct BundleV2<'a> {
     /// on the bundle thread before its parsing task completes.
     pub(crate) resolve_tasks_waiting_for_import_source_index:
         ArrayHashMap<IndexInt, Vec<PendingImport>>,
+
+    /// Set while the onResolve plugins have an entry point. As in esbuild, no entry point is in the
+    /// graph, so no file is loaded, until each has its answer. `on_resolve` then admits them all in
+    /// the order of the request. The unanswered requests keep the scan counter above zero.
+    pub(crate) pending_entry_points: Option<Box<PendingEntryPoints<'a>>>,
 
     /// Allocations not tracked by a threadlocal heap.
     pub(crate) free_list: Vec<Box<[u8]>>,
@@ -281,6 +326,7 @@ impl<'a> BundleV2<'a> {
 
 pub mod bv2_impl {
     use super::ResolveQueue;
+    use super::{EntrySlot, PendingEntryPoints, ReadyEntryPoint};
     use crate::IndexInt;
     use crate::mal_prelude::*;
     // This is Bun's JavaScript/TypeScript bundler
@@ -3123,14 +3169,14 @@ pub mod bv2_impl {
             })
         }
 
+        /// An entry point that the resolver or `files` found: its task, and no place in the graph yet.
         /// `loader`: see `requested_file_loader`.
-        pub(crate) fn enqueue_entry_item(
+        fn ready_entry_point(
             &mut self,
             result: &_resolver::Result<'_>,
-            is_entry_point: bool,
             target: options::Target,
             loader: Option<Loader>,
-        ) -> Result<Option<IndexInt>, Error> {
+        ) -> Result<ReadyEntryPoint<'a>, Error> {
             let path = result.path_const().expect(
                 "resolve_entry_point rejects disabled results and FileMap results have a path",
             );
@@ -3139,27 +3185,73 @@ pub mod bv2_impl {
             if !self.file_map.is_some_and(|files| files.contains(path.text)) {
                 path.assert_file_path_is_absolute();
             }
-            // borrowck: get-then-put instead of a single get-or-put.
-            if self
-                .path_to_source_index_map(target)
-                .get(path.text)
-                .is_some()
-            {
-                return Ok(None);
-            }
-            self.increment_scan_counter();
-            let source_index = Index::source(self.graph.input_files.len() as u32);
 
             let loader = self.requested_file_loader(path, loader);
 
             let path = self.path_with_pretty_initialized(path, target)?;
             path.assert_pretty_is_valid();
-            self.path_to_source_index_map(target)
-                .put(path.text, source_index.get())
-                .expect("oom");
+            // Arena-owned; freed on heap reset.
+            let task_path = self.parse_task_path(result, path);
+            let task_val = ParseTask::init(result, task_path, Index::INVALID, self);
+            // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
+            let task: &mut ParseTask = self.arena_create(task_val);
+            task.loader = Some(loader);
+            task.task.node.next = core::ptr::null_mut();
+            task.is_entry_point = true;
+            task.known_target = target;
+            task.jsx.development = self
+                .transpiler_for_target(target)
+                .options
+                .forced_jsx_development();
+            Ok(ReadyEntryPoint {
+                task: Some(NonNull::from(task)),
+                path,
+                original_name: None,
+            })
+        }
+
+        /// The one place that makes a file an entry point: its row, its load, and its place in
+        /// `graph.entry_points`. `Ok(None)`: an earlier entry point named the file. The file stays
+        /// one entry point (`LinkerGraph::load`) and takes the later name.
+        fn admit_entry_point(
+            &mut self,
+            mut ready: ReadyEntryPoint<'a>,
+        ) -> Result<Option<IndexInt>, Error> {
+            let task = ready.task.expect("an entry point is admitted once");
+            // SAFETY: arena-owned, and only `ready` points at it.
+            let task: &mut ParseTask = unsafe { &mut *task.as_ptr() };
+            let target = task.known_target;
+            let path = ready.path;
+            // SAFETY: `GetOrPutResult` borrows `&mut self` for its whole lifetime. Keep `value_ptr`
+            // as a raw pointer: the map does not change before the write through it below.
+            let (value_ptr, found_existing) = {
+                let existing = self
+                    .path_to_source_index_map(target)
+                    .get_or_put(path.text)
+                    .expect("oom");
+                (
+                    std::ptr::from_mut(existing.value_ptr),
+                    existing.found_existing,
+                )
+            };
+            if found_existing {
+                // SAFETY: map slot from `get_or_put` above; map not mutated since.
+                let source_index = unsafe { *value_ptr };
+                if let Some(name) = &ready.original_name {
+                    let _ = self
+                        .graph
+                        .entry_point_original_names
+                        .put(source_index, name);
+                }
+                return Ok(None);
+            }
+            self.increment_scan_counter();
+            let source_index = Index::source(self.graph.input_files.len() as u32);
+            // SAFETY: map slot from `get_or_put` above; map not mutated since.
+            unsafe { *value_ptr = source_index.get() };
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
-            let side_effects = result.primary_side_effects_data;
+            let loader = task.loader.expect("an entry point task has its loader");
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
                     path,
@@ -3168,22 +3260,18 @@ pub mod bv2_impl {
                     ..Default::default()
                 },
                 loader,
-                side_effects,
+                side_effects: task.side_effects,
                 ..Default::default()
             })?;
-            // Arena-owned; freed on heap reset.
-            let task_path = self.parse_task_path(result, path);
-            let task_val = ParseTask::init(result, task_path, source_index, self);
-            // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
-            task.loader = Some(loader);
-            task.task.node.next = core::ptr::null_mut();
-            task.is_entry_point = is_entry_point;
-            task.known_target = target;
-            task.jsx.development = self
-                .transpiler_for_target(target)
-                .options
-                .forced_jsx_development();
+            // The worker pool or the onLoad plugins have the task from here.
+            ready.task = None;
+            task.source_index = source_index;
+            if let Some(name) = &ready.original_name {
+                let _ = self
+                    .graph
+                    .entry_point_original_names
+                    .put(source_index.get(), name);
+            }
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -3286,6 +3374,7 @@ pub mod bv2_impl {
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
+                pending_entry_points: None,
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
@@ -3557,54 +3646,162 @@ pub mod bv2_impl {
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
-            for entry_point in data {
+            let target = self.transpiler.options.target;
+            let first_for_plugins =
+                self.hold_entry_points_for_plugins(&mut data.iter().map(AsRef::as_ref));
+            for (index, entry_point) in data.iter().enumerate() {
                 let entry_point: &[u8] = entry_point.as_ref();
-                if self.enqueue_entry_point_on_resolve_plugin_if_needed(
-                    entry_point,
-                    self.transpiler.options.target,
-                    None,
-                ) {
+                if self.entry_point_is_for_plugins(first_for_plugins, index, entry_point) {
+                    self.ask_plugins_for_entry_point(entry_point, target, None);
                     continue;
                 }
 
-                // Check FileMap first for in-memory entry points
-                if let Some(file_map) = self.file_map {
-                    if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
-                    {
-                        let _ = self.enqueue_entry_item(
-                            &file_map_result,
-                            true,
-                            self.transpiler.options.target,
-                            None,
-                        )?;
-                        continue;
-                    }
-                }
-
                 // no plugins were matched
-                let dot_slash = OnceCell::new();
-                let resolved = match self.transpiler.resolve_entry_point(entry_point, &dot_slash) {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
+                if let Some(ready) =
+                    self.resolve_unmatched_entry_point(entry_point, target, None)?
+                {
+                    self.admit_or_hold_entry_point(ready)?;
+                }
+            }
+            self.admit_entry_points_if_answered();
+            Ok(())
+        }
 
-                let target = 'brk: {
-                    let main_target = self.transpiler.options.target;
-                    if main_target.is_server_side() {
-                        if let Some(path) = resolved.path_const() {
-                            if let Some(loader) = path.loader(&self.transpiler.options.loaders) {
-                                if loader == Loader::Html {
-                                    self.ensure_client_transpiler();
-                                    break 'brk Target::Browser;
-                                }
-                            }
-                        }
-                    }
-                    break 'brk main_target;
-                };
-                let _ = self.enqueue_entry_item(&resolved, true, target, None)?;
+        /// The index of the first entry point that an onResolve filter matches. When there is one,
+        /// every entry point of the pass waits in `pending_entry_points`. Not generic:
+        /// `enqueue_entry_points_normal` is instantiated twice.
+        #[inline(never)]
+        fn hold_entry_points_for_plugins<'e>(
+            &mut self,
+            entry_points: &mut dyn ExactSizeIterator<Item = &'e [u8]>,
+        ) -> Option<usize> {
+            debug_assert!(self.pending_entry_points.is_none());
+            let count = entry_points.len();
+            let first = {
+                let plugins = self.plugins_ref()?;
+                let mut entry_points = entry_points;
+                Iterator::position(&mut entry_points, |entry_point| {
+                    plugins_match_entry_point(plugins, entry_point)
+                })?
+            };
+            self.pending_entry_points = Some(Box::new(PendingEntryPoints {
+                slots: Vec::with_capacity(count),
+                asked: 0,
+            }));
+            Some(first)
+        }
+
+        /// Whether the onResolve plugins get this entry point. `first` is the result of
+        /// `hold_entry_points_for_plugins`, so each entry point meets the filters once.
+        fn entry_point_is_for_plugins(
+            &self,
+            first: Option<usize>,
+            index: usize,
+            entry_point: &[u8],
+        ) -> bool {
+            match first {
+                None => false,
+                Some(first) if index <= first => index == first,
+                Some(_) => self
+                    .plugins_ref()
+                    .is_some_and(|plugins| plugins_match_entry_point(plugins, entry_point)),
+            }
+        }
+
+        /// Admitted at once, or held in its slot while the onResolve plugins have an entry point of
+        /// the pass.
+        fn admit_or_hold_entry_point(&mut self, ready: ReadyEntryPoint<'a>) -> Result<(), Error> {
+            match self.pending_entry_points.as_mut() {
+                Some(pending) => pending.slots.push(EntrySlot::Ready(ready)),
+                None => {
+                    self.admit_entry_point(ready)?;
+                }
             }
             Ok(())
+        }
+
+        /// `Bun.build`: an html entry point is a page for the browser, also in a build for a server.
+        fn entry_point_target(
+            &mut self,
+            path: &Fs::Path<'_>,
+            target: options::Target,
+        ) -> options::Target {
+            if self.framework.is_none()
+                && self.dev_server.is_none()
+                && target.is_server_side()
+                && path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
+            {
+                self.ensure_client_transpiler();
+                return Target::Browser;
+            }
+            target
+        }
+
+        /// An entry point that no onResolve plugin resolves: a file in memory, or what the resolver
+        /// finds. `None`: the reason is in the log. `loader`: see `requested_file_loader`.
+        fn resolve_unmatched_entry_point(
+            &mut self,
+            entry_point: &[u8],
+            target: options::Target,
+            loader: Option<Loader>,
+        ) -> Result<Option<ReadyEntryPoint<'a>>, Error> {
+            // Check FileMap first for in-memory entry points
+            if let Some(file_map) = self.file_map {
+                if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point) {
+                    return Ok(Some(self.ready_entry_point(
+                        &file_map_result,
+                        target,
+                        loader,
+                    )?));
+                }
+            }
+
+            let dot_slash = OnceCell::new();
+            let resolved = match self
+                .transpiler_for_target(target)
+                .resolve_entry_point(entry_point, &dot_slash)
+            {
+                Ok(r) => r,
+                Err(_) => return Ok(None),
+            };
+            let target = match resolved.path_const() {
+                Some(path) => self.entry_point_target(path, target),
+                None => target,
+            };
+            Ok(Some(self.ready_entry_point(&resolved, target, loader)?))
+        }
+
+        /// The answer for the entry point in `slot`.
+        fn fill_entry_slot(&mut self, slot: u32, filled: EntrySlot<'a>) {
+            let pending = self
+                .pending_entry_points
+                .as_mut()
+                .expect("the onResolve plugins answer an entry point once");
+            debug_assert!(matches!(pending.slots[slot as usize], EntrySlot::Asked));
+            pending.slots[slot as usize] = filled;
+            pending.asked -= 1;
+            self.admit_entry_points_if_answered();
+        }
+
+        /// Every entry point has its answer: they enter the graph in the order of the request. In
+        /// `on_resolve` this runs while the last request still holds its unit of the scan counter.
+        fn admit_entry_points_if_answered(&mut self) {
+            if self
+                .pending_entry_points
+                .as_ref()
+                .is_none_or(|pending| pending.asked != 0)
+            {
+                return;
+            }
+            let pending = self.pending_entry_points.take().expect("checked above");
+            for slot in pending.slots {
+                // A cancelled pass loads nothing more.
+                if let EntrySlot::Ready(ready) = slot
+                    && !self.graph.cancelled
+                {
+                    self.admit_entry_point(ready).expect("oom");
+                }
+            }
         }
 
         pub(crate) fn enqueue_entry_points_dev_server(
@@ -3622,7 +3819,15 @@ pub mod bv2_impl {
                 .ensure_unused_capacity(num_entry_points)?;
 
             debug_assert_eq!(files.set.keys().len(), files.set.values().len());
-            for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
+            let first_for_plugins = self
+                .hold_entry_points_for_plugins(&mut files.set.keys().iter().map(|path| &**path));
+            for (index, (abs_path, flags)) in files
+                .set
+                .keys()
+                .iter()
+                .zip(files.set.values().iter())
+                .enumerate()
+            {
                 // Ensure we have the proper conditions set for client-side entrypoints.
                 // SAFETY: hold the transpiler as a `*mut` across the loop body
                 // so it doesn't keep `self` borrowed through the plugin
@@ -3659,20 +3864,16 @@ pub mod bv2_impl {
                     },
                 ];
 
-                let mut any_plugin_matched = false;
-                for target_info in &targets_to_check {
-                    if target_info.should_dispatch {
-                        if self.enqueue_entry_point_on_resolve_plugin_if_needed(
-                            abs_path,
-                            target_info.target,
-                            target_info.loader,
-                        ) {
-                            any_plugin_matched = true;
+                if self.entry_point_is_for_plugins(first_for_plugins, index, abs_path) {
+                    for target_info in &targets_to_check {
+                        if target_info.should_dispatch {
+                            self.ask_plugins_for_entry_point(
+                                abs_path,
+                                target_info.target,
+                                target_info.loader,
+                            );
                         }
                     }
-                }
-
-                if any_plugin_matched {
                     continue;
                 }
 
@@ -3704,16 +3905,12 @@ pub mod bv2_impl {
                     };
 
                 if flags.client() {
-                    'brk: {
-                        let Some(source_index) = self.enqueue_entry_item(
-                            &resolved,
-                            true,
-                            Target::Browser,
-                            client_loader,
-                        )?
-                        else {
-                            break 'brk;
-                        };
+                    let ready =
+                        self.ready_entry_point(&resolved, Target::Browser, client_loader)?;
+                    if let Some(pending) = self.pending_entry_points.as_mut() {
+                        // `finish_from_bake_dev_server` finds a css entry point in `graph.entry_points`.
+                        pending.slots.push(EntrySlot::Ready(ready));
+                    } else if let Some(source_index) = self.admit_entry_point(ready)? {
                         if flags.css() {
                             css_data.put_no_clobber(
                                 Index::init(source_index),
@@ -3725,22 +3922,16 @@ pub mod bv2_impl {
                     }
                 }
                 if flags.server() {
-                    let _ = self.enqueue_entry_item(
-                        &resolved,
-                        true,
-                        self.transpiler.options.target,
-                        None,
-                    )?;
+                    let ready = self.ready_entry_point(&resolved, server_target, None)?;
+                    self.admit_or_hold_entry_point(ready)?;
                 }
                 if flags.ssr() {
-                    let _ = self.enqueue_entry_item(
-                        &resolved,
-                        true,
-                        Target::ServerComponentsSsr,
-                        None,
-                    )?;
+                    let ready =
+                        self.ready_entry_point(&resolved, Target::ServerComponentsSsr, None)?;
+                    self.admit_or_hold_entry_point(ready)?;
                 }
             }
+            self.admit_entry_points_if_answered();
             Ok(())
         }
 
@@ -3757,14 +3948,18 @@ pub mod bv2_impl {
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
-            for key in data.files.keys() {
+            let first_for_plugins = self.hold_entry_points_for_plugins(
+                &mut data.files.keys().iter().map(|key| key.abs_path()),
+            );
+            for (index, key) in data.files.keys().iter().enumerate() {
                 let abs_path = key.abs_path();
                 let target = match key.side {
                     bake::Side::Client => Target::Browser,
                     bake::Side::Server => self.transpiler.options.target,
                 };
 
-                if self.enqueue_entry_point_on_resolve_plugin_if_needed(abs_path, target, None) {
+                if self.entry_point_is_for_plugins(first_for_plugins, index, abs_path) {
+                    self.ask_plugins_for_entry_point(abs_path, target, None);
                     continue;
                 }
 
@@ -3776,10 +3971,10 @@ pub mod bv2_impl {
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&resolved, true, target, None)? else {
-                    continue;
-                };
+                let ready = self.ready_entry_point(&resolved, target, None)?;
+                self.admit_or_hold_entry_point(ready)?;
             }
+            self.admit_entry_points_if_answered();
             Ok(())
         }
 
@@ -5210,6 +5405,13 @@ pub mod bv2_impl {
         }
     }
 
+    /// Whether an onResolve filter matches an entry point as the caller wrote it.
+    fn plugins_match_entry_point(plugins: &jsc_api::JSBundler::Plugin, entry_point: &[u8]) -> bool {
+        let mut path = Fs::Path::init(entry_point);
+        path.namespace = b"file";
+        plugins.has_any_matches(&path, false)
+    }
+
     impl<'a> BundleV2<'a> {
         /// Re-run the idempotent barrel seeding pass after a plugin `onResolve` result patches a record that the importer's parse-completion pass saw unresolved and skipped (#40606).
         fn schedule_barrel_imports_after_plugin_resolve(
@@ -5271,40 +5473,17 @@ pub mod bv2_impl {
             // `helpCatchMemoryIssues` was a mimalloc TLH probe; bumpalo has no equivalent.
             let _ = FeatureFlags::HELP_CATCH_MEMORY_ISSUES;
 
+            if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                this.on_entry_point_resolved(resolve);
+                return;
+            }
+
             match resolve.value.consume() {
                 jsc_api::JSBundler::ResolveValue::NoMatch => {
                     // If it's a file namespace, we should run it through the resolver like normal.
                     //
                     // The file could be on disk.
                     if resolve.import_record.namespace.as_ref() == b"file" {
-                        if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                            let target = resolve.import_record.original_target;
-                            let dot_slash = OnceCell::new();
-                            let Ok(resolved) = this
-                                .transpiler_for_target(target)
-                                .resolve_entry_point(&resolve.import_record.specifier, &dot_slash)
-                            else {
-                                return;
-                            };
-                            let Ok(source_index) = this.enqueue_entry_item(
-                                &resolved,
-                                true,
-                                target,
-                                resolve.import_record.loader,
-                            ) else {
-                                return;
-                            };
-
-                            // Store the original entry point name for virtual entries that fall back to file resolution
-                            if let Some(idx) = source_index {
-                                let _ = this
-                                    .graph
-                                    .entry_point_original_names
-                                    .put(idx, &resolve.import_record.specifier);
-                            }
-                            return;
-                        }
-
                         this.run_resolver(
                             &resolve.import_record,
                             resolve.import_record.original_target,
@@ -5329,29 +5508,17 @@ pub mod bv2_impl {
                     // When it's not a file, this is an error and we should report it.
                     //
                     // We have no way of loading non-files.
-                    if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                        let _ = log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Module not found {} in namespace {}",
-                                bun_core::fmt::quote(&resolve.import_record.specifier),
-                                bun_core::fmt::quote(&resolve.import_record.namespace),
-                            ),
-                        );
-                    } else {
-                        let source = &this.graph.input_files.items_source()
-                            [resolve.import_record.importer_source_index as usize];
-                        let _ = log.add_range_error_fmt(
-                            Some(source),
-                            resolve.import_record.range,
-                            format_args!(
-                                "Module not found {} in namespace {}",
-                                bun_core::fmt::quote(&resolve.import_record.specifier),
-                                bun_core::fmt::quote(&resolve.import_record.namespace),
-                            ),
-                        );
-                    }
+                    let source = &this.graph.input_files.items_source()
+                        [resolve.import_record.importer_source_index as usize];
+                    let _ = log.add_range_error_fmt(
+                        Some(source),
+                        resolve.import_record.range,
+                        format_args!(
+                            "Module not found {} in namespace {}",
+                            bun_core::fmt::quote(&resolve.import_record.specifier),
+                            bun_core::fmt::quote(&resolve.import_record.namespace),
+                        ),
+                    );
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
@@ -5442,8 +5609,6 @@ pub mod bv2_impl {
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
                                 known_target: resolve.import_record.original_target,
-                                is_entry_point: resolve.import_record.kind
-                                    == ImportKind::EntryPointBuild,
                                 ..Default::default()
                             };
                             // Arena-owned.
@@ -5474,19 +5639,6 @@ pub mod bv2_impl {
                             // SAFETY: map slot from `get_or_put` above; map not mutated since.
                             out_source_index = Some(Index::init(unsafe { *value_ptr }));
                         }
-                    } else if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                        let log = this.log_for_resolution_failures(
-                            &resolve.import_record.source_file,
-                            resolve.import_record.original_target.bake_graph(),
-                        );
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "The entry point {} cannot be marked as external",
-                                bun_core::fmt::quote(&resolve.import_record.specifier),
-                            ),
-                        );
                     } else {
                         // Like esbuild, print the external import with the path the plugin returned.
                         let path = path_in_arena(&path, this.arena());
@@ -5500,44 +5652,30 @@ pub mod bv2_impl {
                     }
 
                     if let Some(source_index) = out_source_index {
-                        if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                            this.graph
-                                .entry_points
-                                .push(bun_ast::Index::init(source_index.get()));
-
-                            // Store the original entry point name for virtual entries
-                            // This preserves the original name for output file naming
-                            let _ = this
-                                .graph
-                                .entry_point_original_names
-                                .put(source_index.get(), &resolve.import_record.specifier);
-                        } else {
-                            let source_import_records =
-                                &mut this.graph.ast.items_import_records_mut()
-                                    [resolve.import_record.importer_source_index as usize];
-                            if source_import_records.len() as u32
-                                <= resolve.import_record.import_record_index
-                            {
-                                let entry = this
-                                    .resolve_tasks_waiting_for_import_source_index
-                                    .get_or_put(resolve.import_record.importer_source_index)
-                                    .expect("oom");
-                                if !entry.found_existing {
-                                    *entry.value_ptr = Vec::new();
-                                }
-                                let _ = entry.value_ptr.push(PendingImport {
-                                    to_source_index: source_index,
-                                    import_record_index: resolve.import_record.import_record_index,
-                                });
-                            } else {
-                                let import_record: &mut ImportRecord = &mut source_import_records
-                                    .as_mut_slice()
-                                    [resolve.import_record.import_record_index as usize];
-                                import_record.source_index = source_index;
-                                this.schedule_barrel_imports_after_plugin_resolve(
-                                    resolve.import_record.importer_source_index,
-                                );
+                        let source_import_records = &mut this.graph.ast.items_import_records_mut()
+                            [resolve.import_record.importer_source_index as usize];
+                        if source_import_records.len() as u32
+                            <= resolve.import_record.import_record_index
+                        {
+                            let entry = this
+                                .resolve_tasks_waiting_for_import_source_index
+                                .get_or_put(resolve.import_record.importer_source_index)
+                                .expect("oom");
+                            if !entry.found_existing {
+                                *entry.value_ptr = Vec::new();
                             }
+                            let _ = entry.value_ptr.push(PendingImport {
+                                to_source_index: source_index,
+                                import_record_index: resolve.import_record.import_record_index,
+                            });
+                        } else {
+                            let import_record: &mut ImportRecord = &mut source_import_records
+                                .as_mut_slice()
+                                [resolve.import_record.import_record_index as usize];
+                            import_record.source_index = source_index;
+                            this.schedule_barrel_imports_after_plugin_resolve(
+                                resolve.import_record.importer_source_index,
+                            );
                         }
                     }
                 }
@@ -5557,6 +5695,130 @@ pub mod bv2_impl {
             // resolve is dropped here (defer resolve.deinit())
         }
 
+        /// The answer of the onResolve plugins for an entry point fills its slot.
+        fn on_entry_point_resolved(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
+            use jsc_api::JSBundler::ResolveValue;
+            let record = &mut resolve.import_record;
+            let slot = record.import_record_index;
+            let target = record.original_target;
+            let filled = match resolve.value.consume() {
+                // The file could be on disk.
+                ResolveValue::NoMatch if record.namespace.as_ref() == b"file" => {
+                    match self.resolve_unmatched_entry_point(
+                        &record.specifier,
+                        target,
+                        record.loader,
+                    ) {
+                        Ok(Some(mut ready)) => {
+                            ready.original_name = Some(core::mem::take(&mut record.specifier));
+                            EntrySlot::Ready(ready)
+                        }
+                        Ok(None) | Err(_) => EntrySlot::Dropped,
+                    }
+                }
+                // We have no way of loading non-files.
+                ResolveValue::NoMatch => {
+                    let log =
+                        self.log_for_resolution_failures(&record.source_file, target.bake_graph());
+                    let _ = log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Module not found {} in namespace {}",
+                            bun_core::fmt::quote(&record.specifier),
+                            bun_core::fmt::quote(&record.namespace),
+                        ),
+                    );
+                    EntrySlot::Dropped
+                }
+                ResolveValue::Success(result) if result.external => {
+                    let log =
+                        self.log_for_resolution_failures(&record.source_file, target.bake_graph());
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "The entry point {} cannot be marked as external",
+                            bun_core::fmt::quote(&record.specifier),
+                        ),
+                    );
+                    EntrySlot::Dropped
+                }
+                ResolveValue::Success(result) => {
+                    let mut path = Fs::Path::init(&result.path);
+                    if result.namespace.is_empty() || result.namespace.as_ref() == b"file" {
+                        path.namespace = b"file";
+                    } else {
+                        path.namespace = &result.namespace;
+                    }
+                    EntrySlot::Ready(self.ready_plugin_entry_point(&path, record))
+                }
+                // Thrown by a plugin, or cancelled.
+                ResolveValue::Err(err) => {
+                    let log =
+                        self.log_for_resolution_failures(&record.source_file, target.bake_graph());
+                    let kind = err.kind;
+                    log.msgs.push(err);
+                    log.errors += (kind == bun_ast::Kind::Err) as u32;
+                    log.warnings += (kind == bun_ast::Kind::Warn) as u32;
+                    EntrySlot::Dropped
+                }
+                ResolveValue::Pending | ResolveValue::Consumed => unreachable!(),
+            };
+            self.fill_entry_slot(slot, filled);
+        }
+
+        /// The module that an onResolve plugin named for an entry point. As for an import that a
+        /// plugin resolved, only the path of the file is known.
+        fn ready_plugin_entry_point(
+            &mut self,
+            path: &Fs::Path<'_>,
+            record: &mut jsc_api::JSBundler::MiniImportRecord,
+        ) -> ReadyEntryPoint<'a> {
+            let target = self.entry_point_target(path, record.original_target);
+            let path = self
+                .path_with_pretty_initialized(path, target)
+                .expect("oom");
+            // A file that a plugin resolved the record to instead keeps its own loader.
+            let loader = self.requested_file_loader(
+                &path,
+                record.loader.filter(|_| path.text == &*record.specifier),
+            );
+            let task_val = ParseTask {
+                // SAFETY: `from_mut(self)` is the live bundle (write provenance);
+                // outlives the task.
+                ctx: Some(unsafe {
+                    bun_ptr::ParentRef::from_raw_mut(
+                        std::ptr::from_mut::<BundleV2>(self).cast::<BundleV2<'static>>(),
+                    )
+                }),
+                path,
+                // unknown at this point:
+                contents_or_fd: parse_task::ContentsOrFd::Fd {
+                    dir: bun_sys::Fd::INVALID,
+                    file: bun_sys::Fd::INVALID,
+                },
+                side_effects: bun_ast::SideEffects::HasSideEffects,
+                jsx: self.transpiler_for_target(target).options.jsx.clone(),
+                source_index: Index::INVALID,
+                module_type: options::ModuleType::Unknown,
+                loader: Some(loader),
+                known_target: target,
+                is_entry_point: true,
+                ..Default::default()
+            };
+            // Arena-owned.
+            // SAFETY: arena outlives the bundle pass.
+            let task: &mut ParseTask = self.arena_create(task_val);
+            task.task.node.next = core::ptr::null_mut();
+            task.io_task.node.next = core::ptr::null_mut();
+            ReadyEntryPoint {
+                task: Some(NonNull::from(task)),
+                path,
+                original_name: Some(core::mem::take(&mut record.specifier)),
+            }
+        }
+
         pub fn deinit_without_freeing_arena(&mut self) {
             // A build that stops between `compute_data_for_source_map` and the waits in
             // `generate_chunks_in_parallel` gets here with those tasks still on the pool,
@@ -5565,6 +5827,10 @@ pub mod bv2_impl {
             self.linker.source_maps.quoted_contents_wait_group.wait();
             // The last IO callback may still be using the worker pool that `pool.deinit()` frees.
             self.graph.pool().wait_for_io_tasks();
+
+            // A pass that stops while the onResolve plugins have an entry point never admits the
+            // ones it holds: drop them while the arena of their tasks is alive.
+            self.pending_entry_points = None;
 
             {
                 // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
@@ -6335,49 +6601,50 @@ pub mod bv2_impl {
             false
         }
 
-        /// `loader`: see `requested_file_loader`.
-        pub(crate) fn enqueue_entry_point_on_resolve_plugin_if_needed(
+        /// Gives an entry point to the onResolve plugins. The answer fills its slot in
+        /// `pending_entry_points`. `loader`: see `requested_file_loader`.
+        fn ask_plugins_for_entry_point(
             &mut self,
             entry_point: &[u8],
             target: options::Target,
             loader: Option<Loader>,
-        ) -> bool {
-            if let Some(plugins) = self.plugins_ref() {
-                let mut temp_path = Fs::Path::init(entry_point);
-                temp_path.namespace = b"file";
-                if plugins.has_any_matches(&temp_path, false) {
-                    bun_core::scoped_log!(
-                        Bundle,
-                        "Entry point '{}' plugin match",
-                        bstr::BStr::new(entry_point)
-                    );
+        ) {
+            bun_core::scoped_log!(
+                Bundle,
+                "Entry point '{}' plugin match",
+                bstr::BStr::new(entry_point)
+            );
 
-                    // Arena-owned.
-                    // SAFETY: arena outlives the bundle pass.
-                    let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
-                    self.increment_scan_counter();
+            let pending = self
+                .pending_entry_points
+                .as_mut()
+                .expect("`hold_entry_points_for_plugins` found a match");
+            let slot = pending.slots.len() as u32;
+            pending.slots.push(EntrySlot::Asked);
+            pending.asked += 1;
 
-                    *resolve = jsc_api::JSBundler::Resolve::init(
-                        self,
-                        jsc_api::JSBundler::MiniImportRecord {
-                            kind: ImportKind::EntryPointBuild,
-                            source_file: Box::default(), // No importer for entry points
-                            namespace: (&b"file"[..]).into(),
-                            specifier: entry_point.into(),
-                            importer_source_index: u32::MAX, // Sentinel value for entry points
-                            import_record_index: 0,
-                            range: bun_ast::Range::NONE,
-                            original_target: target,
-                            loader,
-                        },
-                    );
+            // Arena-owned.
+            // SAFETY: arena outlives the bundle pass.
+            let resolve: &mut jsc_api::JSBundler::Resolve =
+                self.arena_create(jsc_api::JSBundler::Resolve::default());
+            self.increment_scan_counter();
 
-                    resolve.dispatch();
-                    return true;
-                }
-            }
-            false
+            *resolve = jsc_api::JSBundler::Resolve::init(
+                self,
+                jsc_api::JSBundler::MiniImportRecord {
+                    kind: ImportKind::EntryPointBuild,
+                    source_file: Box::default(), // No importer for entry points
+                    namespace: (&b"file"[..]).into(),
+                    specifier: entry_point.into(),
+                    importer_source_index: u32::MAX, // Sentinel value for entry points
+                    import_record_index: slot,       // In `pending_entry_points`
+                    range: bun_ast::Range::NONE,
+                    original_target: target,
+                    loader,
+                },
+            );
+
+            resolve.dispatch();
         }
 
         pub(crate) fn enqueue_on_load_plugin_if_needed(&mut self, parse: &mut ParseTask) -> bool {

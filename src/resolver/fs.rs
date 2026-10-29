@@ -871,11 +871,8 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
             break;
         }
 
-        if shared_buffer.list.capacity() > file_contents_len {
-            // SAFETY: capacity > len, so writing one byte past len is in-bounds
-            unsafe {
-                *shared_buffer.list.as_mut_ptr().add(file_contents_len) = 0;
-            }
+        if let Some(slot) = shared_buffer.list.spare_capacity_mut().first_mut() {
+            slot.write(0);
         }
 
         // `file_contents_len == shared_buffer.list.len()` here (set by `truncate` in

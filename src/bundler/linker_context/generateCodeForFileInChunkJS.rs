@@ -42,8 +42,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let source_ref = unsafe { &(*c.parse_graph).input_files.items_source()[source_index] };
 
     // Grab raw pointers to the SoA columns up front so
-    // subsequent `&mut c` borrows (convert_stmts_for_chunk, print_code_for_file_in_chunk_js)
-    // don't conflict.
+    // subsequent `&mut c` borrows (convert_stmts_for_chunk) don't conflict.
     // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
     // function (linking has already sized everything).
     let parts: *mut [Part] = {

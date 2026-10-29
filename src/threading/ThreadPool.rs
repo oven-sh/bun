@@ -541,7 +541,7 @@ impl Batch {
     }
 }
 
-/// Dispatch trait for `each_impl`: the by-value vs by-pointer branch as two impls.
+/// Dispatch trait for `each_impl`: the by-value vs by-`&mut` branch as two impls.
 trait EachCall<Ctx, V>: core::marker::Sync {
     fn call(&self, ctx: &Ctx, value: &mut V, i: usize);
 }
@@ -675,6 +675,7 @@ impl ThreadPool {
             let wctx = runner_task.ctx.get();
             // SAFETY: `values` slice outlives all RunnerTasks (`group.wait()` blocks until
             // every task finishes); each task owns a distinct index `i`.
+            // `each_impl` holds the exclusive borrow of `values` and does not use it between `schedule` and `wait()`.
             let value: &mut V = unsafe { &mut (*wctx.values)[i] };
             wctx.run_fn.call(&wctx.ctx, value, i);
         }

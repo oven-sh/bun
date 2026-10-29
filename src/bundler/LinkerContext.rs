@@ -1740,7 +1740,7 @@ pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
 /// Note: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
 /// `Ctx: Sync + Copy` and the same context is observed from every worker
-/// thread. Each task only writes to its own `*mut Chunk` slot; reads of
+/// thread. Each task only writes to its own `Chunk` slot; reads of
 /// `c`/`chunks` are disjoint or read-only.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
@@ -1750,7 +1750,7 @@ pub struct GenerateChunkCtx<'a> {
     /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
     /// safe `Deref`. Read-only: each task writes only through its own
-    /// `*mut Chunk`.
+    /// `&mut Chunk` or `*mut Chunk`.
     pub(crate) chunks: bun_ptr::BackRef<[Chunk<'a>]>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write

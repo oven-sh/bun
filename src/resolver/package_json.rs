@@ -385,6 +385,24 @@ impl PackageJSON {
         macro_map
     }
 
+    /// Interns the path of the `package.json` that `parse` reads in `dir`. `joined` is the loose join of the two.
+    fn intern_path(
+        r_fs: &fs::FileSystem,
+        dir: &[u8],
+        dirname_fd: Fd,
+        joined: &[u8],
+    ) -> &'static [u8] {
+        let mut spill = Vec::new();
+        // Through `dirname_fd` the file is read as `package.json` in that open directory, so on POSIX its path keeps a backslash of `dir`.
+        let path =
+            if cfg!(not(windows)) && dirname_fd.is_valid() && strings::contains_char(dir, b'\\') {
+                r_fs.join(&mut spill, &[dir, b"package.json"])
+            } else {
+                joined
+            };
+        r_fs.dirname_store.append_slice(path).expect("unreachable")
+    }
+
     #[inline(never)]
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
         r: &mut resolver::Resolver<'_>,
@@ -419,10 +437,7 @@ impl PackageJSON {
             );
             return None;
         };
-        let package_json_path = r_fs
-            .dirname_store
-            .append_slice(package_json_path_)
-            .expect("unreachable");
+        let package_json_path = Self::intern_path(r_fs, input_path, dirname_fd, package_json_path_);
 
         // DirInfo cache is reused globally
         // So we cannot free these

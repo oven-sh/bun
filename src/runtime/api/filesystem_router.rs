@@ -105,9 +105,7 @@ fn load_router(
         )
     };
     if load == Load::FromDisk {
-        FileSystemRouter::bust_dir_cache_recursive(
-            strings::paths::without_trailing_slash_windows_path(&config.dir),
-        );
+        FileSystemRouter::bust_dir_cache_recursive(&config.dir);
     }
 
     let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
@@ -191,9 +189,7 @@ impl FileSystemRouter {
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(&full_path),
-                        );
+                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(&full_path);
                         Self::bust_dir_cache_recursive(&full_path);
                     }
                 }

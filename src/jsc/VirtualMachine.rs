@@ -5504,9 +5504,7 @@ impl VirtualMachine {
                     };
 
                     // Only re-query if we previously had something cached.
-                    if self.transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) {
+                    if self.transpiler.resolver.bust_dir_cache(buster_name) {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);

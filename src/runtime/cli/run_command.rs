@@ -1998,8 +1998,7 @@ impl RunCommand {
         if let Some(package_json) = root_dir_info.enclosing_package_json {
             if root_dir_info.package_json.is_none() {
                 // no trailing slash
-                package_json_dir =
-                    strings::without_trailing_slash(package_json.source.path.name().dir);
+                package_json_dir = Self::path_entry_dir(package_json.source.path.name().dir);
             }
         }
 
@@ -2016,6 +2015,15 @@ impl RunCommand {
             .put(b"PATH", &new_path)
             .unwrap_or_oom();
         Ok(())
+    }
+
+    /// `dir` without its trailing separators, for a PATH entry. On POSIX a backslash there is a byte of the name.
+    fn path_entry_dir(dir: &[u8]) -> &[u8] {
+        if cfg!(windows) {
+            strings::without_trailing_slash(dir)
+        } else {
+            paths::string_paths::without_trailing_slash_native(dir)
+        }
     }
 
     /// Builds a new PATH with `node_modules/.bin` for each ancestor of `cwd`
@@ -2066,15 +2074,12 @@ impl RunCommand {
         {
             let mut remain = cwd;
             while let Some(i) = strings::last_index_of_char(remain, SEP) {
-                new_path_len += strings::without_trailing_slash(remain).len()
-                    + b"node_modules.bin".len()
-                    + 1
-                    + 2; // +2 for path separators, +1 for path delimiter
+                new_path_len +=
+                    Self::path_entry_dir(remain).len() + b"node_modules.bin".len() + 1 + 2; // +2 for path separators, +1 for path delimiter
                 remain = &remain[..i];
             }
             // final segment once the loop ends naturally
-            new_path_len +=
-                strings::without_trailing_slash(remain).len() + b"node_modules.bin".len() + 1 + 2; // +2 for path separators, +1 for path delimiter
+            new_path_len += Self::path_entry_dir(remain).len() + b"node_modules.bin".len() + 1 + 2; // +2 for path separators, +1 for path delimiter
         }
 
         if needs_to_force_bun {
@@ -2124,7 +2129,7 @@ impl RunCommand {
 
             let mut remain = cwd;
             while let Some(i) = strings::last_index_of_char(remain, SEP) {
-                new_path.extend_from_slice(strings::without_trailing_slash(remain));
+                new_path.extend_from_slice(Self::path_entry_dir(remain));
                 new_path.extend_from_slice(path_literal!(
                     b"/node_modules/.bin",
                     b"\\node_modules\\.bin"
@@ -2133,7 +2138,7 @@ impl RunCommand {
                 remain = &remain[..i];
             }
             // final segment once the loop ends naturally
-            new_path.extend_from_slice(strings::without_trailing_slash(remain));
+            new_path.extend_from_slice(Self::path_entry_dir(remain));
             new_path.extend_from_slice(path_literal!(
                 b"/node_modules/.bin",
                 b"\\node_modules\\.bin"
@@ -2579,13 +2584,12 @@ impl RunCommand {
                         temp_script_buffer.extend_from_slice(b"\x00pre");
                         temp_script_buffer.extend_from_slice(target_name);
 
-                        let package_json_dir =
-                            paths::string_paths::without_trailing_slash_windows_path(
-                                strings::without_suffix_comptime(
-                                    package_json.source.path.text,
-                                    b"package.json",
-                                ),
-                            );
+                        let package_json_dir = paths::string_paths::without_trailing_slash_native(
+                            strings::without_suffix_comptime(
+                                package_json.source.path.text,
+                                b"package.json",
+                            ),
+                        );
                         bun_core::scoped_log!(
                             RUN_LOG,
                             "Running in dir `{}`",

@@ -14,6 +14,7 @@ pub use tidy::{
 #[cfg(windows)]
 use bun_core::strings::CodeUnitsMut;
 use bun_core::strings::{self, CodeUnits};
+use bun_paths::string_paths::without_trailing_slash_native;
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
 
 const PATH_MIN_WIDE: usize = 4096; // 4 KB
@@ -183,21 +184,6 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     Ok(cwd)
 }
 
-#[cfg(windows)]
-#[inline]
-fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    bun_paths::string_paths::without_trailing_slash_windows_path(s)
-}
-#[cfg(not(windows))]
-#[inline]
-fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    let mut end = s.len();
-    while end > 1 && s[end - 1] == CHAR_FORWARD_SLASH {
-        end -= 1;
-    }
-    &s[..end]
-}
-
 /// What [`resolve_posix_t`] puts in front of a path that is not absolute, where the system's own paths are POSIX paths.
 #[cfg(not(windows))]
 #[inline]
@@ -208,7 +194,9 @@ pub fn posix_working_directory() -> &'static [u8] {
 fn working_directory() -> &'static [u8] {
     match bun_core::working_directory_in_executable() {
         Some(directory) => directory,
-        None => without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir()),
+        None => {
+            without_trailing_slash_native(bun_paths::fs::FileSystem::instance().top_level_dir())
+        }
     }
 }
 

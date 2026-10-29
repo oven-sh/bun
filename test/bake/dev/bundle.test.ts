@@ -137,6 +137,71 @@ devTest("recovers from an unresolved import of a path that ends in a slash", {
     await c.expectMessage("value: 789");
   },
 });
+// On POSIX an import path reads `fr\/` as `fr/`. The directory to evict after the failed resolution is `fr`, and
+// the path of the module is the one of its entry in `fr`.
+devTest("an absolute import through a directory spelled fr\\/ resolves after the file is created", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "fr/present.ts": `export {};`,
+    "index.ts": `console.log("start");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("start");
+
+    const specifier = dev.join("fr") + "\\/late";
+    const source = `import { abc } from ${JSON.stringify(specifier)};\nconsole.log("value: " + abc);`;
+    await dev.write("index.ts", source, {
+      errors: [`index.ts:1:21: error: Could not resolve: "${specifier}"`],
+    });
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("fr/late.ts", `export const abc = "456";`, { errors: null });
+    });
+    await c.expectReload(async () => {
+      await dev.write("index.ts", source + "\n// saved again");
+    });
+    await c.expectMessage("value: 456");
+  },
+});
+// On POSIX `we\` is not `we`. The failed lookup of the directory `<root>/we\` is stored under that key, and the
+// retry has to evict it. The "main" of the package goes up one directory, so the file it names does not depend on
+// how the name `we\` is joined.
+devTest("an absolute import of a directory spelled we\\ resolves after the directory is created", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from "./we";
+      console.log("start: " + abc);
+    `,
+    "we/index.ts": `export const abc = "we";`,
+    "target.ts": `export const abc = "target";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("start: we");
+
+    const specifier = dev.join("we") + "\\";
+    const source = `import { abc } from ${JSON.stringify(specifier)};\nconsole.log("value: " + abc);`;
+    await dev.write("index.ts", source, {
+      errors: [`index.ts:1:21: error: Could not resolve: "${specifier}"`],
+    });
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("we\\/package.json", JSON.stringify({ main: "../target.ts" }), { errors: null, dedent: false });
+    });
+    await c.expectReload(async () => {
+      await dev.write("index.ts", source + "\n// saved again");
+    });
+    await c.expectMessage("value: target");
+  },
+});
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

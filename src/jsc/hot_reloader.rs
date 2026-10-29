@@ -8,6 +8,7 @@ use bun_core::Output;
 use bun_core::ZStr;
 #[cfg(not(windows))]
 use bun_paths::SEP;
+#[cfg(not(windows))]
 use bun_paths::strings;
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
@@ -944,9 +945,7 @@ where
                         // on windows we receive file events for all items affected by a directory change
                         // so we only need to clear the directory cache. all other effects will be handled
                         // by the file events
-                        let _ = self.ctx_mut().bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(file_path),
-                        );
+                        let _ = self.ctx_mut().bust_dir_cache(file_path);
                         continue;
                     }
                     #[cfg(not(windows))]
@@ -1062,9 +1061,7 @@ where
                             }
                         }
 
-                        let _ = self.ctx_mut().bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(file_path),
-                        );
+                        let _ = self.ctx_mut().bust_dir_cache(file_path);
 
                         // The watched entrypoint has a per-file inotify watch on its inode.
                         // An atomic rename (`rename(tmp, entrypoint)`) or a rm+recreate over

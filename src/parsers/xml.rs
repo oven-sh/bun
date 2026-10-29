@@ -2116,6 +2116,21 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         Ok(())
     }
 
+    /// Where the grammar has a required `S` before the current token.
+    fn require_spaced(&mut self) -> PResult<()> {
+        if self.tok.spaced {
+            return Ok(());
+        }
+        let tok = self.tok;
+        Err(self.err_fmt(
+            tok.pos,
+            format_args!(
+                "Whitespace is required before {}",
+                KindDisplay(tok.kind, self.latin1)
+            ),
+        ))
+    }
+
     // ── tags: the fast path ────────────────────────────────────────────────
 
     /// One step through a start tag in the document entity, straight off the
@@ -3108,10 +3123,49 @@ impl<'a, U: Unit> AttList<'a, U> {
     }
 }
 
-/// Up to this many attributes on one tag, duplicates are found by comparing
-/// names pairwise (`Parser::attribute_first`); beyond it, through
-/// `Parser::attribute_names`.
+/// Up to this many attributes on one tag, duplicates are found by comparing names pairwise.
 const LINEAR_ATTRIBUTE_LIMIT: usize = 8;
+
+/// The current start tag's attribute names: up to the limit in `first`, beyond it all in `names`.
+struct TagAttributes<'a, U: Unit> {
+    first: [&'a [U]; LINEAR_ATTRIBUTE_LIMIT],
+    names: HashMap<&'a [U], ()>,
+    count: usize,
+}
+
+impl<'a, U: Unit> TagAttributes<'a, U> {
+    #[inline(always)]
+    fn has(&self, name: &[U]) -> bool {
+        if self.count <= LINEAR_ATTRIBUTE_LIMIT {
+            self.first[..self.count]
+                .iter()
+                .any(|&first| name_eq(first, name))
+        } else {
+            self.names.contains_key(name)
+        }
+    }
+
+    #[inline(always)]
+    fn push(&mut self, name: &'a [U]) {
+        if self.count < LINEAR_ATTRIBUTE_LIMIT {
+            self.first[self.count] = name;
+        } else {
+            self.spill(name);
+        }
+        self.count += 1;
+    }
+
+    #[cold]
+    fn spill(&mut self, name: &'a [U]) {
+        if self.count == LINEAR_ATTRIBUTE_LIMIT {
+            self.names.clear();
+            for first in self.first {
+                self.names.insert(first, ());
+            }
+        }
+        self.names.insert(name, ());
+    }
+}
 
 /// Elements open at once. Parsing is iterative, so this is not about the
 /// native stack; it bounds memory on hostile input and keeps the (recursive)
@@ -3132,11 +3186,7 @@ struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
     attlists: HashMap<&'a [U], AttList<'a, U>>,
     /// The open elements: name and the input frame the start tag was in.
     open: Vec<(&'a [U], u32)>,
-    /// The current start tag's attribute names: the first few in `first`,
-    /// and once there are more than `LINEAR_ATTRIBUTE_LIMIT`, all in `names`.
-    attribute_first: [&'a [U]; LINEAR_ATTRIBUTE_LIMIT],
-    attribute_names: HashMap<&'a [U], ()>,
-    attribute_count: usize,
+    attributes: TagAttributes<'a, U>,
     /// Inside the document type declaration, for diagnostics.
     in_dtd: bool,
     sink: S,
@@ -3197,9 +3247,11 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             sink,
             attlists: HashMap::default(),
             open: Vec::new(),
-            attribute_first: [&[]; LINEAR_ATTRIBUTE_LIMIT],
-            attribute_names: HashMap::default(),
-            attribute_count: 0,
+            attributes: TagAttributes {
+                first: [&[]; LINEAR_ATTRIBUTE_LIMIT],
+                names: HashMap::default(),
+                count: 0,
+            },
         }
     }
 
@@ -3256,21 +3308,6 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 KindDisplay(tok.kind, self.scanner.latin1)
             ),
         )
-    }
-
-    /// Where the grammar has a required `S` before the current token.
-    fn require_spaced(&mut self) -> PResult<()> {
-        if self.scanner.tok.spaced {
-            return Ok(());
-        }
-        let tok = self.scanner.tok;
-        Err(self.scanner.err_fmt(
-            tok.pos,
-            format_args!(
-                "Whitespace is required before {}",
-                KindDisplay(tok.kind, self.scanner.latin1)
-            ),
-        ))
     }
 
     fn expect_name(&mut self, expected: &str) -> PResult<&'a [U]> {
@@ -3494,7 +3531,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, name)) {
             return Ok(None);
         }
-        self.require_spaced()?;
+        self.scanner.require_spaced()?;
         let pos = self.scanner.tok.pos;
         self.advance()?;
         if self.scanner.tok.kind != Kind::Eq {
@@ -3516,11 +3553,11 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         self.in_dtd = true;
         self.advance()?;
         self.expect_name("the document type name")?;
-        self.require_spaced()?;
+        self.scanner.require_spaced()?;
         self.advance()?;
         if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC"))
         {
-            self.require_spaced()?;
+            self.scanner.require_spaced()?;
             self.parse_external_id(false)?;
             self.scanner.has_external_subset = true;
         }
@@ -3551,17 +3588,17 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
                 return Err(self.unexpected("a quoted system identifier after SYSTEM"));
             }
-            self.require_spaced()?;
+            self.scanner.require_spaced()?;
             return self.advance();
         }
         self.advance_literal(Literal::Pubid)?;
         if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
             return Err(self.unexpected("a quoted public identifier after PUBLIC"));
         }
-        self.require_spaced()?;
+        self.scanner.require_spaced()?;
         self.advance_literal(Literal::System)?;
         if matches!(self.scanner.tok.kind, Kind::Literal(_)) {
-            self.require_spaced()?;
+            self.scanner.require_spaced()?;
             return self.advance();
         }
         if notation {
@@ -3635,15 +3672,15 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn parse_element_decl(&mut self) -> PResult<u32> {
         self.advance()?;
         self.expect_name("an element name after '<!ELEMENT'")?;
-        self.require_spaced()?;
+        self.scanner.require_spaced()?;
         self.advance()?;
         match self.scanner.tok.kind {
             Kind::Name(n) if eq_ascii(n, b"EMPTY") || eq_ascii(n, b"ANY") => {
-                self.require_spaced()?;
+                self.scanner.require_spaced()?;
                 self.advance()?;
             }
             Kind::ParenOpen => {
-                self.require_spaced()?;
+                self.scanner.require_spaced()?;
                 self.advance()?;
                 if matches!(self.scanner.tok.kind, Kind::Hash(n) if eq_ascii(n, b"PCDATA")) {
                     self.parse_mixed()?;
@@ -3777,7 +3814,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn parse_attlist_decl(&mut self) -> PResult<u32> {
         self.advance()?;
         let element = self.expect_name("an element name after '<!ATTLIST'")?;
-        self.require_spaced()?;
+        self.scanner.require_spaced()?;
         loop {
             self.advance()?;
             let name = match self.scanner.tok.kind {
@@ -3789,32 +3826,32 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     );
                 }
             };
-            self.require_spaced()?;
+            self.scanner.require_spaced()?;
 
             // AttType (§3.3.1): without validation only CDATA versus the
             // rest matters, for attribute-value normalization (§3.3.3).
             self.advance()?;
             let cdata = match self.scanner.tok.kind {
                 Kind::Name(n) if eq_ascii(n, b"CDATA") => {
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     true
                 }
                 Kind::Name(n) if eq_ascii(n, b"ID") || eq_ascii(n, b"IDREF") || eq_ascii(n, b"IDREFS") || eq_ascii(n, b"ENTITY") || eq_ascii(n, b"ENTITIES") || eq_ascii(n, b"NMTOKEN") || eq_ascii(n, b"NMTOKENS") => {
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     false
                 }
                 Kind::Name(n) if eq_ascii(n, b"NOTATION") => {
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     self.advance()?;
                     if self.scanner.tok.kind != Kind::ParenOpen {
                         return Err(self.unexpected("'(' after NOTATION"));
                     }
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     self.parse_enumeration(true)?;
                     false
                 }
                 Kind::ParenOpen => {
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     self.parse_enumeration(false)?;
                     false
                 }
@@ -3827,20 +3864,20 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             self.advance_literal(literal)?;
             let default = match self.scanner.tok.kind {
                 Kind::Hash(n) if eq_ascii(n, b"REQUIRED") || eq_ascii(n, b"IMPLIED") => {
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     None
                 }
                 Kind::Hash(n) if eq_ascii(n, b"FIXED") => {
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     self.advance_literal(literal)?;
                     let Kind::Literal(value) = self.scanner.tok.kind else {
                         return Err(self.unexpected("a quoted default value after #FIXED"));
                     };
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     Some(value)
                 }
                 Kind::Literal(value) => {
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     Some(value)
                 }
                 _ => {
@@ -3893,7 +3930,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         }
         let parameter = self.scanner.tok.kind == Kind::Percent;
         if parameter {
-            self.require_spaced()?;
+            self.scanner.require_spaced()?;
             self.advance()?;
         }
         let name = self.expect_name(if parameter {
@@ -3901,20 +3938,20 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         } else {
             "an entity name or '%' after '<!ENTITY'"
         })?;
-        self.require_spaced()?;
+        self.scanner.require_spaced()?;
 
         self.advance_literal(Literal::EntityValue)?;
         let value = match self.scanner.tok.kind {
             Kind::Literal(value) => {
-                self.require_spaced()?;
+                self.scanner.require_spaced()?;
                 self.advance()?;
                 EntityValue::Internal(value)
             }
             Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC") => {
-                self.require_spaced()?;
+                self.scanner.require_spaced()?;
                 self.parse_external_id(false)?;
                 if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"NDATA")) {
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     if parameter {
                         return Err(self
                             .scanner
@@ -3922,7 +3959,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     }
                     self.advance()?;
                     self.expect_name("a notation name after NDATA")?;
-                    self.require_spaced()?;
+                    self.scanner.require_spaced()?;
                     self.advance()?;
                     EntityValue::Unparsed
                 } else {
@@ -3950,13 +3987,13 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn parse_notation_decl(&mut self) -> PResult<u32> {
         self.advance()?;
         self.expect_name("a notation name after '<!NOTATION'")?;
-        self.require_spaced()?;
+        self.scanner.require_spaced()?;
         self.advance()?;
         if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC"))
         {
             return Err(self.unexpected("SYSTEM or PUBLIC in the notation declaration"));
         }
-        self.require_spaced()?;
+        self.scanner.require_spaced()?;
         self.parse_external_id(true)?;
         self.expect_gt("'>' to end the notation declaration")
     }
@@ -4163,19 +4200,15 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     /// Returns whether the tag was an empty-element tag.
     #[inline]
     fn parse_attributes(&mut self, element: &'a [U]) -> PResult<bool> {
-        self.attribute_count = 0;
-        // The element's ATTLIST, if any. It is not modified while a start tag
-        // is read (declarations precede the root element), so a raw pointer
-        // sidesteps borrowing `self` for the whole loop.
-        let defs: Option<*const AttList<'a, U>> = if self.attlists.is_empty() {
+        self.attributes.count = 0;
+        // The element's ATTLIST, if any.
+        let defs: Option<&AttList<'a, U>> = if self.attlists.is_empty() {
             None
         } else {
-            self.attlists.get(element).map(core::ptr::from_ref)
+            self.attlists.get(element)
         };
-        let collapse_for = |_: &HashMap<&'a [U], AttList<'a, U>>, name: &[U]| {
-            // SAFETY: see `defs`.
-            defs.is_some_and(|d| unsafe { &*d }.get(name).is_some_and(|def| !def.cdata))
-        };
+        let collapse_for =
+            |name: &[U]| defs.is_some_and(|d| d.get(name).is_some_and(|def| !def.cdata));
         let empty = loop {
             // The common shapes straight off the bytes; anything else (and
             // so every error) goes through the token path below.
@@ -4183,7 +4216,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 match self.scanner.tag_step() {
                     TagStep::End { empty } => break empty,
                     TagStep::Attr { name, pos, quote } => {
-                        if self.has_attribute(name) {
+                        if self.attributes.has(name) {
                             return Err(self.scanner.err_named(
                                 pos,
                                 "Duplicate attribute",
@@ -4191,9 +4224,10 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                                 "",
                             ));
                         }
-                        let collapse = collapse_for(&self.attlists, name);
+                        let collapse = collapse_for(name);
                         let value = self.scanner.scan_att_value(quote, collapse)?;
-                        self.push_attribute(name, value);
+                        self.sink.attribute(name, value);
+                        self.attributes.push(name);
                         continue;
                     }
                     TagStep::Slow => {}
@@ -4206,67 +4240,34 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 Kind::Name(name) => name,
                 _ => return Err(self.unexpected("an attribute name, '>' or '/>' in the start tag")),
             };
-            self.require_spaced()?;
+            self.scanner.require_spaced()?;
             let pos = self.scanner.tok.pos;
-            if self.has_attribute(name) {
+            if self.attributes.has(name) {
                 return Err(self.scanner.err_named(pos, "Duplicate attribute", name, ""));
             }
             self.scanner.next(Literal::None)?;
             if self.scanner.tok.kind != Kind::Eq {
                 return Err(self.unexpected("'=' after the attribute name"));
             }
-            let collapse = collapse_for(&self.attlists, name);
+            let collapse = collapse_for(name);
             self.scanner.next(Literal::AttValue { collapse })?;
             let Kind::Literal(value) = self.scanner.tok.kind else {
                 return Err(self.unexpected("a quoted attribute value"));
             };
-            self.push_attribute(name, value);
+            self.sink.attribute(name, value);
+            self.attributes.push(name);
         };
         if let Some(defs) = defs {
-            // SAFETY: see `defs`.
-            let defs = unsafe { &*defs };
             for def in &defs.defs {
                 if let Some(value) = def.default
-                    && !self.has_attribute(def.name)
+                    && !self.attributes.has(def.name)
                 {
-                    self.push_attribute(def.name, value);
+                    self.sink.attribute(def.name, value);
+                    self.attributes.push(def.name);
                 }
             }
         }
         Ok(empty)
-    }
-
-    #[inline(always)]
-    fn has_attribute(&self, name: &[U]) -> bool {
-        if self.attribute_count <= LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_first[..self.attribute_count]
-                .iter()
-                .any(|&first| name_eq(first, name))
-        } else {
-            self.attribute_names.contains_key(name)
-        }
-    }
-
-    #[inline(always)]
-    fn push_attribute(&mut self, name: &'a [U], value: &'a [U]) {
-        self.sink.attribute(name, value);
-        if self.attribute_count < LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_first[self.attribute_count] = name;
-        } else {
-            self.spill_attribute_name(name);
-        }
-        self.attribute_count += 1;
-    }
-
-    #[cold]
-    fn spill_attribute_name(&mut self, name: &'a [U]) {
-        if self.attribute_count == LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_names.clear();
-            for first in self.attribute_first {
-                self.attribute_names.insert(first, ());
-            }
-        }
-        self.attribute_names.insert(name, ());
     }
 }
 

@@ -40,7 +40,8 @@ unsafe extern "C" {
     /// Awake again: take the heaps back from the scavenger, waiting for a sweep in progress to
     /// stop at its next page. A no-op on a thread that is not parked. No preconditions.
     pub safe fn mi_on_thread_idle_end();
-    pub fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
+    /// No preconditions; `arg` is only passed on to `out`.
+    pub safe fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
     /// No preconditions; writes a number through each argument that is not `None`.
     pub safe fn mi_process_info(
         elapsed_msecs: core::option::Option<&mut usize>,

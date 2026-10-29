@@ -76,8 +76,7 @@ pub(crate) fn mimalloc_dump() {
         let text = unsafe { core::ffi::CStr::from_ptr(text) };
         let _ = bun_core::Output::error_writer().write_all(text.to_bytes());
     }
-    // SAFETY: `dump` matches `mi_output_fun` and does not unwind.
-    unsafe { bun_alloc::mimalloc::mi_stats_print_out(Some(dump), core::ptr::null_mut()) };
+    bun_alloc::mimalloc::mi_stats_print_out(Some(dump), core::ptr::null_mut());
     bun_core::Output::flush();
     if bun_alloc::heap_breakdown::ENABLED {
         dump_zone_malloc_stats();

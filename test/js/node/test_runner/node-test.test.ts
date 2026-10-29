@@ -432,8 +432,6 @@ describe("node:test", () => {
     async (_, args) => {
       // `node --test` (v26.3.0) exits 0 for the fixture. No error is printed.
       const { exitCode, stderr } = await runTests(["45-runtime-directive-suppressed-failures.js"], {}, args);
-      // A wait that starts after the timeout of a test is over arms no timer with a negative delay.
-      expect(stderr.split("\n").filter(line => line.includes("TimeoutNegativeWarning"))).toEqual([]);
       expect(errorsAndVerdicts(stderr).sort()).toEqual(
         [
           "(pass) a subtest calls t.todo() and then throws",
@@ -475,6 +473,22 @@ describe("node:test", () => {
           "(todo) a suite > whose test calls t.todo() and then throws",
         ].sort(),
       );
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should not need the global performance to run a test file",
+    async () => {
+      // `node --test` (v26.3.0) exits 0 for the fixture.
+      const { exitCode, stderr } = await runTests(["51-without-global-performance.js"]);
+      expect(errorsAndVerdicts(stderr)).toEqual([
+        "(pass) a test with a timeout",
+        "(pass) a subtest with a timeout",
+        "(skip) a test with a timeout calls t.skip() and throws while its subtest never settles",
+        "(pass) a before hook of a test fails, so its subtest never runs",
+      ]);
       expect(exitCode).toBe(0);
     },
     30_000,

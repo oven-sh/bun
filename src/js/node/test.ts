@@ -2311,7 +2311,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // Node applies the plan option before the beforeEach hooks run, and only for a
   // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
   // `t.assert` snapshots the plan at first access, so hooks must see it already.
-  const { plan: planOption, timeout } = node.options;
+  const { plan: planOption } = node.options;
   if (planOption && node.plan === null) {
     node.plan = new TestPlan(planOption);
   }
@@ -2326,13 +2326,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     failure = err;
   }
 
-  // When the timeout of the test ends. A wait for queued subtests below ends then too.
-  const deadline = typeof timeout === "number" && timeout < Infinity ? performance.now() + timeout : Infinity;
   if (failure === undefined) {
     // Node arms one stopPromise (timeout + signal) and races both the body
     // AND the plan wait against it. Arm timeout once here so plan({wait:true})
     // is bounded by the same test timeout, not left unbounded.
-    const stop = createStopController(timeout);
+    const stop = createStopController(node.options.timeout);
     try {
       const runBody = async () => {
         await runWithNode(node, () => invokeTestFn(fn, ctx));
@@ -2383,7 +2381,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   // Only a queued subtest can still fail the run, and a body that threw did not wait for it. Node cancels it instead.
   if ((acceptedXfail || failure !== undefined) && mustSettleSubtests(node, acceptedXfail)) {
-    await settleCountableSubtests(node, deadline - performance.now());
+    await settleCountableSubtests(node);
   }
 
   // Node sets passed/error before running afterEach/after so hooks can
@@ -2424,7 +2422,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   // A hook, or a subtest that is still queued, can call this test's t.skip() or t.todo() after the body failed.
   if ((acceptedXfail || failure !== undefined) && mustSettleSubtests(node, acceptedXfail)) {
-    await settleCountableSubtests(node, deadline - performance.now());
+    await settleCountableSubtests(node);
   }
 
   // Node's postRun() fold: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1498-L1503
@@ -2485,14 +2483,12 @@ function mustSettleSubtests(node: TestNode, acceptedXfail: boolean) {
   return node.countableTail !== undefined && (acceptedXfail || node.skipped || node.todoFlag);
 }
 
-// Waits for the queued subtests that Node could count, for `timeout` ms at most: the time that the test has left.
-async function settleCountableSubtests(node: TestNode, timeout: number | undefined) {
-  // The time can be over already, and a timer with a negative delay prints a TimeoutNegativeWarning.
-  if (timeout !== undefined && timeout < 0) timeout = 0;
+// Waits for the queued subtests that Node could count. The wait ends after the timeout of the test, if it has one.
+async function settleCountableSubtests(node: TestNode) {
   try {
-    await raceWithTimeoutAndSignal(() => awaitCountableTail(node), timeout, undefined);
+    await raceWithTimeoutAndSignal(() => awaitCountableTail(node), node.options.timeout, undefined);
   } catch {
-    // The timeout of the test is over. Node cancels what is still queued, so it no longer counts here.
+    // Node cancels what is still queued when a test ends, so it no longer counts here.
     node.countableTail = undefined;
   }
 }
@@ -2523,7 +2519,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise
     } catch (err) {
       // A before hook above the child failed before it ran: Node fails the child with the hook's error and reports it.
       const failure = applyExpectFailure(child, err);
-      finalizeNode(child, failure, failure ?? err, performance.now());
+      finalizeNode(child, failure, failure ?? err, runChildReporterEnabled ? performance.now() : 0);
     }
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
@@ -2638,7 +2634,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn) {
         // A queued subtest can call this test's t.skip() or t.todo() after executeTestNode() read them.
         if (failure !== undefined && mustSettleSubtests(node, false)) {
           const deliver = () => deliverEntryResult(node, failure, todoBefore, done);
-          settleCountableSubtests(node, node.options.timeout).then(deliver);
+          settleCountableSubtests(node).then(deliver);
         } else {
           deliverEntryResult(node, failure, todoBefore, done);
         }

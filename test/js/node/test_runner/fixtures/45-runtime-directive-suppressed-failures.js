@@ -238,8 +238,8 @@ test("a test calls t.skip() and throws while a test of its inline todo suite nev
   throw new Error("own");
 });
 
-// A test with a timeout waits for a subtest only until that timeout ends. Node
-// cancels the subtest at once, and a subtest that called t.skip() stays skipped.
+// The timeout of a test ends its wait for a subtest. Node cancels the subtest
+// at once, and a subtest that called t.skip() stays skipped.
 test("a test with a timeout calls t.skip() and throws while its subtest never settles", { timeout: 20 }, t => {
   t.test("skips and never settles", skipsAndNeverSettles);
   t.skip();

@@ -796,8 +796,7 @@ impl Interpreter {
     /// freed slots when available.
     pub(crate) fn alloc_node(&self, node: Node) -> NodeId {
         if let Some(slot) = self.free_list.with_mut(|f| f.pop()) {
-            // SAFETY: no other borrow of `nodes` is live across this store.
-            unsafe { self.nodes_mut()[slot as usize] = node };
+            self.nodes.with_mut(|n| n[slot as usize] = node);
             return NodeId(slot);
         }
         self.nodes.with_mut(|n| {

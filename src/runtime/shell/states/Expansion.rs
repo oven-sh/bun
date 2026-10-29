@@ -118,15 +118,8 @@ impl Expansion {
     /// `child_done` advances `word_idx`.
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
-            // Split-borrow: `me` from `nodes`, `vm_args_utf8` from its own
-            // field, so `expand_simple_no_io` can expand `$N` without aliasing.
-            // R-2: both are `JsCell`-backed; `as_ptr()`/`node_mut()` project
-            // disjoint `&mut` from `&Interpreter`.
             let event_loop = interp.event_loop;
             let command_ctx = interp.command_ctx;
-            // SAFETY: single-JS-thread; `vm_args_utf8` and `nodes` are
-            // disjoint `JsCell` fields (no aliasing between the two borrows).
-            let vm_args_utf8 = unsafe { &mut *interp.vm_args_utf8.as_ptr() };
             let me = interp.as_expansion_mut(this);
             match me.state {
                 ExpansionState::Idle => {
@@ -170,17 +163,19 @@ impl Expansion {
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
                 let shell = me.base.shell();
-                let is_cmd_subst = Self::expand_simple_no_io(
-                    shell,
-                    simple,
-                    &mut me.current_out,
-                    &mut me.meta_offsets,
-                    &mut me.has_quoted_empty,
-                    true,
-                    event_loop,
-                    command_ctx,
-                    vm_args_utf8,
-                );
+                let is_cmd_subst = interp.vm_args_utf8.with_mut(|vm_args_utf8| {
+                    Self::expand_simple_no_io(
+                        shell,
+                        simple,
+                        &mut me.current_out,
+                        &mut me.meta_offsets,
+                        &mut me.has_quoted_empty,
+                        true,
+                        event_loop,
+                        command_ctx,
+                        vm_args_utf8,
+                    )
+                });
                 if !is_cmd_subst {
                     me.word_idx += 1;
                     continue;

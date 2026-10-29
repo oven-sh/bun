@@ -668,10 +668,7 @@ pub use bun_alloc::SEP;
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
 /// `&mut PathBuffer` as `&mut [u16]` via [`cast_slice_mut`]. The language
 /// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
-/// hard `assert!`. We do *not* bump this struct
-/// to `#[repr(align(2))]` because several call sites reinterpret an arbitrary
-/// `&mut [u8]` *as* `PathBuffer`, and raising the nominal alignment would
-/// make *those* casts unsound instead. In practice every `PathBuffer` fed to
+/// hard `assert!`. In practice every `PathBuffer` fed to
 /// the `[u16]` view is a fresh stack local or a pooled heap allocation, both
 /// of which are ≥8-byte aligned on every supported target.
 #[repr(transparent)]

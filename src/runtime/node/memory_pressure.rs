@@ -274,8 +274,8 @@ mod posix {
     /// Whether the installed watcher holds a live OS source. `install` still
     /// fills the slot when no backend could be registered, so `isInstalled`
     /// alone cannot tell the two apart.
-    pub(super) fn has_os_backend(global: &JSGlobalObject) -> bool {
-        let Some(raw) = *slot(global.bun_vm().as_mut()) else {
+    pub(super) fn has_os_backend(vm: &VirtualMachine) -> bool {
+        let Some(raw) = *slot(vm.as_mut()) else {
             return false;
         };
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`,
@@ -561,15 +561,17 @@ pub(crate) fn psi_filter<'a>(
 /// the current listeners registered an OS source. On Windows `install` either
 /// starts the thread or leaves the slot empty, so this equals `isInstalled`.
 pub(crate) fn watcher_has_os_backend(heap: &JsHeap<'_>) -> bool {
-    // SAFETY: reads the watcher's slot in the VM.
-    let global = unsafe { heap.global() };
+    let vm = heap.bun_vm();
     #[cfg(not(windows))]
     {
-        posix::has_os_backend(global)
+        posix::has_os_backend(vm)
     }
     #[cfg(windows)]
     {
-        Bun__MemoryPressure__isInstalled(global)
+        vm.as_mut()
+            .rare_data()
+            .memory_pressure_watcher_slot()
+            .is_some()
     }
 }
 

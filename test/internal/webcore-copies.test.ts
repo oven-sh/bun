@@ -4,7 +4,7 @@
  * reads two git repositories: a bun checkout and a WebKit clone. Here both are a few files with the shape of the real
  * ones.
  */
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { chmodSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -41,17 +41,18 @@ interface Commit {
 }
 
 /**
- * Adds `commits` to `main` with one git process, which makes no use of the machine's git configuration (identity,
- * signing, hooks). The author's date is not the committer's, and the objects stay loose files.
+ * Adds `commits` to the branch `to` with one git process, which makes no use of the machine's git configuration
+ * (identity, signing, hooks). The first of them comes after `from`, or after nothing. The author's date is not the
+ * committer's, and the objects stay loose files.
  */
-function addCommits(dir: string, commits: Commit[], parent = "") {
+function addCommits(dir: string, commits: Commit[], { to = "refs/heads/main", from = "" } = {}) {
   const data = (text: string) => `data ${Buffer.byteLength(text)}\n${text}\n`;
   const stream = commits.map(({ message, files, ref }, index) =>
     [
-      `commit refs/heads/main\nmark :${index + 1}\n`,
+      `commit ${to}\nmark :${index + 1}\n`,
       "author Test <test@example.com> 1756728000 +0000\ncommitter Test <test@example.com> 1756900800 +0000\n",
       data(message),
-      index === 0 ? parent : "",
+      index === 0 && from !== "" ? `from ${from}\n` : "",
       ...Object.entries(files).map(([path, text]) =>
         text === null ? `D ${path}\n` : `M 100644 inline ${path}\n${data(text)}`,
       ),
@@ -143,7 +144,7 @@ bool Path::contains(const FloatPoint& point, WindRule rule) const
 } // namespace WebCore
 `;
 
-// A copy with an underscore that upstream's name does not have.
+// A copy that upstream renamed: its name has an underscore that upstream's no longer has. The table names it.
 const aesKw = (header: string, failed: string) => `${license}
 #include "${header}"
 
@@ -159,73 +160,38 @@ static std::optional<Vector<uint8_t>> cryptUnwrapKey(const Vector<uint8_t>& key,
 
 } // namespace WebCore
 `;
+const bunAesKw = "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp";
+const upstreamAesKw = "Source/WebCore/crypto/algorithms/CryptoAlgorithmAESKW.cpp";
 
-// A copy without the JS that upstream's name starts with.
-const customEvent = (detail: string) => `${license}
-#include "config.h"
-#include "JSCustomEvent.h"
-
-namespace WebCore {
-
-JSC::JSValue JSCustomEvent::detail(JSC::JSGlobalObject& lexicalGlobalObject) const
-{
-    return cachedPropertyValue(lexicalGlobalObject, *this, wrapped().cachedDetail(), [this] {
-        return ${detail};
-    });
-}
-
-template<typename Visitor>
-void JSCustomEvent::visitAdditionalChildren(Visitor& visitor)
-{
-    wrapped().detail().visit(visitor);
-    wrapped().cachedDetail().visit(visitor);
-}
-
-} // namespace WebCore
-`;
-
-// Two files with nearly the same name, and the same license, that are not related: upstream's has a JS in front.
-const upstreamCustom = (world: string) => `${license}
-#include "config.h"
-#include "JSPerformanceObserver.h"
-
-bool JSPerformanceObserverOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    return JSC::jsCast<JSPerformanceObserver*>(handle.slot()->asCell())->wrapped().isRegistered(${world});
-}
-`;
-const bunCustom = `${license}
-#include "PerformanceObserverCustom.h"
-
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_observe, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    auto* thisObject = jsDynamicCast<JSPerformanceObserver*>(callFrame->thisValue());
-    auto options = convert<IDLDictionary<PerformanceObserver::Init>>(*globalObject, callFrame->argument(0));
-    return JSValue::encode(toJS<IDLUndefined>(*globalObject, thisObject->wrapped().observe(WTF::move(options))));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_disconnect, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    auto* thisObject = jsDynamicCast<JSPerformanceObserver*>(callFrame->thisValue());
-    thisObject->wrapped().disconnect();
-    return JSValue::encode(jsUndefined());
-}
-`;
-
-// A copy whose code upstream has in two files. The table names both: no file name leads to the second one.
-const cloneSerializer = `    void dumpArrayBufferView(JSObject* object, SerializationReturnCode& code);
-    bool dumpIfTerminal(JSValue value, SerializationReturnCode& code);
-    void write(SerializationTag tag) { writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag)); }
-    void write(const String& string) { write(string.impl()); }
-`;
+// A copy whose code upstream has in two files. Its name leads to the first. The table names the second, which is
+// not under Source/WebCore, and names it for Bun's header too.
 const serializedScriptValue = `RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value)
     auto serializer = CloneSerializer(globalObject, messagePorts, arrayBuffers);
     Vector<uint8_t> buffer = serializer.takeBuffer();
     return adoptRef(*new SerializedScriptValue(WTF::move(buffer)));
 `;
-const bunSerializer = "src/jsc/bindings/webcore/SerializedScriptValue.cpp";
+const cloneSerializer = [
+  "    void dumpString(const String& string);",
+  "    void dumpBigIntData(JSBigInt* bigInt);",
+  "    void write(SerializationTag tag) { writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag)); }",
+  "    void write(const String& string) { write(string.impl()); }",
+  "    void dumpArrayBufferView(JSObject* object, SerializationReturnCode& code);",
+  "    void dumpImmediate(JSValue value, SerializationReturnCode& code);",
+  "    bool dumpIfTerminal(JSValue value, SerializationReturnCode& code);",
+  "    bool startObjectInternal(JSObject* object);",
+];
+const upstreamSerializedScriptValue = "Source/WebCore/bindings/js/SerializedScriptValue.cpp";
 const upstreamSerializer = "Source/JavaScriptCore/runtime/CloneSerializerBase.h";
-const table = { [bunSerializer]: ["Source/WebCore/bindings/js/SerializedScriptValue.cpp", upstreamSerializer] };
+const bunSerializer = "src/jsc/bindings/webcore/SerializedScriptValue.cpp";
+const bunSerializerHeader = "src/jsc/bindings/webcore/SerializedScriptValue.h";
+// Six of the eight lines of upstream's header are in Bun's .cpp. The first two are in Bun's .h, which has no
+// license and no long line: only the table says that it is a copy.
+const serializerFiles = {
+  [bunSerializer]: `${license}\n${serializedScriptValue}${cloneSerializer.slice(2).join("\n")}\n`,
+  [bunSerializerHeader]: `#pragma once\n${cloneSerializer.slice(0, 2).join("\n")}\n`,
+};
+const serializerTable = { [bunSerializer]: [upstreamSerializer], [bunSerializerHeader]: [upstreamSerializer] };
+const table = { ...serializerTable, [bunAesKw]: [upstreamAesKw] };
 
 const renderBox = `${license}\n// Bun has this file too, but not where the copies are.\n`;
 
@@ -233,36 +199,31 @@ const shas = (text: string) => text.replace(/^[0-9a-f]{4,64} /gm, "<sha> ");
 const list = (bun: string, webkit: string, oldBase: string, newBase: string, names: Record<string, string[]> = {}) =>
   shas(formatCopyChanges(listCopyChanges(bun, webkit, oldBase, newBase, names), `${oldBase}..${newBase}`)).split("\n");
 
-// Ten upstream commits and the Bun files that go with them. Nothing changes these two repositories after this.
-let repositories: { bun: string; webkit: string; [Symbol.dispose](): void } | undefined;
-afterAll(() => repositories?.[Symbol.dispose]());
-function tenCommits() {
-  if (repositories !== undefined) return repositories;
+// Eight upstream commits and the Bun files that go with them. No test changes these two repositories.
+let repositories: { bun: string; webkit: string };
+const directories: Disposable[] = [];
+afterAll(() => directories.forEach(directory => directory[Symbol.dispose]()));
+beforeAll(() => {
   const bun = checkout({
     "src/jsc/bindings/webcore/PerformanceObserver.cpp": bunCopy,
     "src/jsc/bindings/webcore/JSPerformanceObserver.cpp": `#include "JSPerformanceObserver.h"\n`,
-    "src/jsc/bindings/webcore/PerformanceObserverCustom.cpp": bunCustom,
-    "src/jsc/bindings/webcore/CustomEventCustom.cpp": customEvent("wrapped().detail().getValue()"),
-    "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp": aesKw("CryptoAlgorithmAES_KW.h", "< 0"),
-    [bunSerializer]: `${license}\n${cloneSerializer}${serializedScriptValue}`,
+    [bunAesKw]: aesKw("CryptoAlgorithmAES_KW.h", "< 0"),
+    ...serializerFiles,
     "src/jsc/bindings/Path.cpp": bunPath,
-    "src/jsc/bindings/RenderBox.cpp": renderBox,
     "src/runtime/RenderBox.cpp": renderBox,
+    // Git prints a name like this one in quotes, with its bytes as numbers, unless it is told not to.
+    "src/jsc/bindings/webcore/Straße.h": "#pragma once\n",
   });
-  // Tracked, and not in the working tree.
-  rmSync(join(String(bun), "src/jsc/bindings/RenderBox.cpp"));
-
+  directories.push(bun);
   const webkit = clone([
     {
       message: "base",
       files: {
         "Source/WebCore/page/PerformanceObserver.cpp": upstreamBefore,
         "Source/WebCore/page/PerformanceObserver.idl": "interface PerformanceObserver {};\n",
-        "Source/WebCore/bindings/js/JSPerformanceObserverCustom.cpp": upstreamCustom("world"),
-        "Source/WebCore/bindings/js/JSCustomEventCustom.cpp": customEvent("wrapped().detail().getValue()"),
-        "Source/WebCore/crypto/algorithms/CryptoAlgorithmAESKW.cpp": aesKw("CryptoAlgorithmAESKW.h", "< 0"),
-        "Source/WebCore/bindings/js/SerializedScriptValue.cpp": `${license}\n${serializedScriptValue}`,
-        [upstreamSerializer]: `${license}\n${cloneSerializer}`,
+        [upstreamAesKw]: aesKw("CryptoAlgorithmAESKW.h", "< 0"),
+        [upstreamSerializedScriptValue]: `${license}\n${serializedScriptValue}`,
+        [upstreamSerializer]: `${license}\n${cloneSerializer.join("\n")}\n`,
         "Source/WebCore/platform/graphics/Path.cpp": webcorePath("false"),
         "Source/WebCore/rendering/RenderBox.cpp": renderBox,
         "Tools/TestWebKitAPI/PerformanceObserver.cpp": upstreamBefore,
@@ -276,16 +237,12 @@ function tenCommits() {
       },
     },
     {
-      message: "Not listed: Bun's files of this name are elsewhere, or deleted",
+      message: "Not listed: Bun's file of this name is not where the copies are",
       files: { "Source/WebCore/rendering/RenderBox.cpp": `${renderBox}// Changed.\n` },
     },
     {
       message: "Not listed: Bun's file of this name is not a copy",
       files: { "Source/WebCore/platform/graphics/Path.cpp": webcorePath("rule == WindRule::NonZero") },
-    },
-    {
-      message: "Not listed: Bun's file of nearly this name has none of its code",
-      files: { "Source/WebCore/bindings/js/JSPerformanceObserverCustom.cpp": upstreamCustom("visitor.world()") },
     },
     {
       message: "Not listed: the file is not under Source/WebCore, and the table does not name it",
@@ -300,19 +257,13 @@ function tenCommits() {
     },
     {
       message: "AES-KW unwrapKey accepts tampered wrapped keys",
-      files: { "Source/WebCore/crypto/algorithms/CryptoAlgorithmAESKW.cpp": aesKw("CryptoAlgorithmAESKW.h", "<= 0") },
-    },
-    {
-      message: "CustomEvent.detail is null before initCustomEvent()",
-      files: {
-        "Source/WebCore/bindings/js/JSCustomEventCustom.cpp": customEvent("wrapped().detail().getValue(JSC::jsNull())"),
-      },
+      files: { [upstreamAesKw]: aesKw("CryptoAlgorithmAESKW.h", "<= 0") },
     },
     {
       message: "Serialize a resizable ArrayBuffer with its maximum length",
       files: {
-        [upstreamSerializer]: `${license}\n${cloneSerializer}    void write(uint64_t);\n`,
-        "Source/WebCore/bindings/js/SerializedScriptValue.cpp": `${license}\n${serializedScriptValue}// Changed.\n`,
+        [upstreamSerializer]: `${license}\n${cloneSerializer.join("\n")}\n    void write(uint64_t);\n`,
+        [upstreamSerializedScriptValue]: `${license}\n${serializedScriptValue}// Changed.\n`,
       },
     },
     {
@@ -323,53 +274,51 @@ function tenCommits() {
       },
     },
   ]);
-  return (repositories = {
-    bun: String(bun),
-    webkit: String(webkit),
-    [Symbol.dispose]() {
-      bun[Symbol.dispose]();
-      webkit[Symbol.dispose]();
-    },
-  });
-}
+  directories.push(webkit);
+  repositories = { bun: String(bun), webkit: String(webkit) };
+});
 
 test("lists the commits that touch the upstream file of a copy or the IDL of a binding, and no others", () => {
-  const { bun, webkit } = tenCommits();
+  const { bun, webkit } = repositories;
   expect(list(bun, webkit, "base", "main", table)).toEqual([
-    // A moved file is listed under both paths. `main` does not have the old one, which is compared as `base` has it.
+    // A moved file is listed under both paths. `main` does not have the old one. `base` does not have the new one,
+    // which is compared as the commit that adds it has it: with the fix, so the copy has less of it.
     "<sha> 2025-09-03 Move PerformanceObserver to Modules/performance",
-    "    Source/WebCore/Modules/performance/PerformanceObserver.cpp -> src/jsc/bindings/webcore/PerformanceObserver.cpp (88% same)",
+    "    Source/WebCore/Modules/performance/PerformanceObserver.cpp -> src/jsc/bindings/webcore/PerformanceObserver.cpp (70% same)",
     "    Source/WebCore/page/PerformanceObserver.cpp (gone) -> src/jsc/bindings/webcore/PerformanceObserver.cpp (88% same)",
-    // The two upstream files that the table names for this copy, one of them outside Source/WebCore. Each has half of
-    // the copy's code, and the share is of both together. The copy is listed once, not again for its name.
+    // The table names the first file for two copies. Each has its own part of that file. The name of the copy leads
+    // to the second file, which has fewer than eight lines of code, so no share.
     "<sha> 2025-09-03 Serialize a resizable ArrayBuffer with its maximum length",
-    "    Source/JavaScriptCore/runtime/CloneSerializerBase.h -> src/jsc/bindings/webcore/SerializedScriptValue.cpp (100% same)",
-    "    Source/WebCore/bindings/js/SerializedScriptValue.cpp -> src/jsc/bindings/webcore/SerializedScriptValue.cpp (100% same)",
-    // Two copies under nearly the name of the upstream file. Neither has the line that the commit changes.
-    "<sha> 2025-09-03 CustomEvent.detail is null before initCustomEvent()",
-    "    Source/WebCore/bindings/js/JSCustomEventCustom.cpp -> src/jsc/bindings/webcore/CustomEventCustom.cpp (91% same)",
+    `    ${upstreamSerializer} -> ${bunSerializer} (75% same), ${bunSerializerHeader} (25% same)`,
+    `    ${upstreamSerializedScriptValue} -> ${bunSerializer}`,
+    // The share is of the file as `base` has it: the copy has seven of its eight lines. It has one fewer of the
+    // lines that `main` has, because it does not have this fix.
     "<sha> 2025-09-03 AES-KW unwrapKey accepts tampered wrapped keys",
-    "    Source/WebCore/crypto/algorithms/CryptoAlgorithmAESKW.cpp -> src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp (75% same)",
+    `    ${upstreamAesKw} -> ${bunAesKw} (88% same)`,
     "<sha> 2025-09-03 Expose PerformanceObserver.supportedEntryTypes",
     "    Source/WebCore/page/PerformanceObserver.idl -> src/jsc/bindings/webcore/JSPerformanceObserver.cpp (binding)",
     // The first line of the message, the committer's date, and only the file that Bun has a copy of.
     "<sha> 2025-09-03 Schedule task on buffered PerformanceObserver",
     "    Source/WebCore/page/PerformanceObserver.cpp (gone) -> src/jsc/bindings/webcore/PerformanceObserver.cpp (88% same)",
     "",
-    "Commits in base..main that touch the upstream file of a Bun copy: 6 of 10",
+    "Commits in base..main that touch the upstream file of a Bun copy: 5 of 8",
   ]);
 });
 
 test("a range in which no commit touches a copy prints the count alone", () => {
-  const { bun, webkit } = tenCommits();
-  // The four commits in the middle of the ten.
-  expect(list(bun, webkit, "main~9", "main~5", table)).toEqual([
-    "Commits in main~9..main~5 that touch the upstream file of a Bun copy: 0 of 4",
+  const { bun, webkit } = repositories;
+  // The three commits that are not listed.
+  expect(list(bun, webkit, "main~7", "main~4", table)).toEqual([
+    "Commits in main~7..main~4 that touch the upstream file of a Bun copy: 0 of 3",
+  ]);
+  // The AES-KW commit, without the table: a name that is nearly the same leads to no copy.
+  expect(list(bun, webkit, "main~3", "main~2")).toEqual([
+    "Commits in main~3..main~2 that touch the upstream file of a Bun copy: 0 of 1",
   ]);
 });
 
 test("a range with no commits is an error", () => {
-  const { bun, webkit } = tenCommits();
+  const { bun, webkit } = repositories;
   // The arguments the wrong way round, and an old base that was never set.
   expect(() => listCopyChanges(bun, webkit, "main", "base", table)).toThrow("No commit is in main..base.");
   expect(() => listCopyChanges(bun, webkit, "main", "main", table)).toThrow("No commit is in main..main.");
@@ -383,90 +332,116 @@ test("an upstream file that git cannot read is an error, and not a file without 
     { message: "Schedule task on buffered PerformanceObserver", files: { [path]: upstreamAfter } },
   ]);
   // What a clone without blobs has when it cannot fetch one: the tree names the file, and its content is not there.
-  const blob = git(String(webkit), ["rev-parse", `main:${path}`]);
+  const blob = git(String(webkit), ["rev-parse", `base:${path}`]);
   const object = join(String(webkit), ".git", "objects", blob.slice(0, 2), blob.slice(2));
   chmodSync(object, 0o666);
   rmSync(object);
   expect(() => listCopyChanges(String(bun), String(webkit), "base", "main", {})).toThrow(
-    `\`git show main:${path}\` failed`,
+    `\`git show base:${path}\` failed`,
   );
 });
 
-test("a table that names a file which is not there is an error", () => {
-  const webcoreFile = "Source/WebCore/bindings/js/SerializedScriptValue.cpp";
-  using bun = checkout({ [bunSerializer]: `${license}\n${cloneSerializer}${serializedScriptValue}` });
+test("a tracked file that the working tree does not have is an error", () => {
+  const { webkit } = repositories;
+  const path = "src/jsc/bindings/webcore/PerformanceObserver.cpp";
+  using bun = checkout({ [path]: bunCopy, "src/jsc/bindings/webcore/Performance.cpp": bunCopy });
+  rmSync(join(String(bun), path));
+  // Without the error, the commits that touch its upstream file would not be listed, and nothing would say so.
+  expect(() => listCopyChanges(String(bun), webkit, "base", "main", {})).toThrow(
+    `These tracked files are not in the working tree of ${bun}:\n  ${path}`,
+  );
+});
+
+test("a table that names a file which upstream no longer has is an error", () => {
+  using bun = checkout(serializerFiles);
   using webkit = clone([
     {
       message: "base",
       files: {
-        [upstreamSerializer]: `${license}\n${cloneSerializer}`,
-        [webcoreFile]: `${license}\n${serializedScriptValue}`,
+        [upstreamSerializer]: `${license}\n${cloneSerializer.join("\n")}\n`,
+        [upstreamSerializedScriptValue]: `${license}\n${serializedScriptValue}`,
       },
     },
     {
       message: "Move the serializer to CloneSerializer.h",
-      files: { [upstreamSerializer]: null, "Source/JavaScriptCore/runtime/CloneSerializer.h": cloneSerializer },
+      files: {
+        [upstreamSerializer]: null,
+        "Source/JavaScriptCore/runtime/CloneSerializer.h": cloneSerializer.join("\n"),
+      },
       ref: "refs/heads/moved",
     },
-    { message: "Another change", files: { [webcoreFile]: `${license}\n` }, ref: "refs/heads/later" },
+    {
+      message: "Another change",
+      files: { [upstreamSerializedScriptValue]: `${license}\n// Changed.\n${serializedScriptValue}` },
+      ref: "refs/heads/later",
+    },
   ]);
-  const [bunRoot, dir] = [String(bun), String(webkit)];
+  const [bunRoot, dir, table] = [String(bun), String(webkit), serializerTable];
   const removal = git(dir, ["rev-parse", "moved"]).slice(0, 12);
+  const gone = `\`upstreamOf\` in scripts/webcore-copies.ts:\n  ${upstreamSerializer} is gone since ${removal}.`;
 
   // The range that removes the file lists it. After that range the entry would match nothing, and nobody would know.
   expect(list(bunRoot, dir, "base", "moved", table)).toEqual([
     "<sha> 2025-09-03 Move the serializer to CloneSerializer.h",
-    `    ${upstreamSerializer} (gone) -> ${bunSerializer} (100% same)`,
+    `    ${upstreamSerializer} (gone) -> ${bunSerializer} (75% same), ${bunSerializerHeader} (25% same)`,
     "",
     "Commits in base..moved that touch the upstream file of a Bun copy: 1 of 1",
   ]);
-  expect(() => listCopyChanges(bunRoot, dir, "moved", "later", table)).toThrow(
-    `\`upstreamOf\` in scripts/webcore-copies.ts:\n  ${upstreamSerializer} is gone since ${removal}.`,
-  );
+  expect(() => listCopyChanges(bunRoot, dir, "moved", "later", table)).toThrow(gone);
+
+  // Two commits that still have the file do not change that. The upgrade goes to neither: a release branch of
+  // upstream that left before the move, and the fork, which kept the file when it merged `later`.
+  const withFile = { message: "Keep the serializer", files: { [upstreamSerializer]: `${license}\n` } };
+  addCommits(dir, [withFile], { to: "refs/remotes/upstream/safari-branch", from: "refs/heads/base" });
+  addCommits(dir, [withFile], { to: "refs/remotes/origin/main", from: "refs/heads/later" });
+  expect(() => listCopyChanges(bunRoot, dir, "moved", "later", table)).toThrow(gone);
 
   // A name that upstream never had, and a copy that Bun does not have.
-  const typo = { [bunSerializer]: [...table[bunSerializer], "Source/JavaScriptCore/runtime/CloneSerialiserBase.h"] };
-  expect(() => listCopyChanges(bunRoot, dir, "base", "later", typo)).toThrow(
-    "Source/JavaScriptCore/runtime/CloneSerialiserBase.h is in no commit of the clone.",
+  const typo = "Source/JavaScriptCore/runtime/CloneSerialiserBase.h";
+  expect(() => listCopyChanges(bunRoot, dir, "base", "later", { [bunSerializer]: [typo] })).toThrow(
+    `${typo} is not in the history of base, and no later upstream commit has it.`,
   );
   expect(() => listCopyChanges(bunRoot, dir, "base", "later", { "src/jsc/bindings/Gone.cpp": [] })).toThrow(
     "src/jsc/bindings/Gone.cpp is not a tracked file.",
   );
 
-  // Upstream brings the file back. In the range before that, neither end has it and the table is right.
-  const reland = {
-    message: "Reland the serializer",
-    files: { [upstreamSerializer]: `${license}\n${cloneSerializer}` },
-  };
-  addCommits(dir, [reland], "from refs/heads/main^0\n");
-  expect(list(bunRoot, dir, "moved", "later", table)).toEqual([
+  // Upstream brings the file back after `later`. In the range before that, neither end has it and the table is right.
+  // The table can also name the file that the copy's name leads to: the copy is then listed once.
+  const reland = { message: "Reland the serializer", files: { [upstreamSerializer]: `${license}\n` } };
+  addCommits(dir, [reland], { to: "refs/remotes/upstream/main", from: "refs/heads/later" });
+  const both = { ...table, [bunSerializer]: [upstreamSerializer, upstreamSerializedScriptValue] };
+  expect(list(bunRoot, dir, "moved", "later", both)).toEqual([
     "<sha> 2025-09-03 Another change",
-    `    ${webcoreFile} -> ${bunSerializer} (0% same)`,
+    `    ${upstreamSerializedScriptValue} -> ${bunSerializer}`,
     "",
     "Commits in moved..later that touch the upstream file of a Bun copy: 1 of 1",
   ]);
 });
 
-test("a file that the range adds and removes again is listed without a share", () => {
+test("a file that the range adds and removes again is compared as the commit that adds it has it", () => {
   const path = "Source/WebCore/page/PerformanceTiming.cpp";
-  using bun = checkout({ "src/jsc/bindings/webcore/PerformanceTiming.cpp": bunCopy });
+  const unrelated = "Source/WebCore/platform/graphics/Path.cpp";
+  using bun = checkout({
+    "src/jsc/bindings/webcore/PerformanceTiming.cpp": bunCopy,
+    "src/jsc/bindings/Path.cpp": bunPath,
+  });
   using webkit = clone([
     { message: "base", files: { "Source/WebCore/page/Performance.cpp": upstreamBefore } },
-    { message: "Add PerformanceTiming", files: { [path]: upstreamBefore } },
-    { message: "Revert: Add PerformanceTiming", files: { [path]: null } },
+    { message: "Add PerformanceTiming", files: { [path]: upstreamBefore, [unrelated]: webcorePath("false") } },
+    { message: "Revert: Add PerformanceTiming", files: { [path]: null, [unrelated]: null } },
   ]);
 
-  // Neither end has the file, so there is nothing to hold Bun's file against: not when its name leads to the upstream
-  // file, and not when the table does.
+  // Neither end has the two files. Bun's Path.cpp is not a copy of the one that was added, and is not listed.
   const listed = [
     "<sha> 2025-09-03 Revert: Add PerformanceTiming",
-    `    ${path} (gone) -> src/jsc/bindings/webcore/PerformanceTiming.cpp`,
+    `    ${path} (gone) -> src/jsc/bindings/webcore/PerformanceTiming.cpp (88% same)`,
     "<sha> 2025-09-03 Add PerformanceTiming",
-    `    ${path} (gone) -> src/jsc/bindings/webcore/PerformanceTiming.cpp`,
+    `    ${path} (gone) -> src/jsc/bindings/webcore/PerformanceTiming.cpp (88% same)`,
     "",
     "Commits in base..main that touch the upstream file of a Bun copy: 2 of 2",
   ];
   expect(list(String(bun), String(webkit), "base", "main")).toEqual(listed);
+  // The table can name such a file.
   const named = { "src/jsc/bindings/webcore/PerformanceTiming.cpp": [path] };
   expect(list(String(bun), String(webkit), "base", "main", named)).toEqual(listed);
 });
@@ -482,26 +457,24 @@ test("every copy that upstreamOf names is a tracked file", () => {
 });
 
 test("a file of the same name is a copy only while it shares a long line with the upstream file", () => {
-  // Seven of the copy's eight lines of code are in the upstream file. The short lines (`if (isBuffered)`, `deliver();`,
-  // braces) and the license are not counted.
-  expect(compareToUpstream(bunCopy, upstreamAfter)).toEqual({ isCopy: true, share: 7 / 8 });
+  // The copy has seven of the eight lines of code of the upstream file. The short lines (`if (isBuffered)`,
+  // `deliver();`, braces) and the license are not counted. The fix is two more lines that the copy does not have.
+  expect(compareToUpstream(bunCopy, upstreamBefore)).toEqual({ isCopy: true, share: 7 / 8 });
+  expect(compareToUpstream(bunCopy, upstreamAfter)).toEqual({ isCopy: true, share: 7 / 10 });
   expect(compareToUpstream(upstreamAfter, upstreamAfter)).toEqual({ isCopy: true, share: 1 });
   // `#include "Path.h"` is in both files, and is too short to make one a copy of the other.
   expect(compareToUpstream(bunPath, webcorePath("false"))).toEqual({ isCopy: false, share: undefined });
-  // The license alone makes it a copy. Fewer than eight lines of code have no share: the copy, less one line.
-  expect(compareToUpstream(`${license}\n#pragma once\n`, upstreamAfter)).toEqual({ isCopy: true, share: undefined });
-  expect(compareToUpstream(bunCopy.replace("        m_registered = true;\n", ""), upstreamAfter)).toEqual({
-    isCopy: true,
-    share: undefined,
-  });
-  // So a file of nearly the same name needs more than the license: a quarter of its code.
-  expect(compareToUpstream(bunCustom, upstreamCustom("world"))).toEqual({ isCopy: true, share: 0 });
-  // A comment is not code: not one that Bun added, and not a license without an asterisk in front of its lines.
-  const commented = bunCopy.replace("namespace WebCore {", "// Bun has no document here.\nnamespace WebCore {");
-  expect(compareToUpstream(commented, upstreamAfter)).toEqual({ isCopy: true, share: 7 / 8 });
+  // The license alone makes it a copy.
+  expect(compareToUpstream(`${license}\n#pragma once\n`, upstreamBefore)).toEqual({ isCopy: true, share: 0 });
+  // An upstream file with fewer than eight lines of code has no share: the file, less one line.
+  const sevenLines = upstreamBefore.replace("        m_registered = true;\n", "");
+  expect(compareToUpstream(bunCopy, sevenLines)).toEqual({ isCopy: true, share: undefined });
+  // A comment is not code: not a line of its own, and not a license without an asterisk in front of its lines.
+  const commented = upstreamBefore.replace("namespace WebCore {", "// Workers have no document.\nnamespace WebCore {");
+  expect(compareToUpstream(bunCopy, commented)).toEqual({ isCopy: true, share: 7 / 8 });
   const plainLicense = license.replaceAll("\n * ", "\n   ");
   expect(
-    compareToUpstream(bunCopy.replace(license, plainLicense), upstreamAfter.replace(license, plainLicense)),
+    compareToUpstream(bunCopy.replace(license, plainLicense), upstreamBefore.replace(license, plainLicense)),
   ).toEqual({ isCopy: true, share: 7 / 8 });
 });
 
@@ -539,24 +512,31 @@ test("the command prints the list, or says what is wrong", () => {
     const { exitCode, stdout, stderr } = main(args, root, clone);
     return { exitCode, stdout: shas(stdout), stderr };
   };
-  expect(command(["base"])).toEqual({ exitCode: 0, stdout: listedForThisCheckout, stderr: "" });
-
-  // `bun scripts/webcore-copies.ts $OLD_BASE upstream/main` with the variable unset.
-  expect(command(["upstream/main"])).toEqual({
+  expect(command(["base", "upstream/main"])).toEqual({ exitCode: 0, stdout: listedForThisCheckout, stderr: "" });
+  expect(command(["upstream/main", "base"])).toEqual({
     exitCode: 1,
     stdout: "",
-    stderr: "No commit is in upstream/main..upstream/main. Is the old base set, and is it the older of the two?",
+    stderr: "No commit is in upstream/main..base. Is the old base the older of the two?",
   });
-  // An argument that is missing or empty, and a clone that is not there.
+
+  // A revision that is missing or empty, and a clone that is not there. The checklist's command has one argument
+  // when `$OLD_BASE` is not set.
   const usage = (clone: string) => ({
     exitCode: 1,
     stdout: "",
     stderr:
-      "usage: bun scripts/webcore-copies.ts <old-base> [<new-base>]\n" +
+      "usage: bun scripts/webcore-copies.ts <old-base> <new-base>\n" +
       `It reads the WebKit clone at ${clone}. Set BUN_WEBKIT_PATH to use another one.`,
   });
   const nowhere = join(String(webkit), "nowhere");
-  expect([command([]), command(["", "upstream/main"]), command(["base", ""]), command(["base"], nowhere)]).toEqual([
+  expect([
+    command([]),
+    command(["upstream/main"]),
+    command(["", "upstream/main"]),
+    command(["base", ""]),
+    command(["base", "upstream/main"], nowhere),
+  ]).toEqual([
+    usage(String(webkit)),
     usage(String(webkit)),
     usage(String(webkit)),
     usage(String(webkit)),
@@ -564,28 +544,35 @@ test("the command prints the list, or says what is wrong", () => {
   ]);
 });
 
-// Each run starts a Bun, which takes seconds for a debug build on a busy machine.
+async function script(clone: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(root, "scripts", "webcore-copies.ts"), ...args],
+    env: { ...bunEnv, BUN_WEBKIT_PATH: clone },
+    cwd: dirname(clone),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: shas(stdout), stderr, exitCode };
+}
+
+// These two are not concurrent: two debug builds of Bun that start together take longer than one after the other.
 test("the script finds this checkout from where it is, and the clone from $BUN_WEBKIT_PATH", async () => {
   using webkit = cloneForThisCheckout();
-  const script = async (...args: string[]) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(root, "scripts", "webcore-copies.ts"), ...args],
-      env: { ...bunEnv, BUN_WEBKIT_PATH: String(webkit) },
-      cwd: dirname(String(webkit)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: shas(stdout), stderr, exitCode };
-  };
-  expect(await Promise.all([script("base"), script()])).toEqual([
-    { stdout: `${listedForThisCheckout}\n`, stderr: "", exitCode: 0 },
-    {
-      stdout: "",
-      stderr:
-        "usage: bun scripts/webcore-copies.ts <old-base> [<new-base>]\n" +
-        `It reads the WebKit clone at ${webkit}. Set BUN_WEBKIT_PATH to use another one.\n`,
-      exitCode: 1,
-    },
-  ]);
-}, 30_000);
+  expect(await script(String(webkit), "base", "upstream/main")).toEqual({
+    stdout: `${listedForThisCheckout}\n`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test("the script prints what is wrong to stderr, and exits with 1", async () => {
+  using directory = tempDir("webcore-copies-no-arguments", {});
+  expect(await script(String(directory))).toEqual({
+    stdout: "",
+    stderr:
+      "usage: bun scripts/webcore-copies.ts <old-base> <new-base>\n" +
+      `It reads the WebKit clone at ${directory}. Set BUN_WEBKIT_PATH to use another one.\n`,
+    exitCode: 1,
+  });
+});

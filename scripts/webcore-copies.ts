@@ -3,13 +3,12 @@
  * Lists the upstream WebKit commits that touch a file Bun keeps its own copy
  * of.
  *
- *   bun scripts/webcore-copies.ts <old-base> [<new-base>]
+ *   bun scripts/webcore-copies.ts <old-base> <new-base>
  *
- * Both are revisions in the WebKit clone (vendor/WebKit, or $BUN_WEBKIT_PATH):
+ * Both are revisions in the WebKit clone ($BUN_WEBKIT_PATH, else vendor/WebKit):
  * the upstream commit the fork was merged with before, and the one it is
- * merged with now (`upstream/main` when left out). The clone needs the history
- * between the two. One made with `--filter=blob:none` fetches each file that
- * is compared.
+ * merged with now. The clone needs the history between the two. One made with
+ * `--filter=blob:none` fetches each file that is compared.
  *
  * Bun does not build Source/WebCore. The files under src/jsc/bindings that
  * come from it (most of them in webcore/ and webcrypto/) were copied by hand
@@ -27,22 +26,23 @@ import { basename, dirname, join } from "node:path";
 
 const copiesRoot = "src/jsc/bindings";
 const upstreamRoot = "Source/WebCore";
+/** The remote of the clone that is WebKit/WebKit. The upgrade routine asks for this name. */
+const upstreamRemote = "upstream";
 
 /**
- * The copies that a file name does not find: Bun's file, then every upstream
- * file its code comes from. An entry replaces the match by name, so it also
- * has the upstream file of the same name when there is one.
+ * The upstream files of a copy that its file name does not lead to: Bun's
+ * file, then each such upstream file. An upstream file with the name of the
+ * copy is found without an entry.
  *
- * Add an upstream file to an entry, beside the one the code came from, when
- * upstream renames or splits a file that has a copy or moves code out of it.
- * Add an entry when WebCore code goes into a Bun file of another name. The
- * script fails when a file that is named here is not there, so that an entry
- * cannot stop matching without notice.
+ * Add an upstream file here when upstream moves code of a copy into it (it
+ * renames the copy's file, or splits it), and when WebCore code goes into a
+ * Bun file of another name. The script fails when upstream no longer has a
+ * file that is named here, so that an entry cannot stop matching without
+ * notice.
  */
 export const upstreamOf: Record<string, string[]> = {
   // Upstream moved much of structured clone into JavaScriptCore. Bun's copy still has it in one file.
   "src/jsc/bindings/webcore/SerializedScriptValue.cpp": [
-    "Source/WebCore/bindings/js/SerializedScriptValue.cpp",
     "Source/JavaScriptCore/runtime/CloneBase.h",
     "Source/JavaScriptCore/runtime/CloneSerializerBase.h",
     "Source/JavaScriptCore/runtime/CloneDeserializerBase.h",
@@ -50,29 +50,53 @@ export const upstreamOf: Record<string, string[]> = {
     "Source/JavaScriptCore/runtime/StructuredCloneTags.cpp",
   ],
   // Upstream split the inline functions off.
-  "src/jsc/bindings/webcore/EventTarget.h": [
-    "Source/WebCore/dom/EventTarget.h",
-    "Source/WebCore/dom/EventTargetInlines.h",
-  ],
-  "src/jsc/bindings/webcore/JSValueInWrappedObject.h": [
-    "Source/WebCore/bindings/js/JSValueInWrappedObject.h",
-    "Source/WebCore/bindings/js/JSValueInWrappedObjectInlines.h",
-  ],
+  "src/jsc/bindings/webcore/EventTarget.h": ["Source/WebCore/dom/EventTargetInlines.h"],
+  "src/jsc/bindings/webcore/JSValueInWrappedObject.h": ["Source/WebCore/bindings/js/JSValueInWrappedObjectInlines.h"],
   // The OpenSSL half is in a file of its own upstream. Bun wrote its half into the algorithm's file.
   "src/jsc/bindings/webcrypto/CryptoAlgorithmEd25519.cpp": [
-    "Source/WebCore/crypto/algorithms/CryptoAlgorithmEd25519.cpp",
     "Source/WebCore/crypto/openssl/CryptoAlgorithmEd25519OpenSSL.cpp",
   ],
   "src/jsc/bindings/webcrypto/CryptoAlgorithmX25519.cpp": [
-    "Source/WebCore/crypto/algorithms/CryptoAlgorithmX25519.cpp",
     "Source/WebCore/crypto/openssl/CryptoAlgorithmX25519OpenSSL.cpp",
   ],
   // Made from the Cocoa file, before upstream had an OpenSSL one.
-  "src/jsc/bindings/webcrypto/CryptoKeyOKPOpenSSL.cpp": [
-    "Source/WebCore/crypto/openssl/CryptoKeyOKPOpenSSL.cpp",
-    "Source/WebCore/crypto/cocoa/CryptoKeyOKPCocoa.cpp",
+  "src/jsc/bindings/webcrypto/CryptoKeyOKPOpenSSL.cpp": ["Source/WebCore/crypto/cocoa/CryptoKeyOKPCocoa.cpp"],
+  // Upstream took the underscore out of these names.
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBC.h": ["Source/WebCore/crypto/algorithms/CryptoAlgorithmAESCBC.h"],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBC.cpp": [
+    "Source/WebCore/crypto/algorithms/CryptoAlgorithmAESCBC.cpp",
+  ],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBCOpenSSL.cpp": [
+    "Source/WebCore/crypto/openssl/CryptoAlgorithmAESCBCOpenSSL.cpp",
+  ],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CFB.h": ["Source/WebCore/crypto/algorithms/CryptoAlgorithmAESCFB.h"],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CFB.cpp": [
+    "Source/WebCore/crypto/algorithms/CryptoAlgorithmAESCFB.cpp",
+  ],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CFBOpenSSL.cpp": [
+    "Source/WebCore/crypto/openssl/CryptoAlgorithmAESCFBOpenSSL.cpp",
+  ],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CTR.h": ["Source/WebCore/crypto/algorithms/CryptoAlgorithmAESCTR.h"],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CTR.cpp": [
+    "Source/WebCore/crypto/algorithms/CryptoAlgorithmAESCTR.cpp",
+  ],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CTROpenSSL.cpp": [
+    "Source/WebCore/crypto/openssl/CryptoAlgorithmAESCTROpenSSL.cpp",
+  ],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_GCM.h": ["Source/WebCore/crypto/algorithms/CryptoAlgorithmAESGCM.h"],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_GCM.cpp": [
+    "Source/WebCore/crypto/algorithms/CryptoAlgorithmAESGCM.cpp",
+  ],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_GCMOpenSSL.cpp": [
+    "Source/WebCore/crypto/openssl/CryptoAlgorithmAESGCMOpenSSL.cpp",
+  ],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.h": ["Source/WebCore/crypto/algorithms/CryptoAlgorithmAESKW.h"],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp": ["Source/WebCore/crypto/algorithms/CryptoAlgorithmAESKW.cpp"],
+  "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KWOpenSSL.cpp": [
+    "Source/WebCore/crypto/openssl/CryptoAlgorithmAESKWOpenSSL.cpp",
   ],
   // WebCore code in a file with a name of Bun's.
+  "src/jsc/bindings/webcore/CustomEventCustom.cpp": ["Source/WebCore/bindings/js/JSCustomEventCustom.cpp"],
   "src/jsc/bindings/webcrypto/CryptoDigest.cpp": ["Source/WebCore/PAL/pal/crypto/openssl/CryptoDigestOpenSSL.cpp"],
   "src/jsc/bindings/BunClientData.h": ["Source/WebCore/bindings/js/WebCoreJSClientData.h"],
   "src/jsc/bindings/BunClientData.cpp": ["Source/WebCore/bindings/js/WebCoreJSClientData.cpp"],
@@ -98,7 +122,7 @@ export interface ChangedFile {
   upstream: string;
   /** The new base does not have it: the range deleted it, or moved it. */
   gone: boolean;
-  /** Bun's copies of it, with `compareToUpstream`'s share. */
+  /** Bun's copies of it, each with `compareToUpstream`'s share. */
   copies: { path: string; share: number | undefined }[];
   /** Bun's `JS<Name>.cpp`, when `upstream` is `<Name>.idl`. */
   binding: string | undefined;
@@ -122,7 +146,9 @@ export interface CopyChanges {
 class Failure extends Error {}
 
 function git(cwd: string, ...args: string[]): string {
-  const { exitCode, stdout, stderr } = Bun.spawnSync({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
+  // Without the option, git prints a path that is not ASCII in quotes, with its bytes as numbers.
+  const cmd = ["git", "-c", "core.quotePath=false", ...args];
+  const { exitCode, stdout, stderr } = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" });
   if (exitCode !== 0) throw new Failure(`\`git ${args.join(" ")}\` failed in ${cwd}:\n${stderr}`);
   return stdout.toString();
 }
@@ -134,48 +160,38 @@ const trimmedLines = (text: string) =>
     .filter(line => line !== "");
 
 /**
- * Whether `copy` still has text of `upstream`, and how much.
+ * Whether `copy` still has text of `upstream`, and how much of it.
  *
  * Two files with the same name are not always related: Bun's Path.cpp is
  * node:path, WebCore's draws curves. `isCopy` asks for one shared line of 40
  * characters or more. The license header of a real copy has several, and
  * `#pragma once`, `namespace WebCore {` or `#include "config.h"` are shorter.
  *
- * `share` is the part of the copy's code that the upstream text has too, where
+ * `share` is the part of the upstream file's code that the copy has too, where
  * code is every line of 16 characters or more outside a comment (so not a
- * brace, `return true;` or the license). It says how well an upstream diff
- * lines up with the copy. It falls when Bun edits the copy and also when
- * upstream edits, splits or moves its file, so a low share does not mean that
- * a fix has nothing to apply to. It is undefined for a copy with fewer than 8
- * lines of code, where one edited line decides it.
+ * brace, `return true;` or the license). It says how well a diff of the
+ * upstream file lines up with the copy. It is low when Bun has few of the
+ * file's functions and when either side has edited them, so a low share does
+ * not mean that a fix has nothing to apply to. It is undefined for an upstream
+ * file with fewer than 8 lines of code, where one edited line decides it.
  */
 export function compareToUpstream(copy: string, upstream: string): { isCopy: boolean; share: number | undefined } {
-  const theirs = new Set(trimmedLines(upstream));
-  const code = trimmedLines(copy.replace(/\/\*[\s\S]*?\*\//g, "")).filter(
+  const ours = new Set(trimmedLines(copy));
+  const code = trimmedLines(upstream.replace(/\/\*[\s\S]*?\*\//g, "")).filter(
     line => line.length >= 16 && !line.startsWith("//"),
   );
   return {
-    isCopy: trimmedLines(copy).some(line => line.length >= 40 && theirs.has(line)),
-    share: code.length >= 8 ? code.filter(line => theirs.has(line)).length / code.length : undefined,
+    isCopy: trimmedLines(upstream).some(line => line.length >= 40 && ours.has(line)),
+    share: code.length >= 8 ? code.filter(line => ours.has(line)).length / code.length : undefined,
   };
 }
-
-/**
- * A copy can have a name that differs a little from upstream's:
- * CryptoAlgorithmAES_KW.cpp is CryptoAlgorithmAESKW.cpp there, and
- * CustomEventCustom.cpp is JSCustomEventCustom.cpp. A file whose name differs
- * in that way must share a quarter of its code to count.
- */
-const withoutUnderscores = (path: string) => basename(path).replaceAll("_", "");
-const renamedCopyShare = 0.25;
 
 /**
  * The commits in `oldBase..newBase` of the WebKit clone at `webkitRoot` that
  * touch an upstream file with a counterpart among the tracked files under
  * src/jsc/bindings of the bun checkout at `bunRoot`. A counterpart is:
+ * - a file of the same name that `compareToUpstream` takes for a copy,
  * - a copy that `table` names for the file,
- * - a copy found by name: a file of the same name, or of nearly the same name,
- *   that passes `compareToUpstream`,
  * - for `<Name>.idl`, the binding `JS<Name>.cpp`. WebCore generates that file
  *   from the IDL, and Bun's is kept by hand.
  */
@@ -188,14 +204,15 @@ export function listCopyChanges(
 ): CopyChanges {
   const range = `${oldBase}..${newBase}`;
   const total = Number(git(webkitRoot, "rev-list", "--count", range));
-  if (total === 0) throw new Failure(`No commit is in ${range}. Is the old base set, and is it the older of the two?`);
+  if (total === 0) throw new Failure(`No commit is in ${range}. Is the old base the older of the two?`);
 
-  const tracked = new Set(
-    trimmedLines(git(bunRoot, "ls-files", "--", copiesRoot)).filter(path => existsSync(join(bunRoot, path))),
-  );
+  const tracked = trimmedLines(git(bunRoot, "ls-files", "--", copiesRoot));
+  const missing = tracked.filter(path => !existsSync(join(bunRoot, path)));
+  if (missing.length > 0) {
+    throw new Failure(`These tracked files are not in the working tree of ${bunRoot}:\n  ${missing.join("\n  ")}`);
+  }
   const ours = (path: string) => readFileSync(join(bunRoot, path), "utf8");
-  const byName = new Map([...tracked].map(path => [basename(path), path]));
-  const byLooseName = Map.groupBy(tracked, withoutUnderscores);
+  const byName = Map.groupBy(tracked, path => basename(path));
 
   // `table` the other way round.
   const namedCopies = new Map<string, string[]>();
@@ -207,69 +224,54 @@ export function listCopyChanges(
   // Which upstream files each end has. A failed read of one of them is then an error, not a file that is not there.
   const filesAt = (rev: string) =>
     new Set(trimmedLines(git(webkitRoot, "ls-tree", "-r", "--name-only", rev, "--", upstreamRoot, ...outsideRoot)));
-  const atNew = filesAt(newBase);
   const atOld = filesAt(oldBase);
-  const exists = (path: string) => atNew.has(path) || atOld.has(path);
-  const texts = new Map<string, string>();
-  const theirs = (path: string) => {
-    // A file that a commit in the range deleted or moved away is read as the old base has it.
-    if (!texts.has(path)) texts.set(path, git(webkitRoot, "show", `${atNew.has(path) ? newBase : oldBase}:${path}`));
-    return texts.get(path)!;
-  };
+  const atNew = filesAt(newBase);
+  const commitsWith = (path: string, ...revisions: string[]) =>
+    trimmedLines(git(webkitRoot, "rev-list", ...revisions, "--", path));
 
-  // An entry that matches nothing must not go unseen. A file that neither end has is fine only when a commit outside
-  // the history of the old base has it: upstream adds it later, or adds and removes it inside the range.
+  // An entry that matches nothing must not go unseen. A file that the old base does not have is fine only when an
+  // upstream commit that comes after the old base has it: one in the range, or a later one on a branch of the
+  // upstream remote. A commit of the fork does not count. Neither does one on a branch that left before the old
+  // base, such as a release branch.
   const wrong = Object.keys(table)
-    .filter(copy => !tracked.has(copy))
+    .filter(copy => !tracked.includes(copy))
     .map(copy => `${copy} is not a tracked file.`);
+  const after = [newBase, `--remotes=${upstreamRemote}`, "--ancestry-path", `^${oldBase}`];
   for (const path of namedCopies.keys()) {
-    if (exists(path) || git(webkitRoot, "rev-list", "-1", "--all", `^${oldBase}`, "--", path) !== "") continue;
-    const removal = git(webkitRoot, "rev-list", "-1", oldBase, "--", path).trim();
+    if (atOld.has(path) || commitsWith(path, "-1", ...after).length > 0) continue;
+    const [removal] = commitsWith(path, "-1", oldBase);
     wrong.push(
-      removal === ""
-        ? `${path} is in no commit of the clone.`
+      removal === undefined
+        ? `${path} is not in the history of ${oldBase}, and no later upstream commit has it.`
         : `${path} is gone since ${removal.slice(0, 12)}. Name the file that has its code now, or take it out.`,
     );
   }
   if (wrong.length > 0) throw new Failure(`\`upstreamOf\` in scripts/webcore-copies.ts:\n  ${wrong.join("\n  ")}`);
 
-  const shares = new Map<string, number | undefined>();
-  const namedShare = (copy: string) => {
-    if (!shares.has(copy)) {
-      const upstream = table[copy].filter(exists).map(theirs);
-      shares.set(copy, upstream.length > 0 ? compareToUpstream(ours(copy), upstream.join("\n")).share : undefined);
+  // A copy is held against the text that the commits of the range change: the file as the old base has it, or as the
+  // first commit of the range that has it.
+  const texts = new Map<string, string>();
+  const theirs = (path: string) => {
+    if (!texts.has(path)) {
+      const [revision] = atOld.has(path) ? [oldBase] : commitsWith(path, "--reverse", range);
+      texts.set(path, git(webkitRoot, "show", `${revision}:${path}`));
     }
-    return shares.get(copy);
+    return texts.get(path)!;
   };
 
-  const changedFiles = new Map<string, ChangedFile | undefined>();
-  const changedFile = (upstream: string) => {
-    if (changedFiles.has(upstream)) return changedFiles.get(upstream);
-    const copies = (namedCopies.get(upstream) ?? []).map(path => ({ path, share: namedShare(path) }));
-    const name = withoutUnderscores(upstream);
-    const found = [
-      ...(byLooseName.get(name) ?? []),
-      ...((name.startsWith("JS") && byLooseName.get(name.slice(2))) || []),
-    ];
-    for (const path of found) {
-      if (Object.hasOwn(table, path)) continue;
-      if (!exists(upstream)) {
-        // Added and removed inside the range: there is no text to hold the file against, so it stays listed.
-        copies.push({ path, share: undefined });
-        continue;
-      }
+  const changedFile = (upstream: string): ChangedFile | undefined => {
+    const named = namedCopies.get(upstream) ?? [];
+    const sameName = (byName.get(basename(upstream)) ?? []).filter(path => !named.includes(path));
+    const copies: ChangedFile["copies"] = [];
+    for (const path of [...named, ...sameName]) {
       const { isCopy, share } = compareToUpstream(ours(path), theirs(upstream));
-      const sameName = basename(path) === basename(upstream);
-      if (isCopy && (sameName || (share ?? 0) >= renamedCopyShare)) copies.push({ path, share });
+      // The table says that a file it names is a copy. A file of the same name must show it.
+      if (isCopy || named.includes(path)) copies.push({ path, share });
     }
     const idl = basename(upstream).endsWith(".idl") ? basename(upstream).slice(0, -".idl".length) : undefined;
-    const binding = idl === undefined ? undefined : byName.get(`JS${idl}.cpp`);
-    const file =
-      copies.length > 0 || binding !== undefined
-        ? { upstream, gone: !atNew.has(upstream), copies, binding }
-        : undefined;
-    changedFiles.set(upstream, file);
-    return file;
+    const binding = idl === undefined ? undefined : byName.get(`JS${idl}.cpp`)?.[0];
+    if (copies.length === 0 && binding === undefined) return undefined;
+    return { upstream, gone: !atNew.has(upstream), copies, binding };
   };
 
   // Per commit: \0 <sha> \0 <date> \0 <message> \0, then one path per line.
@@ -307,9 +309,9 @@ export function formatCopyChanges({ commits, total }: CopyChanges, range: string
 
 /** The command: what it prints for `args`, and its exit code. */
 export function main(args: string[], bunRoot: string, webkitRoot: string) {
-  const [oldBase, newBase = "upstream/main"] = args;
+  const [oldBase, newBase] = args;
   if (!oldBase || !newBase || !existsSync(webkitRoot)) {
-    const usage = "usage: bun scripts/webcore-copies.ts <old-base> [<new-base>]";
+    const usage = "usage: bun scripts/webcore-copies.ts <old-base> <new-base>";
     const clone = `It reads the WebKit clone at ${webkitRoot}. Set BUN_WEBKIT_PATH to use another one.`;
     return { exitCode: 1, stdout: "", stderr: `${usage}\n${clone}` };
   }

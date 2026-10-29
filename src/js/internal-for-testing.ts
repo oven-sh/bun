@@ -994,6 +994,9 @@ export const dnsCacheSeed = $bindgen("dns_internals.bind.ts", "seedCacheForTesti
   addresses: string[],
 ) => number[];
 
+/** The natives behind the callback forms of `node:dns`, in the object that `node:dns` reads them from: assign one to replace it. */
+export const dnsCallbackForms = require("internal/dns/binding");
+
 /** Whether the connect-path resolver answers `hostname` with the loopback addresses itself instead of asking getaddrinfo. */
 export const dnsIsLocalhostName = $bindgen("dns_internals.bind.ts", "isLocalhostNameForTesting");
 

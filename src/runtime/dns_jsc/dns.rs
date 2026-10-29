@@ -1,11 +1,12 @@
 //! DNS resolver — JSC bindings.
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::MaybeUninit;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::VecDeque;
 
 use bun_collections::{ArrayHashMap, HiveArray};
 #[cfg(not(windows))]
@@ -21,7 +22,7 @@ use bun_dns::{
 #[cfg(not(windows))]
 use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -38,6 +39,7 @@ use bun_wyhash::hash as wyhash;
 use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::ResolverOptions;
+use crate::generated_bindgen::node_dns_binding::QueryMethod;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -140,17 +142,18 @@ mod lib_c {
         query_init: &GetAddrInfo,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
     ) -> JSValue {
         let key = get_addr_info_request::PendingCacheKey::init(query_init);
 
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
+            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context, callback);
             // SAFETY: inflight points into resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
             // SAFETY: dns_lookup just heap-allocated; owned by the inflight list.
-            return unsafe { (*dns_lookup).promise.value() };
+            return unsafe { (*dns_lookup).completion.value() };
         }
 
         let query = query_init.clone();
@@ -163,10 +166,11 @@ mod lib_c {
             Some(this.as_ctx_ptr()),
             global_this,
             context,
+            callback,
             PendingCacheField::PendingHostCacheNative,
         );
         // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
-        let promise_value = unsafe { (*request).head.promise.value() };
+        let returned = unsafe { (*request).head.completion.value() };
 
         bun_jsc::Job::<get_addr_info_request::LibcLookup>::schedule(
             // The realm's: lookups of the same name from any context wait on the one in flight.
@@ -178,7 +182,7 @@ mod lib_c {
         );
         this.request_sent(this.vm());
 
-        promise_value
+        returned
     }
 }
 
@@ -197,19 +201,22 @@ pub(crate) mod lib_uv_backend {
 
     impl LibuvCompleteHolder {
         pub(crate) fn run(self: Box<Self>) {
+            let _answers = Pass::open();
             GetAddrInfoRequest::on_libuv_complete(self.uv_info);
         }
     }
     impl bun_event_loop::Taskable for LibuvCompleteHolder {
         const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GetAddrInfoLibuvComplete;
         /// A uv_getaddrinfo the stop phase cancelled and drained into the queue:
-        /// its completion is what frees the request and its cache slot, and it
-        /// only settles promises (no callback runs; script is forbidden), so run it.
+        /// its completion is what frees the request and its cache slot, so run it.
+        /// It settles promises. Script is forbidden, so no callback runs:
+        /// `Answers::record` drops what a `node:dns` callback waits for.
         unsafe fn release_unrun(this: *mut Self) {
             // SAFETY: fn contract — the box `on_raw_libuv_complete` queued.
-            unsafe { bun_core::heap::take(this) }.run();
+            let uv_info = unsafe { bun_core::heap::take(this) }.uv_info;
+            GetAddrInfoRequest::on_libuv_complete(uv_info);
         }
-        /// A lookup is shared by the realm; each promise waiting on it is settled for its own context.
+        /// A lookup is shared by the realm; each waiter is answered for its own context.
         unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
             bun_event_loop::ContextId::NONE
         }
@@ -241,15 +248,16 @@ pub(crate) mod lib_uv_backend {
         query: GetAddrInfo,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
     ) -> JsResult<JSValue> {
         let key = get_addr_info_request::PendingCacheKey::init(&query);
 
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
+            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context, callback);
             unsafe { (*inflight).append(dns_lookup) };
-            return Ok(unsafe { (*dns_lookup).promise.value() });
+            return Ok(unsafe { (*dns_lookup).completion.value() });
         }
 
         let request = GetAddrInfoRequest::init(
@@ -258,6 +266,7 @@ pub(crate) mod lib_uv_backend {
             Some(this.as_ctx_ptr()),
             global_this,
             context,
+            callback,
             PendingCacheField::PendingHostCacheNative,
         );
 
@@ -280,9 +289,9 @@ pub(crate) mod lib_uv_backend {
         let host = ZStr::from_buf(&hostname[..], copied_len);
 
         // SAFETY: request lives until completion; backend.libc.uv is the embedded uv_getaddrinfo_t
-        let promise = unsafe {
+        let returned = unsafe {
             (*request).backend.as_libc_uv_mut().data = request.cast::<c_void>();
-            let promise = (*request).head.promise.value();
+            let returned = (*request).head.completion.value();
             let rc = libuv::uv_getaddrinfo(
                 this.vm().uv_loop(),
                 (*request).backend.as_libc_uv_mut(),
@@ -298,7 +307,7 @@ pub(crate) mod lib_uv_backend {
                 // (e.g. UV_EINVAL from the 256-byte IDNA buffer for long hostnames,
                 // or UV_ENOMEM). Route the error through the same path the async
                 // completion would have taken so the pending-cache slot is released
-                // and the promise is rejected with a DNSException.
+                // and the waiters get a DNSException.
                 if let Some(resolver) = (*request).resolver_for_caching {
                     if let Some(pos) = (*request).pending_slot {
                         (*resolver).drain_pending_host_native(
@@ -307,7 +316,7 @@ pub(crate) mod lib_uv_backend {
                             rc.int(),
                             &GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
                         );
-                        return Ok(promise);
+                        return Ok(returned);
                     }
                 }
                 // Consume the request and move `head` out by value; `ptr::read`
@@ -315,11 +324,11 @@ pub(crate) mod lib_uv_backend {
                 let owned = *bun_core::heap::take(request);
                 let mut head = owned.head;
                 DNSLookup::process_get_addr_info_native(&mut head, rc.int(), ptr::null_mut());
-                return Ok(promise);
+                return Ok(returned);
             }
-            promise
+            returned
         };
-        Ok(promise)
+        Ok(returned)
     }
 }
 
@@ -457,6 +466,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
         cache_field: PendingCacheField,
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
@@ -469,7 +479,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
-                promise: JSPromiseStrong::init(global_this),
+                completion: Completion::new(global_this, callback),
                 poll_ref,
                 allocated: false,
                 next: None,
@@ -594,6 +604,7 @@ impl GetHostByAddrInfoRequest {
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
@@ -605,7 +616,7 @@ impl GetHostByAddrInfoRequest {
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
-                promise: JSPromiseStrong::init(global_this),
+                completion: Completion::new(global_this, callback),
                 poll_ref,
                 allocated: false,
                 next: None,
@@ -677,7 +688,7 @@ impl c_ares::HostentHandler for GetHostByAddrInfoRequest {
 
 pub(crate) struct CAresNameInfo {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
-    pub promise: JSPromiseStrong,
+    pub completion: Completion,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
     pub next: Option<NonNull<CAresNameInfo>>, // INTRUSIVE
@@ -699,6 +710,7 @@ impl CAresNameInfo {
     fn init(
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
         name: Box<[u8]>,
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
@@ -706,7 +718,7 @@ impl CAresNameInfo {
         bun_core::heap::into_raw(Box::new(Self {
             global_this: bun_ptr::BackRef::new(global_this),
             context,
-            promise: JSPromiseStrong::init(global_this),
+            completion: Completion::new(global_this, callback),
             poll_ref,
             allocated: true,
             next: None,
@@ -732,7 +744,7 @@ impl CAresNameInfo {
                     err,
                     b"getnameinfo",
                     Some((*this).name.as_ref()),
-                    &mut (*this).promise,
+                    &mut (*this).completion,
                 )
                 .reject_later(global_this, (*this).context);
                 Self::destroy(this);
@@ -746,7 +758,7 @@ impl CAresNameInfo {
                     c_ares::Error::ENOTFOUND,
                     b"getnameinfo",
                     Some((*this).name.as_ref()),
-                    &mut (*this).promise,
+                    &mut (*this).completion,
                 )
                 .reject_later(global_this, (*this).context);
                 Self::destroy(this);
@@ -764,10 +776,10 @@ impl CAresNameInfo {
     /// SAFETY: see `process_resolve`.
     unsafe fn on_complete(this: *mut Self, result: Outcome) {
         // SAFETY: see fn contract — `this` is a live node.
-        let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
+        let completion = unsafe { core::mem::take(&mut (*this).completion) };
         // SAFETY: see fn contract — `this` is a live node.
         let (global_this, context) = unsafe { ((*this).global_this(), (*this).context) };
-        result.settle(&mut promise, global_this, context);
+        result.settle(completion, global_this, context);
         // SAFETY: see fn contract.
         unsafe { Self::destroy(this) };
     }
@@ -847,6 +859,7 @@ impl GetNameInfoRequest {
         name: Box<[u8]>,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
         cache_field: PendingCacheField,
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
@@ -857,7 +870,7 @@ impl GetNameInfoRequest {
             head: CAresNameInfo {
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
-                promise: JSPromiseStrong::init(global_this),
+                completion: Completion::new(global_this, callback),
                 poll_ref,
                 allocated: false,
                 next: None,
@@ -1009,6 +1022,7 @@ pub(crate) mod get_addr_info_request {
             let req = core::mem::ManuallyDrop::new(request).0.as_ptr();
             // SAFETY: the live heap request; `then` consumes it on every path.
             unsafe { (*req).backend = Backend::Libc(this.backend) };
+            let _answers = Pass::open();
             super::GetAddrInfoRequest::then(req, cx.global());
             Ok(())
         }
@@ -1173,6 +1187,7 @@ impl GetAddrInfoRequest {
         resolver: Option<*mut Resolver>,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
         cache_field: PendingCacheField,
     ) -> *mut Self {
         bun_output::scoped_log!(GetAddrInfoRequest, "init");
@@ -1186,7 +1201,7 @@ impl GetAddrInfoRequest {
                 // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
-                promise: JSPromiseStrong::init(global_this),
+                completion: Completion::new(global_this, callback),
                 poll_ref,
                 allocated: false,
                 next: None,
@@ -1431,7 +1446,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
 pub(crate) struct CAresReverse {
     pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
-    pub promise: JSPromiseStrong,
+    pub completion: Completion,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
     pub next: Option<NonNull<CAresReverse>>, // INTRUSIVE
@@ -1456,6 +1471,7 @@ impl CAresReverse {
         resolver: Option<*mut Resolver>,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
         name: &[u8],
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
@@ -1465,7 +1481,7 @@ impl CAresReverse {
             resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
-            promise: JSPromiseStrong::init(global_this),
+            completion: Completion::new(global_this, callback),
             poll_ref,
             allocated: true,
             next: None,
@@ -1490,7 +1506,7 @@ impl CAresReverse {
                     err,
                     b"getHostByAddr",
                     Some(&(*this).name),
-                    &mut (*this).promise,
+                    &mut (*this).completion,
                 )
                 .reject_later(global_this, (*this).context);
                 Self::destroy(this);
@@ -1501,7 +1517,7 @@ impl CAresReverse {
                     c_ares::Error::ENOTFOUND,
                     b"getHostByAddr",
                     Some(&(*this).name),
-                    &mut (*this).promise,
+                    &mut (*this).completion,
                 )
                 .reject_later(global_this, (*this).context);
                 Self::destroy(this);
@@ -1520,9 +1536,9 @@ impl CAresReverse {
     unsafe fn on_complete(this: *mut Self, result: Outcome) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
+            let completion = core::mem::take(&mut (*this).completion);
             let global_this = (*this).global_this();
-            result.settle(&mut promise, global_this, (*this).context);
+            result.settle(completion, global_this, (*this).context);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1560,7 +1576,7 @@ impl Drop for CAresReverse {
 pub(crate) struct CAresLookup<T: CAresRecordType> {
     pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
-    pub promise: JSPromiseStrong,
+    pub completion: Completion,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
     pub next: Option<NonNull<CAresLookup<T>>>, // INTRUSIVE
@@ -1580,6 +1596,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         resolver: Option<*mut Resolver>,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
         name: &[u8],
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
@@ -1589,7 +1606,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
             resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
-            promise: JSPromiseStrong::init(global_this),
+            completion: Completion::new(global_this, callback),
             poll_ref,
             allocated: true,
             next: None,
@@ -1630,7 +1647,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
                     err,
                     syscall.as_bytes(),
                     Some(&(*this).name),
-                    &mut (*this).promise,
+                    &mut (*this).completion,
                 )
                 .reject_later(global_this, (*this).context);
                 Self::destroy(this);
@@ -1641,7 +1658,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
                     c_ares::Error::ENOTFOUND,
                     syscall.as_bytes(),
                     Some(&(*this).name),
-                    &mut (*this).promise,
+                    &mut (*this).completion,
                 )
                 .reject_later(global_this, (*this).context);
                 Self::destroy(this);
@@ -1657,9 +1674,9 @@ impl<T: CAresRecordType> CAresLookup<T> {
     unsafe fn on_complete(this: *mut Self, result: Outcome) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
+            let completion = core::mem::take(&mut (*this).completion);
             let global_this = (*this).global_this();
-            result.settle(&mut promise, global_this, (*this).context);
+            result.settle(completion, global_this, (*this).context);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1697,7 +1714,7 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
 pub(crate) struct DNSLookup {
     pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
-    pub promise: JSPromiseStrong,
+    pub completion: Completion,
     pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
     pub poll_ref: KeepAlive,
@@ -1724,6 +1741,7 @@ impl DNSLookup {
         resolver: *mut Resolver,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
     ) -> *mut Self {
         bun_output::scoped_log!(DNSLookup, "init");
 
@@ -1735,7 +1753,7 @@ impl DNSLookup {
             resolver: Some(unsafe { RefPtr::init_ref(resolver) }),
             global_this: bun_ptr::BackRef::new(global_this),
             poll_ref,
-            promise: JSPromiseStrong::init(global_this),
+            completion: Completion::new(global_this, callback),
             allocated: true,
             next: None,
             context,
@@ -1763,7 +1781,7 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
-                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
+                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).completion)
                     .reject_later((*this).global_this(), (*this).context);
                 Self::destroy(this);
                 return;
@@ -1794,7 +1812,7 @@ impl DNSLookup {
         unsafe {
             let global_this = (*this).global_this();
             if let Some(err) = err_ {
-                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
+                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).completion)
                     .reject_later(global_this, (*this).context);
                 Self::destroy(this);
                 return;
@@ -1806,7 +1824,7 @@ impl DNSLookup {
                     c_ares::Error::ENOTFOUND,
                     b"getaddrinfo",
                     None,
-                    &mut (*this).promise,
+                    &mut (*this).completion,
                 )
                 .reject_later(global_this, (*this).context);
                 Self::destroy(this);
@@ -1833,9 +1851,9 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
+            let completion = core::mem::take(&mut (*this).completion);
             let global_this = (*this).global_this();
-            result.settle(&mut promise, global_this, (*this).context);
+            result.settle(completion, global_this, (*this).context);
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
@@ -1899,27 +1917,294 @@ impl Outcome {
     /// The resolver backends' completion callbacks (c-ares poll, libinfo,
     /// libuv) land here to settle the lookup's promise with a value built by
     /// the resolver: this is their fold for what settling leaves pending
-    /// (allocation failure, a terminating VM).
-    fn settle(
-        self,
-        promise: &mut JSPromiseStrong,
-        global: &JSGlobalObject,
-        context: bun_jsc::ContextId,
-    ) {
-        // The lookup continues the script that asked for it.
-        let _context = global.bun_vm().enter_context(context);
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        crate::dispatch::fold(match self {
-            Outcome::Value(v) => promise.resolve(global, v),
-            Outcome::Error(e) => promise.reject(global, Ok(e)),
-            Outcome::Stopped => return,
-        });
+    /// (allocation failure, a terminating VM). A `node:dns` callback is not
+    /// called here: its answer waits in [`Answers`].
+    fn settle(self, completion: Completion, global: &JSGlobalObject, context: bun_jsc::ContextId) {
+        match completion {
+            Completion::Promise(mut promise) => {
+                // The lookup continues the script that asked for it.
+                let _context = global.bun_vm().enter_context(context);
+                let _guard = VirtualMachine::get().enter_event_loop_scope();
+                crate::dispatch::fold(match self {
+                    Outcome::Value(v) => promise.resolve(global, v),
+                    Outcome::Error(e) => promise.reject(global, Ok(e)),
+                    Outcome::Stopped => return,
+                });
+            }
+            Completion::Callback(callback, checkpoint) => {
+                let answer = match self {
+                    Outcome::Value(v) => Answer::Value(jsc::Strong::create(v, global)),
+                    Outcome::Error(e) => Answer::Thrown(jsc::Strong::create(e, global)),
+                    Outcome::Stopped => return,
+                };
+                Answers::record(Delivery {
+                    global: bun_ptr::BackRef::new(global),
+                    callback,
+                    checkpoint,
+                    context,
+                    answer,
+                });
+            }
+        }
     }
 }
 
 #[inline]
 fn keep_alive(outcome: &Outcome) {
     outcome.keep_alive();
+}
+
+/// When the tick queue and the microtasks run after a `node:dns` callback. It is what Node does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Checkpoint {
+    /// `lookup` and `lookupService`. libuv completes each request on its own, and Node makes one
+    /// `MakeCallback` per request:
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/cares_wrap.cc#L1881
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/cares_wrap.cc#L1916
+    AfterEach,
+    /// The c-ares queries. Node queues each answer as a native immediate, and one callback scope
+    /// covers every immediate of a loop turn:
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/cares_wrap.h#L388-L399
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L1424-L1454
+    AfterAll,
+}
+
+/// A `node:dns` callback, as the native that starts the request takes it.
+#[derive(Clone, Copy)]
+pub(crate) struct Callback {
+    function: JSValue,
+    checkpoint: Checkpoint,
+}
+
+impl Callback {
+    fn after_each(function: JsLocal<'_, Callable>) -> Self {
+        Self {
+            function: function.to_js(),
+            checkpoint: Checkpoint::AfterEach,
+        }
+    }
+
+    fn after_all(function: JsLocal<'_, Callable>) -> Self {
+        Self {
+            function: function.to_js(),
+            checkpoint: Checkpoint::AfterAll,
+        }
+    }
+}
+
+/// How a waiter reports its answer.
+pub(crate) enum Completion {
+    /// `Bun.dns` and `node:dns/promises`: settled where the request completes.
+    Promise(JSPromiseStrong),
+    /// `node:dns`: called by [`Answers`], after the completion pass has ended.
+    Callback(jsc::Strong, Checkpoint),
+}
+
+impl Default for Completion {
+    fn default() -> Self {
+        Completion::Promise(JSPromiseStrong::default())
+    }
+}
+
+impl Completion {
+    pub(crate) fn new(global: &JSGlobalObject, callback: Option<Callback>) -> Self {
+        match callback {
+            Some(callback) => Completion::Callback(
+                jsc::Strong::create(
+                    callback.function.with_async_context_if_needed(global),
+                    global,
+                ),
+                callback.checkpoint,
+            ),
+            None => Completion::Promise(JSPromiseStrong::init(global)),
+        }
+    }
+
+    /// What the host function that made the waiter returns.
+    pub(crate) fn value(&self) -> JSValue {
+        match self {
+            Completion::Promise(promise) => promise.value(),
+            Completion::Callback(..) => JSValue::UNDEFINED,
+        }
+    }
+}
+
+/// What a `node:dns` callback is called with.
+pub(crate) enum Answer {
+    Value(jsc::Strong),
+    /// What the conversion of the answer threw.
+    Thrown(jsc::Strong),
+    /// A resolver failure. It becomes an error object when the callback is called.
+    Failed(Box<super::cares_jsc::ErrorDeferred>),
+}
+
+/// An answer on its way to a `node:dns` callback.
+pub(crate) struct Delivery {
+    /// The global of the script that asked. It outlives the VM's queues.
+    pub(crate) global: bun_ptr::BackRef<JSGlobalObject>,
+    pub(crate) callback: jsc::Strong,
+    pub(crate) checkpoint: Checkpoint,
+    /// The context of the script that asked.
+    pub(crate) context: bun_jsc::ContextId,
+    pub(crate) answer: Answer,
+}
+
+impl Delivery {
+    fn call(mut self) {
+        let global = self.global.get();
+        let vm = global.bun_vm();
+        // The callback continues the script that asked. A context that has stopped is called for nobody.
+        let _context = vm.enter_context(self.context);
+        let (arguments, count) = match &mut self.answer {
+            Answer::Value(value) => ([JSValue::NULL, value.get()], 2),
+            Answer::Thrown(error) => ([error.get(), JSValue::UNDEFINED], 1),
+            Answer::Failed(failure) => match failure.to_js_for_callback(global) {
+                Ok(error) => ([error, JSValue::UNDEFINED], 1),
+                Err(err) => {
+                    let _ = bun_jsc::task::report_error_or_terminate(global, err);
+                    return;
+                }
+            },
+        };
+        vm.event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
+            self.callback.get(),
+            global,
+            JSValue::UNDEFINED,
+            &arguments[..count],
+        );
+        arguments[0].ensure_still_alive();
+    }
+}
+
+/// The answers that `node:dns` callbacks wait for, in the order their requests completed. Each
+/// event loop of the VM has a list (`jsc_hooks::dns_answers`): a list queues itself on the loop
+/// that is current, and the loop of macros runs only while a macro waits.
+///
+/// A request completes inside c-ares, inside a loop over the waiters of one query, or inside the
+/// host call that made the request. No callback runs there. A completion that opens a [`Pass`]
+/// calls back when the pass ends. With no pass open, the list queues itself as a task that calls
+/// back: the request completed inside a host call, or a timer ended it (`check_timeouts`).
+pub(crate) struct Answers {
+    waiting: RefCell<VecDeque<Delivery>>,
+    /// The passes that are open. Each one delivers when it ends.
+    passes: Cell<u32>,
+    /// The list is in the task queue.
+    task_queued: Cell<bool>,
+}
+
+impl Answers {
+    /// How many entries of the emptied list stay allocated for the next answers.
+    const KEPT_CAPACITY: usize = 64;
+
+    pub(crate) const fn new() -> Self {
+        Self {
+            waiting: RefCell::new(VecDeque::new()),
+            passes: Cell::new(0),
+            task_queued: Cell::new(false),
+        }
+    }
+
+    pub(crate) fn record(delivery: Delivery) {
+        let vm = delivery.global.get().bun_vm();
+        // Nobody is left to call, and the task queue is not drained again.
+        if vm.is_shutting_down() || !vm.script_allowed() {
+            return;
+        }
+        let answers = crate::jsc_hooks::dns_answers();
+        answers.waiting.borrow_mut().push_back(delivery);
+        if answers.passes.get() == 0 && !answers.task_queued.replace(true) {
+            vm.as_mut().enqueue_task(bun_event_loop::Task::init(
+                ptr::from_ref(answers).cast_mut(),
+            ));
+        }
+    }
+
+    fn next_checkpoint(&self) -> Option<Checkpoint> {
+        self.waiting.borrow().front().map(|next| next.checkpoint)
+    }
+
+    /// Calls back until no answer waits. A callback can make a request that is answered inside
+    /// the call, and Node answers it in the same pass (`drain_list`):
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L1432-L1454
+    fn deliver(&self) {
+        if self.waiting.borrow().is_empty() {
+            return;
+        }
+        let vm = VirtualMachine::get();
+        // The callbacks of c-ares queries share the checkpoint that follows the pass.
+        let _scope = vm.enter_event_loop_scope();
+        let mut previous = None;
+        while let Some(next) = self.next_checkpoint() {
+            if previous.is_some_and(|previous| {
+                previous == Checkpoint::AfterEach || next == Checkpoint::AfterEach
+            }) && vm.event_loop_mut().drain_microtasks().is_err()
+            {
+                return self.discard();
+            }
+            // The checkpoint ran script, which can have delivered from a nested event loop.
+            let Some(delivery) = self.waiting.borrow_mut().pop_front() else {
+                return;
+            };
+            previous = Some(delivery.checkpoint);
+            delivery.call();
+        }
+        // A burst of answers must not keep its memory for the life of the VM.
+        let mut waiting = self.waiting.borrow_mut();
+        if waiting.is_empty() && waiting.capacity() > Self::KEPT_CAPACITY {
+            *waiting = VecDeque::new();
+        }
+    }
+
+    /// The VM stops: the callbacks that wait are called by nobody.
+    pub(crate) fn discard(&self) {
+        let waiting = core::mem::take(&mut *self.waiting.borrow_mut());
+        drop(waiting);
+    }
+
+    /// The list, from the task queue.
+    pub(crate) fn run_task(&self) {
+        self.task_queued.set(false);
+        self.deliver();
+    }
+}
+
+/// A completion that the event loop starts: a poll of the c-ares sockets, a `getaddrinfo` that
+/// has finished. It is opened before the completion hands out answers. Its end calls the
+/// `node:dns` callbacks that were answered, so it ends where the completion holds nothing that a
+/// callback can free, and inside the event-loop scope of the completion if there is one.
+#[must_use = "dropping the pass calls the callbacks"]
+pub(crate) struct Pass(&'static Answers);
+
+impl Pass {
+    pub(crate) fn open() -> Self {
+        let answers = crate::jsc_hooks::dns_answers();
+        answers.passes.set(answers.passes.get() + 1);
+        Self(answers)
+    }
+}
+
+impl Drop for Pass {
+    fn drop(&mut self) {
+        self.0.passes.set(self.0.passes.get() - 1);
+        self.0.deliver();
+    }
+}
+
+/// As a task, the list calls the `node:dns` callbacks whose requests completed with no [`Pass`]
+/// open: inside the host call that made the request, or inside one that cancelled it.
+impl bun_event_loop::Taskable for Answers {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DnsAnswers;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract: the list that `record` queued. It lives in the VM's `RuntimeState`.
+        let answers = unsafe { &*this };
+        answers.task_queued.set(false);
+        answers.discard();
+    }
+    /// Each callback is called inside the context of the script that asked.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl Drop for DNSLookup {
@@ -4008,6 +4293,8 @@ impl Resolver {
 
         if let Ok(channel) = self.get_channel_or_error(vm.global()) {
             if self.any_requests_pending() {
+                // No `Pass`: what times out calls back from the task of `Answers`, after the timers
+                // that are due, as Node's native immediate does.
                 // SAFETY: `channel` is the live c-ares channel owned by `self`.
                 c_ares::ares_process_fd(
                     unsafe { &mut *channel },
@@ -4686,6 +4973,8 @@ impl Resolver {
                 let _exit = vm.enter_event_loop_scope();
                 // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
                 let _guard = RefPtr::init_ref(parent);
+                // As in `on_dns_poll`.
+                let _answers = Pass::open();
                 // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
                 let channel = (*parent).channel.get().unwrap();
                 if status < 0 {
@@ -4753,6 +5042,8 @@ impl Resolver {
         };
 
         let _guard = self.ref_guard();
+        // Dropped first: the callbacks run with the resolver alive, and `_exit` is their checkpoint.
+        let _answers = Pass::open();
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
@@ -4931,7 +5222,16 @@ impl Resolver {
         name: &[u8],
         record: Option<&[u8]>,
     ) -> JsResult<JSValue> {
-        let global_this = cx.global();
+        self.resolve_record(cx.global(), name, record, None)
+    }
+
+    fn resolve_record(
+        &self,
+        global_this: &JSGlobalObject,
+        name: &[u8],
+        record: Option<&[u8]>,
+        callback: Option<Callback>,
+    ) -> JsResult<JSValue> {
         let context = global_this.bun_vm().context_of_caller().id();
         let record_type: RecordType = match record {
             None | Some(b"") => RecordType::DEFAULT,
@@ -4955,35 +5255,24 @@ impl Resolver {
             ));
         }
 
+        macro_rules! query {
+            ($Reply:ty) => {
+                self.do_resolve_cares::<$Reply>(name, global_this, context, callback)
+            };
+        }
         match record_type {
-            RecordType::A => self.do_resolve_cares::<AHostentWithTtls>(name, global_this, context),
-            RecordType::AAAA => {
-                self.do_resolve_cares::<AaaaHostentWithTtls>(name, global_this, context)
-            }
-            RecordType::ANY => {
-                self.do_resolve_cares::<c_ares::struct_any_reply>(name, global_this, context)
-            }
-            RecordType::CAA => {
-                self.do_resolve_cares::<c_ares::struct_ares_caa_reply>(name, global_this, context)
-            }
-            RecordType::CNAME => self.do_resolve_cares::<CnameHostent>(name, global_this, context),
-            RecordType::MX => {
-                self.do_resolve_cares::<c_ares::struct_ares_mx_reply>(name, global_this, context)
-            }
-            RecordType::NAPTR => {
-                self.do_resolve_cares::<c_ares::struct_ares_naptr_reply>(name, global_this, context)
-            }
-            RecordType::NS => self.do_resolve_cares::<NsHostent>(name, global_this, context),
-            RecordType::PTR => self.do_resolve_cares::<PtrHostent>(name, global_this, context),
-            RecordType::SOA => {
-                self.do_resolve_cares::<c_ares::struct_ares_soa_reply>(name, global_this, context)
-            }
-            RecordType::SRV => {
-                self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(name, global_this, context)
-            }
-            RecordType::TXT => {
-                self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(name, global_this, context)
-            }
+            RecordType::A => query!(AHostentWithTtls),
+            RecordType::AAAA => query!(AaaaHostentWithTtls),
+            RecordType::ANY => query!(c_ares::struct_any_reply),
+            RecordType::CAA => query!(c_ares::struct_ares_caa_reply),
+            RecordType::CNAME => query!(CnameHostent),
+            RecordType::MX => query!(c_ares::struct_ares_mx_reply),
+            RecordType::NAPTR => query!(c_ares::struct_ares_naptr_reply),
+            RecordType::NS => query!(NsHostent),
+            RecordType::PTR => query!(PtrHostent),
+            RecordType::SOA => query!(c_ares::struct_ares_soa_reply),
+            RecordType::SRV => query!(c_ares::struct_ares_srv_reply),
+            RecordType::TXT => query!(c_ares::struct_ares_txt_reply),
         }
     }
 
@@ -4992,7 +5281,15 @@ impl Resolver {
     }
 
     pub(crate) fn reverse(&self, cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
-        let global_this = cx.global();
+        self.reverse_address(cx.global(), ip, None)
+    }
+
+    fn reverse_address(
+        &self,
+        global_this: &JSGlobalObject,
+        ip: &[u8],
+        callback: Option<Callback>,
+    ) -> JsResult<JSValue> {
         let context = global_this.bun_vm().context_of_caller().id();
         if ip.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
@@ -5023,11 +5320,11 @@ impl Resolver {
         );
         if let LookupCacheHit::Inflight(inflight) = cache {
             let cares_reverse =
-                CAresReverse::init(Some(self.as_ctx_ptr()), global_this, context, ip);
+                CAresReverse::init(Some(self.as_ctx_ptr()), global_this, context, callback, ip);
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(cares_reverse) };
             // SAFETY: `cares_reverse` was just heap-allocated; owned by the inflight list.
-            return Ok(unsafe { (*cares_reverse).promise.value() });
+            return Ok(unsafe { (*cares_reverse).completion.value() });
         }
 
         let request = GetHostByAddrInfoRequest::init(
@@ -5036,10 +5333,11 @@ impl Resolver {
             ip,
             global_this,
             context,
+            callback,
         );
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
-        let promise = unsafe { (*(*request).tail).promise.value() };
+        let returned = unsafe { (*(*request).tail).completion.value() };
         // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
         // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
         unsafe {
@@ -5048,7 +5346,7 @@ impl Resolver {
 
         // SAFETY: `bun_vm()` returns the live VM back-ptr.
         self.request_sent(global_this.bun_vm());
-        Ok(promise)
+        Ok(returned)
     }
 
     pub(crate) fn global_lookup(
@@ -5056,7 +5354,15 @@ impl Resolver {
         name: &[u8],
         options_object: &LookupOptions<'_>,
     ) -> JsResult<JSValue> {
-        let global_this = cx.global();
+        Self::lookup_host(cx.global(), name, options_object, None)
+    }
+
+    fn lookup_host(
+        global_this: &JSGlobalObject,
+        name: &[u8],
+        options_object: &LookupOptions<'_>,
+        callback: Option<Callback>,
+    ) -> JsResult<JSValue> {
         let context = global_this.bun_vm().context_of_caller().id();
         if name.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
@@ -5094,7 +5400,7 @@ impl Resolver {
 
         let resolver = global_resolver(global_this);
 
-        resolver.do_lookup(name, port, options, global_this, context)
+        resolver.do_lookup(name, port, options, global_this, context, callback)
     }
 
     pub(crate) fn do_lookup(
@@ -5104,18 +5410,19 @@ impl Resolver {
         options: GetAddrInfoOptions,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
     ) -> JsResult<JSValue> {
         if !bun_dns::is_valid_hostname(name) {
-            let mut promise = JSPromiseStrong::init(global_this);
-            let promise_value = promise.value();
+            let mut completion = Completion::new(global_this, callback);
+            let returned = completion.value();
             error_to_deferred(
                 c_ares::Error::ENOTFOUND,
                 b"getaddrinfo",
                 Some(name),
-                &mut promise,
+                &mut completion,
             )
             .reject_later(global_this, context);
-            return Ok(promise_value);
+            return Ok(returned);
         }
 
         let mut opts = options;
@@ -5130,30 +5437,30 @@ impl Resolver {
 
         Ok(match opts.backend {
             GetAddrInfoBackend::CAres => {
-                self.c_ares_lookup_with_normalized_name(&query, global_this, context)?
+                self.c_ares_lookup_with_normalized_name(&query, global_this, context, callback)?
             }
             GetAddrInfoBackend::Libc => {
                 #[cfg(windows)]
                 {
-                    lib_uv_backend::lookup(self, query, global_this, context)?
+                    lib_uv_backend::lookup(self, query, global_this, context, callback)?
                 }
                 #[cfg(not(windows))]
                 {
-                    lib_c::lookup(self, &query, global_this, context)
+                    lib_c::lookup(self, &query, global_this, context, callback)
                 }
             }
             GetAddrInfoBackend::System => {
                 #[cfg(target_os = "macos")]
                 {
-                    dns_sd::lookup(self, &query, global_this, context)
+                    dns_sd::lookup(self, &query, global_this, context, callback)
                 }
                 #[cfg(windows)]
                 {
-                    lib_uv_backend::lookup(self, query, global_this, context)?
+                    lib_uv_backend::lookup(self, query, global_this, context, callback)?
                 }
                 #[cfg(all(not(target_os = "macos"), not(windows)))]
                 {
-                    lib_c::lookup(self, &query, global_this, context)
+                    lib_c::lookup(self, &query, global_this, context, callback)
                 }
             }
         })
@@ -5163,23 +5470,41 @@ impl Resolver {
     // These are mechanically identical across record types.
 }
 
-macro_rules! resolve_record_fn {
-    ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
-        pub(crate) fn $global(cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
-            global_resolver(cx.global()).$method(cx, name)
-        }
-
-        pub(crate) fn $method(&self, cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
-            let global_this = cx.global();
-            let context = global_this.bun_vm().context_of_caller().id();
-            if !$allow_empty && name.is_empty() {
-                return Err(global_this.throw_invalid_argument_type(
-                    $jsname,
-                    "hostname",
-                    "non-empty string",
-                ));
+/// For each `resolveSrv()`-style query: the `Bun.dns` function and the `DNSResolver` method. Both
+/// start the query through `start_query`, and so does `queryCb`, which the callback form of
+/// `node:dns` calls.
+macro_rules! resolve_record_fns {
+    ($(($global:ident, $method:ident, $variant:ident, $jsname:literal, $ty:ty, $allow_empty:expr)),+ $(,)?) => {
+        $(
+            pub(crate) fn $global(cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
+                global_resolver(cx.global()).$method(cx, name)
             }
-            self.do_resolve_cares::<$ty>(name, global_this, context)
+
+            pub(crate) fn $method(&self, cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
+                self.start_query(cx.global(), QueryMethod::$variant, name, None)
+            }
+        )+
+
+        fn start_query(
+            &self,
+            global_this: &JSGlobalObject,
+            method: QueryMethod,
+            name: &[u8],
+            callback: Option<Callback>,
+        ) -> JsResult<JSValue> {
+            let context = global_this.bun_vm().context_of_caller().id();
+            match method {
+                $(QueryMethod::$variant => {
+                    if !$allow_empty && name.is_empty() {
+                        return Err(global_this.throw_invalid_argument_type(
+                            $jsname,
+                            "hostname",
+                            "non-empty string",
+                        ));
+                    }
+                    self.do_resolve_cares::<$ty>(name, global_this, context, callback)
+                })+
+            }
         }
     };
 }
@@ -5222,69 +5547,18 @@ impl Resolver {
 }
 
 impl Resolver {
-    resolve_record_fn!(
-        global_resolve_srv,
-        resolve_srv,
-        "resolveSrv",
-        c_ares::struct_ares_srv_reply,
-        false
-    );
-    resolve_record_fn!(
-        global_resolve_soa,
-        resolve_soa,
-        "resolveSoa",
-        c_ares::struct_ares_soa_reply,
-        true
-    );
-    resolve_record_fn!(
-        global_resolve_caa,
-        resolve_caa,
-        "resolveCaa",
-        c_ares::struct_ares_caa_reply,
-        false
-    );
-    resolve_record_fn!(global_resolve_ns, resolve_ns, "resolveNs", NsHostent, true);
-    resolve_record_fn!(
-        global_resolve_ptr,
-        resolve_ptr,
-        "resolvePtr",
-        PtrHostent,
-        false
-    );
-    resolve_record_fn!(
-        global_resolve_cname,
-        resolve_cname,
-        "resolveCname",
-        CnameHostent,
-        false
-    );
-    resolve_record_fn!(
-        global_resolve_mx,
-        resolve_mx,
-        "resolveMx",
-        c_ares::struct_ares_mx_reply,
-        false
-    );
-    resolve_record_fn!(
-        global_resolve_naptr,
-        resolve_naptr,
-        "resolveNaptr",
-        c_ares::struct_ares_naptr_reply,
-        false
-    );
-    resolve_record_fn!(
-        global_resolve_txt,
-        resolve_txt,
-        "resolveTxt",
-        c_ares::struct_ares_txt_reply,
-        false
-    );
-    resolve_record_fn!(
-        global_resolve_any,
-        resolve_any,
-        "resolveAny",
-        c_ares::struct_any_reply,
-        false
+    #[rustfmt::skip]
+    resolve_record_fns!(
+        (global_resolve_srv, resolve_srv, ResolveSrv, "resolveSrv", c_ares::struct_ares_srv_reply, false),
+        (global_resolve_soa, resolve_soa, ResolveSoa, "resolveSoa", c_ares::struct_ares_soa_reply, true),
+        (global_resolve_caa, resolve_caa, ResolveCaa, "resolveCaa", c_ares::struct_ares_caa_reply, false),
+        (global_resolve_ns, resolve_ns, ResolveNs, "resolveNs", NsHostent, true),
+        (global_resolve_ptr, resolve_ptr, ResolvePtr, "resolvePtr", PtrHostent, false),
+        (global_resolve_cname, resolve_cname, ResolveCname, "resolveCname", CnameHostent, false),
+        (global_resolve_mx, resolve_mx, ResolveMx, "resolveMx", c_ares::struct_ares_mx_reply, false),
+        (global_resolve_naptr, resolve_naptr, ResolveNaptr, "resolveNaptr", c_ares::struct_ares_naptr_reply, false),
+        (global_resolve_txt, resolve_txt, ResolveTxt, "resolveTxt", c_ares::struct_ares_txt_reply, false),
+        (global_resolve_any, resolve_any, ResolveAny, "resolveAny", c_ares::struct_any_reply, false),
     );
 
     pub(crate) fn do_resolve_cares<T: CAresRecordType>(
@@ -5292,6 +5566,7 @@ impl Resolver {
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
     ) -> JsResult<JSValue> {
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
@@ -5315,12 +5590,17 @@ impl Resolver {
             self.get_or_put_into_resolve_pending_cache::<ResolveInfoRequest<T>>(&key, cache_field);
         if let LookupCacheHit::Inflight(inflight) = cache {
             // CAresLookup will have the name ownership
-            let cares_lookup =
-                CAresLookup::<T>::init(Some(self.as_ctx_ptr()), global_this, context, name);
+            let cares_lookup = CAresLookup::<T>::init(
+                Some(self.as_ctx_ptr()),
+                global_this,
+                context,
+                callback,
+                name,
+            );
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(cares_lookup) };
             // SAFETY: `cares_lookup` was just heap-allocated; owned by the inflight list.
-            return Ok(unsafe { (*cares_lookup).promise.value() });
+            return Ok(unsafe { (*cares_lookup).completion.value() });
         }
 
         let request = ResolveInfoRequest::<T>::init(
@@ -5329,10 +5609,11 @@ impl Resolver {
             name, // CAresLookup will have the ownership
             global_this,
             context,
+            callback,
             cache_field,
         );
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
-        let promise = unsafe { (*(*request).tail).promise.value() };
+        let returned = unsafe { (*(*request).tail).completion.value() };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
@@ -5342,7 +5623,7 @@ impl Resolver {
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
-        Ok(promise)
+        Ok(returned)
     }
 
     pub(crate) fn c_ares_lookup_with_normalized_name(
@@ -5350,6 +5631,7 @@ impl Resolver {
         query: &GetAddrInfo,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
+        callback: Option<Callback>,
     ) -> JsResult<JSValue> {
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
@@ -5371,11 +5653,11 @@ impl Resolver {
         let cache =
             self.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheCares);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(self.as_ctx_ptr(), global_this, context);
+            let dns_lookup = DNSLookup::init(self.as_ctx_ptr(), global_this, context, callback);
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
             // SAFETY: `dns_lookup` was just heap-allocated; owned by the inflight list.
-            return Ok(unsafe { (*dns_lookup).promise.value() });
+            return Ok(unsafe { (*dns_lookup).completion.value() });
         }
 
         let hints_buf = [query.to_cares()];
@@ -5385,10 +5667,11 @@ impl Resolver {
             Some(self.as_ctx_ptr()),
             global_this,
             context,
+            callback,
             PendingCacheField::PendingHostCacheCares,
         );
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
-        let promise = unsafe { (*(*request).tail).promise.value() };
+        let returned = unsafe { (*(*request).tail).completion.value() };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated GetAddrInfoRequest. c-ares stores the ctx
@@ -5399,7 +5682,7 @@ impl Resolver {
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
-        Ok(promise)
+        Ok(returned)
     }
 
     // ───────── servers / local address ─────────
@@ -5775,7 +6058,15 @@ impl Resolver {
         addr_s: &[u8],
         port_value: f64,
     ) -> JsResult<JSValue> {
-        let global_this = cx.global();
+        Self::lookup_service(cx.global(), addr_s, port_value, None)
+    }
+
+    fn lookup_service(
+        global_this: &JSGlobalObject,
+        addr_s: &[u8],
+        port_value: f64,
+        callback: Option<Callback>,
+    ) -> JsResult<JSValue> {
         let context = global_this.bun_vm().context_of_caller().id();
         if addr_s.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
@@ -5823,11 +6114,11 @@ impl Resolver {
         );
 
         if let LookupCacheHit::Inflight(inflight) = cache {
-            let info = CAresNameInfo::init(global_this, context, cache_name);
+            let info = CAresNameInfo::init(global_this, context, callback, cache_name);
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(info) };
             // SAFETY: `info` was just heap-allocated; owned by the inflight list.
-            return Ok(unsafe { (*info).promise.value() });
+            return Ok(unsafe { (*info).completion.value() });
         }
 
         let request = GetNameInfoRequest::init(
@@ -5836,11 +6127,12 @@ impl Resolver {
             cache_name, // transfer ownership here
             global_this,
             context,
+            callback,
             PendingCacheField::PendingNameinfoCacheCares,
         );
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
-        let promise = unsafe { (*(*request).tail).promise.value() };
+        let returned = unsafe { (*(*request).tail).completion.value() };
         // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
         // sockaddr_storage reborrowed as sockaddr; `request` was just
         // `heap::alloc`'d and is owned by c-ares until the callback fires.
@@ -5855,7 +6147,91 @@ impl Resolver {
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         resolver.request_sent(global_this.bun_vm());
-        Ok(promise)
+        Ok(returned)
+    }
+
+    // ───────── the callback forms of `node:dns` ─────────
+    // Each starts what its promise twin starts. The waiter holds `callback`, and `Answers` calls it.
+
+    pub(crate) fn lookup_cb<'a>(
+        cx: &mut JsScope<'a>,
+        callback: JsLocal<'a, Callable>,
+        name: &[u8],
+        options: &LookupOptions<'_>,
+    ) -> JsResult<()> {
+        Self::lookup_host(
+            cx.global(),
+            name,
+            options,
+            Some(Callback::after_each(callback)),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn lookup_service_cb<'a>(
+        cx: &mut JsScope<'a>,
+        callback: JsLocal<'a, Callable>,
+        address: &[u8],
+        port: f64,
+    ) -> JsResult<()> {
+        Self::lookup_service(
+            cx.global(),
+            address,
+            port,
+            Some(Callback::after_each(callback)),
+        )?;
+        Ok(())
+    }
+
+    /// `resolver` is absent for the resolver of the VM.
+    pub(crate) fn resolve_cb<'a>(
+        cx: &mut JsScope<'a>,
+        callback: JsLocal<'a, Callable>,
+        resolver: Option<&'a Resolver>,
+        name: &[u8],
+        record: Option<&[u8]>,
+    ) -> JsResult<()> {
+        let global_this = cx.global();
+        let resolver = resolver.unwrap_or_else(|| global_resolver(global_this));
+        resolver.resolve_record(
+            global_this,
+            name,
+            record,
+            Some(Callback::after_all(callback)),
+        )?;
+        Ok(())
+    }
+
+    /// `method` names the query. `resolver` is absent for the resolver of the VM.
+    pub(crate) fn query_cb<'a>(
+        cx: &mut JsScope<'a>,
+        callback: JsLocal<'a, Callable>,
+        resolver: Option<&'a Resolver>,
+        method: QueryMethod,
+        name: &[u8],
+    ) -> JsResult<()> {
+        let global_this = cx.global();
+        let resolver = resolver.unwrap_or_else(|| global_resolver(global_this));
+        resolver.start_query(
+            global_this,
+            method,
+            name,
+            Some(Callback::after_all(callback)),
+        )?;
+        Ok(())
+    }
+
+    /// `resolver` is absent for the resolver of the VM.
+    pub(crate) fn reverse_cb<'a>(
+        cx: &mut JsScope<'a>,
+        callback: JsLocal<'a, Callable>,
+        resolver: Option<&'a Resolver>,
+        ip: &[u8],
+    ) -> JsResult<()> {
+        let global_this = cx.global();
+        let resolver = resolver.unwrap_or_else(|| global_resolver(global_this));
+        resolver.reverse_address(global_this, ip, Some(Callback::after_all(callback)))?;
+        Ok(())
     }
 
     pub(crate) fn get_runtime_default_result_order_option() -> bun::String {

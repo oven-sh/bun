@@ -10,6 +10,7 @@ use bun_core as bstr;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc};
 
+use super::dns_body::{Answer, Answers, Completion, Delivery};
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 
 /// Create a JS string directly from UTF-8 bytes.
@@ -644,7 +645,7 @@ pub(crate) struct ErrorDeferred {
     pub errno: c_ares::Error,
     pub syscall: &'static [u8],
     pub hostname: Option<bstr::String>,
-    pub promise: bun_jsc::JSPromiseStrong,
+    pub completion: Completion,
 }
 
 impl ErrorDeferred {
@@ -652,52 +653,74 @@ impl ErrorDeferred {
         errno: c_ares::Error,
         syscall: &'static [u8],
         hostname: Option<bstr::String>,
-        promise: bun_jsc::JSPromiseStrong,
+        completion: Completion,
     ) -> Box<ErrorDeferred> {
         Box::new(ErrorDeferred {
             errno,
             syscall,
             hostname,
-            promise,
+            completion,
         })
     }
 
-    fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let code = self.errno.code();
+    /// `code` is the error's `code`: `errno.code()`, with or without its `DNS_`.
+    fn system_error(&mut self, code: &'static str) -> SystemError {
+        let name = &self.errno.code()[4..];
         let message = if let Some(hostname) = &self.hostname {
             bstr::String::create_format(format_args!(
                 "{} {} {}",
                 BStr::new(self.syscall),
-                BStr::new(&code[4..]),
+                BStr::new(name),
                 hostname
             ))
         } else {
             bstr::String::create_format(format_args!(
                 "{} {}",
                 BStr::new(self.syscall),
-                BStr::new(&code[4..])
+                BStr::new(name)
             ))
         };
-        let system_error = SystemError {
+        SystemError {
             errno: self.errno.errno(),
             code: bstr::String::static_(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
             hostname: self.hostname.take().unwrap_or(bstr::String::EMPTY),
             ..Default::default()
-        };
+        }
+    }
 
-        let instance =
-            system_error.to_error_instance_with_async_stack(global_this, self.promise.get());
+    fn reject(
+        mut self,
+        global_this: &JSGlobalObject,
+        mut promise: bun_jsc::JSPromiseStrong,
+    ) -> JsResult<()> {
+        let instance = self
+            .system_error(self.errno.code())
+            .to_error_instance_with_async_stack(global_this, promise.get());
         instance.put(
             global_this,
             b"name",
             bstr::String::static_("DNSException").to_js(global_this)?,
         );
 
-        // `self` (and thus self.promise / self.hostname) drops at scope exit;
+        // `self` (and thus self.hostname) and `promise` drop at scope exit;
         // hostname was `take()`n above to avoid double-deref.
-        self.promise.reject(global_this, Ok(instance))
+        promise.reject(global_this, Ok(instance))
+    }
+
+    /// What a `node:dns` callback is called with. Its `code` is Node's: `Bun.dns` says `DNS_ENOTFOUND`,
+    /// and `node:dns` says `ENOTFOUND`.
+    pub(crate) fn to_js_for_callback(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        let instance = self
+            .system_error(&self.errno.code()[4..])
+            .to_error_instance(global_this);
+        instance.put(
+            global_this,
+            b"name",
+            bstr::String::static_("DNSException").to_js(global_this)?,
+        );
+        Ok(instance)
     }
 
     /// `context` is the context of the script that asked. Once it has stopped the
@@ -705,7 +728,7 @@ impl ErrorDeferred {
     /// query with `ARES_EDESTRUCTION`, and that is how a `Bun.ModuleGraph`'s
     /// resolver goes when the graph is disposed.
     pub(crate) fn reject_later(
-        self: Box<Self>,
+        mut self: Box<Self>,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) {
@@ -715,14 +738,26 @@ impl ErrorDeferred {
         if vm.is_shutting_down() {
             return;
         }
-        vm.as_mut()
-            .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
-                ErrorDeferredTask {
-                    asking: context,
-                    deferred: self,
-                    global_this: bun_ptr::BackRef::new(global_this),
-                },
-            )));
+        match core::mem::take(&mut self.completion) {
+            Completion::Promise(promise) => {
+                vm.as_mut()
+                    .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
+                        ErrorDeferredTask {
+                            asking: context,
+                            deferred: self,
+                            promise,
+                            global_this: bun_ptr::BackRef::new(global_this),
+                        },
+                    )));
+            }
+            Completion::Callback(callback, checkpoint) => Answers::record(Delivery {
+                global: bun_ptr::BackRef::new(global_this),
+                callback,
+                checkpoint,
+                context,
+                answer: Answer::Failed(self),
+            }),
+        }
     }
 }
 
@@ -731,6 +766,7 @@ pub(crate) struct ErrorDeferredTask {
     /// The context of the script that asked; it may stop before the task runs.
     asking: bun_jsc::ContextId,
     deferred: Box<ErrorDeferred>,
+    promise: bun_jsc::JSPromiseStrong,
     // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
     // enqueued task (VM-owned), so a `BackRef` captures the invariant.
     global_this: bun_ptr::BackRef<JSGlobalObject>,
@@ -742,12 +778,13 @@ impl ErrorDeferredTask {
         let Self {
             asking,
             deferred,
+            promise,
             global_this,
         } = *self;
         let global = global_this.get();
         // For the script that asked: once its context has stopped the error goes to nobody.
         let _context = global.bun_vm().enter_context(asking);
-        deferred.reject(global)
+        deferred.reject(global, promise)
     }
 }
 
@@ -770,10 +807,10 @@ pub(crate) fn error_to_deferred(
     this: c_ares::Error,
     syscall: &'static [u8],
     hostname: Option<&[u8]>,
-    promise: &mut bun_jsc::JSPromiseStrong,
+    completion: &mut Completion,
 ) -> Box<ErrorDeferred> {
     let host_string: Option<bstr::String> = hostname.map(bstr::String::clone_utf8);
-    let taken = core::mem::take(promise);
+    let taken = core::mem::take(completion);
     ErrorDeferred::init(this, syscall, host_string, taken)
 }
 

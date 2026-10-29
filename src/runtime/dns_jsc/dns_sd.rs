@@ -587,6 +587,8 @@ impl SharedConnection {
         let main_ref = unsafe { (*this).main_ref };
         // One scope across `finish()` so the microtask drain runs after we let go of `this`.
         let _exit = event_loop_scope();
+        // The `node:dns` callbacks of what finishes run at the same point, before that drain.
+        let _answers = _exit.is_some().then(Pass::open);
 
         // SAFETY: FFI; `main_ref` is live and no `&mut Self` is held (callbacks use `context`).
         let rc = unsafe { DNSServiceProcessResult(main_ref) };
@@ -672,6 +674,7 @@ impl SharedConnection {
     pub(crate) unsafe fn on_early_out(this: *mut Self) {
         // Raw receiver like `on_readable`: `finish()` may re-derive `&mut Self`, so no borrow of `*this` outlives it.
         let _exit = event_loop_scope();
+        let _answers = _exit.is_some().then(Pass::open);
         // SAFETY: `this` is the live connection whose timer fired; each borrow
         // below is scoped to its statement and ends before `finish()`.
         let ready = unsafe {
@@ -800,6 +803,7 @@ pub(crate) fn lookup(
     query: &GetAddrInfo,
     global_this: &JSGlobalObject,
     context: bun_jsc::ContextId,
+    callback: Option<Callback>,
 ) -> JSValue {
     bun_core::Environment::only_mac();
 
@@ -807,18 +811,18 @@ pub(crate) fn lookup(
     if getaddrinfo_only_flags(query.options.flags)
         || bun_core::ip_address::to_ip_address(query.name.as_ref()).is_some()
     {
-        return lib_c::lookup(this, query, global_this, context);
+        return lib_c::lookup(this, query, global_this, context, callback);
     }
 
     let key = get_addr_info_request::PendingCacheKey::init(query);
     let cache = this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
 
     if let CacheHit::Inflight(inflight) = cache {
-        let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
+        let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context, callback);
         // SAFETY: inflight points into resolver's HiveArray buffer
         unsafe { (*inflight).append(dns_lookup) };
         // SAFETY: `dns_lookup` was just heap-allocated by `DNSLookup::init`.
-        return unsafe { (*dns_lookup).promise.value() };
+        return unsafe { (*dns_lookup).completion.value() };
     }
 
     let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
@@ -828,7 +832,7 @@ pub(crate) fn lookup(
                 unsafe { c.put(new) };
             });
         }
-        return lib_c::lookup(this, query, global_this, context);
+        return lib_c::lookup(this, query, global_this, context, callback);
     };
 
     let protocol = protocol_for_family(query.options.family);
@@ -838,10 +842,11 @@ pub(crate) fn lookup(
         Some(this.as_ctx_ptr()),
         global_this,
         context,
+        callback,
         PendingCacheField::PendingHostCacheNative,
     );
     // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
-    let promise_value = unsafe { (*request).head.promise.value() };
+    let returned = unsafe { (*request).head.completion.value() };
 
     let name_z = bun::ZBox::from_bytes(query.name.as_ref());
     if !shared.start(Inflight::Jsc(request), protocol, &name_z) {
@@ -857,10 +862,10 @@ pub(crate) fn lookup(
             DNSLookup::destroy(&raw mut (*request).head);
             drop(bun_core::heap::take(request));
         }
-        return lib_c::lookup(this, query, global_this, context);
+        return lib_c::lookup(this, query, global_this, context, callback);
     }
 
     this.request_sent(this.vm());
 
-    promise_value
+    returned
 }

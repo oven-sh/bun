@@ -386,9 +386,11 @@ export default b.declarations(
     ),
     "node:dns",
     "node:dns/promises",
+    "internal/dns/binding",
     "%DNSResolver%",
     ...nativeBindings("Bindgen", "dns_internals.bind.ts", "getRuntimeDefaultResultOrderOption"),
     ...nativeBindings("Bindgen", "dns_internals.bind.ts", "newResolver"),
+    ...nativeBindings("Bindgen", "node_dns_binding.bind.ts", "callbackForms"),
   ),
 
   extendAll(

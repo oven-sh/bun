@@ -151,7 +151,7 @@ const kInternalSendOptions: any = Object.create(null);
 $putByIdDirectPrivate(kInternalSendOptions, "internal", true);
 ObjectFreeze(kInternalSendOptions);
 
-// Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
+// Node invokes fs callbacks via InternalMakeCallback, so a throw becomes uncaughtException
 // (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
 // https://github.com/nodejs/node/blob/main/src/api/callback.cc
 const reportUncaughtException: (error: unknown) => void = $newCppFunction(
@@ -162,7 +162,7 @@ const reportUncaughtException: (error: unknown) => void = $newCppFunction(
 
 // Wrap a node-style callback so a throw inside it takes the uncaught path. The
 // callback keeps its place in the event loop; only the throw is rerouted. The
-// arity switch avoids materializing `arguments` for the shapes fs and dns use.
+// arity switch avoids materializing `arguments` for the shapes fs uses.
 function guardCallback(callback: (...args: any[]) => unknown) {
   return function guarded(a?: unknown, b?: unknown, c?: unknown) {
     try {

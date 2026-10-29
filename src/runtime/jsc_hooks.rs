@@ -76,6 +76,9 @@ pub(crate) struct RuntimeState {
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
+    /// What `node:dns` callbacks wait for, from every resolver of the VM. Each event loop of the
+    /// VM has a list: the regular loop, then the loop that macros run on.
+    pub(crate) dns_answers: [crate::dns_jsc::Answers; 2],
     /// Synthetic `bun:main` wrapper source.
     pub(crate) entry_point: ServerEntryPoint,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
@@ -194,6 +197,16 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     // address is stable for the VM's lifetime and only read (interior
     // mutability via `OnceCell`).
     unsafe { &(*state).global_dns_data }
+}
+
+/// [`RuntimeState::dns_answers`] of the event loop that this thread's VM runs now.
+#[inline]
+pub(crate) fn dns_answers() -> &'static crate::dns_jsc::Answers {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "dns_answers before init_runtime_state");
+    let macro_loop = usize::from(VirtualMachine::get().macro_mode);
+    // SAFETY: as `global_dns_data`.
+    unsafe { &(*state).dns_answers[macro_loop] }
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
@@ -362,6 +375,7 @@ unsafe fn init_runtime_state(
         },
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
+        dns_answers: [const { crate::dns_jsc::Answers::new() }; 2],
         entry_point: ServerEntryPoint::default(),
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
@@ -1784,6 +1798,11 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
         return SweepResult::Idle;
     }
     let mut result = SweepResult::Idle;
+    // The callbacks that wait hold JS handles, and nobody is left to call.
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; the lists are interior-mutable.
+    for answers in unsafe { &(*state).dns_answers } {
+        answers.discard();
+    }
     // SAFETY: `state` is the live per-thread `RuntimeState` box; shared borrow
     // of the `OnceCell` only (the resolver's own state is interior-mutable).
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {

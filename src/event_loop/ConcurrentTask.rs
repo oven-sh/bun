@@ -74,6 +74,7 @@ pub mod task_tag {
         ChromePipeEvent,
         CopyFileWindowsMkdirp,
         WriteFileWindowsMkdirp,
+        DnsAnswers,               // bun_runtime::dns_jsc::Answers (`node:dns` callbacks)
         DnsErrorDeferred,
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Close,

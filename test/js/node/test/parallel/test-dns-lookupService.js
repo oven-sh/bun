@@ -6,6 +6,8 @@ const assert = require('assert');
 Bun.dns.lookupService = (addr, port) => {
   throw Object.assign(new Error(`getnameinfo ENOENT ${addr}`), {code: 'ENOENT', syscall: 'getnameinfo'});
 };
+// The callback form of `dns.lookupService` has a native of its own.
+require('bun:internal-for-testing').dnsCallbackForms.lookupServiceCb = (callback, addr, port) => Bun.dns.lookupService(addr, port);
 
 const dns = require('dns');
 

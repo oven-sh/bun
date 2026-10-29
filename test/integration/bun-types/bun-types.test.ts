@@ -421,6 +421,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_assert_binding.bind.ts": null,
   "node_cluster_binding.bind.ts": null,
   "node_crypto_binding.bind.ts": null,
+  "node_dns_binding.bind.ts": null,
   "node_fs_binding.bind.ts": null,
   "node_fs_stat_watcher.bind.ts": null,
   "node_fs_watcher.bind.ts": null,

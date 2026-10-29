@@ -11,6 +11,9 @@ if (typeof Bun === "undefined") {
   cares.getaddrinfo = () => internalBinding('uv').UV_ENOMEM;
 } else {
   Bun.dns.lookup = (hostname) => Promise.reject(Object.assign(new Error('Out of memory'), { code: 'ENOMEM', hostname }));
+  // The callback form of `dns.lookup` has a native of its own, which answers through the callback.
+  require('bun:internal-for-testing').dnsCallbackForms.lookupCb = (callback, hostname) =>
+    process.nextTick(callback, Object.assign(new Error('Out of memory'), { code: 'ENOMEM', hostname }));
 }
 
 const dns = require('dns');

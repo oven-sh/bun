@@ -1461,6 +1461,7 @@ interface $BunModules {
   "internal/cluster/primary": $ModuleValue<typeof import("./internal/cluster/primary")>;
   "internal/debugger": $ModuleValue<typeof import("./internal/debugger")>;
   "internal/dgram": $ModuleValue<typeof import("./internal/dgram")>;
+  "internal/dns/binding": $ModuleValue<typeof import("./internal/dns/binding")>;
   "internal/errors": $ModuleValue<typeof import("./internal/errors")>;
   "internal/fifo": $ModuleValue<typeof import("./internal/fifo")>;
   "internal/fixed_queue": $ModuleValue<typeof import("./internal/fixed_queue")>;

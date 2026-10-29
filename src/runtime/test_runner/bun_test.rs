@@ -508,7 +508,7 @@ impl BunTestRoot {
         self.file_generation = self.file_generation.wrapping_add(1);
 
         // Derive the stored backref from the TestRunner's *stable* storage
-        // (the global `Jest::RUNNER` NonNull) rather than `self as *mut _`.
+        // (the global `Jest::RUNNER` pointer) rather than `self as *mut _`.
         // A pointer coerced from `&mut self` carries provenance bounded by this
         // call's reborrow; the next `Jest::runner()` hands out a fresh
         // an exclusive `&mut TestRunner`, invalidating that tag, so later derefs at

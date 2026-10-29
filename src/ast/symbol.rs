@@ -100,7 +100,8 @@ pub struct Symbol {
     /// compile-time error like we do for real import items. This status lets us
     /// avoid this. We also need to be able to replace such import items with
     /// undefined, which this status is also used for.
-    pub import_item_status: ImportItemStatus,
+    /// `Cell`: the linker sets it through `&Symbol`, only in a serial step (its graph is shared across threads).
+    pub import_item_status: Cell<ImportItemStatus>,
 
     /// Packed boolean state — see [`SymbolFlags`].
     pub flags: SymbolFlags,
@@ -177,7 +178,7 @@ impl Default for Symbol {
             chunk_index: AtomicU32::new(INVALID_CHUNK_INDEX),
             nested_scope_slot: INVALID_NESTED_SCOPE_SLOT,
             kind: Kind::Other,
-            import_item_status: ImportItemStatus::None,
+            import_item_status: Cell::new(ImportItemStatus::None),
             flags: SymbolFlags::empty(),
         }
     }
@@ -244,7 +245,7 @@ impl Symbol {
     /// that a hoisting merge links has no import item status.
     #[inline]
     pub fn is_bound_import_item(&self) -> bool {
-        self.import_item_status != ImportItemStatus::None && self.has_link()
+        self.import_item_status.get() != ImportItemStatus::None && self.has_link()
     }
 }
 

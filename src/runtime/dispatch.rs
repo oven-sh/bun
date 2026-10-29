@@ -347,18 +347,12 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        task_tag::ShellAsyncCpTask => in_features!(
-            [Shell],
-            (
-                copy: *mut crate::node::fs::ShellAsyncCpTask =
-                    cast_ptr!(crate::node::fs::ShellAsyncCpTask),
-                global: &JSGlobalObject = global,
-            ) -> JsResult<()> {
+        task_tag::ShellAsyncCpTask => {
+            feature_arm!([Shell], |copy: crate::node::fs::ShellAsyncCpTask| {
                 // SAFETY: as above.
-                unsafe { bun_core::heap::take(copy) }.run_from_js_thread(global)?;
-                Ok(())
-            }
-        )?,
+                unsafe { bun_core::heap::take(copy) }.finish_shell();
+            })
+        }
         task_tag::StatWatcherHop => feature_arm!(
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {

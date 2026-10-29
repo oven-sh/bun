@@ -2223,7 +2223,8 @@ mod _async_tasks {
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
-            if poster.is_js() {
+            // `fs.cp` always has a JS ticket; the const in front keeps references to the shell out of its code.
+            if !IS_SHELL || poster.is_js() {
                 poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
                     this,
                 )));
@@ -2241,28 +2242,23 @@ mod _async_tasks {
         }
 
         /// The shell's `cp`, on its loop (JS or mini): hands the result to the `ShellCpTask`.
-        fn finish_shell(mut self: Box<Self>) {
-            // SAFETY: shelltask is set by create_for_shell and outlives this task
-            // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
-            // `Ok(())` placeholder.
+        pub(crate) fn finish_shell(mut self: Box<Self>) {
+            // Move the result out: `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap `Ok(())` placeholder.
             let result = core::mem::replace(self.result.get_mut(), Ok(()));
             let src = core::mem::take(&mut self.args.src);
             let dest = core::mem::take(&mut self.args.dest);
             let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
-            // SAFETY: shelltask is non-null in the IS_SHELL specialization and
-            // outlives this task; `cp_on_finish` enqueues it concurrently.
+            // SAFETY: `create_for_shell` set `shelltask`: a live `ShellCpTask` that waits for
+            // this call, which takes it over. It is not touched afterwards.
             unsafe { ShellCpTask::cp_on_finish(shelltask, src, dest, result) };
             self.destroy();
         }
 
+        /// `fs.cp`, on the JS thread: settles the promise.
         pub(crate) fn run_from_js_thread(
             mut self: Box<Self>,
             global_object: &JSGlobalObject,
         ) -> JsResult<()> {
-            if IS_SHELL {
-                self.finish_shell();
-                return Ok(());
-            }
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
             let promise = self.promise.get();

@@ -155,7 +155,7 @@ describe("dgram connect() reads the address as the UDP handle does", () => {
   });
 
   // What connect(2) itself says, which the callback gets as it is. Each kernel has its own answers, and these are
-  // the ones of Linux. The zone of fe80::1 decides between the first two: no interface, or one with no route.
+  // the ones of Linux. The zone of fe80::1 decides: EINVAL with no interface, ENETUNREACH with one that has no route.
   const refusedByLinux: [
     name: string,
     type: SocketType,
@@ -171,6 +171,8 @@ describe("dgram connect() reads the address as the UDP handle does", () => {
       `fe80::1%${loopbackInterface}`,
       "ENETUNREACH",
     ],
+    // 2 ** 32 + 1 names no interface. It is not the index 1, which the loopback interface has.
+    ["a link-local address whose zone is a number past 32 bits", "udp6", {}, "fe80::1%4294967297", "EINVAL"],
     ["an IPv4-mapped address from an IPv6-only socket", "udp6", { ipv6Only: true }, "::ffff:127.0.0.1", "ENETUNREACH"],
     ["the broadcast address without SO_BROADCAST", "udp4", {}, "255.255.255.255", "EACCES"],
   ];

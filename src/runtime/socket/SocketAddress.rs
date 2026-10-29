@@ -1022,14 +1022,14 @@ fn scope_index(zone: &[u8]) -> u32 {
             }
         }
     }
-    let mut idx: u32 = 0;
-    for &b in zone {
-        if !b.is_ascii_digit() {
-            return 0;
-        }
-        idx = idx.wrapping_mul(10).wrapping_add((b - b'0') as u32);
-    }
-    idx
+    zone.iter()
+        .try_fold(0u32, |idx, &b| {
+            if !b.is_ascii_digit() {
+                return None;
+            }
+            idx.checked_mul(10)?.checked_add(u32::from(b - b'0'))
+        })
+        .unwrap_or(0)
 }
 
 #[cfg(windows)]

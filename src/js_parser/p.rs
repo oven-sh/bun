@@ -4356,11 +4356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let items_slice: &mut [js_ast::ClauseItem] = stmt.items.slice_mut();
         for i in 0..items_slice.len() {
-            // `ClauseItem` does not derive `Copy`; bit-copy via `ptr::read` —
-            // all fields are POD (`StoreStr`/`Loc`/`LocRef`).
-            // SAFETY: items_slice[i] is a live initialised `ClauseItem`; the
-            // original slot is overwritten or compacted below before any drop.
-            let mut item = unsafe { core::ptr::read(&raw const items_slice[i]) };
+            let mut item = items_slice[i];
             let name = self.load_name_from_ref(item.name.ref_);
             let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, item.name.loc, name)?;
             item.name.ref_ = r#ref;
@@ -9970,18 +9966,7 @@ impl LowerUsingDeclarationsContext {
                 }
                 js_ast::StmtData::SExportClause(data) => {
                     // Merge export clauses together.
-                    // ClauseItem isn't `Clone` (POD-only fields, no derive);
-                    // shallow-copy via ptr::read.
-                    // arena-owned `StoreSlice<ClauseItem>` valid for 'a; the source
-                    // slot is never read again (this whole stmt is dropped via the
-                    // `continue` below) — safe to `ptr::read` each item.
-                    let items = data.items.slice();
-                    exports.reserve(items.len());
-                    for item in items {
-                        // SAFETY: arena-owned slot never read again (stmt dropped
-                        // via `continue` below); shallow move out is sound.
-                        exports.push(unsafe { core::ptr::read(item) });
-                    }
+                    exports.extend_from_slice(data.items.slice());
                     continue;
                 }
                 js_ast::StmtData::SFunction(_) => {

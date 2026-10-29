@@ -5269,7 +5269,7 @@ impl VirtualMachine {
             module_type: Cell::new(module_type),
             source_code_printer: printer.as_ptr(),
             // `fetchWithoutOnLoadPlugins` forbids the async path.
-            promise_ptr: core::ptr::null_mut(),
+            promise_ptr: None,
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,

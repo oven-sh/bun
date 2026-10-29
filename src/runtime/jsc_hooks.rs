@@ -2885,11 +2885,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Pending imports → AsyncModule queue.
                 if parse_result.pending_imports.len() > 0 {
-                    let promise_ptr = extra.promise_ptr;
                     // The queue outlives this call, and a virtual source's bytes do not.
-                    if promise_ptr.is_null() || virtual_source.is_some() {
+                    let (Some(promise_ptr), None) = (extra.promise_ptr, virtual_source) else {
                         return Err(crate::Error::UnexpectedPendingResolution);
-                    }
+                    };
 
                     if parse_result.source.contents_is_recycled {
                         // this shared buffer is about to become owned by the AsyncModule struct
@@ -2927,7 +2926,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             bun_jsc::async_module::InitOpts {
                                 parse_result,
                                 path: *path,
-                                promise_ptr: Some(promise_ptr),
+                                promise_ptr,
                                 specifier,
                                 referrer,
                                 arena,
@@ -4513,7 +4512,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     });
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
-    let mut promise: *mut JSInternalPromise = ptr::null_mut();
+    let promise: Cell<*mut JSInternalPromise> = Cell::new(ptr::null_mut());
     let extra = TranspileExtra {
         path: lr.path,
         loader: Cell::new(synchronous_loader),
@@ -4521,9 +4520,9 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         source_code_printer: printer_ptr,
         // Resolving a package asynchronously is the global object's loader's only.
         promise_ptr: if allow_promise && module_loader.is_empty() {
-            &raw mut promise
+            Some(&promise)
         } else {
-            ptr::null_mut()
+            None
         },
     };
     let args = TranspileArgs {
@@ -4540,11 +4539,11 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
-            promise.cast::<c_void>()
+            promise.get().cast::<c_void>()
         }
         Err(crate::Error::AsyncModule) => {
-            debug_assert!(!promise.is_null());
-            promise.cast::<c_void>()
+            debug_assert!(!promise.get().is_null());
+            promise.get().cast::<c_void>()
         }
         Err(err) => {
             if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
@@ -4659,7 +4658,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         loader: Cell::new(loader),
         module_type: Cell::new(ModuleType::Unknown),
         source_code_printer: printer_ptr,
-        promise_ptr: ptr::null_mut(), // null forbids async resolution
+        promise_ptr: None, // forbids async resolution
     };
     let args = TranspileArgs {
         specifier,

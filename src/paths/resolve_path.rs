@@ -377,25 +377,15 @@ pub fn get_if_exists_longest_common_path<'a>(input: &[&'a [u8]]) -> Option<&'a [
 // from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
 // without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
 // of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
-struct LazyPathBuf(core::cell::Cell<*mut PathBuffer>);
-
-impl Drop for LazyPathBuf {
-    fn drop(&mut self) {
-        let p = self.0.get();
-        if !p.is_null() {
-            // SAFETY: `p` came from `heap::into_raw` in `lazy_path_buf`; sole accessor.
-            unsafe { drop(bun_core::heap::take(p)) };
-        }
-    }
-}
+struct LazyPathBuf(core::cell::UnsafeCell<Option<Box<PathBuffer>>>);
 
 thread_local! {
     static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf =
-        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+        const { LazyPathBuf(core::cell::UnsafeCell::new(None)) };
     static RELATIVE_FROM_BUF: LazyPathBuf =
-        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+        const { LazyPathBuf(core::cell::UnsafeCell::new(None)) };
     static RELATIVE_TO_BUF: LazyPathBuf =
-        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+        const { LazyPathBuf(core::cell::UnsafeCell::new(None)) };
 }
 
 /// Lazily allocate (on first use) and borrow a thread-local `PathBuffer`. One
@@ -403,13 +393,9 @@ thread_local! {
 /// 5 sites → 1).
 #[inline]
 fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
-    let mut p = c.0.get();
-    if p.is_null() {
-        p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
-        c.0.set(p);
-    }
-    // SAFETY: `p` is non-null after the init branch; this thread is the sole accessor.
-    unsafe { &mut *p }
+    // SAFETY: the slot is thread-local and only this function touches it, so no other reference to it is live.
+    let slot = unsafe { &mut *c.0.get() };
+    slot.get_or_insert_with(|| Box::new(PathBuffer::ZEROED))
 }
 
 /// Raw pointer into the thread-local scratch buffer. Callers reborrow

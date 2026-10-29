@@ -1,5 +1,5 @@
-// Several points of the table in ../generated/typed-object-mutations.ts on one object: two to four changes that no type forbids, of the object itself and of what stands above it, one behind the other in a drawn order, and two looks through the typed reference.
-import { axesOf, nameOf, pickCombination, textOf, type Combination } from "../generated/typed-object-mutations";
+// Several points of the table in ./generators/typed-object-mutations.ts on one object: two to four changes that no type forbids, of the object itself and of what stands above it, one behind the other in a drawn order, and two looks through the typed reference.
+import { axesOf, nameOf, pickCombination, textOf, type Combination } from "./generators/typed-object-mutations";
 import type { Random } from "./random";
 
 type Change = Combination["change"];

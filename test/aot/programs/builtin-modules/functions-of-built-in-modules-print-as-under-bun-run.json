@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for built-in modules, which the jsc shell does not provide" }

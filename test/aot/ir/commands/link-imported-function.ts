@@ -1,6 +1,6 @@
-// RUN(ENTRY): link
-// ENTRY: function [[add]] name="add" module=[[entry]]
-// ENTRY: entry module=[[entry]]
+// RUN(MAIN): link
+// MAIN: function [[add]] name="add" module=[[entry]]
+// MAIN: entry module=[[entry]]
 
 // RUN(IMPORTED): link
 // IMPORTED: module [[imported]] path="{{*}}/imports/helper.ts"

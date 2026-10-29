@@ -220,6 +220,9 @@ struct Outer<'a> {
     dialect: CodeDialect,
     /// `saveDiagnosticsLength`
     diagnostics: usize,
+    /// A decorator that an expression of a tag leaves stray belongs to the comment, where TypeScript keeps it: no
+    /// statement list takes it.
+    stray_decorators: usize,
 }
 
 /// A parse that only keeps its parse errors.
@@ -823,6 +826,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             has_top_level_await: self.has_top_level_await,
             dialect: self.enter_typescript_dialect(),
             diagnostics: self.f.diagnostics.len(),
+            stray_decorators: self.s.stray_decorators.len(),
         };
         self.lx
             .set_src(outer.src.get(..cut as usize).unwrap_or(outer.src));
@@ -855,6 +859,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.last_nullable_type = outer.last_nullable_type;
         self.parameter_question_pos = outer.parameter_question_pos;
         self.has_top_level_await = outer.has_top_level_await;
+        self.s.stray_decorators.truncate(outer.stray_decorators);
         self.jsdoc.is_in_comment = false;
         match self.lx.rejection {
             None => {}

@@ -442,12 +442,10 @@ pub(crate) trait CompressionStreamImpl:
                 copy.from = (view.as_ptr(), view.len());
                 global.vm().report_extra_memory(copy.bytes.len());
             }
-            let chunk = copy.bytes.get(in_off..in_off + in_len)?;
-            // SAFETY: `write()`, `reset()` and `close()` throw or are deferred while a write
-            // is in progress, and the completion frees the copy only after the input is
-            // consumed, so the bytes outlive the job that reads them.
-            Some(unsafe { core::slice::from_raw_parts(chunk.as_ptr(), chunk.len()) })
-        })
+            Some(())
+        })?;
+        // Nothing replaces or frees the copy while a write is in progress, so the job can read these bytes.
+        self.input_copy().get().bytes.get(in_off..in_off + in_len)
     }
 
     /// Releases the pins `write()` took; the cached slots keep rooting the values either way.

@@ -1424,19 +1424,14 @@ impl WsPackageSocket {
     /// Runs in the context of the script that created the server, like every other `http.Server`
     /// connection event. It doesn't use the handlers' own context, because each server has one
     /// set of handlers and they come from the first upgrade.
-    ///
-    /// # Safety
-    /// `this` is the socket's live user-data slot.
     #[inline(always)]
-    unsafe fn dispatch(this: *mut Self, callback: impl FnOnce(&Self) -> JsResult<()>) {
-        // SAFETY: per this function's contract.
-        let this = unsafe { &*this };
-        let handler = this.0.handler();
+    fn dispatch(&self, callback: impl FnOnce(&Self) -> JsResult<()>) {
+        let handler = self.0.handler();
         // `server` is only cleared when the server drains, and an open socket prevents that.
         let _context = handler
             .server
             .map(|server| handler.vm().enter_context(server.context_id()));
-        crate::dispatch::fold(callback(this));
+        crate::dispatch::fold(callback(self));
     }
 }
 
@@ -1449,62 +1444,51 @@ impl WebSocketHandler for WsPackageSocket {
     #[inline(always)]
     unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
-        unsafe {
-            Self::dispatch(this, |this| {
-                let global = this.0.handler().global_object();
-                let buffer = match ArrayBuffer::create_buffer(global, message) {
-                    Ok(buffer) => buffer,
-                    Err(e) => {
-                        // Same as `ServerWebSocket::on_message`. `ws.ts` turns the close into the
-                        // socket's 'error' event.
-                        if global.take_error(e).is_termination_exception() {
-                            return Err(e);
-                        }
-                        ws.fail_out_of_memory();
-                        return Ok(());
+        unsafe { &*this }.dispatch(|this| {
+            let global = this.0.handler().global_object();
+            let buffer = match ArrayBuffer::create_buffer(global, message) {
+                Ok(buffer) => buffer,
+                Err(e) => {
+                    // Same as `ServerWebSocket::on_message`. `ws.ts` turns the close into the socket's 'error' event.
+                    if global.take_error(e).is_termination_exception() {
+                        return Err(e);
                     }
-                };
-                this.call(this.0.handler().on_message, |_| {
-                    Ok([buffer, JSValue::js_boolean(opcode == Opcode::Binary)])
-                })
+                    ws.fail_out_of_memory();
+                    return Ok(());
+                }
+            };
+            this.call(this.0.handler().on_message, |_| {
+                Ok([buffer, JSValue::js_boolean(opcode == Opcode::Binary)])
             })
-        };
+        });
     }
     #[inline(always)]
     unsafe fn on_drain(this: *mut Self, _ws: AnyWebSocket) {
         // SAFETY: per trait contract.
-        unsafe {
-            Self::dispatch(this, |this| {
-                this.call(this.0.handler().on_drain, |_| Ok([]))
-            })
-        };
+        unsafe { &*this }.dispatch(|this| this.call(this.0.handler().on_drain, |_| Ok([])));
     }
     #[inline(always)]
     unsafe fn on_ping(this: *mut Self, _ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe {
-            Self::dispatch(this, |this| {
-                this.call(this.0.handler().on_ping, |global| {
-                    Ok([ArrayBuffer::create_buffer(global, message)?])
-                })
+        unsafe { &*this }.dispatch(|this| {
+            this.call(this.0.handler().on_ping, |global| {
+                Ok([ArrayBuffer::create_buffer(global, message)?])
             })
-        };
+        });
     }
     #[inline(always)]
     unsafe fn on_pong(this: *mut Self, _ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe {
-            Self::dispatch(this, |this| {
-                this.call(this.0.handler().on_pong, |global| {
-                    Ok([ArrayBuffer::create_buffer(global, message)?])
-                })
+        unsafe { &*this }.dispatch(|this| {
+            this.call(this.0.handler().on_pong, |global| {
+                Ok([ArrayBuffer::create_buffer(global, message)?])
             })
-        };
+        });
     }
     #[inline(always)]
     unsafe fn on_close(this: *mut Self, _ws: AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { Self::dispatch(this, |this| this.on_close(code, message)) };
+        unsafe { &*this }.dispatch(|this| this.on_close(code, message));
     }
 }
 

@@ -1958,6 +1958,117 @@ describe("bundler", () => {
       "/entry.js": ['Ambiguous import "foo" has multiple matching exports'],
     },
   });
+  // A file that passes on a name of such a barrel still reads it off the
+  // namespace, so an entry point that stars that file declares what it exports.
+  for (const [name, named, keys] of [
+    ["ExportFrom", `export { foo } from "./barrel.js";`, "foo"],
+    ["ImportExport", `import { foo } from "./barrel.js"; export { foo };`, "foo"],
+    ["ExportFromAs", `export { foo as baz, bar } from "./barrel.js";`, "bar,baz"],
+  ]) {
+    const files = {
+      "/named.js": named,
+      "/barrel.js": /* js */ `
+        export * from "./lib.cjs";
+      `,
+      "/holder.js": /* js */ `
+        import lib from "./lib.cjs";
+        console.log(Object.keys(lib).join(","));
+      `,
+      "/lib.cjs": /* js */ `
+        exports.foo = 1;
+        exports.bar = 2;
+      `,
+    };
+    itBundled(`cjs2esm/ExportStarOf${name}OfWrappedLiftedCommonJSBarrel`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./holder.js";
+          export * from "./named.js";
+        `,
+        ...files,
+      },
+      format: "esm",
+      cjs2esm: { unhandled: ["/lib.cjs"] },
+      runtimeFiles: {
+        "/test.js": /* js */ `
+          import * as ns from './out.js';
+          console.log(Object.keys(ns).join(","), ns.foo ?? ns.baz);
+        `,
+      },
+      run: {
+        file: "/test.js",
+        stdout: `foo,bar\n${keys} 1`,
+      },
+    });
+    // The same for a chunk that `import()` loads.
+    itBundled(`cjs2esm/ExportStarOf${name}OfWrappedLiftedCommonJSBarrelSplitting`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./holder.js";
+          const ns = await import("./lazy.js");
+          console.log(Object.keys(ns).join(","), ns.foo ?? ns.baz);
+        `,
+        "/lazy.js": /* js */ `
+          export * from "./named.js";
+        `,
+        ...files,
+      },
+      format: "esm",
+      splitting: true,
+      outdir: "/out",
+      run: {
+        file: "/out/entry.js",
+        stdout: `foo,bar\n${keys} 1`,
+      },
+    });
+  }
+  // A method call through the namespace of such a barrel passes that
+  // namespace as `this`, as for a lifted file with no wrapper.
+  for (const [name, files] of [
+    [
+      "StarImport",
+      {
+        "/entry.js": /* js */ `
+          import lib from "./lib.cjs";
+          import * as ns from "./barrel.js";
+          console.log(Object.keys(lib).join(","), ns.self() === ns, ns["self"]() === ns, ns.own);
+        `,
+      },
+    ],
+    [
+      "NamespaceReExport",
+      {
+        "/entry.js": /* js */ `
+          import lib from "./lib.cjs";
+          import { ns } from "./reexport.js";
+          console.log(Object.keys(lib).join(","), ns.self() === ns, ns["self"]() === ns, ns.own);
+        `,
+        "/reexport.js": /* js */ `
+          export * as ns from "./barrel.js";
+        `,
+      },
+    ],
+  ] as const) {
+    itBundled(`cjs2esm/${name}MethodCallThroughExportStarOfWrappedLiftedCommonJSKeepsThis`, {
+      files: {
+        ...files,
+        "/barrel.js": /* js */ `
+          export * from "./lib.cjs";
+          export const own = 1;
+        `,
+        "/lib.cjs": /* js */ `
+          exports.self = function () {
+            return this;
+          };
+        `,
+      },
+      format: "esm",
+      cjs2esm: { unhandled: ["/lib.cjs"] },
+      run: {
+        stdout: "self true true 1",
+      },
+    });
+  }
   // A method call through the default import or the namespace of a CommonJS
   // module passes `module.exports` as `this`. The `stack-trace` package reads it.
   const thisReadingLib = {

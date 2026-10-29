@@ -1709,7 +1709,7 @@ pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a Z
 }
 
 pub fn join_string_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a [u8] {
-    join_string_buf_t::<u8, P>(buf, parts)
+    join_string_buf_t_same::<u8, P>(buf, parts)
 }
 
 /// `joinStringBufW` overload for u16 parts (no transcode): the
@@ -1720,7 +1720,7 @@ pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u
 
 const JOIN_TEMP_LEN: usize = 4096;
 
-/// Uninitialized scratch for `join_string_buf_t*`'s unnormalized concatenation of `count` units.
+/// Uninitialized scratch for `join_string_buf_t_same`'s unnormalized concatenation of `count` units.
 #[inline]
 fn join_temp_buf<'a, T>(
     stack: &'a mut [MaybeUninit<T>; JOIN_TEMP_LEN],
@@ -1735,8 +1735,6 @@ fn join_temp_buf<'a, T>(
 }
 
 /// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
-/// split out of `join_string_buf_t` because Rust can't monomorphize on the
-/// parts' element types — callers pick the overload.
 fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     buf: &'a mut [T],
     parts: &[&[T]],
@@ -1781,51 +1779,6 @@ fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
 
 pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
     join_z_buf::<P>(buf, parts)
-}
-
-fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&[u8]]) -> &'a [T] {
-    // Takes `&[&[u8]]` — every in-tree caller passes u8
-    // parts — and transcodes to u16 below when `T == u16`.
-    let mut written: usize = 0;
-    let mut stack_temp_buf = [const { MaybeUninit::<T>::uninit() }; JOIN_TEMP_LEN];
-    let mut heap_temp_buf: Vec<T> = Vec::new();
-
-    let mut count: usize = 0;
-    for part in parts {
-        if part.is_empty() {
-            continue;
-        }
-        count += part.len() + 1;
-    }
-
-    let temp_buf = join_temp_buf(&mut stack_temp_buf, &mut heap_temp_buf, count);
-
-    for part in parts {
-        if part.is_empty() {
-            continue;
-        }
-
-        if written > 0 {
-            temp_buf[written].write(T::from_u8(P::P.separator()));
-            written += 1;
-        }
-
-        let spare = &mut temp_buf[written..];
-        // SAFETY: write-only view; `write_u8_part` only stores into it and returns the units written.
-        let dest: &mut [T] =
-            unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<T>(), spare.len()) };
-        // Parts are always u8 (see fn-level comment); transcode iff T == u16.
-        written += T::write_u8_part(dest, part);
-    }
-
-    if written == 0 {
-        buf[0] = T::from_u8(b'.');
-        return &buf[0..1];
-    }
-
-    // SAFETY: the loop above wrote every unit of `temp_buf[..written]`.
-    let joined = unsafe { temp_buf[..written].assume_init_ref() };
-    normalize_string_node_t::<T, P>(joined, buf)
 }
 
 /// Buffer length that holds `_join_abs_string_buf`'s concatenation of `cwd` and

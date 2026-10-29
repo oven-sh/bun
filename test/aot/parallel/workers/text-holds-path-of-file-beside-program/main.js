@@ -1,7 +1,7 @@
 // A program puts the text together that a Worker starts from, and the text holds the whole path of a file beside the program.
 // Alone: which files the build compiles for a Worker depends on what else the executable holds
 // Build prints: 0 x warn: TS100150: Could not resolve: "file:///$bunfs/root/beside.js"
-// Build prints: 0 x warn: TS100150: Could not resolve: "file:///B:/~BUN/root/beside.js"
+// Build prints: 0 x warn: TS100150: Could not resolve: "file:///B:/%7EBUN/root/beside.js"
 const ask = (what, worker) =>
   new Promise(done => {
     const end = text => (console.log(what + ":", text), worker.terminate(), done());
@@ -15,7 +15,7 @@ const refused = 'error => postMessage("refused")';
 
 // The build folds this URL, so an executable must see exactly this form.
 const isInExecutable = /^(\/\$bunfs|B:[\\/]~BUN)/.test(import.meta.dir);
-console.log("URL as the build folds it:", !isInExecutable || /^file:\/\/\/(\$bunfs|B:\/~BUN)\/root\/beside\.js$/.test(url));
+console.log("URL as the build folds it:", !isInExecutable || /^file:\/\/\/(\$bunfs|B:\/%7EBUN)\/root\/beside\.js$/.test(url) || url);
 
 await ask(
   "import() of a path",

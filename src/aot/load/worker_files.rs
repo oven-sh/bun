@@ -98,6 +98,7 @@ fn with_forward_slashes(mut path: Vec<u8>) -> Vec<u8> {
     path
 }
 
+// As `import.meta.url` and `pathToFileURL()` write it when the program runs: they escape what Node escapes, and the parser of URLs escapes the rest.
 fn write_file_url(path: &[u8]) -> Option<Vec<u8>> {
     if !is_absolute(path) {
         return None;
@@ -110,7 +111,20 @@ fn write_file_url(path: &[u8]) -> Option<Vec<u8>> {
         let is_written_as_it_is = byte.is_ascii_graphic()
             && !matches!(
                 byte,
-                b'"' | b'#' | b'%' | b'<' | b'>' | b'?' | b'`' | b'{' | b'}' | b'\\'
+                b'"' | b'#'
+                    | b'%'
+                    | b'<'
+                    | b'>'
+                    | b'?'
+                    | b'`'
+                    | b'{'
+                    | b'}'
+                    | b'\\'
+                    | b'['
+                    | b']'
+                    | b'^'
+                    | b'|'
+                    | b'~'
             );
         if is_written_as_it_is {
             url.push(byte);
@@ -1464,7 +1478,7 @@ mod tests {
         );
         let windows = "B:/~BUN/root/";
         assert_eq!(
-            find("C:\\a\\b", windows, "file:///B:/~BUN/root/w.js"),
+            find("C:\\a\\b", windows, "file:///B:/%7EBUN/root/w.js"),
             is("C:/a/b/w.js")
         );
         assert_eq!(
@@ -1489,7 +1503,15 @@ mod tests {
             assert_eq!(read_file_url(&url).as_deref(), Some(path.as_bytes()));
         }
         let url = write_file_url(b"B:/~BUN/root/a b.js");
-        assert_eq!(url.as_deref(), Some(&b"file:///B:/~BUN/root/a%20b.js"[..]));
+        assert_eq!(
+            url.as_deref(),
+            Some(&b"file:///B:/%7EBUN/root/a%20b.js"[..])
+        );
+        let url = write_file_url(b"/a/[b]^c|d~e.js");
+        assert_eq!(
+            url.as_deref(),
+            Some(&b"file:///a/%5Bb%5D%5Ec%7Cd%7Ee.js"[..])
+        );
         assert_eq!(write_file_url(b"w.js"), None);
         assert_eq!(read_file_url(b"file:///a.js?b"), None);
         assert_eq!(read_file_url(b"file://host/a.js"), None);

@@ -52,6 +52,8 @@ WTF::String firstCompiledModuleMatching(JSC::JSGlobalObject*, JSC::RegExp* filte
 enum class NotInExecutable : bool { Code,
     HostObject };
 JSC::JSValue createNotInExecutableError(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path, NotInExecutable = NotInExecutable::Code);
+// The compiled program asks the loader why a module fails to load, and runs nothing of it.
+bool isAskingWhyFileFailsToLoad();
 JSC::JSValue errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
 // The same for a file that loads as a database or a page, under a name the compiler could not follow.
 JSC::JSValue errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);

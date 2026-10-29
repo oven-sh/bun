@@ -595,7 +595,12 @@ static JSObject* createEmptyJSONBodyError(JSGlobalObject* realm)
     return asObject(JSValue::decode(Blob__createEmptyJSONBodyError(realm)));
 }
 
-static thread_local bool isAskingWhyFileFailsToLoad = false;
+static thread_local bool isAskingWhyFileFails = false;
+
+bool isAskingWhyFileFailsToLoad()
+{
+    return isAskingWhyFileFails;
+}
 
 // The file is read and parsed as `require` reads it, and nothing of it runs.
 static JSValue createLoadError(JSGlobalObject* realm, const String& path)
@@ -606,7 +611,7 @@ static JSValue createLoadError(JSGlobalObject* realm, const String& path)
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(realm);
     BunString specifier = Bun::toString(path);
     ErrorableResolvedSource source;
-    SetForScope isAsking(isAskingWhyFileFailsToLoad, true);
+    SetForScope isAsking(isAskingWhyFileFails, true);
     Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, nullptr, &source, false, true, BunLoaderTypeNone);
     return source.success ? JSValue() : JSValue::decode(source.result.err);
 }
@@ -652,7 +657,7 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
 
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode code, const String& path)
 {
-    if (!hasCompiledModules() || isAskingWhyFileFailsToLoad)
+    if (!hasCompiledModules() || isAskingWhyFileFails)
         return {};
     bool refusesCode = AOT::refusesCodeOutsideImage(globalObject, path);
     // An executable does not hold the text of a compiled module.

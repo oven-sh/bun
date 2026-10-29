@@ -3536,12 +3536,18 @@ extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, 
     return count;
 }
 
-// `length` is at least 2.
-extern "C" JSC::EncodedJSValue JSC__JSString__createUninitializedLatin1(JSC::JSGlobalObject* globalObject, uint32_t length, Latin1Character** characters)
+extern "C" JSC::EncodedJSValue JSC__JSString__singleLatin1Character(JSC::JSGlobalObject* globalObject, uint8_t character)
+{
+    return JSC::JSValue::encode(JSC::jsSingleCharacterString(JSC::getVM(globalObject), Latin1Character { character }));
+}
+
+// `length` is at least 2. Empty when the characters cannot be allocated.
+extern "C" JSC::EncodedJSValue JSC__JSString__tryCreateUninitializedLatin1(JSC::JSGlobalObject* globalObject, uint32_t length, Latin1Character** characters)
 {
     std::span<Latin1Character> buffer;
     auto text = WTF::StringImpl::tryCreateUninitialized(length, buffer);
-    RELEASE_ASSERT(text);
+    if (!text) [[unlikely]]
+        return {};
     *characters = buffer.data();
     return JSC::JSValue::encode(JSC::jsNontrivialString(JSC::getVM(globalObject), WTF::String(text.releaseNonNull())));
 }

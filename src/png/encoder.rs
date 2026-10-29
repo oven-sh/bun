@@ -93,7 +93,8 @@ pub fn encode(
     let mut out = idat.finish()?;
     chunk::write(&mut out, chunk::IEND, &[])?;
     // Or a file of 100 bytes would hold on to the room for two IDAT chunks for as long as JavaScript keeps it.
-    out.shrink_to_fit();
+    // A refusal costs the spare room and nothing else.
+    let _ = out.try_shrink_to_fit();
     Ok(out)
 }
 

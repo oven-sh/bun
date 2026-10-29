@@ -133,7 +133,7 @@ unsafe extern "C" {
     fn highway_xxhash64(input: *const u8, len: usize, seed: u64) -> u64;
 
     safe fn highway_xxhash64_reset(state: &mut XxHash64State, seed: u64);
-    fn highway_xxhash64_update(state: *mut u8, input: *const u8, len: usize);
+    fn highway_xxhash64_update(state: &mut XxHash64State, input: *const u8, len: usize);
     safe fn highway_xxhash64_digest(state: &XxHash64State) -> u64;
 
     fn highway_parse_mappings(
@@ -1108,13 +1108,7 @@ impl XxHash64State {
     pub fn update(&mut self, bytes: &[u8]) {
         // SAFETY: `self._storage` is a valid XXH64State; `bytes.ptr/len` are a
         // valid readable range (never dereferenced when empty).
-        unsafe {
-            highway_xxhash64_update(
-                self._storage.as_mut_ptr().cast(),
-                bytes.as_ptr(),
-                bytes.len(),
-            )
-        };
+        unsafe { highway_xxhash64_update(self, bytes.as_ptr(), bytes.len()) };
     }
 
     #[inline(always)]

@@ -2,9 +2,10 @@
 // The collection that finds one of those frames dead writes the stack out by itself, and may look into no realm for a name. Compiled code that
 // calls `require` lists the function that `require` hands the file to. Its frame has the name of that function object: "anonymous" for a
 // CommonJS file and for a module of Bun's library, none for an ES module.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.cjs": `const vm = require("node:vm");
@@ -49,57 +50,42 @@ for (const from of ["common", "module", "library"])
   "module.mjs": `for (let i = 0; i < 20; ++i) globalThis.keep("module");\nexport {};\n`,
 };
 
-// Not every build of Bun includes the compiler. One without it says so before it looks for the entry point.
-const unsupported = /^error: --aot (?:only supports|isn't available) /m.test(
-  Bun.spawnSync({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./no-such-file.ts"],
-    cwd: import.meta.dir,
-    env: bunEnv,
-    stdout: "ignore",
-    stderr: "pipe",
-  }).stderr.toString(),
-);
-
-test.skipIf(unsupported)(
-  "a captured stack below require reads the same after a collection has written it out",
-  async () => {
-    using dir = tempDir("aot-captured-stack-below-require", files);
-    const folder = String(dir);
-    const executable = join(folder, "main" + (isWindows ? ".exe" : ""));
-    {
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
-        cwd: folder,
-        env: bunEnv,
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
-      expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
-    }
-    await using ran = Bun.spawn({
-      cmd: [executable],
+test("a captured stack below require reads the same after a collection has written it out", async () => {
+  using dir = tempDir("aot-captured-stack-below-require", files);
+  const folder = String(dir);
+  const executable = join(folder, "main" + (isWindows ? ".exe" : ""));
+  {
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
       cwd: folder,
-      env: { ...bunEnv, BUN_ENABLE_CRASH_REPORTING: "0" },
-      stdout: "pipe",
+      env: bunEnv,
+      stdout: "ignore",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-    expect({ stdout, stderr, exitCode, signal: ran.signalCode }).toEqual({
-      stdout: [
-        // The function of the context, keep(), the body of the required file, the function that require called, the body of main.cjs.
-        '" < keep <  < anonymous < "',
-        '" < keep < module code <  < "',
-        '["anonymous@[native code]"]',
-        "common 20 of 20",
-        "module 20 of 20",
-        "library 20 of 20",
-        "",
-      ].join("\n"),
-      stderr: "",
-      exitCode: 0,
-      signal: null,
-    });
-  },
-  600_000,
-);
+    const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  }
+  await using ran = Bun.spawn({
+    cmd: [executable],
+    cwd: folder,
+    env: { ...bunEnv, BUN_ENABLE_CRASH_REPORTING: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  expect({ stdout, stderr, exitCode, signal: ran.signalCode }).toEqual({
+    stdout: [
+      // The function of the context, keep(), the body of the required file, the function that require called, the body of main.cjs.
+      '" < keep <  < anonymous < "',
+      '" < keep < module code <  < "',
+      '["anonymous@[native code]"]',
+      "common 20 of 20",
+      "module 20 of 20",
+      "library 20 of 20",
+      "",
+    ].join("\n"),
+    stderr: "",
+    exitCode: 0,
+    signal: null,
+  });
+}, 600_000);

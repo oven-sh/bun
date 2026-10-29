@@ -1762,7 +1762,7 @@ pub(crate) fn to_bytes(
     let mut module_files: Vec<&OutputFile> = Vec::with_capacity(module_count);
     let mut entry_point_file: Option<&OutputFile> = None;
     // `Graph::from_bytes` keys files by path; a repeat would shift `entry_point_id`.
-    let mut seen_paths: StringArrayHashMap<()> = StringArrayHashMap::new();
+    let mut seen_paths: StringArrayHashMap<usize> = StringArrayHashMap::new();
 
     for output_file in output_files {
         if !output_file.output_kind.is_file_in_standalone_mode() {
@@ -1773,13 +1773,17 @@ pub(crate) fn to_bytes(
             continue;
         }
 
-        // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
-        if seen_paths
-            .get_or_put(module_dest_path(output_file))?
-            .found_existing
-        {
+        // Same `[name]` and `[hash]` means the same bytes: keep one copy. The runtime reads the
+        // loader of a file it `require`s, so that copy replaces a plain asset.
+        let seen = seen_paths.get_or_put(module_dest_path(output_file))?;
+        if seen.found_existing {
+            let kept = &mut module_files[*seen.value_ptr];
+            if output_file.loader.is_runtime_require() && !kept.loader.is_runtime_require() {
+                *kept = output_file;
+            }
             continue;
         }
+        *seen.value_ptr = module_files.len();
         if entry_point_file.is_none() && is_entry_point(output_file) {
             entry_point_file = Some(output_file);
         }

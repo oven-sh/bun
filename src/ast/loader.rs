@@ -126,6 +126,12 @@ impl Loader {
         )
     }
 
+    /// A standalone executable `require`s an embedded file of this loader by its path, and the
+    /// loader stored with the file says how to load it.
+    pub fn is_runtime_require(self) -> bool {
+        matches!(self, Loader::Napi | Loader::Sqlite | Loader::SqliteEmbedded)
+    }
+
     pub fn handles_empty_file(self) -> bool {
         matches!(self, Loader::Wasm | Loader::File | Loader::Text)
     }

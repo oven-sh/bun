@@ -1250,13 +1250,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     namespace_ref = p.store_name_in_ref(name);
                 }
 
-                let import_record_index = p.add_import_record(
-                    ImportKind::Stmt,
-                    path.loc,
-                    path.text,
-                    // TODO: import assertions
-                    // path.assertions
-                );
+                let import_record_index =
+                    p.add_import_record(ImportKind::Stmt, path.loc, path.text);
+                p.import_records.items_mut()[import_record_index as usize].loader = path.loader;
 
                 if path.is_macro {
                     p.log().add_error(
@@ -1329,6 +1325,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
+                    p.import_records.items_mut()[import_record_index as usize].loader =
+                        parsed_path.loader;
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {
                         use std::io::Write as _;

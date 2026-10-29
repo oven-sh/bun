@@ -186,6 +186,7 @@ fn run<'h>(
     bundle.fail_if_no_entry_points()?;
 
     bundle.scan_for_secondary_paths();
+    bundle.disambiguate_pretty_paths();
     bundle.process_server_component_manifest_files()?;
     bundle.clone_ast()?;
 

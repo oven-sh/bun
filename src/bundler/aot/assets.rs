@@ -214,16 +214,9 @@ fn compute_name_order(files: &[OutputFile]) -> Vec<u32> {
 fn same_name_order(file: &OutputFile) -> (bool, u8, &[u8]) {
     let loader = file.loader;
     (
-        !is_runtime_require_loader(loader),
+        !loader.is_runtime_require(),
         loader as u8,
         file.src_path.text,
-    )
-}
-
-fn is_runtime_require_loader(loader: Loader) -> bool {
-    matches!(
-        loader,
-        Loader::Napi | Loader::Sqlite | Loader::SqliteEmbedded
     )
 }
 

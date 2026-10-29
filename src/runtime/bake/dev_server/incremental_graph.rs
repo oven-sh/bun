@@ -1669,7 +1669,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // Clear the cached entry from the path→source-index maps.
         for map in bv2.graph.build_graphs.values_mut() {
-            map.remove(abs_path);
+            map.remove_all_forms(abs_path);
         }
         Ok(())
     }

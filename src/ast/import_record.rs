@@ -106,6 +106,12 @@ bitflags::bitflags! {
     }
 }
 
+// Two flags on one bit compile, and each then reads as the other.
+const _: () = assert!(
+    Flags::all().bits().count_ones() as usize == <Flags as bitflags::Flags>::FLAGS.len(),
+    "two ImportRecord flags share a bit"
+);
+
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord<'a>>;
 
 #[repr(u8)]

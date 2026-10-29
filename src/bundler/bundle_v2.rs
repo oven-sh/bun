@@ -4301,12 +4301,15 @@ pub mod bv2_impl {
             &mut self,
             reachable: &[Index],
         ) -> Result<Box<[Chunk<'a>]>, crate::linker_context_mod::LinkError> {
-            self.linker.load(
-                &mut self.graph,
-                &*self.transpiler,
-                &mut self.dynamic_import_entry_points,
-                reachable,
-            )?;
+            // SAFETY: `graph` and `transpiler` are those of `self`, which holds `linker`.
+            unsafe {
+                self.linker.load(
+                    &mut self.graph,
+                    &*self.transpiler,
+                    &mut self.dynamic_import_entry_points,
+                    reachable,
+                )
+            }?;
             self.linker.link(
                 self.has_any_top_level_await_modules,
                 self.unique_key,
@@ -5911,14 +5914,16 @@ pub mod bv2_impl {
 
             // The linker still has to be initialized as code generation expects
             // much of its state to be valid memory, even if empty.
-            self.linker
-                .load(
+            // SAFETY: `graph` and `transpiler` are those of `self`, which holds `linker`.
+            unsafe {
+                self.linker.load(
                     &mut self.graph,
                     &*self.transpiler,
                     &mut self.dynamic_import_entry_points,
                     js_reachable_files,
                 )
-                .map_err(|_| AllocError)?;
+            }
+            .map_err(|_| AllocError)?;
 
             // HMR skips tree-shaking, so size and seed the part-liveness bitsets
             // here: every part of every JS file is considered live.

@@ -519,8 +519,11 @@ impl<'a> LinkerContext<'a> {
         true
     }
 
-    /// `self` keeps pointers into `parse_graph` and `transpiler`: pass those of the `BundleV2` that holds `self`.
-    pub(crate) fn load(
+    /// `self` keeps pointers into `parse_graph` and `transpiler`, which its safe accessors dereference later.
+    ///
+    /// # Safety
+    /// Both must be those of the `BundleV2` that holds `self`.
+    pub(crate) unsafe fn load(
         &mut self,
         parse_graph: &mut Graph<'a>,
         transpiler: &Transpiler<'a>,

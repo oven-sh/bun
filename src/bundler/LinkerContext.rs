@@ -112,7 +112,7 @@ pub struct LinkerContext<'a> {
     /// string buffer containing prefix for each unique keys
     pub(crate) unique_key_prefix: Box<[u8]>,
 
-    pub(crate) source_maps: SourceMapData,
+    pub(crate) source_maps: SourceMapData<'a>,
 
     /// This will eventually be used for reference-counting LinkerContext
     /// to know whether or not we can free it safely.
@@ -641,18 +641,10 @@ impl<'a> LinkerContext<'a> {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        // Note: erase `'a` → `'static` for the task backref. The tasks are
-        // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
+        // The tasks are joined before `self` is dropped (see `SourceMapData.*_wait_group`).
         // Shared provenance: worker tasks only read the context (they never
         // form `&mut LinkerContext`); peer tasks hold the same pointer.
-        // SAFETY: `self` outlives every task (joined before drop).
-        let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>> = Some(unsafe {
-            bun_ptr::ParentRef::from_raw(
-                std::ptr::from_ref::<LinkerContext<'a>>(self)
-                    .cast::<LinkerContext<'static>>()
-                    .cast_mut(),
-            )
-        });
+        let ctx = Some(bun_ptr::ParentRef::new(&*self));
         let mut batch = ThreadPoolLib::Batch::default();
         let mut second_batch = ThreadPoolLib::Batch::default();
         debug_assert_eq!(reachable.len(), self.source_maps.line_offset_tasks.len());
@@ -1468,23 +1460,23 @@ pub enum LinkerOptionsMode {
 }
 
 #[derive(Default)]
-pub struct SourceMapData {
+pub struct SourceMapData<'a> {
     pub(crate) line_offset_wait_group: WaitGroup,
-    pub(crate) line_offset_tasks: Box<[SourceMapDataTask]>,
+    pub(crate) line_offset_tasks: Box<[SourceMapDataTask<'a>]>,
 
     pub(crate) quoted_contents_wait_group: WaitGroup,
-    pub(crate) quoted_contents_tasks: Box<[SourceMapDataTask]>,
+    pub(crate) quoted_contents_tasks: Box<[SourceMapDataTask<'a>]>,
 }
 
-pub struct SourceMapDataTask {
+pub struct SourceMapDataTask<'a> {
     /// `None` only in `Default` (the per-index slot is overwritten before
     /// scheduling).
-    pub(crate) ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>>,
+    pub(crate) ctx: Option<bun_ptr::ParentRef<LinkerContext<'a>>>,
     pub(crate) source_index: crate::IndexInt,
     pub(crate) thread_task: ThreadPoolLib::Task,
 }
 
-impl Default for SourceMapDataTask {
+impl Default for SourceMapDataTask<'_> {
     fn default() -> Self {
         Self {
             ctx: None,
@@ -1497,7 +1489,7 @@ impl Default for SourceMapDataTask {
     }
 }
 
-impl SourceMapDataTask {
+impl SourceMapDataTask<'_> {
     // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
     // `source_index`. Writes: `ctx.graph.files[source_index].line_offset_table`
     // (per-row disjoint), `ctx.pending_task_count` (atomic),
@@ -1588,7 +1580,7 @@ impl SourceMapDataTask {
     }
 }
 
-impl SourceMapData {
+impl SourceMapData<'_> {
     /// Runs concurrently across the worker pool (one task per `source_index`).
     /// Takes [`ParentRef<LinkerContext>`](bun_ptr::ParentRef) (not `&mut`)
     /// because peer tasks on other threads hold the same pointer —

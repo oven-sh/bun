@@ -31,7 +31,7 @@ pub(crate) struct ServerComponentParseTask<'a> {
     // BACKREF (LIFETIMES.tsv) — written through in `on_complete`.
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'a>, bun_ptr::Mut>>,
     pub source: Source<'a>,
 }
 

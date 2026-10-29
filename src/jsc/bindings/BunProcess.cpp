@@ -1802,6 +1802,57 @@ static void writeToStandardError(std::span<const char> bytes)
 }
 #endif
 
+static void readMembers(Zig::GlobalObject* globalObject, JSValue holder, std::span<const ASCIILiteral> names)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!holder.isObject())
+        return;
+    for (auto name : names) {
+        holder.get(globalObject, Identifier::fromString(vm, name));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+static void readMembersOfGlobal(Zig::GlobalObject* globalObject, ASCIILiteral global, std::span<const ASCIILiteral> names)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue holder = globalObject->get(globalObject, Identifier::fromString(vm, global));
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    readMembers(globalObject, holder, names);
+}
+
+// A built-in object lists a member from when it is first read. The modules that make process.stderr read these when they load, those of an object in this order,
+// whatever the descriptor is. test/aot/parallel/process/keys-of-built-in-objects-behind-a-warning.mjs compares.
+static void readMembersThatMakingStandardErrorReads(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    static constexpr ASCIILiteral membersOfObject[] = { "freeze"_s, "create"_s, "defineProperty"_s, "keys"_s, "setPrototypeOf"_s, "getPrototypeOf"_s, "defineProperties"_s, "assign"_s, "getOwnPropertyDescriptor"_s, "is"_s };
+    static constexpr ASCIILiteral membersOfReflect[] = { "getPrototypeOf"_s, "ownKeys"_s, "getOwnPropertyDescriptor"_s, "defineProperty"_s };
+    static constexpr ASCIILiteral membersOfSymbol[] = { "for"_s };
+    static constexpr ASCIILiteral membersOfNumber[] = { "isNaN"_s };
+    static constexpr ASCIILiteral membersOfPromisePrototype[] = { "finally"_s };
+    readMembersOfGlobal(globalObject, "Object"_s, membersOfObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    readMembersOfGlobal(globalObject, "Reflect"_s, membersOfReflect);
+    RETURN_IF_EXCEPTION(scope, void());
+    readMembersOfGlobal(globalObject, "Symbol"_s, membersOfSymbol);
+    RETURN_IF_EXCEPTION(scope, void());
+    readMembersOfGlobal(globalObject, "Number"_s, membersOfNumber);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue promise = globalObject->get(globalObject, Identifier::fromString(vm, "Promise"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!promise.isObject())
+        return;
+    JSValue promisePrototype = promise.get(globalObject, vm.propertyNames->prototype);
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    readMembers(globalObject, promisePrototype, membersOfPromisePrototype);
+}
+
 // Calls process.stderr.write.
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1813,6 +1864,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * le
     bool holdsEveryModule = !Bun::hasCompiledModules() && !JSC::Bun__removableFeatureState.isTrimmed;
     bool shouldWriteThroughStream = holdsEveryModule || globalObject->nodeWorkerStdioPorts() || process->staticPropertiesReified() || process->getDirect(vm, stderrName);
     if (!shouldWriteThroughStream) {
+        readMembersThatMakingStandardErrorReads(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         auto text = callFrame->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto bytes = text.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);

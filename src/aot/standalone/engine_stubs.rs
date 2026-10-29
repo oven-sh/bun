@@ -30,6 +30,7 @@ functions_of_no_engine! {
         Bytes,
         *const c_void,
         unsafe extern "C" fn(*mut c_void),
+        unsafe extern "C" fn(*mut c_void, *const c_void) -> bool,
         *mut c_void,
         *const c_void,
         *const c_void

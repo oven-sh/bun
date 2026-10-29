@@ -46,7 +46,7 @@ Library/Caches
 *.tmp
 *.trace
 *.wat
-!test/aot/programs/**/*.wat
+!test/aot/parallel/**/*.wat
 *.zip
 **/.verdaccio-db.json
 **/*.dir
@@ -97,8 +97,8 @@ misctools/sha
 myscript.sh
 node_modules
 node_modules_*
-!test/aot/programs/**/node_modules/
-!test/aot/programs/**/dist/
+!test/aot/parallel/**/node_modules/
+!test/aot/parallel/**/dist/
 !test/aot/ir/**/node_modules/
 out
 out.*
@@ -222,3 +222,5 @@ src/jsc/bindings/GeneratedBindings.zig
 # hawk analysis scaffolding (see tools/hawk/); generated per-run, never committed
 src/runtime/hawk_root.rs
 __pycache__/
+rustc-ice-*.txt
+fuzz-out/

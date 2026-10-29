@@ -1,0 +1,38 @@
+# function g(a: number, b: int32, c: int32) {}   function f(list: [number, number, number]) { g(...list) }
+# FORM: AsRead
+# RUN: pass TypeValues CheckInt32Promises
+# DIAGNOSTIC: UnprovenInt32
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 exports=[{name="f" variable=g0}] namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="f" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="g" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    Return v0
+}
+
+function f1 name="f" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g1
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    v4 = Convert v2 declared={type=i32 flags=[IsInt32Promise]} illTypedCause=FromLooseType
+    v5 = CallList v1, -, v2 calleeName="g"
+    v6 = Undefined
+    Return v6
+}
+
+function f2 name="g" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=i32 flags=[IsInt32Promise]}, {type=i32 flags=[IsInt32Promise]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: i32, v2: i32):
+    Jump -> next b1()
+  b1():
+    v3 = Undefined
+    Return v3
+}

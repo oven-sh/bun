@@ -30,6 +30,7 @@ fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
     let has_compiled_code_of_workers = compilation.started_workers.code == CodeOfWorkers::Compiled;
     interface::Compilation {
         starts_workers_from_unseen_code: !has_compiled_code_of_workers,
+        names_of_worker_files: compilation.started_workers.names,
         engine: wrap_engine(compilation.engine),
         further_programs: further.into_iter().map(wrap_engine).collect(),
         summary: interface::compile::ProgramSummary {

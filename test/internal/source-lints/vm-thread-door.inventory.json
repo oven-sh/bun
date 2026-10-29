@@ -198,22 +198,6 @@
       "PathWatcherManager"
     ]
   },
-  "src/runtime/shell/IOReader.rs": {
-    "unsafe impl Send": [
-      "IOReader"
-    ],
-    "unsafe impl Sync": [
-      "IOReader"
-    ]
-  },
-  "src/runtime/shell/IOWriter.rs": {
-    "unsafe impl Send": [
-      "IOWriter"
-    ],
-    "unsafe impl Sync": [
-      "IOWriter"
-    ]
-  },
   "src/runtime/shell/builtin/cp.rs": {
     "WorkPool::schedule*": 1
   },

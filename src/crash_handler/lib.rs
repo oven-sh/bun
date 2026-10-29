@@ -33,7 +33,10 @@ pub use error::{Error, Result};
 
 pub mod build_id;
 mod compiled_frames;
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 mod fault_registers;
 mod stopped_builds;
 pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
@@ -622,9 +625,9 @@ mod draft {
 
     /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
     #[derive(Clone, Copy)]
-    pub enum CrashReason {
+    pub enum CrashReason<'a> {
         /// From @panic()
-        Panic(&'static [u8]),
+        Panic(&'a [u8]),
         /// "reached unreachable code"
         Unreachable,
 
@@ -650,7 +653,7 @@ mod draft {
         OutOfMemory,
     }
 
-    impl CrashReason {
+    impl CrashReason<'_> {
         /// Signal to terminate the process with after the crash report has
         /// been printed. Signal-originated crashes re-raise the original
         /// fault so the parent process (and core-dump analyzers) see the
@@ -675,7 +678,7 @@ mod draft {
         }
     }
 
-    impl fmt::Display for CrashReason {
+    impl fmt::Display for CrashReason<'_> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {
                 CrashReason::Panic(message) => write!(writer, "{}", bstr::BStr::new(message)),
@@ -775,13 +778,14 @@ mod draft {
         Fault { pc: usize, fp: usize },
         /// POSIX: as `Fault`, with the stack pointer, from which the callers of
         /// compiled code without a frame record are found. `behind_pc`: see
-        /// `capture_from_fault`.
+        /// `capture_from_fault`. `context`: the handler's third argument.
         #[cfg(unix)]
         FaultOnStack {
             pc: usize,
             behind_pc: usize,
             fp: usize,
             sp: usize,
+            context: *mut c_void,
         },
         /// Walk the current stack and trim the capture machinery above this PC.
         BeginAddr(usize),
@@ -816,7 +820,7 @@ mod draft {
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
     #[cold]
-    pub fn crash_handler(reason: CrashReason, seed: TraceSeed) -> ! {
+    pub fn crash_handler(reason: CrashReason<'_>, seed: TraceSeed) -> ! {
         if cfg!(debug_assertions) {
             Output::disable_scoped_debug_writer();
         }
@@ -1080,6 +1084,7 @@ mod draft {
                                 behind_pc,
                                 fp,
                                 sp,
+                                ..
                             } => bun_core::debug::capture_from_fault(
                                 pc,
                                 behind_pc,
@@ -1217,10 +1222,20 @@ mod draft {
                         }
                     }
 
-                    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                    crate::fault_registers::write_to(&mut |text| {
-                        let _ = writer.write_all(text);
-                    });
+                    #[cfg(all(
+                        target_os = "linux",
+                        any(target_arch = "x86_64", target_arch = "aarch64")
+                    ))]
+                    if let TraceSeed::FaultOnStack { context, .. } = seed {
+                        let fault = match reason {
+                            CrashReason::SegmentationFault(address)
+                            | CrashReason::BusError(address) => Some(address),
+                            _ => None,
+                        };
+                        crate::fault_registers::write_to(context, fault, &mut |text| {
+                            let _ = writer.write_all(text);
+                        });
+                    }
 
                     if enable_ansi_colors_stderr() {
                         if writer
@@ -1517,8 +1532,7 @@ mod draft {
             if msg == b"reached unreachable code" {
                 CrashReason::Unreachable
             } else {
-                // SAFETY: process is about to abort; the borrow is never invalidated.
-                CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
+                CrashReason::Panic(msg)
             },
             TraceSeed::BeginAddr(begin_addr),
         );
@@ -1648,11 +1662,6 @@ mod draft {
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
         let context = fault_context_from_ucontext(ctx);
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        crate::fault_registers::remember(
-            ctx,
-            matches!(sig, libc::SIGSEGV | libc::SIGBUS).then_some(addr),
-        );
 
         // Removed code was filled with traps, or cut out of the file, which leaves its pages unmapped.
         const SEGV_MAPERR: c_int = 1;
@@ -1701,6 +1710,7 @@ mod draft {
                     },
                     fp,
                     sp,
+                    context: ctx,
                 },
                 None => TraceSeed::None,
             },
@@ -1870,12 +1880,13 @@ mod draft {
                 return;
             }
             REPORTS_ABORTS.store(true, Ordering::Relaxed);
-            // SAFETY: the handler has the signature that `signal` calls and is never unloaded.
+            // SAFETY: the handlers have the signatures that `signal` and the engine call and are never unloaded.
             unsafe {
                 libc::signal(
                     libc::SIGABRT,
                     handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
                 );
+                WTFSetAbortReporter(Some(report_abort_windows));
             }
         }
     }
@@ -1933,12 +1944,7 @@ mod draft {
             };
             let _ = write!(msg_buf.writer(), "{msg}");
         }
-        // SAFETY: `CrashReason::Panic` stores `&'static [u8]` (it was designed for
-        // the `-> !` path). `msg_buf` outlives every read of `reason` below — the
-        // borrow is fully consumed by the `Display`/`TraceString` writes inside
-        // this frame and never escapes.
-        let reason =
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
+        let reason = CrashReason::Panic(msg_buf.const_slice());
 
         let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
         {
@@ -2111,6 +2117,7 @@ mod draft {
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
                 if REPORTS_ABORTS.swap(false, Ordering::Relaxed) {
                     libc::signal(libc::SIGABRT, libc::SIG_DFL);
+                    WTFSetAbortReporter(None);
                 }
             }
             return;
@@ -2155,7 +2162,7 @@ mod draft {
     #[cfg(windows)]
     fn classify_exception_windows(
         record: &bun_sys::windows::EXCEPTION_RECORD,
-    ) -> Option<CrashReason> {
+    ) -> Option<CrashReason<'static>> {
         Some(match record.ExceptionCode {
             bun_sys::windows::EXCEPTION_DATATYPE_MISALIGNMENT => CrashReason::DatatypeMisalignment,
             bun_sys::windows::EXCEPTION_ACCESS_VIOLATION => {
@@ -2285,6 +2292,18 @@ mod draft {
                 handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
             );
         }
+        report_abort_windows()
+    }
+
+    #[cfg(windows)]
+    unsafe extern "C" {
+        fn WTFSetAbortReporter(reporter: Option<extern "C" fn()>);
+    }
+
+    /// An assertion of the engine that fails calls this in front of `abort()`: between the C runtime's reset and the
+    /// first statement of `handle_abort_windows` the `abort()` of a second thread ends the process.
+    #[cfg(windows)]
+    extern "C" fn report_abort_windows() {
         bun_core::debug::with_current_context(|pc, context| {
             crash_handler(CrashReason::Abort, TraceSeed::Fault { pc, fp: context })
         })
@@ -2721,54 +2740,35 @@ mod draft {
                     let header_ref = unsafe { &*header };
                     // SAFETY: load commands follow the mach header in memory; the
                     // dyld-mapped image stays live for the process lifetime.
-                    let it = bun_sys::macho::LoadCommandIterator::new(header_ref.ncmds, unsafe {
+                    let commands = unsafe {
                         core::slice::from_raw_parts(
                             header
                                 .cast::<u8>()
                                 .add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
                             header_ref.sizeofcmds as usize,
                         )
-                    });
+                    };
 
-                    for cmd in it {
-                        match cmd.cmd() {
-                            bun_sys::macho::LC_SEGMENT_64 => {
-                                let segment_cmd =
-                                    cmd.cast::<bun_sys::macho::segment_command_64>().unwrap();
-                                if segment_cmd.seg_name() != b"__TEXT" {
-                                    continue;
-                                }
-
-                                let original_address = address - vmaddr_slide;
-                                let seg_start = segment_cmd.vmaddr as usize;
-                                let seg_end = seg_start + segment_cmd.vmsize as usize;
-                                if original_address >= seg_start && original_address < seg_end {
-                                    // Subtract ASLR value for stable address
-                                    let stable_address: usize = address - vmaddr_slide;
-
-                                    if i == 0 {
-                                        let image_relative_address = stable_address - seg_start;
-                                        if image_relative_address > i32::MAX as usize {
-                                            return None;
-                                        }
-
-                                        // To remap this, you have to add the offset (which is going to be 0x100000000),
-                                        // and then you can run it through `llvm-symbolizer --obj bun-with-symbols 0x123456`
-                                        // The reason we are subtracting this known offset is mostly just so that we can
-                                        // fit it within a signed 32-bit integer. The VLQs will be shorter too.
-                                        return Some(StackLine {
-                                            object: None,
-                                            address: i32::try_from(image_relative_address)
-                                                .expect("int cast"),
-                                        });
-                                    } else {
-                                        // these libraries are not interesting, mark as unknown
-                                        return None;
-                                    }
-                                }
-                            }
-                            _ => {}
+                    // Subtract ASLR value for stable address
+                    let stable_address: usize = address - vmaddr_slide;
+                    if let Some(image_relative_address) = bun_sys::macho::offset_in_code(
+                        header_ref.ncmds,
+                        commands,
+                        stable_address as u64,
+                    ) {
+                        if i != 0 {
+                            // these libraries are not interesting, mark as unknown
+                            return None;
                         }
+
+                        // To remap this, you have to add the offset (which is going to be 0x100000000),
+                        // and then you can run it through `llvm-symbolizer --obj bun-with-symbols 0x123456`
+                        // The reason we are subtracting this known offset is mostly just so that we can
+                        // fit it within a signed 32-bit integer. The VLQs will be shorter too.
+                        return Some(StackLine {
+                            object: None,
+                            address: i32::try_from(image_relative_address).ok()?,
+                        });
                     }
                     i += 1;
                 }
@@ -2809,7 +2809,7 @@ mod draft {
 
     struct TraceString<'a> {
         trace: &'a StackTrace<'a>,
-        reason: CrashReason,
+        reason: CrashReason<'a>,
         action: TraceStringAction,
     }
 
@@ -3186,7 +3186,7 @@ mod draft {
     /// On POSIX this re-raises the signal that caused the crash (or SIGABRT
     /// for panics) so the parent sees the real fault and core dumps are
     /// attributed correctly.
-    fn crash(reason: CrashReason) -> ! {
+    fn crash(reason: CrashReason<'_>) -> ! {
         #[cfg(not(windows))]
         {
             let sig = reason.terminal_signal();
@@ -3885,8 +3885,6 @@ mod draft {
         }
         // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
         let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-        // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
-        // buffer suffices — `panic_impl` erases to &'static for the abort path.
         let mut msg = BoundedArray::<u8, 256>::default();
         let _ = write!(
             msg.writer(),
@@ -3903,8 +3901,7 @@ mod draft {
         // SAFETY: caller passes a valid (ptr, len) byte slice
         let msg = unsafe { core::slice::from_raw_parts(message_ptr, message_len) };
         crash_handler(
-            // SAFETY: noreturn — see panic_impl note
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) }),
+            CrashReason::Panic(msg),
             TraceSeed::BeginAddr(debug::return_address()),
         );
     }
@@ -3916,10 +3913,8 @@ mod draft {
     unsafe extern "C" fn CrashHandler__beginDlOpenAction(
         path: *const c_char,
     ) -> *mut ActionGuard<'static> {
-        // SAFETY: path is a valid NUL-terminated C string (caller contract)
-        let s = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
-        // SAFETY: the C string outlives the guard (caller contract)
-        let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
+        // SAFETY: path is a valid NUL-terminated C string that outlives the guard (caller contract)
+        let s: &'static [u8] = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
         // SAFETY: `CrashHandler__endDlOpenAction` drops it (caller contract)
         bun_core::heap::into_raw(Box::new(unsafe { ActionGuard::new(Action::Dlopen(s)) }))
     }

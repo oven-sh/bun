@@ -1710,9 +1710,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 // `append_overflow_uninit` and is exclusively owned via `self.head`.
                 Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
             };
-            let raw = Box::into_raw(new_block);
-            // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
-            head_ptr = unsafe { NonNull::new_unchecked(raw) };
+            head_ptr = Box::into_non_null(new_block);
             self.head = Some(head_ptr);
         }
         // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with

@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 /**
  * Regenerate test/expected-durations.json from recent Buildkite runs.
@@ -6,17 +6,15 @@
  * median per-lane cost in ms (see `lanes` below). runner.node.ts uses it
  * to bin-pack test files across --max-shards so every shard does roughly
  * the same amount of work instead of `index % shards`.
- * Usage: BUILDKITE_API_TOKEN=... bun scripts/update-test-durations.mjs [--builds N]
+ * Usage: BUILDKITE_API_TOKEN=... node scripts/update-test-durations.mjs [--builds N]
  * Intended to be run by a scheduled Buildkite job on oven-sh/bun; it only
  * reads public build metadata and writes one file in the repo.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { units as partsOfOneTestFile } from "../test/aot/parts.mts";
-import { aotTests } from "./buildkite.ts";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,11 +46,6 @@ const lanes = {
   windows: "windows-x64-2019-test-bun",
   "windows-aarch64": "windows-aarch64-11-test-bun",
 };
-
-const aotStepOf = stepKey => stepKey.replace(/-test-bun$/, "-test-aot");
-// getTestBunStep in .buildkite/ci.ts splits test/aot between these two.
-const aotStepsOf = stepKey => [aotStepOf(stepKey), `${aotStepOf(stepKey)}-drawn`];
-export const isAotTest = path => aotTests.some(group => path.startsWith(group));
 
 const api = async path => {
   for (let attempt = 0; ; attempt++) {
@@ -105,6 +98,15 @@ export function parseLog(raw) {
         concurrent = false;
         continue;
       }
+      // A program compiled ahead of time says what it took: its own build, or its
+      // share of a build that it shares with others, and its run.
+      const program = /^(.+\.[cm]?[jt]sx?) \(compile (\d+) ms, run (\d+) ms\)$/.exec(title);
+      if (program) {
+        out.push([program[1], Number(program[2]) + Number(program[3])]);
+        path = start = null;
+        concurrent = false;
+        continue;
+      }
       const isPath = /\.(?:[cm]?[jt]sx?|json)$/.test(title);
       path = isPath ? title : null;
       start = isPath ? ts : null;
@@ -123,6 +125,14 @@ export function parseLog(raw) {
   }
   emit(lastTs);
   return out;
+}
+
+// Most programs under test/aot/parallel take well under a second, and count alike
+// where the shards are dealt (msOfWeight): only the long ones have an entry.
+// test/aot/run-parallel.ts compiles Bun's library once for all that have one,
+// and then each takes little: so an entry stays once it is there.
+export function entryOfProgram(medians, before) {
+  return medians.default >= 700 ? medians : before;
 }
 
 function median(arr) {
@@ -153,16 +163,8 @@ async function findSourceBuilds(want) {
 }
 
 async function collect(build, stepKey, into) {
-  const allJobs = (await (await api(`builds/${build}`)).json()).jobs;
-  // Only a build that ran all of test/aot has the asan lane's step; the others run a tenth of it, and Windows arm64
-  // always does (getAotTests in .buildkite/ci.ts).
-  const ranAllOfAot = stepKey !== lanes["windows-aarch64"] && allJobs.some(j => j.step_key === aotStepOf(lanes.asan));
-  const jobs = allJobs.filter(
-    j =>
-      (j.step_key === stepKey || (ranAllOfAot && aotStepsOf(stepKey).includes(j.step_key))) &&
-      j.started_at &&
-      j.finished_at &&
-      j.state !== "canceled",
+  const jobs = (await (await api(`builds/${build}`)).json()).jobs.filter(
+    j => j.step_key === stepKey && j.started_at && j.finished_at && j.state !== "canceled",
   );
   let idx = 0;
   const worker = async () => {
@@ -228,6 +230,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     );
     process.exit(1);
   }
+  const before = JSON.parse(readFileSync(outputPath, "utf8"));
   const out = {
     // Consumers should tolerate missing paths (new tests) and missing lanes.
     _meta: {
@@ -236,17 +239,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       lanes,
     },
   };
-  const previous = JSON.parse(readFileSync(outputPath, "utf8"));
-  for (const p of Object.keys(previous)) {
-    if (isAotTest(p) && (existsSync(join(dirname(outputPath), p)) || partsOfOneTestFile.includes(p))) paths.add(p);
-  }
   for (const p of [...paths].sort()) {
     const entry = {};
     for (const lane of Object.keys(lanes)) {
       if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
-      else if (isAotTest(p) && previous[p]?.[lane] !== undefined) entry[lane] = previous[p][lane];
     }
-    out[p] = entry;
+    const kept = p.startsWith("aot/parallel/") ? entryOfProgram(entry, before[p]) : entry;
+    if (kept) out[p] = kept;
   }
 
   writeFileSync(outputPath, JSON.stringify(out, null, 2) + "\n");

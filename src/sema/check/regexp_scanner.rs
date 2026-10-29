@@ -1826,9 +1826,8 @@ mod spelling_tests {
         names
     }
 
-    /// Skipped under Miri: the 380,880 comparisons run no unsafe code, and Miri needs hours for them.
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(miri, ignore = "no unsafe code, 76,000 pairs of names five times")]
     fn characters_refuse_only_names_that_are_too_far_apart() {
         let names = names();
         let mut accepted = 0;

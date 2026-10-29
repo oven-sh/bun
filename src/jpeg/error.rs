@@ -57,7 +57,7 @@ pub enum Error {
     ConversionNotImpl,
     #[error("Could not determine colorspace of JPEG image")]
     UnknownColorSpace,
-    #[error("Invalid progressive parameters Ss={0} Se={1} Ah={2} Al={3}")]
+    #[error("Invalid progressive/lossless parameters Ss={0} Se={1} Ah={2} Al={3}")]
     BadProgression(u8, u8, u8, u8),
     #[error("Progressive JPEG image has more than {0} scans")]
     TooManyScans(u32),
@@ -69,9 +69,9 @@ pub enum Error {
         "Invalid restart interval {0}; must be an integer multiple of the number of MCUs in an MCU row ({1})"
     )]
     BadRestart(u32, u32),
-    #[error("Sorry, arithmetic coding is not implemented")]
+    #[error("Requested feature was omitted at compile time")]
     ArithNotImpl,
-    #[error("Corrupt JPEG data: bad DCT coefficient")]
+    #[error("DCT coefficient (lossy) or spatial difference (lossless) out of range")]
     BadDctCoef,
     #[error("Huffman code size table overflow")]
     HuffCodeLengthOverflow,

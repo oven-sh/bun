@@ -52,7 +52,7 @@ test("a type error is a warning, and the test files that reach it run", async ()
   const { said, exitCode } = await run(String(dir));
   expect(errors(said)).toEqual([]);
   expect(reported("warn", said)).toEqual(["b-mistyped.test.ts:1:18 TS2322", "mistyped.ts:1:14 TS2322"]);
-  expect(said).toContain("warn: 2 files have type errors, so they are compiled without their types");
+  expect(said).toContain("warn: TS100075: Files with type errors are compiled without their types: 2 in this run");
   expect(passed(said)).toEqual(["a fine test", "an imported error", "its own error"]);
   expect(exitCode).toBe(0);
 });

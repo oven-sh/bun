@@ -1190,9 +1190,8 @@ runtimefunction id=ObjectsToLocaleString function=f110
 # CHECK-NEXT: v7: object ~ L8|L11|L20|L21|L22 = Upcast v14 castType=anything
 # CHECK-NEXT: v15: object ~ L8|L11|L20|L21|L22 = AssumeType v7 provenType=object
 # CHECK-NEXT: v8: anything = PropGet v15 key="value" accessSite=81
-# CHECK-NEXT: v16: undefined = AssumeType v8 provenType=undefined [isBehindChecks]
-# CHECK-NEXT: v17: undefined = AssumeType v16 provenType=undefined
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: v16: undefined = AssumeType v8 provenType=undefined
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function f35 module=
 # CHECK: m0 position=1664 kind=Arrow flags=[IsChecked] captures=[{type=undefined|function|f18|f46|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)}] thisType={type=anything} results=[{type=anything}] functionTypes=[f58] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -2220,7 +2220,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f52 visibility=Private
 # CHECK-NEXT: v24: boolean = ShapeTest v23 layouts=[L4]
 # CHECK-NEXT: Branch v24 -> taken b9(), notTaken b11()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v25: int[0, 2] = CallDirect v23, v13 function=f59 calledBuiltin=JSONStringify
+# CHECK-NEXT: v25: int[0, 2] = CallDirect v23, v13 function=f60 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v25 cases=[1] -> case b10(), otherwise b11()
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v26: buildercursor = StringBuilderReserve v13 size=128
@@ -2330,7 +2330,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f52 visibility=Private
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=503 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Plain"
-# CHECK: module=m0 position=528 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers constructEntrypoint=f61} inlineFrames=[{}, {callee=f2 callPosition=528 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=528 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers constructEntrypoint=f62} inlineFrames=[{}, {callee=f2 callPosition=528 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything):
 # CHECK-NEXT: v3: undefined|int = AssumeType v2 provenType=undefined|int
 # CHECK-NEXT: v4: anything ~ L0 = Upcast v1 castType=anything @528 tail

@@ -34,9 +34,9 @@ use self::lower_stage::LoweredRuntimes;
 #[cfg(test)]
 pub(crate) use self::lower_stage::collect_file_inputs;
 #[cfg(test)]
-pub use self::paths::{EntryPointPaths, FolderPaths, RefusedEntryPoints};
+pub use self::paths::{EntryPointPaths, FolderPaths};
 #[cfg(not(test))]
-pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths, RefusedEntryPoints};
+pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths};
 
 use self::import_graph::ImportGraph;
 use self::load_stage::{AssetReads, SharedByLoads};
@@ -74,9 +74,12 @@ use crate::options::{
     WaysBetweenModuleObjects,
 };
 use crate::report::{ModuleLocator, SourceTexts};
-use crate::statistics::{LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics};
+use crate::statistics::{
+    LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics, logs_stages,
+};
+use bstr::BStr;
 use bun_ast::{Kind, Loader, Log, Msg};
-use bun_core::ZBox;
+use bun_core::{ZBox, strings};
 use bun_options_types::aot_options::{Preload, TargetPlatform};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::BuiltinTypeSymbols;
@@ -138,6 +141,8 @@ pub struct Compilation {
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     /// A spy of the test runner may replace them, by the word of the engine, and they were compiled as exports that keep their values.
     replaced_exports: Vec<ReplacedExport>,
+    /// Tests were not analyzed, by the word of the engine, and their exports were compiled as exports that keep their values.
+    lacks_replaceable_exports: bool,
     /// A program is too large for whole-program analysis, by the word of the engine.
     is_too_large_to_analyze: bool,
     /// The load expected the analysis to stop, and it came to an end, by the word of the engine.
@@ -158,6 +163,12 @@ pub(crate) enum CodeOfWorkers {
 /// What the programs that are compiled say about the Workers that they start.
 #[derive(Default)]
 pub(crate) struct StartedWorkers {
+    /// `find_root_folders_spelled`
+    pub(crate) root_folders_spelled: Vec<u8>,
+    /// `imports_file_with_query`
+    pub(crate) imports_file_with_query: bool,
+    /// Where code from disk may ask for them: the files of the program, for the names of their packages.
+    pub(crate) program_files: Vec<EntryPointPaths>,
     pub code: CodeOfWorkers,
     /// What `find_code_that_starts_workers` found, and the `copies` that the engine saw passed to `new Worker()`.
     pub files: Vec<WorkerFile>,
@@ -206,7 +217,7 @@ pub struct BuildFailed {
     pub is_internal_error: bool,
     pub statistics: Statistics,
     pub compilation: Option<Box<Compilation>>,
-    pub refused_entry_points: Option<RefusedEntryPoints>,
+    pub refused_entry_points: Option<Vec<u32>>,
     /// No failure: see `compile_program_at_each_entry_point`.
     pub is_one_program: bool,
     /// No failure yet: see `compile`.
@@ -364,6 +375,8 @@ struct FrontEndOutput {
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     ways_followed_for_their_names: WaysBetweenModuleObjects,
     holds_whole_library_as_guess: bool,
+    /// `Build::skips_analysis_of_tests`
+    skips_analysis_of_tests: bool,
     /// Of a build that runs tests.
     exported_variables: ExportedVariables,
 }
@@ -698,6 +711,15 @@ fn has_followed_nothing(found: FlowFindings<'_>) -> bool {
     })
 }
 
+// The analysis says which exports the spies of tests replace. Without it they may replace any.
+fn lacks_replaceable_exports(options: &Options<'_>, found: FlowFindings<'_>) -> bool {
+    let load = &options.load;
+    load.runs_tests
+        && !load.mocks_any_module
+        && !options.aot.checks_only
+        && has_followed_nothing(found)
+}
+
 // The analysis stopped at its budget, and would stop there again.
 fn is_too_large_to_analyze(found: FlowFindings<'_>) -> bool {
     let mut causes = found.unseen_code.iter().map(|record| record.cause);
@@ -826,6 +848,7 @@ fn find_load_options_with_what_engine_found(
         compiled.ways_read_out_of_sight,
         compiled.ways_named_that_nobody_reads,
         &compiled.replaced_exports,
+        compiled.lacks_replaceable_exports,
         compiled.is_too_large_to_analyze,
         compiled.holds_whole_library_for_nothing,
     )
@@ -838,6 +861,7 @@ fn find_load_options_with(
     ways_read_out_of_sight: WaysBetweenModuleObjects,
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     replaced_exports: &[ReplacedExport],
+    lacks_replaceable_exports: bool,
     is_too_large_to_analyze: bool,
     holds_whole_library_for_nothing: bool,
 ) -> Option<LoadOptions> {
@@ -872,6 +896,10 @@ fn find_load_options_with(
         load.replaced_exports.sort_unstable();
         load.replaced_exports.dedup();
     }
+    if lacks_replaceable_exports {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.mocks_any_module = true;
+    }
     if let Some(load) = &mut load {
         load.is_too_large_to_analyze |= is_too_large_to_analyze;
     }
@@ -893,6 +921,95 @@ fn find_load_options_to_compile_again_with(
     Some(load)
 }
 
+fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
+    let code = |load: &LoadOptions| {
+        let code = &load.library_code_lacked;
+        (
+            code.modules.len(),
+            code.exports_read.len(),
+            code.functions.len(),
+        )
+    };
+    let flags = |load: &LoadOptions| {
+        [
+            (
+                "keeps library code without names",
+                load.keeps_library_code_without_names,
+            ),
+            (
+                "reads the main module without its name",
+                load.reads_main_module_without_its_name,
+            ),
+            (
+                "reads children out of sight",
+                load.ways_read_out_of_sight.children,
+            ),
+            (
+                "reads parent out of sight",
+                load.ways_read_out_of_sight.parent,
+            ),
+            (
+                "nobody reads children",
+                load.ways_named_that_nobody_reads.children,
+            ),
+            (
+                "nobody reads parent",
+                load.ways_named_that_nobody_reads.parent,
+            ),
+            ("takes the run time as any", load.takes_runtime_as_any),
+            ("too large to analyze", load.is_too_large_to_analyze),
+            ("known to be analyzed", load.is_known_to_be_analyzed),
+        ]
+    };
+    let changed: Vec<&str> = (flags(before).iter().zip(flags(after)))
+        .filter(|(before, after)| before.1 != after.1)
+        .map(|(_, after)| after.0)
+        .collect();
+    let new_functions = (after.library_code_lacked.functions.iter())
+        .filter(|function| !before.library_code_lacked.functions.contains(function))
+        .filter_map(|&function| table::runtime_function(RuntimeFunction(function)))
+        .map(|data| format!("{}:{}", data.file, data.export_name))
+        .collect::<Vec<_>>();
+    let added = (after.replaced_exports.iter())
+        .filter(|export| before.replaced_exports.binary_search(export).is_err());
+    let (mut in_files, mut in_library) = (0usize, 0usize);
+    let mut examples: Vec<String> = Vec::new();
+    for export in added {
+        let name = BStr::new(&export.name);
+        let example = match &export.module {
+            crate::options::ReplacedModule::File(path) => {
+                in_files += 1;
+                let file = strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
+                format!("{}:{}", BStr::new(&path[file..]), name)
+            }
+            crate::options::ReplacedModule::Runtime(id) => {
+                in_library += 1;
+                format!("library {}:{}", id, name)
+            }
+        };
+        if examples.len() < 8 {
+            examples.push(example);
+        }
+    }
+    if !examples.is_empty() {
+        bun_core::print_errorln!(
+            "AOT build starts over | replaced exports added: {} in files, {} in the library | {}",
+            in_files,
+            in_library,
+            examples.join(" "),
+        );
+    }
+    bun_core::print_errorln!(
+        "AOT build starts over | replaced exports {} > {} | library modules, exports, functions lacked {:?} > {:?} | {} | {}",
+        before.replaced_exports.len(),
+        after.replaced_exports.len(),
+        code(before),
+        code(after),
+        changed.join(", "),
+        new_functions.join(" "),
+    );
+}
+
 pub fn compile(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
@@ -908,6 +1025,9 @@ pub fn compile(
         let Some(load) = find_load_options_to_compile_again_with(options, &compiled) else {
             break compiled;
         };
+        if logs_stages() {
+            log_why_build_starts_over(&options.load, &load);
+        }
         log.msgs.truncate(said_before.0);
         (log.warnings, log.errors) = (said_before.1, said_before.2);
         provider.clear_embedded_files();
@@ -1329,6 +1449,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     (first.ways_read_out_of_sight).add(program.ways_read_out_of_sight);
     (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
     first.replaced_exports.extend(program.replaced_exports);
+    first.lacks_replaceable_exports |= program.lacks_replaceable_exports;
     first.is_too_large_to_analyze |= program.is_too_large_to_analyze;
     first.holds_whole_library_for_nothing |= program.holds_whole_library_for_nothing;
 }
@@ -1666,6 +1787,15 @@ fn compile_programs<'a>(
         if options.aot.checks_only {
             engine_options.check_only();
         }
+        if output.skips_analysis_of_tests && !options.load.is_too_large_to_analyze {
+            if let Err(rejected) = engine_options.skip_flow_analysis() {
+                build.diagnostics.add_internal_error(InternalError {
+                    stage: Stage::Any,
+                    message: rejected.sentence,
+                });
+                return Err(build.finish::<()>(Err(Stage::Any), log).unwrap_err());
+            }
+        }
         let own = match (place, programs) {
             (ProgramPlace::OneOfSeveral(index), Some(all)) => {
                 let position = all.indexes.iter().position(|&it| it == index);
@@ -1679,6 +1809,7 @@ fn compile_programs<'a>(
         let ways_not_followed = output.ways_not_followed_out_of_sight;
         let ways_followed = output.ways_followed_for_their_names;
         let holds_whole_library = output.holds_whole_library_as_guess;
+        let skips_analysis = output.skips_analysis_of_tests;
         let exported_variables = &output.exported_variables;
         // All of it was asked for, so what is still lacked is not to be had.
         let find_lacked = |found: FlowFindings<'_>| match holds_whole_library {
@@ -1700,6 +1831,7 @@ fn compile_programs<'a>(
                 ways,
                 nobody_reads,
                 &exported_variables.find_replaced(found),
+                !skips_analysis && lacks_replaceable_exports(own, found),
                 is_too_large,
                 holds_whole_library && !has_followed_nothing(found),
             );
@@ -1809,12 +1941,15 @@ fn compile_programs<'a>(
             );
             let replaced_exports =
                 (output.exported_variables).find_replaced(engine.flow_findings());
+            let lacks_replaceable_exports = !output.skips_analysis_of_tests
+                && lacks_replaceable_exports(options, engine.flow_findings());
             let is_too_large_to_analyze = is_too_large_to_analyze(engine.flow_findings());
             let holds_whole_library_for_nothing = output.holds_whole_library_as_guess
                 && !has_followed_nothing(engine.flow_findings());
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
                 replaced_exports,
+                lacks_replaceable_exports,
                 is_too_large_to_analyze,
                 holds_whole_library_for_nothing,
                 reads_main_module_without_its_name,
@@ -1898,7 +2033,7 @@ fn fail(
     stage: Stage,
     diagnostics: Diagnostics,
     statistics: Statistics,
-    refused_entry_points: Option<RefusedEntryPoints>,
+    refused_entry_points: Option<Vec<u32>>,
     log: &mut Log,
 ) -> BuildFailed {
     let is_internal_error = diagnostics.has_internal_errors();
@@ -1917,6 +2052,15 @@ fn fail(
 }
 
 impl<'a> Build<'a> {
+    /// Tests that are expected to be too large to analyze are not analyzed: the spies and mocks of tests may then replace any export.
+    pub(crate) fn skips_analysis_of_tests(&self) -> bool {
+        self.options.load.runs_tests && self.holds_whole_library_as_guess
+    }
+
+    pub(crate) fn mocks_any_module(&self) -> bool {
+        self.options.load.mocks_any_module || self.skips_analysis_of_tests()
+    }
+
     pub(crate) fn new(
         options: &'a Options<'a>,
         provider: &'a dyn SourceProvider,
@@ -1975,15 +2119,10 @@ impl<'a> Build<'a> {
         self.checked_elsewhere.clear();
     }
 
-    fn find_refused_entry_points(&self) -> Option<RefusedEntryPoints> {
+    fn find_refused_entry_points(&self) -> Option<Vec<u32>> {
         let paths = self.diagnostics.paths_of_errors()?;
-        let other_paths = self.diagnostics.paths_of_errors_that_are_no_type_errors();
         let graph = self.import_graph.as_ref()?;
-        Some(RefusedEntryPoints {
-            refused: graph.find_entry_points_that_reach(paths.into_iter())?,
-            refused_without_types: graph.find_entry_points_that_reach(other_paths.into_iter())?,
-            files_with_type_errors: self.diagnostics.files_with_type_errors(),
-        })
+        graph.find_entry_points_that_reach(paths.into_iter())
     }
 
     fn run_front_end(&mut self) -> Result<FrontEndOutput, Stage> {
@@ -2159,8 +2298,12 @@ impl<'a> Build<'a> {
 
         let returned = Instant::now();
         self.statistics.add_values(engine.statistics());
-        self.diagnostics
-            .add_engine_records(&engine, &output.names, &output.texts);
+        self.diagnostics.add_engine_records(
+            &engine,
+            &output.names,
+            &output.texts,
+            self.options.aot.runs_tests,
+        );
         if engine_options.makes_image()
             && !has_ended_behind_flow_analysis
             && engine.image().is_none()

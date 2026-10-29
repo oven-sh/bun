@@ -647,111 +647,61 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="bark"
-# CHECK: module=m0 position=384 kind=Method role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2 site=w14 flags=[IsExpected]} results=[{type=string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f96 fallback=f97} {
-# CHECK-NEXT: b0(v0: anything ~ L2):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=L2
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: L2):
-# CHECK-NEXT: v3: string = CallDirect v2 function=f96
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: string = CallDirect v0 function=f97
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=384 kind=Method role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2 site=w14 flags=[IsExpected]} results=[{type=string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f96 fallback=f97}
 # CHECK-LABEL: function f13 module=
-# CHECK: m0 position=2311 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f67 callPosition=4294967295 isTailCall=true module=m5}, {callee=f112 callPosition=4294967295 isConstruction=true module=m0}, {callee=f110 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f101 callPosition=25 parent=1 module=m5}] {
+# CHECK: m0 position=2311 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f122 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: Generator<undefined|null|string, pristine[Storage, Names]> = GetModuleVariable variable=g7
-# CHECK-NEXT: v1: absent|f7 = GetModuleVariable variable=g3
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=absent
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v3: f7 = CallDirect function=f99
-# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: v0: undefined = CallDirect function=f122
+# CHECK-NEXT: v1: i32 = ResultAt v0
+# CHECK-NEXT: v2: object|unspecified = ResultAt v0 index=1
+# CHECK-NEXT: v3: anything|unspecified = ResultAt v0 index=2
+# CHECK-NEXT: v4: boolean|unspecified = ResultAt v0 index=3
+# CHECK-NEXT: Switch v1 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: fact = Specified
+# CHECK-NEXT: v6: object = AssumeType v2, v5 provenType=object
+# CHECK-NEXT: Jump -> next b3(v6)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v4: L2 = NewObject layout=L2 allocationClass=1
-# CHECK-NEXT: v5: undefined = StepGenerator v0, v4 check=None
-# CHECK-NEXT: v6: anything = ResultAt v5
-# CHECK-NEXT: v7: int[0, 2] = ResultAt v5 index=1
-# CHECK-NEXT: v8: 2 = Integer integer=2
-# CHECK-NEXT: v9: boolean = StrictEq v7, v8
-# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4(| 0)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v10: anything = ResumeGenerator v0, v4
-# CHECK-NEXT: v11: object = AssumeType v10 provenType=object
-# CHECK-NEXT: Jump -> next b5(v11)
-# CHECK-NEXT: b4(v12: int[0, 1]):
-# CHECK-NEXT: v13: 1 = Integer integer=1
-# CHECK-NEXT: v14: boolean = StrictEq v12, v13
-# CHECK-NEXT: v15: L(IteratorResult) = NewObject -, v6, v14 layout=L(IteratorResult) fields=[0, 1]
-# CHECK-NEXT: Jump -> next b5(v15)
-# CHECK-NEXT: b5(v16: object):
-# CHECK-NEXT: v17: object ~ L6|L7|L8|L9 = Upcast v16 castType=object
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: v7: fact = Specified
+# CHECK-NEXT: v8: anything = AssumeType v3, v7 provenType=anything
+# CHECK-NEXT: v9: boolean = AssumeType v4, v7 provenType=boolean
+# CHECK-NEXT: v10: L(IteratorResult) = NewObject -, v8, v9 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b3(v11: object):
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=2418 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f67 callPosition=4294967295 isTailCall=true module=m5}, {callee=f115 callPosition=4294967295 isConstruction=true module=m0}, {callee=f34 callPosition=4294967295 parent=2 module=m0}, {callee=f110 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f101 callPosition=25 parent=1 module=m5}] {
+# CHECK: m0 position=2418 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f123 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: Generator<undefined|null|string, pristine[Storage, Names]> = GetModuleVariable variable=g8
-# CHECK-NEXT: v1: absent|f11 = GetModuleVariable variable=g5
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=absent
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v3: f11 = CallDirect function=f100
-# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: v0: undefined = CallDirect function=f123
+# CHECK-NEXT: v1: i32 = ResultAt v0
+# CHECK-NEXT: v2: object|unspecified = ResultAt v0 index=1
+# CHECK-NEXT: v3: anything|unspecified = ResultAt v0 index=2
+# CHECK-NEXT: v4: boolean|unspecified = ResultAt v0 index=3
+# CHECK-NEXT: Switch v1 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: fact = Specified
+# CHECK-NEXT: v6: object = AssumeType v2, v5 provenType=object
+# CHECK-NEXT: Jump -> next b3(v6)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v4: "eight" = String string="eight"
-# CHECK-NEXT: v5: L4 = NewObject -, v4 layout=L4 fields=[0] allocationClass=2 [listsOnlyStoredValues]
-# CHECK-NEXT: v6: undefined = StepGenerator v0, v5 check=None
-# CHECK-NEXT: v7: anything = ResultAt v6
-# CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
-# CHECK-NEXT: v9: 2 = Integer integer=2
-# CHECK-NEXT: v10: boolean = StrictEq v8, v9
-# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b4(| 0)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v11: anything = ResumeGenerator v0, v5
-# CHECK-NEXT: v12: object = AssumeType v11 provenType=object
-# CHECK-NEXT: Jump -> next b5(v12)
-# CHECK-NEXT: b4(v13: int[0, 1]):
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: boolean = StrictEq v13, v14
-# CHECK-NEXT: v16: L(IteratorResult) = NewObject -, v7, v15 layout=L(IteratorResult) fields=[0, 1]
-# CHECK-NEXT: Jump -> next b5(v16)
-# CHECK-NEXT: b5(v17: object):
-# CHECK-NEXT: v18: object ~ L6|L7|L8|L9 = Upcast v17 castType=object
-# CHECK-NEXT: Return v18
+# CHECK-NEXT: v7: fact = Specified
+# CHECK-NEXT: v8: anything = AssumeType v3, v7 provenType=anything
+# CHECK-NEXT: v9: boolean = AssumeType v4, v7 provenType=boolean
+# CHECK-NEXT: v10: L(IteratorResult) = NewObject -, v8, v9 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b3(v11: object):
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="bark"
-# CHECK: module=m0 position=384 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2 site=w14} results=[{type=string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}]} {
-# CHECK-NEXT: b0(v0: L2):
-# CHECK-NEXT: v1: boolean = IsSlotFilled v0 key="name" receivers=[L2] level=Expected
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b4()
-# CHECK-NEXT: b1(v2: guard):
-# CHECK-NEXT: v3: undefined|null|string = GetSlot v0, v2 key="name" receivers=[L2] level=Expected accessSite=18
-# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=string
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v5: string):
-# CHECK-NEXT: v6: boolean = IsSlotFilled v0 key="legs" receivers=[L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v7: guard):
-# CHECK-NEXT: v8: " barks on " = String string=" barks on "
-# CHECK-NEXT: v9: string = Add v5, v8
-# CHECK-NEXT: v10: number = GetSlot v0, v7 key="legs" receivers=[L2] level=Expected accessSite=19 [holdsDeclaredType]
-# CHECK-NEXT: v11: string = Add v9, v10
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v12: string = CallDirect v0 function=f97 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v12 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=384 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2 site=w14} results=[{type=string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}]}
 # CHECK-LABEL: function {{*}}name="bark"
 # CHECK: module=m0 position=384 kind=Method role=GenericVersion flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2 site=w14 flags=[IsExpected]} results=[{type=string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}]} creator=Version{provenVersion=f96} {
 # CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
-# CHECK-NEXT: v1: anything = PropGet v0 key="name" accessSite=18
-# CHECK-NEXT: v2: " barks on " = String string=" barks on "
-# CHECK-NEXT: v3: string = Add v1, v2 form=Generic
-# CHECK-NEXT: v4: anything = PropGet v0 key="legs" accessSite=19
-# CHECK-NEXT: v5: string = Add v3, v4 form=Generic
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v4: undefined = PropGetPair v0 key="name" secondKey="legs" readOrigin={position=4294967295} accessSite=18 secondAccessSite=19
+# CHECK-NEXT: v2: anything = ResultAt v4 index=1
+# CHECK-NEXT: v1: anything = ResultAt v4
+# CHECK-NEXT: v3: "undefined barks on undefined" = String string="undefined barks on undefined"
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=1106 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a dog"|"a spider"|"for-of sends nothing" site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=f13|f15|f28}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f3}
@@ -765,41 +715,58 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-LABEL: function {{*}}name="Animal"
 # CHECK: module=m0 position=187 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=L1|L2|L3|L4} parameters=[{type="boris"|"rex" site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] functionTypes=[f37] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f6} constructedClass=L1
 # CHECK-LABEL: function {{*}}name="bark"
-# CHECK: module=m0 position=384 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {
+# CHECK: module=m0 position=384 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} inlineFrames=[{}, {callee=f8 callPosition=384 isTailCall=true module=m0}, {callee=f96 callPosition=384 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f8, v1: anything):
-# CHECK-NEXT: v2: string = CallDirect v1 function=f8
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=1106 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f13|f15|f28}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameter=1073741825 parameterMap=[{original=1}]} creator=Version{provenVersion=f3} {
-# CHECK-NEXT: b0(v1: f13|f15|f28):
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=f13
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
-# CHECK-NEXT: b1() handler=b6():
-# CHECK-NEXT: v3: anything ~ undefined|null|L6|L7|L8|L9 = CallDirect function=f13 accessSite=4
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b2(v4: f15|f28):
-# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=f15
-# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3() handler=b6():
-# CHECK-NEXT: v6: anything ~ undefined|null|L6|L7|L8|L9 = CallDirect function=f15 accessSite=4
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4() frequency=Rare handler=b6():
-# CHECK-NEXT: v7: string = CallDirect function=f28 accessSite=4
+# CHECK-NEXT: v2: anything ~ L2 = Upcast v1 castType=anything @384 tail
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=L2
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b6()
+# CHECK-NEXT: b1(v4: L2):
+# CHECK-NEXT: v5: boolean = IsSlotFilled v4 key="name" receivers=[L2] level=Expected
+# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b2()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v6: anything ~ undefined|null|string = PropGet v4 key="name" accessSite=18 receivers=[L2]
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v7: boolean = IsSlotFilled v4 key="legs" receivers=[L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v7 -> taken b5(), notTaken b4()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v8: anything ~ number = PropGet v4 key="legs" accessSite=19 receivers=[L2]
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b6() role=CatchHandler:
-# CHECK-NEXT: v8: anything = CatchValue
-# CHECK-NEXT: v9: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v10: boolean = HasInPrototypeChain v8, v9
-# CHECK-NEXT: v11: anything ~ undefined|null|Error = Upcast v8 castType=anything
-# CHECK-NEXT: v12: anything = PropGet v11 key="constructor" accessSite=6
-# CHECK-NEXT: v13: anything ~ undefined|null|function = Expect v12 expectedType=undefined|null|function
-# CHECK-NEXT: v14: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v13 name="name"
-# CHECK-NEXT: v15: anything = PropGet v14 key="name" accessSite=7
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v16: undefined = Undefined
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v9: "undefined barks on undefined" = String string="undefined barks on undefined"
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v10: string = CallDirect v2 function=f97
+# CHECK-NEXT: ReturnCall v10 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="show"
+# CHECK: module=m0 position=1106 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f13|f15|f28}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameter=1073741825 parameterMap=[{original=1}]} creator=Version{provenVersion=f3} inlineFrames=[{}, {callee=f15 callPosition=4294967295 module=m0}, {callee=f13 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: f13|f15|f28):
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=f13
+# CHECK-NEXT: Branch v1 -> taken b6(), notTaken b1(| 0)
+# CHECK-NEXT: b1(v2: f15|f28):
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=f15
+# CHECK-NEXT: Branch v3 -> taken b5(), notTaken b2()
+# CHECK-NEXT: b2() frequency=Rare handler=b3():
+# CHECK-NEXT: v4: string = CallDirect function=f28 accessSite=4
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: v6: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v7: boolean = HasInPrototypeChain v5, v6
+# CHECK-NEXT: v8: anything ~ undefined|null|Error = Upcast v5 castType=anything
+# CHECK-NEXT: v9: anything = PropGet v8 key="constructor" accessSite=6
+# CHECK-NEXT: v10: anything ~ undefined|null|function = Expect v9 expectedType=undefined|null|function
+# CHECK-NEXT: v11: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v10 name="name"
+# CHECK-NEXT: v12: anything = PropGet v11 key="name" accessSite=7
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b5() handler=b3():
+# CHECK-NEXT: v14: undefined = CallDirect function=f123
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b6() handler=b3():
+# CHECK-NEXT: v15: undefined = CallDirect function=f122
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: }

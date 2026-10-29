@@ -646,7 +646,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f66 visibility=Private
 # CHECK-NEXT: Successors: #6
 # CHECK-NEXT: BB#13: ; frequency = 0.003460
 # CHECK-NEXT: Predecessors: #2
-# CHECK-NEXT: Int64 b@57 = Patchpoint(b@34:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v11:PropHasOwn)
+# CHECK-NEXT: Int64 b@57 = Patchpoint(b@34:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v11:PropHasOwn)
 # CHECK-NEXT: Int32 b@58 = Trunc(b@57, v11:PropHasOwn)
 # CHECK-NEXT: Int64 b@59 = ZExt32(b@58)
 # CHECK-NEXT: Int64 b@47 = Const64(6, v8:Boolean)

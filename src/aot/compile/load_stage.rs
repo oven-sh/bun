@@ -364,6 +364,7 @@ impl<'a> Build<'a> {
             &atoms,
             &self.limits,
             self.platform,
+            options.aot.runs_in_place,
         );
         let parsed_before = match (preload_of(options), &shared_by_loads) {
             (None, None) => ParsedBefore::Nothing,
@@ -409,6 +410,7 @@ impl<'a> Build<'a> {
         let options = self.options;
         let code = CodeOptions {
             max_computed_candidates: max_computed_candidates(&self.limits),
+            mocks_any_file: options.load.mocks_any_module || options.load.runs_tests,
             ..options.code.clone()
         };
         let limits = self.limits.clone();
@@ -439,7 +441,10 @@ impl<'a> Build<'a> {
             fold: shared.application_fold,
             atoms: shared.atoms,
             libs: options.typescript_libs,
-            project_origin: FileOrigin::NoFile,
+            project_origin: match options.aot.runs_tests && !options.aot.checks_only {
+                true => FileOrigin::TestedSource,
+                false => FileOrigin::NoFile,
+            },
             threads: self.threads,
             progress: None,
             left_out_bodies: None,
@@ -557,7 +562,7 @@ impl<'a> Build<'a> {
         if project.asset_reads == AssetReads::FinishedLater {
             read_assets(project.scope, host);
         }
-        if options.aot.runs_tests || (options.aot.checks_only && options.entry_points.len() > 1) {
+        if (options.aot.checks_only || options.aot.runs_tests) && options.entry_points.len() > 1 {
             self.import_graph = Some(ImportGraph::of(application.files()));
         }
         resolve_loads_through_imported_loaders(application.files(), &self.parallel_runner());
@@ -1295,6 +1300,8 @@ fn texts_of_program_files<'f, 's>(
     })
 }
 
+const MOST_SOURCE_BYTES_OF_TESTS_EXPECTED_TO_BE_ANALYZED: u64 = 214_000_000;
+
 // Whole-program analysis of so much text stops at its budget, and the program then holds all of Bun's own code. A load that holds it
 // from the start is not thrown away for lacking it. Where the analysis comes to an end after all, the program is loaded again without it.
 fn looks_too_large_to_analyze(
@@ -1310,7 +1317,20 @@ fn looks_too_large_to_analyze(
         return false;
     }
     let size: usize = texts_of_program_files(files).map(|(_, size)| size).sum();
-    size as u64 > limits.get(LimitId::MaxSourceBytesExpectedToBeAnalyzed)
+    if crate::statistics::logs_stages() {
+        bun_core::print_errorln!(
+            "AOT first look | source bytes {} | runs tests {}",
+            size,
+            load.runs_tests
+        );
+    }
+    // On one large suite, flow came to an end with 196 MB of text and stopped at its budget with 233 MB.
+    let limit = limits.get(LimitId::MaxSourceBytesExpectedToBeAnalyzed);
+    let limit = match load.runs_tests {
+        true => limit.min(MOST_SOURCE_BYTES_OF_TESTS_EXPECTED_TO_BE_ANALYZED),
+        false => limit,
+    };
+    size as u64 > limit
 }
 
 // The rule of `are_one_program` for Bun's own modules. Each of `loaded` is what the programs of one group hold of them.

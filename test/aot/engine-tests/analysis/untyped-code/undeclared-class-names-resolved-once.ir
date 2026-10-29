@@ -352,10 +352,10 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="run"
-# CHECK: module=m0 position=505 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0|L2|L3} results=[{type=string}] functionTypes=[f19] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=505 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0|L2|L3} results=[{type=string}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0|L2|L3):
-# CHECK-NEXT: v1: string = CallDirect function=f61
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
+# CHECK-NEXT: v1: "ran undefined" = String string="ran undefined"
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Job"
 # CHECK: module=m0 position=637 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=L2|L3 flags=[IsFromCompiler]}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 inlineFrames=[{}, {callee=f5 callPosition=4294967295 isConstruction=true module=m0}] {
@@ -452,11 +452,5 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=672 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9 parameter=2147483648 node=6} creator=Entrypoint{target=f9 arguments=Registers} inlineFrames=[{}, {callee=f9 callPosition=672 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: object):
 # CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="run"
-# CHECK: module=m0 position=505 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=string}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f6} {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v1: "ran undefined" = String string="ran undefined"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }

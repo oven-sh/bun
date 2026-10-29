@@ -758,50 +758,40 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=35
 # CHECK-NEXT: v3: Array = NewArrayLike v2, v1
 # CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v4)
-# CHECK-NEXT: b1(v5: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: v6: boolean = HasArrayStorage v3 arrayStorage=Contiguous [isWritable]
-# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b5(v5)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v7: boolean = Less v5, v2
-# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: v9: never = Call v8 calleeName="make" accessSite=33 callees=[]
+# CHECK-NEXT: v5: boolean = HasArrayStorage v3 arrayStorage=Contiguous [isWritable]
+# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b4()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v6: boolean = Less v4, v2
+# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: never = Call v7 calleeName="make" accessSite=33 callees=[]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v10: fact = Specified
-# CHECK-NEXT: v11: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v10 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v12: Array<number> = NewArray contents=number allocationSite=6
-# CHECK-NEXT: v13: f33 = NewClosure v12 function=f33 allocationSite=8
-# CHECK-NEXT: v14: undefined = CallBuiltin v11, v13 overload=ArrayPrototypeForEach/0 accessSite=10
-# CHECK-NEXT: Jump -> next b10(v12)
-# CHECK-NEXT: b5(v15: int[0, 4294967295] ~ 0) frequency=Rare:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v17: boolean = Less v15, v2
-# CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b9()
-# CHECK-NEXT: b6(v18: int[0, 4294967294] ~ 0) frequency=Rare:
-# CHECK-NEXT: v19: undefined = Undefined
-# CHECK-NEXT: v20: number = CallDirect v19 function=f32 accessSite=38 [calleeIsPredicted]
-# CHECK-NEXT: ElemDefine v3, v18, v20 accessSite=39
-# CHECK-NEXT: v22: int[1, 4294967295] ~ 1 = Increment v18
-# CHECK-NEXT: v23: boolean = IsPristine v3 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: Branch v23 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: Jump -> next b1(v22)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: Jump -> next b5(v22)
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v24: fact = Specified
-# CHECK-NEXT: v25: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v24 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v26: Array<number> = NewArray contents=number allocationSite=6
-# CHECK-NEXT: v27: f33 = NewClosure v26 function=f33 allocationSite=8
-# CHECK-NEXT: v28: undefined = CallBuiltin v25, v27 overload=ArrayPrototypeForEach/0 accessSite=10
-# CHECK-NEXT: Jump -> next b10(v26)
-# CHECK-NEXT: b10(v29: Array<number>):
-# CHECK-NEXT: v30: fact = Specified
-# CHECK-NEXT: v31: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v29, v30 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v31
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: fact = Specified
+# CHECK-NEXT: v10: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v9 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: Array<number> = NewArray contents=number allocationSite=6
+# CHECK-NEXT: v12: f33 = NewClosure v11 function=f33 allocationSite=8
+# CHECK-NEXT: v13: undefined = CallBuiltin v10, v12 overload=ArrayPrototypeForEach/0 accessSite=10
+# CHECK-NEXT: Jump -> next b7(v11)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v14: boolean = Less v4, v2
+# CHECK-NEXT: Branch v14 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: number = CallDirect v15 function=f32 accessSite=38 [calleeIsPredicted]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v17: fact = Specified
+# CHECK-NEXT: v18: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v17 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v19: Array<number> = NewArray contents=number allocationSite=6
+# CHECK-NEXT: v20: f33 = NewClosure v19 function=f33 allocationSite=8
+# CHECK-NEXT: v21: undefined = CallBuiltin v18, v20 overload=ArrayPrototypeForEach/0 accessSite=10
+# CHECK-NEXT: Jump -> next b7(v19)
+# CHECK-NEXT: b7(v22: Array<number>):
+# CHECK-NEXT: v23: fact = Specified
+# CHECK-NEXT: v24: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v22, v23 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v24
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="once"
 # CHECK: module=m0 position=1781 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=string site=w13 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -902,7 +892,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: v5: never = Call v4 calleeName="read" accessSite=32 callees=[f38]
+# CHECK-NEXT: v5: never = Call v4 calleeName="read" accessSite=32 callees=[f38] @0 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=

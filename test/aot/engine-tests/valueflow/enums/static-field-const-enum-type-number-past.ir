@@ -122,8 +122,6 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK: module=m0 position=167 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=4294967296 site=w1}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: 4294967296):
 # CHECK-NEXT: PutModuleVariable v0 variable=g2
-# CHECK-NEXT: v2: string = TypeOf v0
-# CHECK-NEXT: v3: " " = String string=" "
-# CHECK-NEXT: v4: string = Strcat v2, v3, v0
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v2: "number 4294967296" = String string="number 4294967296"
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }

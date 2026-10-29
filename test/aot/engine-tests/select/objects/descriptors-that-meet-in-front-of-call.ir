@@ -550,58 +550,61 @@ runtimefunction id=ArrayTraversalTraverseArray function=f63 visibility=Private
 # CHECK-NEXT: v27: anything @JSValue = PropGet v3 key="v" accessSite=6 receivers=[L0]
 # CHECK-NEXT: v28: undefined|int @JSValue = AssumeType v27 provenType=undefined|int
 # CHECK-NEXT: v29: anything @JSValue = PropGet v3 key="w" accessSite=7 receivers=[L0]
+# CHECK-NEXT: v30: undefined @JSValue = AssumeType v29 provenType=undefined
 # CHECK-NEXT: Jump -> next b11()
 # CHECK-NEXT: b11() handler=b12():
-# CHECK-NEXT: v30: "stored" @LiteralString = CallDirect function=f16 accessSite=27
-# CHECK-NEXT: Jump -> next b13(v30)
+# CHECK-NEXT: v31: "stored" @LiteralString = CallDirect function=f16 accessSite=27
+# CHECK-NEXT: Jump -> next b13(v31)
 # CHECK-NEXT: b12() role=CatchHandler:
-# CHECK-NEXT: v31: anything @JSValue = CatchValue
-# CHECK-NEXT: v32: string @Cell = CallDirect v31 function=f75
-# CHECK-NEXT: Jump -> next b13(v32)
-# CHECK-NEXT: b13(v33: string @JSValue):
+# CHECK-NEXT: v32: anything @JSValue = CatchValue
+# CHECK-NEXT: v33: string @Cell = CallDirect v32 function=f75
+# CHECK-NEXT: Jump -> next b13(v33)
+# CHECK-NEXT: b13(v34: string @JSValue):
 # CHECK-NEXT: TryCallInline -, v3 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 accessSite=9 -> done b15(), miss b14()
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v34: Array<string> @JSValue = CallBuiltin -, v3 overload=ObjectKeys/0 accessSite=9
-# CHECK-NEXT: Jump -> next b15(v34)
-# CHECK-NEXT: b15(v35: Array<string> @JSValue):
-# CHECK-NEXT: v36: Array<string, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v35 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v37: "values" @JSValue = String string="values"
-# CHECK-NEXT: v38: anything @JSValue = Call v24, -, v37, v28, v29, v33, v36 calleeName="show" accessSite=10 callees=[f4]
-# CHECK-NEXT: v39: L2 @Cell = NewObject layout=L2 allocationSite=10 allocation=5 allocationClass=2
-# CHECK-NEXT: v40: "x" @JSValue = String string="x"
-# CHECK-NEXT: v41: true @Boolean = Boolean boolean=true
-# CHECK-NEXT: v42: f18 @Cell = NewClosure function=f18 allocationSite=12 closureForm=Slim
-# CHECK-NEXT: v43: L0|L2 @Cell = CallDirect v39, v40, v41, v42 function=f74 accessSite=11
-# CHECK-NEXT: v44: 7 @JSValue = Integer integer=7
-# CHECK-NEXT: v45: true @Boolean = Boolean boolean=true
-# CHECK-NEXT: v46: f24 @Cell = NewClosure function=f24 allocationSite=14 closureForm=Slim
-# CHECK-NEXT: v47: L0|L2 @Cell = CallDirect v3, v44, v45, v46 function=f74 accessSite=13
-# CHECK-NEXT: v48: anything @JSValue = PropGet v3 key=symbol("mark")@m0:47 accessSite=14 receivers=[L0]
-# CHECK-NEXT: v49: L4 @Cell = NewObject layout=L4 allocationSite=15 allocation=6 allocationClass=3
-# CHECK-NEXT: v50: boolean @Boolean = ToBoolean v48 form=Generic
-# CHECK-NEXT: v51: L4 @Cell = CallDirect v49, v50 function=f7 accessSite=15
-# CHECK-NEXT: v52: "order" @JSValue = String string="order"
-# CHECK-NEXT: v53: anything @JSValue = Call v24, -, v52, v1 calleeName="show" accessSite=16 callees=[f4]
-# CHECK-NEXT: v54: null @JSValue = Null
-# CHECK-NEXT: TryCallInline -, v54 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b17(), miss b16()
+# CHECK-NEXT: v35: Array<string> @JSValue = CallBuiltin -, v3 overload=ObjectKeys/0 accessSite=9
+# CHECK-NEXT: Jump -> next b15(v35)
+# CHECK-NEXT: b15(v36: Array<string> @JSValue):
+# CHECK-NEXT: v37: Array<string, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v36 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v38: "values" @JSValue = String string="values"
+# CHECK-NEXT: v39: anything @JSValue = Call v24, -, v38, v28, v30, v34, v37 calleeName="show" accessSite=10 callees=[f4]
+# CHECK-NEXT: v40: L2 @Cell = NewObject layout=L2 allocationSite=10 allocation=5 allocationClass=2
+# CHECK-NEXT: v41: "x" @JSValue = String string="x"
+# CHECK-NEXT: v42: true @Boolean = Boolean boolean=true
+# CHECK-NEXT: v43: f18 @Cell = NewClosure function=f18 allocationSite=12 closureForm=Slim
+# CHECK-NEXT: v44: L0|L2 @Cell = CallDirect v40, v41, v42, v43 function=f74 accessSite=11
+# CHECK-NEXT: v45: 7 @JSValue = Integer integer=7
+# CHECK-NEXT: v46: true @Boolean = Boolean boolean=true
+# CHECK-NEXT: v47: f24 @Cell = NewClosure function=f24 allocationSite=14 closureForm=Slim
+# CHECK-NEXT: v48: L0|L2 @Cell = CallDirect v3, v45, v46, v47 function=f74 accessSite=13
+# CHECK-NEXT: v49: anything @JSValue = PropGet v3 key=symbol("mark")@m0:47 accessSite=14 receivers=[L0]
+# CHECK-NEXT: v50: L4 @Cell = NewObject layout=L4 allocationSite=15 allocation=6 allocationClass=3
+# CHECK-NEXT: v51: boolean @Boolean = ToBoolean v49 form=Generic
+# CHECK-NEXT: v52: L4 @Cell = CallDirect v50, v51 function=f7 accessSite=15
+# CHECK-NEXT: v53: "order" @JSValue = String string="order"
+# CHECK-NEXT: v54: anything @JSValue = Call v24, -, v53, v1 calleeName="show" accessSite=16 callees=[f4]
+# CHECK-NEXT: v55: null @JSValue = Null
+# CHECK-NEXT: TryCallInline -, v55 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b17(), miss b16()
 # CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v55: Object @JSValue = CallBuiltin -, v54 overload=ObjectCreate/0
-# CHECK-NEXT: Jump -> next b17(v55)
-# CHECK-NEXT: b17(v56: Object @JSValue):
-# CHECK-NEXT: v57: "in a loop" @JSValue = String string="in a loop"
-# CHECK-NEXT: v58: undefined @Void = PropGetPair v56 key="p" secondKey="q" readOrigin={position=4294967295} accessSite=18 secondAccessSite=19
-# CHECK-NEXT: v59: anything @JSValue = ResultAt v58 index=1
-# CHECK-NEXT: v60: anything @JSValue = ResultAt v58
-# CHECK-NEXT: v61: anything @JSValue = PropGet v56 key="r" accessSite=20
-# CHECK-NEXT: TryCallInline -, v56 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 accessSite=21 -> done b19(), miss b18()
+# CHECK-NEXT: v56: Object @JSValue = CallBuiltin -, v55 overload=ObjectCreate/0
+# CHECK-NEXT: Jump -> next b17(v56)
+# CHECK-NEXT: b17(v57: Object @JSValue):
+# CHECK-NEXT: v58: "in a loop" @JSValue = String string="in a loop"
+# CHECK-NEXT: v59: anything @JSValue = PropGet v57 key="p" accessSite=18
+# CHECK-NEXT: v60: undefined @JSValue = AssumeType v59 provenType=undefined
+# CHECK-NEXT: v61: anything @JSValue = PropGet v57 key="q" accessSite=19
+# CHECK-NEXT: v62: undefined @JSValue = AssumeType v61 provenType=undefined
+# CHECK-NEXT: v63: anything @JSValue = PropGet v57 key="r" accessSite=20
+# CHECK-NEXT: v64: undefined @JSValue = AssumeType v63 provenType=undefined
+# CHECK-NEXT: TryCallInline -, v57 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 accessSite=21 -> done b19(), miss b18()
 # CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v62: Array<string> @JSValue = CallBuiltin -, v56 overload=ObjectKeys/0 accessSite=21
-# CHECK-NEXT: Jump -> next b19(v62)
-# CHECK-NEXT: b19(v63: Array<string> @JSValue):
-# CHECK-NEXT: v64: Array<never, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v63 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v65: anything @JSValue = Call v24, -, v57, v60, v59, v61, v64 calleeName="show" accessSite=22 callees=[f4]
-# CHECK-NEXT: v66: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v66
+# CHECK-NEXT: v65: Array<string> @JSValue = CallBuiltin -, v57 overload=ObjectKeys/0 accessSite=21
+# CHECK-NEXT: Jump -> next b19(v65)
+# CHECK-NEXT: b19(v66: Array<string> @JSValue):
+# CHECK-NEXT: v67: Array<never, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v66 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v68: anything @JSValue = Call v24, -, v58, v60, v62, v64, v67 calleeName="show" accessSite=22 callees=[f4]
+# CHECK-NEXT: v69: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v69
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="note"
 # CHECK: module=m0 position=536 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="first"|"flag"|"key"|"target" site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=true|"k"|L4|f29 site=w1}] results=[{type=true|"k"|L4|f29 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

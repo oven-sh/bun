@@ -770,6 +770,12 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "texts-of-both-widths",
     "one-of-a-few-written-texts",
     "characters-read-by-index-in-loops",
+    "objects-created-below-a-module-variable",
+    "maps-and-sets-across-small-table-sizes",
+    "lists-made-with-a-length",
+    "integers-compared-where-ranges-decide",
+    "iterators-stepped-by-hand",
+    "counters-stepped-by-one",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(

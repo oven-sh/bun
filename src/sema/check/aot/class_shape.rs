@@ -77,7 +77,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let candidates = store_candidates(
                 hir,
                 bound,
-                index,
+                &index,
                 &[ThisOwner::Instance(class), ThisOwner::Static(class)],
                 bound.declared_symbol(Decl::Class(class)).some(),
                 bound.inner_class_symbol(class).some(),
@@ -111,7 +111,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let candidates = store_candidates(
             hir,
             bound,
-            index,
+            &index,
             &[ThisOwner::Function(function)],
             bound.declared_symbol(Decl::Fn(function)).some(),
             None,

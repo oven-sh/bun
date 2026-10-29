@@ -105,8 +105,9 @@ impl<'s> Folder<'_, 's> {
         if op == UnOp::Typeof
             && let Some(type_name) = type_of_literal
         {
+            // Making a closure or a pattern does nothing that a program can see.
             let type_name = Value::from(Constant::String(type_name));
-            return Folded::new(type_name, self.folded(operand).effects);
+            return Folded::new(type_name, Effects::None);
         }
         if op == UnOp::Not
             && let Some(&is_truthy) = self.conditions.get(&operand)

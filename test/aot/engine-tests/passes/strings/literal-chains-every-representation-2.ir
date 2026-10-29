@@ -273,7 +273,7 @@ function f60 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v21: Array<f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v22: Array<undefined|null|string> = Data data=d0 allocationSite=26
 # CHECK-NEXT: v23: Array<"anyOf"|"l1"|"l12"|"l13"|"l2"|"l3"|"l4"|"l6"|"l7"|"orNil"|"same5"|"twice"|"w1"|"w12"|"w13"|"w2"|"w3"|"w4"|"w6"|"w7", proven, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<"anyOf"|"l1"|"l12"|"l13"|"l2"|"l3"|"l4"|"l6"|"l7"|"orNil"|"same5"|"twice"|"w1"|"w12"|"w13"|"w2"|"w3"|"w4"|"w6"|"w7", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v24: Array<undefined|null|string> = Data data=d1 allocationSite=27
+# CHECK-NEXT: v24: Array<undefined|null|string> = Data data=d3 allocationSite=27 [isNeverToldApart]
 # CHECK-NEXT: v25: Array<""|"a"|"alph"|"alphA"|"alpha"|"alphaa"|"beta"|"betb"|"delta"|"epsilon"|"epsiloo"|"gamma"|"iota"|"kappa"|"lambda"|"lambdb"|"nothing of the kind"|"omega"|"omicron"|"sigma"|"theta"|"upsilon"|"zeta", proven, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<""|"a"|"alph"|"alphA"|"alpha"|"alphaa"|"beta"|"betb"|"delta"|"epsilon"|"epsiloo"|"gamma"|"iota"|"kappa"|"lambda"|"lambdb"|"nothing of the kind"|"omega"|"omicron"|"sigma"|"theta"|"upsilon"|"zeta", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v26: "flat" = String string="flat"
 # CHECK-NEXT: v27: f2 = GetModuleVariable variable=g1

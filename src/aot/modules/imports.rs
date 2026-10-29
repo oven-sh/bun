@@ -92,6 +92,12 @@ pub(super) struct FileImports {
     pub replaced_variables: Vec<Sym>,
     /// The same for a name that the loader fills: of a module of the library, or of a CommonJS file.
     pub replaced_names: Vec<(ModuleRef, Atom)>,
+    /// The modules whose namespace object goes somewhere as a value, or to `spyOn` with a name that the build does not know.
+    pub namespaces_handed_out: Vec<ModuleRef>,
+    /// A spy takes an object that is no namespace and no built-in, which may have come from anywhere.
+    pub spies_on_unknown_objects: bool,
+    /// `import()` or `require` of a path that the build can't know, which answers with the object of any module.
+    pub loads_by_unknown_path: bool,
     /// The modules that `mock.module(specifier, ..)` names.
     pub mocked_modules: Vec<ModuleRef>,
     /// `mock.module` is called with a specifier that the build does not know.
@@ -124,6 +130,7 @@ pub(super) fn bind_imports(
         order,
         sites,
         marker,
+        mocks_any_module: input.mocks_any_module,
         mocked: find_mocked_modules(input, scans, modules),
     };
     let compiled_files = modules.compiled_files.iter();
@@ -218,6 +225,8 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) order: &'a EvaluationOrder,
     pub(super) sites: &'a PlannedSites,
     pub(super) marker: FindMarker<'a>,
+    /// `LoadOptions::mocks_any_module`
+    pub(super) mocks_any_module: bool,
     mocked: MockedModules,
 }
 
@@ -239,7 +248,10 @@ fn find_mocked_modules(
     scans: &Scans,
     modules: &ModuleSet,
 ) -> MockedModules {
-    let mut mocked = MockedModules::default();
+    let mut mocked = MockedModules {
+        is_every_module: input.mocks_any_module,
+        ..MockedModules::default()
+    };
     for &file in &modules.compiled_files {
         let sites = input.files.analysis(file).import_sites.iter();
         for (site, answer) in sites.zip(&scans.of(file).sites) {
@@ -339,6 +351,7 @@ impl<'a, 's> FileBinder<'a, 's> {
         }
         self.bind_jsx_imports();
         self.bind_namespace_members();
+        self.note_what_a_spy_may_reach();
         self.collect_mocked_modules();
         let bindings = &mut self.imports.bindings;
         bindings.shared_sort_by_key(|&(symbol, _)| symbol);

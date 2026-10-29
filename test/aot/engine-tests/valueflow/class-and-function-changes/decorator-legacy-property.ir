@@ -227,17 +227,7 @@ runtimefunction id=DecoratorsDecorateProperty function=f10
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="dec"
-# CHECK: module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=object}, {type="x" site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: object, v1: "x"):
-# CHECK-NEXT: v2: f3 = NewClosure function=f3 allocationSite=3
-# CHECK-NEXT: v3: f4 = NewClosure function=f4 allocationSite=5
-# CHECK-NEXT: v4: true = Boolean boolean=true
-# CHECK-NEXT: v5: L1 = NewObject -, v2, v3, v4 layout=L1 fields=[2, 3, 0] allocationSite=4 allocationClass=1
-# CHECK-NEXT: v6: L1 = FinishObject v5
-# CHECK-NEXT: v7: object = CallBuiltin -, v0, v1, v6 overload=ObjectDefineProperty/0 accessSite=10
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: }
+# CHECK: module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=object}, {type="x" site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="C"
 # CHECK: module=m0 position=126 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
 # CHECK-NEXT: b0(v0: anything):

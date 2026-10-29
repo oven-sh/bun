@@ -1134,47 +1134,47 @@ function f51 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b4(v197, v198)
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v199: anything ~ undefined|string = PropGet v15 key="before" accessSite=29 receivers=[L2]
+# CHECK-NEXT: v200: undefined|string = AssumeType v199 provenType=undefined|string
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectKeys
-# CHECK-NEXT: v201: Array<string> = CallBuiltin -, v16 overload=ObjectKeys/0 accessSite=30
-# CHECK-NEXT: v202: Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]> = AssumeType v201 provenType=Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v203: string = CallBuiltin v202 overload=ArrayPrototypeJoin/0 accessSite=32
+# CHECK-NEXT: v202: Array<string> = CallBuiltin -, v16 overload=ObjectKeys/0 accessSite=30
+# CHECK-NEXT: v203: Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]> = AssumeType v202 provenType=Array<"before"|"name0"|"name1"|"name10"|"name11"|"name12"|"name13"|"name14"|"name15"|"name16"|"name17"|"name18"|"name19"|"name2"|"name20"|"name21"|"name22"|"name23"|"name3"|"name4"|"name5"|"name6"|"name7"|"name8"|"name9", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v204: string = CallBuiltin v203 overload=ArrayPrototypeJoin/0 accessSite=32
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectGetOwnPropertyDescriptor
-# CHECK-NEXT: v205: "name7" = String string="name7"
-# CHECK-NEXT: v206: undefined = CallBuiltin -, v16, v205 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=33
-# CHECK-NEXT: v207: boolean = ResultAt v206
-# CHECK-NEXT: v208: 1 = Integer integer=1
-# CHECK-NEXT: v209: int[0, 1] = ToNumber v207
-# CHECK-NEXT: v210: i32 = LShift v208, v209
-# CHECK-NEXT: v211: anything = ResultAt v206 index=3
-# CHECK-NEXT: v212: 1 = Integer integer=1
-# CHECK-NEXT: v213: int[0, 1] = BitAnd v210, v212
-# CHECK-NEXT: v214: boolean = ToBoolean v213
-# CHECK-NEXT: Branch v214 -> taken b11(), notTaken b12()
+# CHECK-NEXT: v206: "name7" = String string="name7"
+# CHECK-NEXT: v207: undefined = CallBuiltin -, v16, v206 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=33
+# CHECK-NEXT: v208: boolean = ResultAt v207
+# CHECK-NEXT: v209: 1 = Integer integer=1
+# CHECK-NEXT: v210: int[0, 1] = ToNumber v208
+# CHECK-NEXT: v211: i32 = LShift v209, v210
+# CHECK-NEXT: v212: anything = ResultAt v207 index=3
+# CHECK-NEXT: v213: 1 = Integer integer=1
+# CHECK-NEXT: v214: int[0, 1] = BitAnd v211, v213
+# CHECK-NEXT: v215: boolean = ToBoolean v214
+# CHECK-NEXT: Branch v215 -> taken b11(), notTaken b12()
 # CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v215: undefined = Undefined
-# CHECK-NEXT: v216: never = RequireObjectCoercible v215 name="get"
+# CHECK-NEXT: v216: undefined = Undefined
+# CHECK-NEXT: v217: never = RequireObjectCoercible v216 name="get"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v217: anything ~ undefined|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25 = Upcast v211 castType=anything
-# CHECK-NEXT: v218: string = TypeOf v217
-# CHECK-NEXT: v219: "name7" = String string="name7"
-# CHECK-NEXT: v220: undefined = CallBuiltin -, v16, v219 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=35
-# CHECK-NEXT: v221: boolean = ResultAt v220
-# CHECK-NEXT: v222: 1 = Integer integer=1
-# CHECK-NEXT: v223: int[0, 1] = ToNumber v221
-# CHECK-NEXT: v224: i32 = LShift v222, v223
-# CHECK-NEXT: v225: boolean = ResultAt v220 index=6
-# CHECK-NEXT: v226: 1 = Integer integer=1
-# CHECK-NEXT: v227: int[0, 1] = BitAnd v224, v226
-# CHECK-NEXT: v228: boolean = ToBoolean v227
-# CHECK-NEXT: Branch v228 -> taken b13(), notTaken b14()
+# CHECK-NEXT: v218: anything ~ undefined|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25 = Upcast v212 castType=anything
+# CHECK-NEXT: v219: string = TypeOf v218
+# CHECK-NEXT: v220: "name7" = String string="name7"
+# CHECK-NEXT: v221: undefined = CallBuiltin -, v16, v220 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=35
+# CHECK-NEXT: v222: boolean = ResultAt v221
+# CHECK-NEXT: v223: 1 = Integer integer=1
+# CHECK-NEXT: v224: int[0, 1] = ToNumber v222
+# CHECK-NEXT: v225: i32 = LShift v223, v224
+# CHECK-NEXT: v226: boolean = ResultAt v221 index=6
+# CHECK-NEXT: v227: 1 = Integer integer=1
+# CHECK-NEXT: v228: int[0, 1] = BitAnd v225, v227
+# CHECK-NEXT: v229: boolean = ToBoolean v228
+# CHECK-NEXT: Branch v229 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v229: undefined = Undefined
-# CHECK-NEXT: v230: never = RequireObjectCoercible v229 name="configurable"
+# CHECK-NEXT: v230: undefined = Undefined
+# CHECK-NEXT: v231: never = RequireObjectCoercible v230 name="configurable"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v231: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v232: undefined = CallBuiltin v231, v19, v199, v203, v218, v225 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=37
+# CHECK-NEXT: v232: undefined = CallBuiltin -, v19, v200, v204, v219, v226 overload=ConsoleLog/0 accessSite=37
 # CHECK-NEXT: Jump -> next b15()
 # CHECK-NEXT: b15() handler=b16():
 # CHECK-NEXT: v233: 5 = Integer integer=5

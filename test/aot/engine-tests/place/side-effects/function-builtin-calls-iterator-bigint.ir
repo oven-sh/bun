@@ -295,7 +295,7 @@ runtimefunction id=ObjectsFromEntries function=f5
 # CHECK-NEXT: Jump -> next b3(v14)
 # CHECK-NEXT: b3(v22: L1):
 # CHECK-NEXT: v23: "ran" = String string="ran"
-# CHECK-NEXT: v24: int|whole = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: v24: int[0, 9007199254740992] ~ int[0, 2147483647] = GetEnvironmentField v0 layout=L0
 # CHECK-NEXT: v25: undefined = CallBuiltin -, v23, v24 overload=ConsoleLog/0 accessSite=6
 # CHECK-NEXT: v26: boolean = HasNoFieldOutsideSlot v22
 # CHECK-NEXT: Branch v26 -> taken b4(| 0), notTaken b5()
@@ -316,7 +316,7 @@ runtimefunction id=ObjectsFromEntries function=f5
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8():
 # CHECK-NEXT: v35: "ran" = String string="ran"
-# CHECK-NEXT: v36: int|whole = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: v36: int[0, 9007199254740992] ~ int[0, 2147483647] = GetEnvironmentField v0 layout=L0
 # CHECK-NEXT: v37: undefined = CallBuiltin -, v35, v36 overload=ConsoleLog/0 accessSite=11
 # CHECK-NEXT: v38: undefined = Undefined
 # CHECK-NEXT: Return v38

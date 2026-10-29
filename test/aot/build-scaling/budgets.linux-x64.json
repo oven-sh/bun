@@ -484,8 +484,8 @@
     "megabytes": 137
   },
   "entry points that a pattern finds": {
-    "millionInstructions": 10238,
-    "megabytes": 155
+    "millionInstructions": 3651,
+    "megabytes": 95
   },
   "a chain of conditional types": {
     "millionInstructions": 910,

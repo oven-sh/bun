@@ -248,6 +248,8 @@ typesite w118 module=m0 position=3717 kind=CallResult
 typesite w119 module=m0 position=3983 kind=CallResult
 typesite w120 module=m0 position=4042 kind=CallResult
 typesite w121 module=m0 position=4061 kind=CallResult
+typesite w122 module=m3 position=571 kind=Variable
+typesite w123 module=m3 position=1447 kind=Variable
 layout L0 kind=Instance name="Record" module=m0 position=341 constructor=f16 fields=[{key="name" declared={type=undefined|null|string site=w37 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="list" declared={type=undefined|null|Array<number> site=w38 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="next" declared={type=undefined|null|L0 site=w39 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=3
 layout L1 module=m0 position=3914 fields=[{key="length" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
 layout L2 module=m4 position=3027 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
@@ -1135,122 +1137,134 @@ function f54 name="throw" module=m2 position=1077 kind=Method role=Library flags
     v13 = CreateIteratorResult v3, v12 @1489
     Return v13 @1489
 }
-function f55 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f55 name="next" module=m3 position=99 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
-    Jump -> next b1() @25
+    Jump -> next b1() @99
   b1():
-    v1 = HasJSType v0 first=6 last=6 @78
-    v2 = ToBoolean v1 @78
-    Branch v2 -> taken b2(| 0), notTaken b8(| 0) @78
+    v1 = HasJSType v0 first=6 last=6 @152
+    v2 = ToBoolean v1 @152
+    Branch v2 -> taken b2(| 0), notTaken b8(| 0) @152
   b2(v3):
-    Jump -> next b3() @78
+    Jump -> next b3() @152
   b3():
-    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @190
-    v5 = GetInternalField v4 @190
-    v6 = Undefined @320
-    v7 = StepGenerator v5, v6 check=IsGenerator @277
-    v8 = ResultAt v7 @383
-    v9 = ResultAt v7 index=1 @446
-    v10 = Integer integer=2 @510
-    v11 = StrictEq v9, v10 @499
-    Branch v11 -> taken b4(| 0), notTaken b6(| 0) @499
-  b4(v12):
-    Jump -> next b5() @499
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @264
+    v5 = GetInternalField v4 @264
+    v6 = Undefined @394
+    v7 = StepGenerator v5, v6 check=IsGenerator @351
+    v8 = ResultAt v7 @455
+    v9 = ResultAt v7 index=1 @518
+    v10 = Integer integer=1 @589
+    v11 = StrictEq v9, v10 @578
+    v12 = Convert v11 declared={type=boolean site=w122} @578
+    v13 = Integer integer=2 @639
+    v14 = StrictEq v9, v13 @628
+    Branch v14 -> taken b4(| 0), notTaken b6(| 0) @628
+  b4(v15):
+    Jump -> next b5() @628
   b5():
-    v13 = Undefined @602
-    v14 = ResumeGenerator v5, v13 @557
-    Return v14 @557
-  b6(v15):
-    Jump -> next b7() @499
-  b7():
-    v16 = Integer integer=1 @664
-    v17 = StrictEq v15, v16 @653
-    v18 = Convert v17 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @625
-    v19 = CreateIteratorResult v8, v18 @625
-    Return v19 @625
-  b8(v20):
-    Jump -> next b9() @78
+    v16 = Undefined @741
+    v17 = ResumeGenerator v5, v16 @696
+    v18 = PropGet v17 key="value" @770
+    v19 = PropGet v17 key="done" @799
+    v20 = Boolean boolean=true @815
+    v21 = StrictEq v19, v20 @799
+    v22 = Convert v21 declared={type=boolean site=w122} @792
+    Jump -> next b7(v18, v22) @792
+  b6(v23):
+    Jump -> next b7(v8, v12) @628
+  b7(v24, v25: boolean):
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @838
+    v27 = CreateIteratorResult v24, v26 @838
+    Return v27 @838
+  b8(v28):
+    Jump -> next b9() @152
   b9():
-    v21 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @111
-    Unreachable @111
+    v29 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @185
+    Unreachable @185
 }
-function f56 name="return" module=m3 position=727 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f56 name="return" module=m3 position=904 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
-    Jump -> next b1() @727
+    Jump -> next b1() @904
   b1():
-    v1 = Undefined @727
-    v2 = HasJSType v0 first=6 last=6 @783
-    v3 = ToBoolean v2 @783
-    Branch v3 -> taken b2(| 0), notTaken b19(| 0) @783
+    v1 = Undefined @904
+    v2 = HasJSType v0 first=6 last=6 @960
+    v3 = ToBoolean v2 @960
+    Branch v3 -> taken b2(| 0), notTaken b19(| 0) @960
   b2(v4):
-    Jump -> next b3() @783
+    Jump -> next b3() @960
   b3():
-    v5 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @893
-    v6 = GetInternalField v5 @893
-    v7 = IsGeneratorSuspendedAtStart v6 @972
-    v8 = ToBoolean v7 @972
-    Branch v8 -> taken b4(| 0), notTaken b13(| 0) @972
+    v5 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1070
+    v6 = GetInternalField v5 @1070
+    v7 = IsGeneratorSuspendedAtStart v6 @1149
+    v8 = ToBoolean v7 @1149
+    Branch v8 -> taken b4(| 0), notTaken b13(| 0) @1149
   b4(v9):
-    Jump -> next b5() @972
+    Jump -> next b5() @1149
   b5():
-    v10 = Undefined @1537
-    v11 = ResumeGenerator v6, v10 resumeMode=Return @1490
-    v12 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1578
-    v13 = GetInternalField v12 index=1 @1578
-    v14 = TypeTest v13 testedType=null @1665
-    Branch v14 -> taken b6(| 0), notTaken b7(| 0) @1665
+    v10 = Undefined @1833
+    v11 = ResumeGenerator v6, v10 resumeMode=Return @1786
+    v12 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1874
+    v13 = GetInternalField v12 index=1 @1874
+    v14 = TypeTest v13 testedType=null @1961
+    Branch v14 -> taken b6(| 0), notTaken b7(| 0) @1961
   b6(v15):
-    Jump -> next b12() @1665
+    Jump -> next b12() @1961
   b7(v16):
-    Jump -> next b8() @1665
+    Jump -> next b8() @1961
   b8():
-    v17 = PropGet v16 key="return" @1702
-    v18 = TypeTest v17 testedType=undefined|null @1702
-    Branch v18 -> taken b9(| 0), notTaken b10(| 0) @1702
+    v17 = PropGet v16 key="return" @1998
+    v18 = TypeTest v17 testedType=undefined|null @1998
+    Branch v18 -> taken b9(| 0), notTaken b10(| 0) @1998
   b9(v19):
-    Jump -> next b11() @1702
+    Jump -> next b11() @1998
   b10(v20):
-    v21 = Call v20, v16 @1702
-    v22 = RequireObject v21 runtimeError=IteratorResultNotObject @1702
-    Jump -> next b11() @1702
+    v21 = Call v20, v16 @1998
+    v22 = RequireObject v21 runtimeError=IteratorResultNotObject @1998
+    Jump -> next b11() @1998
   b11():
-    v23 = Undefined @1702
-    Jump -> next b12() @1702
+    v23 = Undefined @1998
+    Jump -> next b12() @1998
   b12():
-    v24 = Undefined @1776
-    v25 = Boolean boolean=true @1787
-    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1756
-    v27 = CreateIteratorResult v24, v26 @1756
-    Return v27 @1756
+    v24 = Undefined @2072
+    v25 = Boolean boolean=true @2083
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @2052
+    v27 = CreateIteratorResult v24, v26 @2052
+    Return v27 @2052
   b13(v28):
-    Jump -> next b14() @972
+    Jump -> next b14() @1149
   b14():
-    v29 = Undefined @1081
-    v30 = StepGenerator v6, v29 resumeMode=Return check=IsGenerator @1036
-    v31 = ResultAt v30 @1148
-    v32 = ResultAt v30 index=1 @1215
-    v33 = Integer integer=2 @1283
-    v34 = StrictEq v32, v33 @1272
-    Branch v34 -> taken b15(| 0), notTaken b17(| 0) @1272
-  b15(v35):
-    Jump -> next b16() @1272
+    v29 = Undefined @1258
+    v30 = StepGenerator v6, v29 resumeMode=Return check=IsGenerator @1213
+    v31 = ResultAt v30 @1323
+    v32 = ResultAt v30 index=1 @1390
+    v33 = Integer integer=1 @1465
+    v34 = StrictEq v32, v33 @1454
+    v35 = Convert v34 declared={type=boolean site=w123} @1454
+    v36 = Integer integer=2 @1519
+    v37 = StrictEq v32, v36 @1508
+    Branch v37 -> taken b15(| 0), notTaken b17(| 0) @1508
+  b15(v38):
+    Jump -> next b16() @1508
   b16():
-    v36 = Undefined @1381
-    v37 = ResumeGenerator v6, v36 resumeMode=Return @1334
-    Return v37 @1334
-  b17(v38):
-    Jump -> next b18() @1272
-  b18():
-    v39 = Integer integer=1 @1447
-    v40 = StrictEq v38, v39 @1436
-    v41 = Convert v40 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1408
-    v42 = CreateIteratorResult v31, v41 @1408
-    Return v42 @1408
-  b19(v43):
-    Jump -> next b20() @783
+    v39 = Undefined @1627
+    v40 = ResumeGenerator v6, v39 resumeMode=Return @1580
+    v41 = PropGet v40 key="value" @1660
+    v42 = PropGet v40 key="done" @1693
+    v43 = Boolean boolean=true @1709
+    v44 = StrictEq v42, v43 @1693
+    v45 = Convert v44 declared={type=boolean site=w123} @1686
+    Jump -> next b18(v41, v45) @1686
+  b17(v46):
+    Jump -> next b18(v31, v35) @1508
+  b18(v47, v48: boolean):
+    v49 = Convert v48 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1740
+    v50 = CreateIteratorResult v47, v49 @1740
+    Return v50 @1740
+  b19(v51):
+    Jump -> next b20() @960
   b20():
-    v44 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @816
-    Unreachable @816
+    v52 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @993
+    Unreachable @993
 }
 function f57 name="next" module=m4 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
@@ -1629,13 +1643,22 @@ runtimefunction id=GeneratorPrototypeThrow function=f54 visibility=Private
 # CHECK-NEXT: v3: undefined|null|"abc"|"far"|"odd"|"x"|"yz" = GetSlot v0, v2 key="name" receivers=[L0] level=Expected accessSite=33
 # CHECK-NEXT: v4: "abc"|"far"|"odd"|"x"|"yz" = RequireObjectCoercible v3 name="length"
 # CHECK-NEXT: v5: int[1, 3] = GetStringLength v4
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: Jump -> next b5(v5)
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: v6: anything ~ undefined|null|"abc"|"far"|"odd"|"x"|"yz" = PropGet v0 key="name" accessSite=33 receivers=[L0]
-# CHECK-NEXT: v7: anything = PropGet v6 key="length" accessSite=34 receivers=[]
-# CHECK-NEXT: v8: undefined|number = AssumeType v7 provenType=undefined|number
-# CHECK-NEXT: v9: undefined|number ~ number = Expect v8 expectedType=number
-# CHECK-NEXT: Return v9
+# CHECK-NEXT: v7: undefined|null|int|"abc"|"far"|"odd"|"x"|"yz" ~ undefined|null|"abc"|"far"|"odd"|"x"|"yz" = AssumeType v6 provenType=undefined|null|int|"abc"|"far"|"odd"|"x"|"yz"
+# CHECK-NEXT: v8: int|"abc"|"far"|"odd"|"x"|"yz" ~ "abc"|"far"|"odd"|"x"|"yz" = RequireObjectCoercible v7 name="length"
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v8 testedType="abc"|"far"|"odd"|"x"|"yz"
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b4(| 0)
+# CHECK-NEXT: b3(v10: "abc"|"far"|"odd"|"x"|"yz") frequency=Rare:
+# CHECK-NEXT: v11: int[1, 3] = GetStringLength v10
+# CHECK-NEXT: Jump -> next b5(v11)
+# CHECK-NEXT: b4(v12: int) frequency=Rare:
+# CHECK-NEXT: v13: anything = PropGet v12 key="length" accessSite=34 receivers=[]
+# CHECK-NEXT: v14: undefined|number = AssumeType v13 provenType=undefined|number
+# CHECK-NEXT: Jump -> next b5(v14)
+# CHECK-NEXT: b5(v15: undefined|number ~ int[1, 3]):
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
 # CHECK: m0 position=4035 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<undefined|number|"first"|"long", proven, pristine[Storage, Names, Dense]> site=w67 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f50] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f106} inlineFrames=[{}, {callee=f106 callPosition=4035 module=m0}, {callee=f5 callPosition=4061 parent=1 module=m0}, {callee=f4 callPosition=4042 parent=1 module=m0}, {callee=f61 callPosition=810 parent=3 isTailCall=true module=m0}, {callee=f62 callPosition=879 parent=2 isTailCall=true module=m0}] {
@@ -1661,47 +1684,48 @@ runtimefunction id=GeneratorPrototypeThrow function=f54 visibility=Private
 # CHECK-NEXT: Jump -> next b5(v13)
 # CHECK-NEXT: b4(v14: L1) frequency=Rare:
 # CHECK-NEXT: v15: anything ~ undefined|null|string = GetSlot v14 key="length" receivers=[L1] level=Proven accessSite=36
-# CHECK-NEXT: Jump -> next b5(v15)
-# CHECK-NEXT: b5(v16: anything ~ int[0, 4294967295]):
-# CHECK-NEXT: v17: boolean = HasBirthFieldsFilled v1
-# CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b9()
-# CHECK-NEXT: b6(v18: guard):
-# CHECK-NEXT: v19: undefined|null|Array<number> = GetSlot v1, v18 key="list" receivers=[L0] level=Expected accessSite=37
-# CHECK-NEXT: v20: undefined|null|Array<int, proven, pristine[Storage, Names]> = AssumeType v19 provenType=undefined|null|L1|Array<int, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: v22: Array<int, proven, pristine[Storage, Names]> = RequireObjectCoercible v20
-# CHECK-NEXT: v23: boolean = HasArrayStorage v22 arrayStorage=Double
-# CHECK-NEXT: Branch v23 -> taken b7(| 0), notTaken b14()
-# CHECK-NEXT: b7(v24: guard):
-# CHECK-NEXT: v25: boolean = IsElementPresent v22, v21, v24 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: Branch v25 -> taken b8(| 0), notTaken b11(v22)
-# CHECK-NEXT: b8(v26: guard):
-# CHECK-NEXT: v27: guard = AllGuards v24, v26
-# CHECK-NEXT: v28: int = GetArrayElement v22, v21, v27 arrayStorage=Double level=Expected accessSite=38 [keyIsIntegral, isPresent]
-# CHECK-NEXT: Jump -> next b13(v28)
+# CHECK-NEXT: v16: number|"long" ~ "long" = AssumeType v15 provenType=number|"long"
+# CHECK-NEXT: Jump -> next b5(v16)
+# CHECK-NEXT: b5(v17: number|"long" ~ int[0, 4294967295]):
+# CHECK-NEXT: v18: boolean = HasBirthFieldsFilled v1
+# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b9()
+# CHECK-NEXT: b6(v19: guard):
+# CHECK-NEXT: v20: undefined|null|Array<number> = GetSlot v1, v19 key="list" receivers=[L0] level=Expected accessSite=37
+# CHECK-NEXT: v21: undefined|null|Array<int, proven, pristine[Storage, Names]> = AssumeType v20 provenType=undefined|null|L1|Array<int, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v22: 0 = Integer
+# CHECK-NEXT: v23: Array<int, proven, pristine[Storage, Names]> = RequireObjectCoercible v21
+# CHECK-NEXT: v24: boolean = HasArrayStorage v23 arrayStorage=Double
+# CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b14()
+# CHECK-NEXT: b7(v25: guard):
+# CHECK-NEXT: v26: boolean = IsElementPresent v23, v22, v25 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v26 -> taken b8(| 0), notTaken b11(v23)
+# CHECK-NEXT: b8(v27: guard):
+# CHECK-NEXT: v28: guard = AllGuards v25, v27
+# CHECK-NEXT: v29: int = GetArrayElement v23, v22, v28 arrayStorage=Double level=Expected accessSite=38 [keyIsIntegral, isPresent]
+# CHECK-NEXT: Jump -> next b13(v29)
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v29: anything ~ undefined|null|Array<number> = PropGet v1 key="list" accessSite=37 receivers=[L0]
-# CHECK-NEXT: v30: undefined|null|L1|Array<int, proven, pristine[Storage, Names]> ~ undefined|null|Array<int, proven, pristine[Storage, Names]> = AssumeType v29 provenType=undefined|null|L1|Array<int, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v31: L1|Array<int, proven, pristine[Storage, Names]> ~ Array<int, proven, pristine[Storage, Names]> = RequireObjectCoercible v30
-# CHECK-NEXT: v32: boolean ~ true = TypeTest v31 testedType=Array
-# CHECK-NEXT: Branch v32 -> taken b10(| 0), notTaken b12(| 0)
-# CHECK-NEXT: b10(v33: Array<int, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: Jump -> next b11(v33)
-# CHECK-NEXT: b11(v34: Array<int, proven, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v35: 0 = Integer
-# CHECK-NEXT: v36: undefined|int = ElemGet v34, v35 accessSite=38 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b13(v36)
-# CHECK-NEXT: b12(v37: L1) frequency=Rare:
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: anything = ElemGet v37, v38 accessSite=38 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b13(v39)
-# CHECK-NEXT: b13(v40: anything ~ int):
-# CHECK-NEXT: v41: Array<undefined|number|"first"|"long"> = NewArray v16, v40 contents=undefined|number|"first"|"long" allocationSite=34 [contentsAreProven]
-# CHECK-NEXT: v42: Array<undefined|number|"first"|"long", proven, pristine[Storage, Names, Dense]> = AssumeType v41 provenType=Array<undefined|number|"first"|"long", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v42
+# CHECK-NEXT: v30: anything ~ undefined|null|Array<number> = PropGet v1 key="list" accessSite=37 receivers=[L0]
+# CHECK-NEXT: v31: undefined|null|L1|Array<int, proven, pristine[Storage, Names]> ~ undefined|null|Array<int, proven, pristine[Storage, Names]> = AssumeType v30 provenType=undefined|null|L1|Array<int, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v32: L1|Array<int, proven, pristine[Storage, Names]> ~ Array<int, proven, pristine[Storage, Names]> = RequireObjectCoercible v31
+# CHECK-NEXT: v33: boolean ~ true = TypeTest v32 testedType=Array
+# CHECK-NEXT: Branch v33 -> taken b10(| 0), notTaken b12(| 0)
+# CHECK-NEXT: b10(v34: Array<int, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: Jump -> next b11(v34)
+# CHECK-NEXT: b11(v35: Array<int, proven, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v36: 0 = Integer
+# CHECK-NEXT: v37: undefined|int = ElemGet v35, v36 accessSite=38 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b13(v37)
+# CHECK-NEXT: b12(v38: L1) frequency=Rare:
+# CHECK-NEXT: v39: 0 = Integer
+# CHECK-NEXT: v40: anything = ElemGet v38, v39 accessSite=38 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b13(v40)
+# CHECK-NEXT: b13(v41: anything ~ int):
+# CHECK-NEXT: v42: Array<undefined|number|"first"|"long"> = NewArray v17, v41 contents=undefined|number|"first"|"long" allocationSite=34 [contentsAreProven]
+# CHECK-NEXT: v43: Array<undefined|number|"first"|"long", proven, pristine[Storage, Names, Dense]> = AssumeType v42 provenType=Array<undefined|number|"first"|"long", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: ConvertToDoubleStorage v22
-# CHECK-NEXT: Jump -> next b11(v22)
+# CHECK-NEXT: ConvertToDoubleStorage v23
+# CHECK-NEXT: Jump -> next b11(v23)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="lengthOfName"
 # CHECK: module=m0 position=741 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w4}] results=[{type=undefined|number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} {
@@ -1771,7 +1795,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f54 visibility=Private
 # CHECK-NEXT: v3: boolean = HasBirthFieldsFilled v2
 # CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v4: guard):
-# CHECK-NEXT: v5: undefined|null|"abc"|"far"|"odd"|"x"|"yz" ~ "abc"|"far"|"odd"|"x"|"yz" = GetSlot v2, v4 key="name" receivers=[L0] level=Expected accessSite=42
+# CHECK-NEXT: v5: undefined|null|"abc"|"far"|"odd"|"x"|"yz" = GetSlot v2, v4 key="name" receivers=[L0] level=Expected accessSite=42
 # CHECK-NEXT: v6: "abc"|"far"|"odd"|"x"|"yz" = RequireObjectCoercible v5 name="charCodeAt"
 # CHECK-NEXT: v7: "position" = String string="position"
 # CHECK-NEXT: v8: 0 = Integer
@@ -1833,10 +1857,12 @@ runtimefunction id=GeneratorPrototypeThrow function=f54 visibility=Private
 # CHECK-NEXT: v1: undefined|string|L0 = AssumeType v0 provenType=undefined|string|L0
 # CHECK-NEXT: v2: string|L0 = RequireObjectCoercible v1 name="name"
 # CHECK-NEXT: v3: anything = PropGet v2 key="name" accessSite=33
-# CHECK-NEXT: v4: anything = PropGet v3 key="length" accessSite=34
-# CHECK-NEXT: v5: undefined|number = AssumeType v4 provenType=undefined|number
-# CHECK-NEXT: v6: undefined|number = Expect v5 expectedType=number
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v4: undefined|null|int|"abc"|"far"|"odd"|"x"|"yz" = AssumeType v3 provenType=undefined|null|int|"abc"|"far"|"odd"|"x"|"yz"
+# CHECK-NEXT: v5: int|"abc"|"far"|"odd"|"x"|"yz" = RequireObjectCoercible v4 name="length"
+# CHECK-NEXT: v6: anything = PropGet v5 key="length" accessSite=34
+# CHECK-NEXT: v7: undefined|number = AssumeType v6 provenType=undefined|number
+# CHECK-NEXT: v8: undefined|number = Expect v7 expectedType=number
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="lengthOfList"
 # CHECK: module=m0 position=810 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w6 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=w7 flags=[IsExpected]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=Version{provenVersion=f61} {
@@ -1847,8 +1873,9 @@ runtimefunction id=GeneratorPrototypeThrow function=f54 visibility=Private
 # CHECK-NEXT: v4: undefined|null|L1|Array<int, proven, pristine[Storage, Names]> = AssumeType v3 provenType=undefined|null|L1|Array<int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v5: L1|Array<int, proven, pristine[Storage, Names]> = RequireObjectCoercible v4 name="length"
 # CHECK-NEXT: v6: anything = PropGet v5 key="length" accessSite=36
-# CHECK-NEXT: v7: anything = Expect v6 expectedType=number
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v7: number|"long" = AssumeType v6 provenType=number|"long"
+# CHECK-NEXT: v8: number|"long" = Expect v7 expectedType=number
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="firstOfList"
 # CHECK: module=m0 position=879 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=w9 flags=[IsExpected]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{original=0}]} creator=Version{provenVersion=f62} {
@@ -1868,29 +1895,31 @@ runtimefunction id=GeneratorPrototypeThrow function=f54 visibility=Private
 # CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
 # CHECK-NEXT: v1: undefined|string|L0 = AssumeType v0 provenType=undefined|string|L0
 # CHECK-NEXT: v2: string|L0 = RequireObjectCoercible v1 name="name"
-# CHECK-NEXT: v11: undefined = PropGetPair v2 key="name" secondKey="charCodeAt" readOrigin={position=1095} accessSite=42 secondAccessSite=43 [readsFromFirstResult]
-# CHECK-NEXT: v4: anything = ResultAt v11 index=1
-# CHECK-NEXT: v3: anything = ResultAt v11
-# CHECK-NEXT: v5: undefined|builtin(StringPrototypeCharCodeAt) = AssumeType v4 provenType=undefined|builtin(StringPrototypeCharCodeAt)
-# CHECK-NEXT: v6: "position" = String string="position"
-# CHECK-NEXT: v7: 0 = Integer
-# CHECK-NEXT: v8: int[0, 7] = CallDirect v6, v7 function=f2 accessSite=44
-# CHECK-NEXT: v9: int[0, 7] = Expect v8 expectedType=0
-# CHECK-NEXT: v10: anything = Call v5, v3, v9 calleeKey="charCodeAt" calleeName="p.name.charCodeAt" accessSite=45 callees=[builtin(StringPrototypeCharCodeAt), ..]
-# CHECK-NEXT: ReturnCall v10 casts=[{declared={type=number} resolution=Assume}]
+# CHECK-NEXT: v3: anything = PropGet v2 key="name" accessSite=42
+# CHECK-NEXT: v4: undefined|null|int|"abc"|"far"|"odd"|"x"|"yz" = AssumeType v3 provenType=undefined|null|int|"abc"|"far"|"odd"|"x"|"yz"
+# CHECK-NEXT: v5: int|"abc"|"far"|"odd"|"x"|"yz" = RequireObjectCoercible v4 name="charCodeAt"
+# CHECK-NEXT: v6: anything = PropGet v5 key="charCodeAt" accessSite=43
+# CHECK-NEXT: v7: undefined|builtin(StringPrototypeCharCodeAt) = AssumeType v6 provenType=undefined|builtin(StringPrototypeCharCodeAt)
+# CHECK-NEXT: v8: "position" = String string="position"
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: v10: int[0, 7] = CallDirect v8, v9 function=f2 accessSite=44
+# CHECK-NEXT: v11: int[0, 7] = Expect v10 expectedType=0
+# CHECK-NEXT: v12: anything = Call v7, v5, v11 calleeKey="charCodeAt" calleeName="p.name.charCodeAt" accessSite=45 callees=[builtin(StringPrototypeCharCodeAt), ..]
+# CHECK-NEXT: ReturnCall v12 casts=[{declared={type=number} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="startOfName"
 # CHECK: module=m0 position=1137 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w15 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w16}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}]} creator=Version{provenVersion=f65} {
 # CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
 # CHECK-NEXT: v1: undefined|string|L0 = AssumeType v0 provenType=undefined|string|L0
 # CHECK-NEXT: v2: string|L0 = RequireObjectCoercible v1 name="name"
-# CHECK-NEXT: v8: undefined = PropGetPair v2 key="name" secondKey="startsWith" readOrigin={position=1189} accessSite=46 secondAccessSite=47 [readsFromFirstResult]
-# CHECK-NEXT: v4: anything = ResultAt v8 index=1
-# CHECK-NEXT: v3: anything = ResultAt v8
-# CHECK-NEXT: v5: undefined|builtin(StringPrototypeStartsWith) = AssumeType v4 provenType=undefined|builtin(StringPrototypeStartsWith)
-# CHECK-NEXT: v6: "a" = String string="a"
-# CHECK-NEXT: v7: anything = Call v5, v3, v6 calleeKey="startsWith" calleeName="p.name.startsWith" accessSite=48 callees=[builtin(StringPrototypeStartsWith), ..]
-# CHECK-NEXT: ReturnCall v7 casts=[{declared={type=boolean} resolution=Assume}]
+# CHECK-NEXT: v3: anything = PropGet v2 key="name" accessSite=46
+# CHECK-NEXT: v4: undefined|null|int|"abc"|"far"|"odd"|"x"|"yz" = AssumeType v3 provenType=undefined|null|int|"abc"|"far"|"odd"|"x"|"yz"
+# CHECK-NEXT: v5: int|"abc"|"far"|"odd"|"x"|"yz" = RequireObjectCoercible v4 name="startsWith"
+# CHECK-NEXT: v6: anything = PropGet v5 key="startsWith" accessSite=47
+# CHECK-NEXT: v7: undefined|builtin(StringPrototypeStartsWith) = AssumeType v6 provenType=undefined|builtin(StringPrototypeStartsWith)
+# CHECK-NEXT: v8: "a" = String string="a"
+# CHECK-NEXT: v9: anything = Call v7, v5, v8 calleeKey="startsWith" calleeName="p.name.startsWith" accessSite=48 callees=[builtin(StringPrototypeStartsWith), ..]
+# CHECK-NEXT: ReturnCall v9 casts=[{declared={type=boolean} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cutList"
 # CHECK: module=m0 position=1321 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w19 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=w20 flags=[IsExpected]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f10 parameterMap=[{original=0}]} creator=Version{provenVersion=f67} {
@@ -1909,8 +1938,9 @@ runtimefunction id=GeneratorPrototypeThrow function=f54 visibility=Private
 # CHECK-NEXT: v12: undefined|null|L1|Array<int, proven, pristine[Storage, Names]> = AssumeType v11 provenType=undefined|null|L1|Array<int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v13: L1|Array<int, proven, pristine[Storage, Names]> = RequireObjectCoercible v12 name="length"
 # CHECK-NEXT: v14: anything = PropGet v13 key="length" accessSite=58
-# CHECK-NEXT: v15: anything = Expect v14 expectedType=number
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: v15: number|"long" = AssumeType v14 provenType=number|"long"
+# CHECK-NEXT: v16: number|"long" = Expect v15 expectedType=number
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Record"
 # CHECK: module=m0 position=413 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=2 captures=[{type=f16}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers takesNewTarget=true} {

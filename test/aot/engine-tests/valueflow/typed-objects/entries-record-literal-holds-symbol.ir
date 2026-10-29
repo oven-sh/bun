@@ -501,67 +501,69 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b2(v15: @@asyncDispose) frequency=Rare handler=b13():
 # CHECK-NEXT: v16: L2 = CallDirect v15 function=f12 @1163:2 tail
 # CHECK-NEXT: v17: anything ~ undefined|null|string = GetSlot v16 key="value" receivers=[L2] level=Proven accessSite=14
-# CHECK-NEXT: v18: boolean ~ true = TypeTest v17 testedType=undefined|null|string
-# CHECK-NEXT: Branch v18 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v19: undefined|null|string) frequency=Rare handler=b13():
-# CHECK-NEXT: v20: true = Boolean boolean=true
-# CHECK-NEXT: v21: L2 = NewObject -, v20, v19 layout=L2 fields=[0, 1] allocationSite=13 allocationClass=2
-# CHECK-NEXT: Jump -> next b5(v21)
-# CHECK-NEXT: b4() frequency=Rare handler=b13():
-# CHECK-NEXT: v22: L2 = CallDirect v17 function=f13 @1371:1 tail
+# CHECK-NEXT: v18: undefined|@@asyncDispose ~ undefined = AssumeType v17 provenType=undefined|@@asyncDispose
+# CHECK-NEXT: v19: boolean ~ true = TypeTest v18 testedType=undefined|null|string
+# CHECK-NEXT: Branch v19 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v20: undefined) frequency=Rare handler=b13():
+# CHECK-NEXT: v21: true = Boolean boolean=true
+# CHECK-NEXT: v22: L2 = NewObject -, v21, v20 layout=L2 fields=[0, 1] allocationSite=13 allocationClass=2
 # CHECK-NEXT: Jump -> next b5(v22)
-# CHECK-NEXT: b5(v23: L2) handler=b13():
-# CHECK-NEXT: v24: anything ~ undefined|null|string = GetSlot v23 key="value" receivers=[L2] level=Proven accessSite=17
+# CHECK-NEXT: b4() frequency=Rare handler=b13():
+# CHECK-NEXT: v23: L2 = CallDirect v18 function=f13 @1371:1 tail
+# CHECK-NEXT: Jump -> next b5(v23)
+# CHECK-NEXT: b5(v24: L2) handler=b13():
+# CHECK-NEXT: v25: anything ~ undefined|null|string = GetSlot v24 key="value" receivers=[L2] level=Proven accessSite=17
+# CHECK-NEXT: v26: undefined|@@asyncDispose ~ undefined = AssumeType v25 provenType=undefined|@@asyncDispose
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectEntries
-# CHECK-NEXT: v26: "key" = String string="key"
-# CHECK-NEXT: v27: Array = NewArray v26, v24 contents=anything
-# CHECK-NEXT: v28: Array<Array> = NewArray v27 contents=Array storage=Frame
-# CHECK-NEXT: v29: guard = AllGuards v28
+# CHECK-NEXT: v28: "key" = String string="key"
+# CHECK-NEXT: v29: Array = NewArray v28, v26 contents=anything
+# CHECK-NEXT: v30: Array<Array> = NewArray v29 contents=Array storage=Frame
+# CHECK-NEXT: v31: guard = AllGuards v30
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6() handler=b13():
-# CHECK-NEXT: v30: Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v28 provenType=Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v31: 0 = Integer
-# CHECK-NEXT: Jump -> next b7(v29)
-# CHECK-NEXT: b7(v32: guard):
-# CHECK-NEXT: v33: boolean = IsInBounds v30, v31
-# CHECK-NEXT: Branch v33 -> taken b8(| 0), notTaken b10()
-# CHECK-NEXT: b8(v34: guard):
-# CHECK-NEXT: v35: guard = AllGuards v32, v34
-# CHECK-NEXT: v36: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v30, v31, v35 arrayStorage=Contiguous level=Expected accessSite=20 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v37: 1 = Integer integer=1
-# CHECK-NEXT: v38: boolean = IsInBounds v36, v37
-# CHECK-NEXT: Branch v38 -> taken b9(| 0), notTaken b11(v36)
-# CHECK-NEXT: b9(v39: guard):
-# CHECK-NEXT: v40: undefined|string|@@asyncDispose = GetArrayElement v36, v37, v39 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b12(v40)
+# CHECK-NEXT: v32: Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v33: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v31)
+# CHECK-NEXT: b7(v34: guard):
+# CHECK-NEXT: v35: boolean = IsInBounds v32, v33
+# CHECK-NEXT: Branch v35 -> taken b8(| 0), notTaken b10()
+# CHECK-NEXT: b8(v36: guard):
+# CHECK-NEXT: v37: guard = AllGuards v34, v36
+# CHECK-NEXT: v38: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v32, v33, v37 arrayStorage=Contiguous level=Expected accessSite=20 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v39: 1 = Integer integer=1
+# CHECK-NEXT: v40: boolean = IsInBounds v38, v39
+# CHECK-NEXT: Branch v40 -> taken b9(| 0), notTaken b11(v38)
+# CHECK-NEXT: b9(v41: guard):
+# CHECK-NEXT: v42: undefined|string|@@asyncDispose = GetArrayElement v38, v39, v41 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b12(v42)
 # CHECK-NEXT: b10() frequency=Rare handler=b13():
-# CHECK-NEXT: v41: undefined|Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = ElemGet v30, v31 accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: v42: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v41
-# CHECK-NEXT: Jump -> next b11(v42)
-# CHECK-NEXT: b11(v43: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v44: 1 = Integer integer=1
-# CHECK-NEXT: v45: undefined|string|@@asyncDispose = GetArrayElement v43, v44 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b12(v45)
-# CHECK-NEXT: b12(v46: undefined|string|@@asyncDispose) handler=b13():
-# CHECK-NEXT: v47: undefined = CallDirect v46 function=f1 accessSite=22
+# CHECK-NEXT: v43: undefined|Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = ElemGet v32, v33 accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: v44: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v43
+# CHECK-NEXT: Jump -> next b11(v44)
+# CHECK-NEXT: b11(v45: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v46: 1 = Integer integer=1
+# CHECK-NEXT: v47: undefined|string|@@asyncDispose = GetArrayElement v45, v46 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b12(v47)
+# CHECK-NEXT: b12(v48: undefined|string|@@asyncDispose) handler=b13():
+# CHECK-NEXT: v49: undefined = CallDirect v48 function=f1 accessSite=22
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b13() role=CatchHandler:
-# CHECK-NEXT: v48: anything = CatchValue
-# CHECK-NEXT: v49: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v48 castType=anything
-# CHECK-NEXT: v50: boolean = TypeTest v49 testedType=undefined|null
-# CHECK-NEXT: Branch v50 -> taken b14(), notTaken b15(| 0)
+# CHECK-NEXT: v50: anything = CatchValue
+# CHECK-NEXT: v51: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v50 castType=anything
+# CHECK-NEXT: v52: boolean = TypeTest v51 testedType=undefined|null
+# CHECK-NEXT: Branch v52 -> taken b14(), notTaken b15(| 0)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v51: undefined = Undefined
-# CHECK-NEXT: Jump -> next b16(v51)
-# CHECK-NEXT: b15(v52: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
-# CHECK-NEXT: v53: anything = PropGet v52 key="name" accessSite=29
+# CHECK-NEXT: v53: undefined = Undefined
 # CHECK-NEXT: Jump -> next b16(v53)
-# CHECK-NEXT: b16(v54: anything):
-# CHECK-NEXT: v55: undefined = CallDirect v54 function=f1 accessSite=30
+# CHECK-NEXT: b15(v54: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
+# CHECK-NEXT: v55: anything = PropGet v54 key="name" accessSite=29
+# CHECK-NEXT: Jump -> next b16(v55)
+# CHECK-NEXT: b16(v56: anything):
+# CHECK-NEXT: v57: undefined = CallDirect v56 function=f1 accessSite=30
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v56: "0 0.25   0" = String string="0 0.25   0"
-# CHECK-NEXT: v57: undefined = CallDirect v56 function=f1 accessSite=36
-# CHECK-NEXT: v58: undefined = Undefined
-# CHECK-NEXT: Return v58
+# CHECK-NEXT: v58: "0 0.25   0" = String string="0 0.25   0"
+# CHECK-NEXT: v59: undefined = CallDirect v58 function=f1 accessSite=36
+# CHECK-NEXT: v60: undefined = Undefined
+# CHECK-NEXT: Return v60
 # CHECK-NEXT: }

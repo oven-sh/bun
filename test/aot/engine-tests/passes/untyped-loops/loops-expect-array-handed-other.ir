@@ -1056,9 +1056,9 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=1451 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=L0}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f119 layout=L0} {
+# CHECK: m0 position=1451 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=L0}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f120 layout=L0} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = CallDirect function=f119
+# CHECK-NEXT: v0: undefined = CallDirect function=f120
 # CHECK-NEXT: v1: 3 = ResultAt v0
 # CHECK-NEXT: v2: 0 = ResultAt v0 index=1
 # CHECK-NEXT: v3: 0 = ResultAt v0 index=2

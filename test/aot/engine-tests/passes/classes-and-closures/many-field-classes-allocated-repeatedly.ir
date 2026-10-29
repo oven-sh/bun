@@ -892,19 +892,18 @@ function f66 module=m4 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v17: boolean = GetSlot v1 key="finalized" receivers=[L0, L1] level=Proven accessSite=66
 # CHECK-NEXT: v18: undefined = Undefined
 # CHECK-NEXT: v19: undefined|"late" = GetSlot v1 key="late" receivers=[L0, L1] level=Proven accessSite=68
-# CHECK-NEXT: v20: f16 = GetSlot v1 key="json" receivers=[L0, L1] level=Proven accessSite=69
-# CHECK-NEXT: v21: string = TypeOf v20
-# CHECK-NEXT: v22: "http://localhost/hello" = String string="http://localhost/hello"
-# CHECK-NEXT: v23: f19 = GetSlot v1 key="answer" receivers=[L0, L1] level=Proven accessSite=72
-# CHECK-NEXT: v24: L0|L1 = GetCapture v23 function=f19
-# CHECK-NEXT: v25: undefined|string = GetSlot v24 key=#"#answer"@L0 receivers=[L0, L1] level=Proven accessSite=141
-# CHECK-NEXT: v26: undefined = CallBuiltin -, v0, v16, v17, v18, v19, v21, v22, v25 overload=ConsoleLog/0 accessSite=74
-# CHECK-NEXT: v27: undefined = Undefined
-# CHECK-NEXT: Return v27
+# CHECK-NEXT: v20: "function" = String string="function"
+# CHECK-NEXT: v21: "http://localhost/hello" = String string="http://localhost/hello"
+# CHECK-NEXT: v22: f19 = GetSlot v1 key="answer" receivers=[L0, L1] level=Proven accessSite=72
+# CHECK-NEXT: v23: L0|L1 = GetCapture v22 function=f19
+# CHECK-NEXT: v24: undefined|string = GetSlot v23 key=#"#answer"@L0 receivers=[L0, L1] level=Proven accessSite=141
+# CHECK-NEXT: v25: undefined = CallBuiltin -, v0, v16, v17, v18, v19, v20, v21, v24 overload=ConsoleLog/0 accessSite=74
+# CHECK-NEXT: v26: undefined = Undefined
+# CHECK-NEXT: Return v26
 # CHECK-NEXT: b8() role=CleanupHandler frequency=Rare:
-# CHECK-NEXT: v28: exception = CatchException
+# CHECK-NEXT: v27: exception = CatchException
 # CHECK-NEXT: JSONResetHolders v2
-# CHECK-NEXT: Rethrow v28
+# CHECK-NEXT: Rethrow v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Context"
 # CHECK: module=m0 position=829 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L2 site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|L4 site=w7 flags=[OmitsNull]}] results=[{type=L0|L1 flags=[IsFromCompiler]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

@@ -1469,24 +1469,23 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: v11: 31 = Integer integer=31
 # CHECK-NEXT: v12: int[0, 66571993057] = Mul v10, v11
 # CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: v14: int[0, 2147483647] = GetStringLength v9
-# CHECK-NEXT: v15: boolean = Less v13, v14
-# CHECK-NEXT: Branch v15 -> taken b7(), notTaken b8()
+# CHECK-NEXT: v14: boolean = Less v13, v10
+# CHECK-NEXT: Branch v14 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v16: int[0, 65535] = GetStringCodeUnit v9, v13
-# CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: v18: int[0, 65535] = BitOr v16, v17
-# CHECK-NEXT: v19: int[0, 66572058592] = Add v12, v18
-# CHECK-NEXT: Return v19
+# CHECK-NEXT: v15: int[0, 65535] = GetStringCodeUnit v9, v13
+# CHECK-NEXT: v16: 0 = Integer
+# CHECK-NEXT: v17: int[0, 65535] = BitOr v15, v16
+# CHECK-NEXT: v18: int[0, 66572058592] = Add v12, v17
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v20: whole = Double number=NaN
-# CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: v22: i32 = BitOr v20, v21
-# CHECK-NEXT: v23: int[-2147483648, 68719476704] = Add v12, v22
-# CHECK-NEXT: Return v23
+# CHECK-NEXT: v19: whole = Double number=NaN
+# CHECK-NEXT: v20: 0 = Integer
+# CHECK-NEXT: v21: i32 = BitOr v19, v20
+# CHECK-NEXT: v22: int[-2147483648, 68719476704] = Add v12, v21
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v24: 0 = Integer
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v23: 0 = Integer
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="opaqueInt"
 # CHECK: module=m0 position=899 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w1}, {type=int[1, 63] site=w2}] results=[{type=i32 site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=952 module=m0}] {

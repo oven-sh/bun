@@ -439,7 +439,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b30(v69: anything) frequency=Rare:
 # CHECK-NEXT: Jump -> next b31(v69, v60)
 # CHECK-NEXT: b31(v70: anything, v71: stringbuilder):
-# CHECK-NEXT: v72: undefined|null|string = AssumeType v70 provenType=undefined|null|string
+# CHECK-NEXT: v72: undefined|string = AssumeType v70 provenType=undefined|string
 # CHECK-NEXT: StringBuilderAppend v71, v72
 # CHECK-NEXT: v74: string = StringBuilderFinish v71
 # CHECK-NEXT: Return v74

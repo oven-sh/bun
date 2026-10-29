@@ -342,7 +342,7 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f13 module=
-# CHECK: m0 position=1889 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f51 callPosition=4294967295 isConstruction=true module=m0}, {callee=f51 callPosition=4294967295 isConstruction=true module=m0}, {callee=f48 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f48 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
+# CHECK: m0 position=1889 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f16 = NewClosure function=f16 allocationSite=10
 # CHECK-NEXT: v1: f16 = NewClass v0 layout=L2
@@ -361,58 +361,29 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v14: object = AssumeType v13 provenType=object
 # CHECK-NEXT: v15: object = CallBuiltin -, v12, v14 overload=ObjectSetPrototypeOf/0 accessSite=29
 # CHECK-NEXT: v16: boolean = AreMembersUnchanged conditions=[{layout=L4 side=Static key="prototype"}, {kind=ClassEvaluatedOnce layout=L4}]
-# CHECK-NEXT: Branch v16 -> taken b1(), notTaken b2()
+# CHECK-NEXT: Branch v16 -> taken b1(), notTaken b4()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v17: L4 = NewObject layout=L4 allocationClass=3
-# CHECK-NEXT: Jump -> next b3(v17)
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v18: object = GetConstructPrototype v10 layout=L4
-# CHECK-NEXT: v19: object ~ L4 = NewObject v18 layout=L4 allocationClass=3
-# CHECK-NEXT: v20: L4 = AssumeType v19 provenType=L4
-# CHECK-NEXT: Jump -> next b3(v20)
-# CHECK-NEXT: b3(v21: L4):
-# CHECK-NEXT: v22: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}]
-# CHECK-NEXT: Branch v22 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v23: undefined = Undefined
-# CHECK-NEXT: Jump -> next b6(v23)
+# CHECK-NEXT: Jump -> next b2(v17)
+# CHECK-NEXT: b2(v18: object ~ L4):
+# CHECK-NEXT: v19: L4 = AssumeType v18 provenType=L4
+# CHECK-NEXT: v20: Array<undefined> = NewArray contents=undefined storage=Frame
+# CHECK-NEXT: v21: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v22: undefined = CallDirect v19, v10, v10, v21 function=f51 accessSite=30 [isConstruction]
+# CHECK-NEXT: v23: L4 = AssumeType v18 provenType=L4
+# CHECK-NEXT: v24: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}]
+# CHECK-NEXT: Branch v24 -> taken b3(), notTaken b5()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: v26: never = Call v25, v23 calleeKey="hi" calleeName="hi" accessSite=32 callees=[]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v27: object = GetConstructPrototype v10 layout=L4
+# CHECK-NEXT: v28: object ~ L4 = NewObject v27 layout=L4 allocationClass=3
+# CHECK-NEXT: Jump -> next b2(v28)
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v24: anything = PropGet v21 key="hi" accessSite=31 receivers=[L4]
-# CHECK-NEXT: Jump -> next b6(v24)
-# CHECK-NEXT: b6(v25: anything ~ undefined):
-# CHECK-NEXT: v26: anything = Call v25, v21 calleeKey="hi" calleeName="hi" accessSite=32 callees=[]
-# CHECK-NEXT: v27: anything ~ undefined|null|string = Expect v26 expectedType=undefined|null|string
-# CHECK-NEXT: v28: " " = String string=" "
-# CHECK-NEXT: v29: string = Add v27, v28
-# CHECK-NEXT: v30: boolean = AreMembersUnchanged conditions=[{layout=L4 side=Static key="prototype"}, {kind=ClassEvaluatedOnce layout=L4}]
-# CHECK-NEXT: Branch v30 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v31: L4 = NewObject layout=L4 allocationClass=3
-# CHECK-NEXT: Jump -> next b9(v31)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v32: object = GetConstructPrototype v10 layout=L4
-# CHECK-NEXT: v33: object ~ L4 = NewObject v32 layout=L4 allocationClass=3
-# CHECK-NEXT: v34: L4 = AssumeType v33 provenType=L4
-# CHECK-NEXT: Jump -> next b9(v34)
-# CHECK-NEXT: b9(v35: L4):
-# CHECK-NEXT: v36: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L4}, {kind=ClassEvaluatedOnce layout=L2}]
-# CHECK-NEXT: Branch v36 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v37: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b14(v37)
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v38: boolean = AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L2}]
-# CHECK-NEXT: Branch v38 -> taken b12(), notTaken b13()
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v39: object = GetClassPrototype v2 layout=L2
-# CHECK-NEXT: v40: boolean = HasInPrototypeChain v35, v39
-# CHECK-NEXT: Jump -> next b14(v40)
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v41: boolean = InstanceOf v35, v2
-# CHECK-NEXT: Jump -> next b14(v41)
-# CHECK-NEXT: b14(v42: boolean ~ true):
-# CHECK-NEXT: v43: string = Add v29, v42
-# CHECK-NEXT: Return v43
+# CHECK-NEXT: v29: anything = PropGet v23 key="hi" accessSite=31 receivers=[L4]
+# CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
 # CHECK: m0 position=1465 flags=[IsChecked] thisType={type=anything} results=[{type="replaced" flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -460,18 +431,18 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1() handler=b6():
 # CHECK-NEXT: v3: string = CallDirect function=f10 accessSite=3
-# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b2(v4: f12|f13):
 # CHECK-NEXT: v5: boolean = TypeTest v4 testedType=f12
-# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b4()
+# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b5()
 # CHECK-NEXT: b3() handler=b6():
 # CHECK-NEXT: v6: undefined|null|string = CallDirect function=f12 accessSite=3
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4() handler=b6():
-# CHECK-NEXT: v7: undefined|null|string = CallDirect function=f13 accessSite=3
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b5() frequency=Rare handler=b6():
+# CHECK-NEXT: v7: undefined|null|string = CallDirect function=f13 accessSite=3
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6() role=CatchHandler:
 # CHECK-NEXT: v8: anything = CatchValue
 # CHECK-NEXT: v9: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype

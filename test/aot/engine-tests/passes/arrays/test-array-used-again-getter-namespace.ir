@@ -773,68 +773,29 @@ runtimefunction id=ArrayTraversalTraverseArray function=f124 visibility=Private
 # CHECK-NEXT: b0(v0: undefined, v1: undefined|"/"|"/api"|"/home"|"/nowhere"|"/x.data", v2: false):
 # CHECK-NEXT: v3: f4 = GetModuleVariable variable=g3
 # CHECK-NEXT: v4: Array<fractional, proven, pristine[Storage, Names]> = Call v3, -, v1 calleeName="matchRoutes" accessSite=7 callees=[f4]
-# CHECK-NEXT: v47: Array<fractional, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Array<fractional, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v5: anything = PropGet v1 key="endsWith" accessSite=8 receivers=[]
-# CHECK-NEXT: v48: builtin(StringPrototypeEndsWith) = AssumeType v5 provenType=builtin(StringPrototypeEndsWith)
-# CHECK-NEXT: v6: builtin(StringPrototypeEndsWith) = Upcast v48 castType=anything
-# CHECK-NEXT: v49: builtin(StringPrototypeEndsWith) = AssumeType v6 provenType=builtin(StringPrototypeEndsWith)
-# CHECK-NEXT: v7: ".data" = String string=".data"
-# CHECK-NEXT: v8: anything = Call v49, v1, v7 calleeKey="endsWith" calleeName="path.endsWith" accessSite=9 callees=[builtin(StringPrototypeEndsWith)]
-# CHECK-NEXT: v9: anything ~ boolean = Upcast v8 castType=anything
-# CHECK-NEXT: v10: anything = PropGet v47 key="length" accessSite=10
-# CHECK-NEXT: v50: number = AssumeType v10 provenType=number
-# CHECK-NEXT: v11: number = Upcast v50 castType=anything
-# CHECK-NEXT: v51: number = AssumeType v11 provenType=number
-# CHECK-NEXT: v12: 1 = Integer integer=1
-# CHECK-NEXT: v13: number = Sub v51, v12
-# CHECK-NEXT: v14: undefined|fractional = ElemGet v47, v13 accessSite=11
-# CHECK-NEXT: v52: undefined|fractional = AssumeType v14 provenType=undefined|fractional
-# CHECK-NEXT: v15: undefined|fractional ~ undefined = Upcast v52 castType=anything
-# CHECK-NEXT: v53: undefined|fractional ~ undefined = AssumeType v15 provenType=undefined|fractional
-# CHECK-NEXT: v16: anything = PropGet v53 key="route" accessSite=12 receivers=[]
-# CHECK-NEXT: v17: anything = Upcast v16 castType=anything
-# CHECK-NEXT: v18: anything = PropGet v17 key="module" accessSite=13 receivers=[]
-# CHECK-NEXT: v19: anything = Upcast v18 castType=anything
-# CHECK-NEXT: v20: anything = PropGet v19 key="default" accessSite=14 receivers=[]
-# CHECK-NEXT: v21: anything = PropGet v47 key="length" accessSite=15
-# CHECK-NEXT: v54: number = AssumeType v21 provenType=number
-# CHECK-NEXT: v22: number = Upcast v54 castType=anything
-# CHECK-NEXT: v55: number = AssumeType v22 provenType=number
-# CHECK-NEXT: v23: 1 = Integer integer=1
-# CHECK-NEXT: v24: number = Sub v55, v23
-# CHECK-NEXT: v25: undefined|fractional = ElemGet v47, v24 accessSite=16
-# CHECK-NEXT: v56: undefined|fractional = AssumeType v25 provenType=undefined|fractional
-# CHECK-NEXT: v26: undefined|fractional ~ undefined = Upcast v56 castType=anything
-# CHECK-NEXT: v57: undefined|fractional ~ undefined = AssumeType v26 provenType=undefined|fractional
-# CHECK-NEXT: v27: anything = PropGet v57 key="route" accessSite=17 receivers=[]
-# CHECK-NEXT: v28: anything = Upcast v27 castType=anything
-# CHECK-NEXT: v29: anything = PropGet v28 key="module" accessSite=18 receivers=[]
-# CHECK-NEXT: v30: anything = Upcast v29 castType=anything
-# CHECK-NEXT: v31: anything = PropGet v30 key="ErrorBoundary" accessSite=19 receivers=[]
-# CHECK-NEXT: v32: f5 = GetModuleVariable variable=g4
-# CHECK-NEXT: v33: anything = PropGet v47 key="slice" accessSite=20
-# CHECK-NEXT: v58: builtin(ArrayPrototypeSlice) = AssumeType v33 provenType=builtin(ArrayPrototypeSlice)
-# CHECK-NEXT: v34: builtin(ArrayPrototypeSlice) = Upcast v58 castType=anything
-# CHECK-NEXT: v59: builtin(ArrayPrototypeSlice) = AssumeType v34 provenType=builtin(ArrayPrototypeSlice)
-# CHECK-NEXT: v35: -1 = Integer integer=-1
-# CHECK-NEXT: v36: anything = Call v59, v47, v35 calleeKey="slice" calleeName="matches.slice" accessSite=21 callees=[builtin(ArrayPrototypeSlice)]
-# CHECK-NEXT: v60: Array<fractional, proven, pristine[Storage, Names]> = AssumeType v36 provenType=Array<fractional, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v37: Array<fractional, proven, pristine[Storage, Names]> = Upcast v60 castType=anything
-# CHECK-NEXT: v61: Array<fractional, proven, pristine[Storage, Names]> = AssumeType v37 provenType=Array<fractional, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: undefined|fractional = ElemGet v61, v38 accessSite=22
-# CHECK-NEXT: v62: undefined|fractional = AssumeType v39 provenType=undefined|fractional
-# CHECK-NEXT: v40: undefined|fractional ~ undefined = Upcast v62 castType=anything
-# CHECK-NEXT: v63: undefined|fractional ~ undefined = AssumeType v40 provenType=undefined|fractional
-# CHECK-NEXT: v41: anything = PropGet v63 key="route" accessSite=23 receivers=[]
-# CHECK-NEXT: v42: anything = Upcast v41 castType=anything
-# CHECK-NEXT: v43: anything = PropGet v42 key="id" accessSite=24 receivers=[]
-# CHECK-NEXT: v44: anything = Call v32, -, v43 calleeName="handleResource" accessSite=25 callees=[f5]
-# CHECK-NEXT: v64: Promise<never, proven, pristine[Storage, Names]> = AssumeType v44 provenType=Promise<never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v45: Promise<never, proven, pristine[Storage, Names]> = Upcast v64 castType=anything
-# CHECK-NEXT: v65: Promise<never, proven, pristine[Storage, Names]> = AssumeType v45 provenType=Promise<never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v46: anything = Await v65, v1, v2
-# CHECK-NEXT: Return v46
+# CHECK-NEXT: v5: Array<fractional, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Array<fractional, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v6: anything = PropGet v1 key="endsWith" accessSite=8 receivers=[]
+# CHECK-NEXT: v7: builtin(StringPrototypeEndsWith) = AssumeType v6 provenType=builtin(StringPrototypeEndsWith)
+# CHECK-NEXT: v8: builtin(StringPrototypeEndsWith) = Upcast v7 castType=anything
+# CHECK-NEXT: v9: builtin(StringPrototypeEndsWith) = AssumeType v8 provenType=builtin(StringPrototypeEndsWith)
+# CHECK-NEXT: v10: ".data" = String string=".data"
+# CHECK-NEXT: v11: anything = Call v9, v1, v10 calleeKey="endsWith" calleeName="path.endsWith" accessSite=9 callees=[builtin(StringPrototypeEndsWith)]
+# CHECK-NEXT: v12: anything ~ boolean = Upcast v11 castType=anything
+# CHECK-NEXT: v13: anything = PropGet v5 key="length" accessSite=10
+# CHECK-NEXT: v14: number = AssumeType v13 provenType=number
+# CHECK-NEXT: v15: number = Upcast v14 castType=anything
+# CHECK-NEXT: v16: number = AssumeType v15 provenType=number
+# CHECK-NEXT: v17: 1 = Integer integer=1
+# CHECK-NEXT: v18: number = Sub v16, v17
+# CHECK-NEXT: v19: undefined|fractional = ElemGet v5, v18 accessSite=11
+# CHECK-NEXT: v20: undefined|fractional = AssumeType v19 provenType=undefined|fractional
+# CHECK-NEXT: v21: undefined|fractional ~ undefined = Upcast v20 castType=anything
+# CHECK-NEXT: v22: undefined|fractional ~ undefined = AssumeType v21 provenType=undefined|fractional
+# CHECK-NEXT: v23: anything = PropGet v22 key="route" accessSite=12 receivers=[]
+# CHECK-NEXT: v24: undefined = AssumeType v23 provenType=undefined
+# CHECK-NEXT: v25: undefined = Upcast v24 castType=anything
+# CHECK-NEXT: v26: never = PropGet v25 key="module" accessSite=13 receivers=[]
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="__exportAll"
 # CHECK: module=m0 position=152 kind=Arrow length=2 thisType={type=anything} parameters=[{type=L3}, {type=undefined}] results=[{type=anything}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

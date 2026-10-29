@@ -456,80 +456,81 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v143: undefined|f7|f23|f25|f27 = GetSlotOrUndefined v13 key="r" receivers=[L1] level=Proven accessSite=47
 # CHECK-NEXT: v144: f7|f23|f25|f27 = RequireObjectCoercible v143 name="name"
 # CHECK-NEXT: v145: anything = PropGet v144 key="name" accessSite=48
-# CHECK-NEXT: v146: undefined|f6|f11|f13|f15 = GetSlotOrUndefined v13 key="x" receivers=[L1] level=Proven accessSite=49
-# CHECK-NEXT: v147: f6|f11|f13|f15 = RequireObjectCoercible v146 name="name"
-# CHECK-NEXT: v148: anything = PropGet v147 key="name" accessSite=50
-# CHECK-NEXT: v149: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v150: 7 = Integer integer=7
-# CHECK-NEXT: v151: undefined = CallBuiltin v149, v150, v140, v142, v145, v148 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=51
-# CHECK-NEXT: v152: undefined = Undefined
-# CHECK-NEXT: Return v152
-# CHECK-NEXT: b33() frequency=Unlikely:
+# CHECK-NEXT: v146: undefined|string = AssumeType v145 provenType=undefined|string
+# CHECK-NEXT: v147: undefined|f6|f11|f13|f15 = GetSlotOrUndefined v13 key="x" receivers=[L1] level=Proven accessSite=49
+# CHECK-NEXT: v148: f6|f11|f13|f15 = RequireObjectCoercible v147 name="name"
+# CHECK-NEXT: v149: anything = PropGet v148 key="name" accessSite=50
+# CHECK-NEXT: v150: undefined|string = AssumeType v149 provenType=undefined|string
+# CHECK-NEXT: v151: 7 = Integer integer=7
+# CHECK-NEXT: v152: undefined = CallBuiltin -, v151, v140, v142, v146, v150 overload=ConsoleLog/0 accessSite=51
 # CHECK-NEXT: v153: undefined = Undefined
-# CHECK-NEXT: v154: never = Call v153, v13 calleeKey="b" calleeName="object.b" accessSite=44 callees=[f8, f31]
+# CHECK-NEXT: Return v153
+# CHECK-NEXT: b33() frequency=Unlikely:
+# CHECK-NEXT: v154: undefined = Undefined
+# CHECK-NEXT: v155: never = Call v154, v13 calleeKey="b" calleeName="object.b" accessSite=44 callees=[f8, f31]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b34() frequency=Unlikely:
-# CHECK-NEXT: v155: undefined = Undefined
-# CHECK-NEXT: v156: never = Call v155, v13 calleeKey="a" calleeName="object.a" accessSite=42 callees=[f8, f29]
+# CHECK-NEXT: v156: undefined = Undefined
+# CHECK-NEXT: v157: never = Call v156, v13 calleeKey="a" calleeName="object.a" accessSite=42 callees=[f8, f29]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b35() frequency=Unlikely:
-# CHECK-NEXT: v157: undefined = Undefined
-# CHECK-NEXT: v158: never = Call v157, v13 calleeKey="r" calleeName="object.r" accessSite=29 callees=[f7, f23, f25, f27]
+# CHECK-NEXT: v158: undefined = Undefined
+# CHECK-NEXT: v159: never = Call v158, v13 calleeKey="r" calleeName="object.r" accessSite=29 callees=[f7, f23, f25, f27]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b36() frequency=Unlikely:
-# CHECK-NEXT: v159: undefined = Undefined
-# CHECK-NEXT: v160: never = Call v159, v13 calleeKey="x" calleeName="object.x" accessSite=25 callees=[f6, f11, f13, f15]
+# CHECK-NEXT: v160: undefined = Undefined
+# CHECK-NEXT: v161: never = Call v160, v13 calleeKey="x" calleeName="object.x" accessSite=25 callees=[f6, f11, f13, f15]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b37() frequency=Rare:
-# CHECK-NEXT: v161: fact = Specified
-# CHECK-NEXT: v162: undefined = AssumeType v81, v161 provenType=undefined
-# CHECK-NEXT: v163: "b" = String string="b"
-# CHECK-NEXT: v164: never = Call v162, v16, v163 calleeKey="constant" calleeName="constant" accessSite=21 callees=[f4]
+# CHECK-NEXT: v162: fact = Specified
+# CHECK-NEXT: v163: undefined = AssumeType v81, v162 provenType=undefined
+# CHECK-NEXT: v164: "b" = String string="b"
+# CHECK-NEXT: v165: never = Call v163, v16, v164 calleeKey="constant" calleeName="constant" accessSite=21 callees=[f4]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b38() frequency=Rare:
-# CHECK-NEXT: v165: fact = Specified
-# CHECK-NEXT: v166: undefined = AssumeType v74, v165 provenType=undefined
-# CHECK-NEXT: v167: "a" = String string="a"
-# CHECK-NEXT: v168: never = Call v166, v16, v167 calleeKey="constant" calleeName="helper.constant" accessSite=18 callees=[f4]
+# CHECK-NEXT: v166: fact = Specified
+# CHECK-NEXT: v167: undefined = AssumeType v74, v166 provenType=undefined
+# CHECK-NEXT: v168: "a" = String string="a"
+# CHECK-NEXT: v169: never = Call v167, v16, v168 calleeKey="constant" calleeName="helper.constant" accessSite=18 callees=[f4]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b39() frequency=Unlikely:
-# CHECK-NEXT: v169: undefined = Undefined
-# CHECK-NEXT: v170: never = Call v169, v16, v48, v66 calleeKey="repeat" calleeName="this.repeat" accessSite=122 callees=[f3]
+# CHECK-NEXT: v170: undefined = Undefined
+# CHECK-NEXT: v171: never = Call v170, v16, v48, v66 calleeKey="repeat" calleeName="this.repeat" accessSite=122 callees=[f3]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b40() frequency=Rare:
-# CHECK-NEXT: v171: fact = Specified
-# CHECK-NEXT: v172: undefined = AssumeType v60, v171 provenType=undefined
-# CHECK-NEXT: v173: never = Call v172, v16, v48, v61 calleeKey="repeat" calleeName="this.repeat" accessSite=118 callees=[f3]
+# CHECK-NEXT: v172: fact = Specified
+# CHECK-NEXT: v173: undefined = AssumeType v60, v172 provenType=undefined
+# CHECK-NEXT: v174: never = Call v173, v16, v48, v61 calleeKey="repeat" calleeName="this.repeat" accessSite=118 callees=[f3]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b41() frequency=Rare:
-# CHECK-NEXT: v174: fact = Specified
-# CHECK-NEXT: v175: undefined = AssumeType v53, v174 provenType=undefined
-# CHECK-NEXT: v176: never = Call v175, v16, v48, v54 calleeKey="repeat" calleeName="this.repeat" accessSite=113 callees=[f3]
+# CHECK-NEXT: v175: fact = Specified
+# CHECK-NEXT: v176: undefined = AssumeType v53, v175 provenType=undefined
+# CHECK-NEXT: v177: never = Call v176, v16, v48, v54 calleeKey="repeat" calleeName="this.repeat" accessSite=113 callees=[f3]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b42() frequency=Rare:
-# CHECK-NEXT: v177: fact = Specified
-# CHECK-NEXT: v178: undefined = AssumeType v47, v177 provenType=undefined
-# CHECK-NEXT: v179: 6 = Integer integer=6
-# CHECK-NEXT: v180: never = Call v178, v16, v48, v179 calleeKey="repeat" calleeName="helper.repeat" accessSite=15 callees=[f3]
+# CHECK-NEXT: v178: fact = Specified
+# CHECK-NEXT: v179: undefined = AssumeType v47, v178 provenType=undefined
+# CHECK-NEXT: v180: 6 = Integer integer=6
+# CHECK-NEXT: v181: never = Call v179, v16, v48, v180 calleeKey="repeat" calleeName="helper.repeat" accessSite=15 callees=[f3]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b43() frequency=Rare:
-# CHECK-NEXT: v181: fact = Specified
-# CHECK-NEXT: v182: undefined = AssumeType v37, v181 provenType=undefined
-# CHECK-NEXT: v183: "y" = String string="y"
-# CHECK-NEXT: v184: f5 = NewClosure function=f5 allocationSite=6
-# CHECK-NEXT: v185: never = Call v182, v16, v183, v184 calleeKey="define" calleeName="helper.define" accessSite=12 callees=[f2]
+# CHECK-NEXT: v182: fact = Specified
+# CHECK-NEXT: v183: undefined = AssumeType v37, v182 provenType=undefined
+# CHECK-NEXT: v184: "y" = String string="y"
+# CHECK-NEXT: v185: f5 = NewClosure function=f5 allocationSite=6
+# CHECK-NEXT: v186: never = Call v183, v16, v184, v185 calleeKey="define" calleeName="helper.define" accessSite=12 callees=[f2]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b44() frequency=Rare:
-# CHECK-NEXT: v186: fact = Specified @327:15 tail
-# CHECK-NEXT: v187: undefined = AssumeType v27, v186 provenType=undefined @327:15 tail
-# CHECK-NEXT: v188: f11 = NewClosure function=f11 allocationSite=14
-# CHECK-NEXT: v189: never = Call v187, v16, v19, v188 calleeKey="define" calleeName="this.define" accessSite=75 callees=[f2] @327:15 tail
+# CHECK-NEXT: v187: fact = Specified @327:15 tail
+# CHECK-NEXT: v188: undefined = AssumeType v27, v187 provenType=undefined @327:15 tail
+# CHECK-NEXT: v189: f11 = NewClosure function=f11 allocationSite=14
+# CHECK-NEXT: v190: never = Call v188, v16, v19, v189 calleeKey="define" calleeName="this.define" accessSite=75 callees=[f2] @327:15 tail
 # CHECK-NEXT: Unreachable @327:15 tail
 # CHECK-NEXT: b45() frequency=Rare:
-# CHECK-NEXT: v190: fact = Specified
-# CHECK-NEXT: v191: undefined = AssumeType v18, v190 provenType=undefined
-# CHECK-NEXT: v192: 1 = Integer integer=1
-# CHECK-NEXT: v193: never = Call v191, v16, v19, v192 calleeKey="define" calleeName="helper.define" accessSite=9 callees=[f2]
+# CHECK-NEXT: v191: fact = Specified
+# CHECK-NEXT: v192: undefined = AssumeType v18, v191 provenType=undefined
+# CHECK-NEXT: v193: 1 = Integer integer=1
+# CHECK-NEXT: v194: never = Call v192, v16, v19, v193 calleeKey="define" calleeName="helper.define" accessSite=9 callees=[f2]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f2 module=
@@ -605,7 +606,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b1(v35)
 # CHECK-NEXT: b20() frequency=Unlikely:
 # CHECK-NEXT: v40: undefined = Undefined
-# CHECK-NEXT: v41: never = Call v40, v0, v1, v35 calleeKey="define" calleeName="this.define" accessSite=60 callees=[f2]
+# CHECK-NEXT: v41: never = Call v40, v0, v1, v35 calleeKey="define" calleeName="this.define" accessSite=60 callees=[f2] @327 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f3 module=

@@ -309,11 +309,11 @@ function f4 name="Holder" module=m0 position=559 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @559
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @553
-    v2 = NewObject v1 layout=L0 @553
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @553
-    v4 = CallDirect v3 function=f6 @553
-    Return v3 @553
+    v1 = GetConstructPrototype v0 layout=L0 @559
+    v2 = NewObject v1 layout=L0 @559
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @559
+    v4 = CallDirect v3 function=f6 @559
+    Return v3 @559
 }
 function f5 name="later" module=m0 position=940 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|"read"|"write" site=w24 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1):
@@ -362,7 +362,7 @@ function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[Ha
 runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # -- generated: f0 take pick run Holder later f6
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=1479 module=m0}, {callee=f19 callPosition=1561 isConstruction=true module=m0}, {callee=f19 callPosition=1504 isConstruction=true module=m0}, {callee=f6 callPosition=553 parent=3 module=m0}, {callee=f6 callPosition=553 parent=2 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=1479 module=m0}, {callee=f19 callPosition=1561 isConstruction=true module=m0}, {callee=f19 callPosition=1504 isConstruction=true module=m0}, {callee=f6 callPosition=559 parent=3 module=m0}, {callee=f6 callPosition=559 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "off" = String string="off"
 # CHECK-NEXT: v1: "read" = String string="read"
@@ -459,7 +459,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: ReturnCall v6 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Holder"
-# CHECK: module=m0 position=559 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f6 callPosition=553 module=m0}] {
+# CHECK: module=m0 position=559 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f6 callPosition=559 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f4 = AssumeType v0 provenType=f4
 # CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
@@ -604,53 +604,51 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: v43: " " = String string=" "
 # CHECK-NEXT: v44: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: StringBuilderAppend v44, v35, v36, v41, v42, v34, v43
-# CHECK-NEXT: v46: "read" = String string="read"
-# CHECK-NEXT: v47: boolean = StrictEq v0, v46
-# CHECK-NEXT: Branch v47 -> taken b20(), notTaken b19()
+# CHECK-NEXT: Branch v6 -> taken b20(), notTaken b19()
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v48: "write" = String string="write"
-# CHECK-NEXT: v49: boolean = StrictEq v0, v48
-# CHECK-NEXT: Branch v49 -> taken b20(), notTaken b22()
+# CHECK-NEXT: v46: "write" = String string="write"
+# CHECK-NEXT: v47: boolean = StrictEq v0, v46
+# CHECK-NEXT: Branch v47 -> taken b20(), notTaken b22()
 # CHECK-NEXT: b20():
-# CHECK-NEXT: v50: undefined|null|"admin"|"off"|"read"|"write" ~ undefined|null|"read"|"write" = Expect v0 expectedType=undefined|null|"read"|"write"
-# CHECK-NEXT: v51: boolean = TypeTest v50 testedType=string
-# CHECK-NEXT: Branch v51 -> taken b23(| 0), notTaken b21(| 0)
-# CHECK-NEXT: b21(v52: undefined|null) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b28(v44, v52)
+# CHECK-NEXT: v48: undefined|null|"admin"|"off"|"read"|"write" ~ undefined|null|"read"|"write" = Expect v0 expectedType=undefined|null|"read"|"write"
+# CHECK-NEXT: v49: boolean = TypeTest v48 testedType=string
+# CHECK-NEXT: Branch v49 -> taken b23(| 0), notTaken b21(| 0)
+# CHECK-NEXT: b21(v50: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b28(v44, v50)
 # CHECK-NEXT: b22():
-# CHECK-NEXT: v53: "read" = String string="read"
-# CHECK-NEXT: Jump -> next b23(v53) @677:1 tail
-# CHECK-NEXT: b23(v54: "admin"|"off"|"read"|"write" ~ "read"|"write"):
-# CHECK-NEXT: StringBuilderAppend v44, v54
+# CHECK-NEXT: v51: "read" = String string="read"
+# CHECK-NEXT: Jump -> next b23(v51) @677:1 tail
+# CHECK-NEXT: b23(v52: "admin"|"off"|"read"|"write" ~ "read"|"write"):
+# CHECK-NEXT: StringBuilderAppend v44, v52
 # CHECK-NEXT: Jump -> next b29(v44)
-# CHECK-NEXT: b24(v56: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: b24(v54: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: v55: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v55, v35, v36
+# CHECK-NEXT: Jump -> next b27(v55, v54, v34)
+# CHECK-NEXT: b25() frequency=Rare:
 # CHECK-NEXT: v57: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: StringBuilderAppend v57, v35, v36
-# CHECK-NEXT: Jump -> next b27(v57, v56, v34)
-# CHECK-NEXT: b25() frequency=Rare:
-# CHECK-NEXT: v59: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v59, v35, v36
-# CHECK-NEXT: Jump -> next b26(v59, v34)
-# CHECK-NEXT: b26(v61: stringbuilder, v62: int[-2, 2]) frequency=Rare:
-# CHECK-NEXT: v63: anything ~ undefined|null|"read"|"write" = PropGet v2 key="kept" accessSite=18 receivers=[L0]
-# CHECK-NEXT: Jump -> next b27(v61, v63, v62)
-# CHECK-NEXT: b27(v64: stringbuilder, v65: anything ~ undefined|null|"read"|"write", v66: int[-2, 2]) frequency=Rare:
-# CHECK-NEXT: v67: "" = String string=""
-# CHECK-NEXT: v68: string = Add v67, v65
-# CHECK-NEXT: StringBuilderAppend v64, v68
-# CHECK-NEXT: v70: " " = String string=" "
-# CHECK-NEXT: v71: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v64, v70, v66, v71
-# CHECK-NEXT: v73: anything ~ undefined|null|"read"|"write" = CallDirect v0 function=f11 accessSite=19
-# CHECK-NEXT: Jump -> next b28(v64, v73)
-# CHECK-NEXT: b28(v74: stringbuilder, v75: anything ~ undefined|null|"read"|"write") frequency=Rare:
-# CHECK-NEXT: v76: "" = String string=""
-# CHECK-NEXT: v77: string = Add v76, v75
-# CHECK-NEXT: StringBuilderAppend v74, v77
-# CHECK-NEXT: Jump -> next b29(v74)
-# CHECK-NEXT: b29(v79: stringbuilder):
-# CHECK-NEXT: v80: string = StringBuilderFinish v79
-# CHECK-NEXT: Return v80
+# CHECK-NEXT: Jump -> next b26(v57, v34)
+# CHECK-NEXT: b26(v59: stringbuilder, v60: int[-2, 2]) frequency=Rare:
+# CHECK-NEXT: v61: anything ~ undefined|null|"read"|"write" = PropGet v2 key="kept" accessSite=18 receivers=[L0]
+# CHECK-NEXT: Jump -> next b27(v59, v61, v60)
+# CHECK-NEXT: b27(v62: stringbuilder, v63: anything ~ undefined|null|"read"|"write", v64: int[-2, 2]) frequency=Rare:
+# CHECK-NEXT: v65: "" = String string=""
+# CHECK-NEXT: v66: string = Add v65, v63
+# CHECK-NEXT: StringBuilderAppend v62, v66
+# CHECK-NEXT: v68: " " = String string=" "
+# CHECK-NEXT: v69: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v62, v68, v64, v69
+# CHECK-NEXT: v71: anything ~ undefined|null|"read"|"write" = CallDirect v0 function=f11 accessSite=19
+# CHECK-NEXT: Jump -> next b28(v62, v71)
+# CHECK-NEXT: b28(v72: stringbuilder, v73: anything ~ undefined|null|"read"|"write") frequency=Rare:
+# CHECK-NEXT: v74: "" = String string=""
+# CHECK-NEXT: v75: string = Add v74, v73
+# CHECK-NEXT: StringBuilderAppend v72, v75
+# CHECK-NEXT: Jump -> next b29(v72)
+# CHECK-NEXT: b29(v77: stringbuilder):
+# CHECK-NEXT: v78: string = StringBuilderFinish v77
+# CHECK-NEXT: Return v78
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="take"
 # CHECK: module=m0 position=599 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"read"|"write" site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int[1, 2] site=w1}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=Version{provenVersion=f10} {

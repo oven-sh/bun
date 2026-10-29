@@ -269,6 +269,12 @@ static unsigned attributesOfFoldedMember(VM& vm)
     return vm.hasCompiledCode() ? PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete : 0;
 }
 
+// A program that runs in place, as a test does, reads these two as plain Bun does.
+static unsigned attributesOfVersionOfRuntime(VM& vm)
+{
+    return Bun::compiledModulesRunInPlaceOfFiles() ? 0 : attributesOfFoldedMember(vm);
+}
+
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -276,8 +282,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
     RETURN_IF_EXCEPTION(scope, {});
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))), attributesOfFoldedMember(vm));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)), attributesOfFoldedMember(vm));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))), attributesOfVersionOfRuntime(vm));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)), attributesOfVersionOfRuntime(vm));
 
     struct VersionEntry {
         const char* name;
@@ -3329,6 +3335,252 @@ static JSObject* lightStandardStreamsOf(JSC::JSGlobalObject* globalObject, JSC::
     return kept;
 }
 
+// Which object of a bare stream: one of the prototypes, or the stream itself.
+enum class BareStreamLevel : uint8_t {
+    EventEmitter,
+    Stream,
+    Writable,
+    WriteStream,
+    Readable,
+    ReadStream,
+    TerminalReadStream,
+    Output,
+    Input,
+};
+
+// A method of plain Bun's stream. Leaving code out of the executable takes implementations away and keeps names:
+// the method is there with its name and length, and a call of it throws the error that names the function left out.
+struct BareStreamMethod {
+    enum class Kind : uint8_t {
+        Method,
+        SameAsPrevious,
+        Constructor,
+    };
+    ASCIILiteral key;
+    ASCIILiteral name;
+    uint8_t length;
+    bool isEnumerable { true };
+    Kind kind { Kind::Method };
+};
+
+static constexpr BareStreamMethod methodsOfEventEmitter[] = {
+    { "setMaxListeners"_s, "setMaxListeners"_s, 1 },
+    { "constructor"_s, "EventEmitter"_s, 1, true, BareStreamMethod::Kind::Constructor },
+    { "getMaxListeners"_s, "getMaxListeners"_s, 0 },
+    { "emit"_s, "emit"_s, 1 },
+    { "addListener"_s, "addListener"_s, 2 },
+    { "on"_s, "addListener"_s, 2, true, BareStreamMethod::Kind::SameAsPrevious },
+    { "prependListener"_s, "prependListener"_s, 2 },
+    { "once"_s, "once"_s, 2 },
+    { "prependOnceListener"_s, "prependOnceListener"_s, 2 },
+    { "removeListener"_s, "removeListener"_s, 2 },
+    { "off"_s, "removeListener"_s, 2, true, BareStreamMethod::Kind::SameAsPrevious },
+    { "removeAllListeners"_s, "removeAllListeners"_s, 1 },
+    { "listeners"_s, "listeners"_s, 1 },
+    { "rawListeners"_s, "rawListeners"_s, 1 },
+    { "listenerCount"_s, "listenerCount"_s, 2 },
+    { "eventNames"_s, "eventNames"_s, 0 },
+};
+static constexpr BareStreamMethod methodsOfStream[] = {
+    { "constructor"_s, "Stream"_s, 1, false, BareStreamMethod::Kind::Constructor },
+    { "pipe"_s, ""_s, 2 },
+    { "eventNames"_s, "eventNames"_s, 0 },
+};
+static constexpr BareStreamMethod methodsOfWritable[] = {
+    { "constructor"_s, "Writable"_s, 1, false, BareStreamMethod::Kind::Constructor },
+    { "pipe"_s, ""_s, 0 },
+    { "write"_s, ""_s, 3 },
+    { "cork"_s, ""_s, 0 },
+    { "uncork"_s, ""_s, 0 },
+    { "setDefaultEncoding"_s, "setDefaultEncoding"_s, 1 },
+    { "_write"_s, ""_s, 3 },
+    { "end"_s, ""_s, 3 },
+    { "destroy"_s, ""_s, 2 },
+    { "_undestroy"_s, "undestroy"_s, 0 },
+    { "_destroy"_s, ""_s, 2 },
+};
+static constexpr BareStreamMethod methodsOfWriteStream[] = {
+    { "constructor"_s, "WriteStream"_s, 2, false, BareStreamMethod::Kind::Constructor },
+    { "open"_s, "open"_s, 0 },
+    { "_construct"_s, "streamConstruct"_s, 1 },
+    { "_write"_s, "_write"_s, 3 },
+    { "_writev"_s, ""_s, 2 },
+    { "_destroy"_s, ""_s, 2 },
+    { "close"_s, ""_s, 1 },
+    { "destroySoon"_s, ""_s, 3 },
+};
+// Plain Bun lays these on the same prototype once a stream for output is a terminal.
+static constexpr BareStreamMethod methodsOfTerminalWriteStream[] = {
+    { "_refreshSize"_s, ""_s, 0 },
+    { "clearLine"_s, ""_s, 2 },
+    { "clearScreenDown"_s, ""_s, 1 },
+    { "cursorTo"_s, ""_s, 3 },
+    { "getColorDepth"_s, ""_s, 0 },
+    { "getWindowSize"_s, ""_s, 0 },
+    { "hasColors"_s, ""_s, 2 },
+    { "moveCursor"_s, ""_s, 3 },
+};
+static constexpr BareStreamMethod methodsOfReadable[] = {
+    { "constructor"_s, "Readable"_s, 1, false, BareStreamMethod::Kind::Constructor },
+    { "destroy"_s, "destroy"_s, 2 },
+    { "_undestroy"_s, "undestroy"_s, 0 },
+    { "_destroy"_s, ""_s, 2 },
+    { "push"_s, ""_s, 2 },
+    { "unshift"_s, ""_s, 2 },
+    { "isPaused"_s, ""_s, 0 },
+    { "setEncoding"_s, ""_s, 1 },
+    { "read"_s, ""_s, 1 },
+    { "_read"_s, ""_s, 1 },
+    { "pipe"_s, ""_s, 2 },
+    { "unpipe"_s, ""_s, 1 },
+    { "on"_s, ""_s, 2 },
+    { "addListener"_s, ""_s, 2, true, BareStreamMethod::Kind::SameAsPrevious },
+    { "removeListener"_s, ""_s, 2 },
+    { "off"_s, ""_s, 2, true, BareStreamMethod::Kind::SameAsPrevious },
+    { "removeAllListeners"_s, ""_s, 1 },
+    { "resume"_s, ""_s, 0 },
+    { "pause"_s, ""_s, 0 },
+    { "wrap"_s, ""_s, 1 },
+    { "iterator"_s, ""_s, 1 },
+    { "compose"_s, "compose"_s, 2 },
+    { "drop"_s, "drop"_s, 1, false },
+    { "filter"_s, "filter"_s, 2, false },
+    { "flatMap"_s, "flatMap"_s, 2, false },
+    { "map"_s, "map"_s, 2, false },
+    { "take"_s, "take"_s, 1, false },
+    { "every"_s, "every"_s, 1, false },
+    { "forEach"_s, "forEach"_s, 2, false },
+    { "reduce"_s, "reduce"_s, 3, false },
+    { "toArray"_s, "toArray"_s, 1, false },
+    { "some"_s, "some"_s, 1, false },
+    { "find"_s, "find"_s, 2, false },
+};
+static constexpr BareStreamMethod methodsOfReadStream[] = {
+    { "constructor"_s, "ReadStream"_s, 2, false, BareStreamMethod::Kind::Constructor },
+    { "open"_s, "open"_s, 0 },
+    { "_construct"_s, "streamConstruct"_s, 1 },
+    { "_read"_s, ""_s, 1 },
+    { "_destroy"_s, ""_s, 2 },
+    { "close"_s, ""_s, 1 },
+};
+static constexpr BareStreamMethod methodsOfTerminalReadStream[] = {
+    { "ref"_s, ""_s, 0 },
+    { "unref"_s, ""_s, 0 },
+    { "setRawMode"_s, ""_s, 1 },
+};
+static constexpr BareStreamMethod methodsOfOutputBeforeWrite[] = {
+    { "_write"_s, "underscoreWriteFast"_s, 3 },
+};
+static constexpr BareStreamMethod methodsOfOutputAfterWrite[] = {
+    { "_final"_s, "finalFast"_s, 1 },
+    { "destroySoon"_s, ""_s, 2 },
+    { "_destroy"_s, ""_s, 2 },
+};
+static constexpr BareStreamMethod methodsOfInputBeforeRef[] = {
+    { "on"_s, ""_s, 2 },
+    { "addListener"_s, ""_s, 2, true, BareStreamMethod::Kind::SameAsPrevious },
+};
+// A file that is no terminal has none of them.
+static constexpr BareStreamMethod methodsOfInputThatWaits[] = {
+    { "ref"_s, ""_s, 0 },
+    { "unref"_s, ""_s, 0 },
+};
+static constexpr BareStreamMethod methodsOfInputAfterRef[] = {
+    { "pause"_s, ""_s, 0 },
+    { "resume"_s, ""_s, 0 },
+    { "read"_s, ""_s, 1 },
+    { "_read"_s, "triggerRead"_s, 1 },
+};
+
+// What else plain Bun's stream has under a string: accessors and state. The name is there. Its value takes the whole stream.
+static constexpr ASCIILiteral stateOfEventEmitter[] = { "_eventsCount"_s };
+static constexpr ASCIILiteral stateOfWritable[] = { "_writev"_s, "closed"_s, "destroyed"_s, "writable"_s, "writableFinished"_s, "writableObjectMode"_s, "writableBuffer"_s, "writableEnded"_s, "writableNeedDrain"_s, "writableHighWaterMark"_s, "writableCorked"_s, "writableLength"_s, "errored"_s, "writableAborted"_s };
+static constexpr ASCIILiteral stateOfFileStream[] = { "autoClose"_s, "pending"_s };
+static constexpr ASCIILiteral stateOfReadable[] = { "readable"_s, "readableDidRead"_s, "readableAborted"_s, "readableHighWaterMark"_s, "readableBuffer"_s, "readableFlowing"_s, "readableLength"_s, "readableObjectMode"_s, "readableEncoding"_s, "errored"_s, "closed"_s, "destroyed"_s, "readableEnded"_s };
+static constexpr ASCIILiteral stateOfOutput[] = { "_writev"_s, "flush"_s, "start"_s, "pos"_s, "bytesWritten"_s, "_construct"_s, "_events"_s, "_writableState"_s, "_maxListeners"_s, "readable"_s, "_type"_s, "_isStdio"_s };
+static constexpr ASCIILiteral stateOfInput[] = { "start"_s, "end"_s, "pos"_s, "bytesRead"_s, "_events"_s, "_readableState"_s, "_maxListeners"_s, "_eventsCount"_s };
+static constexpr ASCIILiteral stateOfTerminalInput[] = { "path"_s, "flags"_s, "mode"_s, "isRaw"_s };
+
+static bool isStateOfBareStream(BareStreamLevel level, const Identifier& name)
+{
+    auto lists = [&](std::span<const ASCIILiteral> names) {
+        return std::ranges::any_of(names, [&](ASCIILiteral listed) { return name.string() == listed; });
+    };
+    switch (level) {
+    case BareStreamLevel::EventEmitter:
+        return lists(stateOfEventEmitter);
+    case BareStreamLevel::Stream:
+    case BareStreamLevel::TerminalReadStream:
+        return false;
+    case BareStreamLevel::Writable:
+        return lists(stateOfWritable);
+    case BareStreamLevel::WriteStream:
+    case BareStreamLevel::ReadStream:
+        return lists(stateOfFileStream);
+    case BareStreamLevel::Readable:
+        return lists(stateOfReadable);
+    case BareStreamLevel::Output:
+        return lists(stateOfOutput);
+    case BareStreamLevel::Input:
+        return lists(stateOfInput) || (bun_stdio_tty[0] && lists(stateOfTerminalInput));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The target of each object of a bare stream holds its descriptor and its level under a private name.
+static int descriptorOfBareStream(JSC::VM& vm, JSObject* target)
+{
+    return target->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()).asInt32() & 0xff;
+}
+
+static BareStreamLevel levelOfBareStream(JSC::VM& vm, JSObject* target)
+{
+    return static_cast<BareStreamLevel>(target->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()).asInt32() >> 8);
+}
+
+static bool findsStateInBareStream(JSC::VM& vm, JSObject* target, const Identifier& name)
+{
+    const Identifier& privateName = WebCore::builtinNames(vm).lightStandardStreamsPrivateName();
+    for (JSObject* object = target; object;) {
+        if (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
+            object = proxy->target();
+            continue;
+        }
+        if (!object->getDirect(vm, privateName))
+            return false;
+        if (isStateOfBareStream(levelOfBareStream(vm, object), name))
+            return true;
+        JSValue prototype = object->getPrototypeDirect();
+        object = prototype.isObject() ? asObject(prototype) : nullptr;
+    }
+    return false;
+}
+
+// A method of a prototype that the streams for input and output share
+JSC_DEFINE_HOST_FUNCTION(Process_functionMethodOfAnyBareStream, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* proxy = dynamicDowncast<JSC::ProxyObject>(callFrame->thisValue());
+    JSValue kept = proxy && !proxy->isRevoked() ? proxy->target()->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()) : JSValue();
+    bool isInput = kept && !(kept.asInt32() & 0xff);
+    return isInput ? Process_functionNeedsWholeInputStream(globalObject, callFrame) : Process_functionNeedsWholeOutputStream(globalObject, callFrame);
+}
+
+static void putMethodsOfBareStream(JSC::JSGlobalObject* globalObject, JSObject* target, std::span<const BareStreamMethod> methods, JSC::NativeFunction refuse, JSFunction* constructor = nullptr)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSFunction* previous = nullptr;
+    for (const BareStreamMethod& method : methods) {
+        JSFunction* function = previous;
+        if (method.kind == BareStreamMethod::Kind::Constructor)
+            function = constructor;
+        else if (method.kind == BareStreamMethod::Kind::Method)
+            function = JSFunction::create(vm, globalObject, method.length, method.name, refuse, JSC::ImplementationVisibility::Public);
+        target->putDirect(vm, Identifier::fromString(vm, method.key), function, method.isEnumerable ? 0 : static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        previous = function;
+    }
+}
+
 // Looks into the bare prototypes themselves. Streams share them, so their traps would refuse in the name of another stream.
 static bool findInBareStream(JSC::JSGlobalObject* globalObject, JSObject* target, const Identifier& name, PropertySlot& slot)
 {
@@ -3354,7 +3606,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetOfBareStream, (JSC::JSGlobalObject *
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* target = asObject(callFrame->argument(0));
-    int fd = target->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()).asInt32();
+    int fd = descriptorOfBareStream(vm, target);
     Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     PropertySlot slot(target, PropertySlot::InternalMethodType::Get);
@@ -3380,6 +3632,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetOfBareStream, (JSC::JSGlobalObject *
             return JSValue::encode(jsUndefined());
         RELEASE_AND_RETURN(scope, JSValue::encode(size->getIndex(globalObject, isColumns ? 0 : 1)));
     }
+    if (!findsStateInBareStream(vm, target, name))
+        return JSValue::encode(jsUndefined());
     RELEASE_AND_RETURN(scope, fd ? Process_functionNeedsWholeOutputStream(globalObject, callFrame) : Process_functionNeedsWholeInputStream(globalObject, callFrame));
 }
 
@@ -3395,7 +3649,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHasOfBareStream, (JSC::JSGlobalObject *
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* target = asObject(callFrame->argument(0));
-    int fd = target->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()).asInt32();
+    int fd = descriptorOfBareStream(vm, target);
     Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
@@ -3405,7 +3659,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHasOfBareStream, (JSC::JSGlobalObject *
         return JSValue::encode(jsBoolean(isFound));
     if (isNameOfTerminal(vm, name, fd))
         return JSValue::encode(jsBoolean(bun_stdio_tty[fd]));
-    RELEASE_AND_RETURN(scope, fd ? Process_functionNeedsWholeOutputStream(globalObject, callFrame) : Process_functionNeedsWholeInputStream(globalObject, callFrame));
+    return JSValue::encode(jsBoolean(findsStateInBareStream(vm, target, name)));
 }
 
 // The `getOwnPropertyDescriptor` trap of a bare stream
@@ -3414,7 +3668,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetOwnPropertyDescriptorOfBareStream, (
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* target = asObject(callFrame->argument(0));
-    int fd = target->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()).asInt32();
+    int fd = descriptorOfBareStream(vm, target);
     Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::PropertyDescriptor descriptor;
@@ -3425,7 +3679,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetOwnPropertyDescriptorOfBareStream, (
     PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
     bool isInherited = findInBareStream(globalObject, target, name, slot);
     RETURN_IF_EXCEPTION(scope, {});
-    if (isInherited || name.isSymbol() || isNameOfTerminal(vm, name, fd))
+    if (isInherited || name.isSymbol() || isNameOfTerminal(vm, name, fd) || !isStateOfBareStream(levelOfBareStream(vm, target), name))
         return JSValue::encode(jsUndefined());
     RELEASE_AND_RETURN(scope, fd ? Process_functionNeedsWholeOutputStream(globalObject, callFrame) : Process_functionNeedsWholeInputStream(globalObject, callFrame));
 }
@@ -3443,7 +3697,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteOfBareStream, (JSC::JSGlobalObject
     JSValue descriptor = proxy && !proxy->isRevoked() ? proxy->target()->getDirect(vm, privateName) : JSValue();
     if (!descriptor)
         return throwVMTypeError(globalObject, scope, "this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is undefined)"_s);
-    int fd = descriptor.asInt32();
+    int fd = descriptor.asInt32() & 0xff;
     JSObject* kept = asObject(defaultGlobalObject(globalObject)->processObject()->getDirect(vm, privateName));
     JSValue sink = kept->getDirectIndex(globalObject, fd);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3486,13 +3740,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteOfBareStream, (JSC::JSGlobalObject
 }
 
 // What code evaluated at run time gets for a standard stream in a program that names none: no function that makes streams is in the executable.
-// The object answers `fd`, `isTTY`, `columns`, `rows` and `write`. Every question about another name and every change throw the error that names the function left out.
-// Listing its keys and asking for its prototype do not throw, so code that walks over every object it can reach goes on.
-static JSObject* wrapBareStreamObject(JSC::JSGlobalObject* globalObject, int fd, JSObject* target)
+// The object answers `fd`, `isTTY`, `columns`, `rows` and `write`, and has every method of plain Bun's stream. A call of another method, a read of the stream's state
+// and every change throw the error that names the function left out. A name that plain Bun's stream lacks is absent.
+// Listing its keys, reading what they hold and asking for its prototype do not throw, so code that walks over every object it can reach goes on.
+static JSObject* wrapBareStreamObject(JSC::JSGlobalObject* globalObject, int fd, BareStreamLevel level, JSObject* target)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    target->putDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName(), jsNumber(fd));
+    target->putDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName(), jsNumber(fd | static_cast<int>(level) << 8));
     JSObject* handler = JSC::constructEmptyObject(globalObject);
     handler->putDirect(vm, Identifier::fromString(vm, "get"_s), JSFunction::create(vm, globalObject, 3, ""_s, Process_functionGetOfBareStream, JSC::ImplementationVisibility::Private));
     handler->putDirect(vm, Identifier::fromString(vm, "has"_s), JSFunction::create(vm, globalObject, 2, ""_s, Process_functionHasOfBareStream, JSC::ImplementationVisibility::Private));
@@ -3503,18 +3758,26 @@ static JSObject* wrapBareStreamObject(JSC::JSGlobalObject* globalObject, int fd,
     RELEASE_AND_RETURN(scope, JSC::ProxyObject::create(globalObject, target, handler));
 }
 
-// A prototype of a bare stream says which class it is of, as in plain Bun, and nothing else.
-static JSObject* constructBareStreamPrototype(JSC::JSGlobalObject* globalObject, int fd, ASCIILiteral className, JSObject* parent)
+// A prototype of a bare stream says which class it is of and has the methods of that class, as in plain Bun.
+static JSObject* constructBareStreamPrototype(JSC::JSGlobalObject* globalObject, int fd, BareStreamLevel level, std::span<const BareStreamMethod> methods, JSObject* parent)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* target = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     target->setPrototypeDirect(vm, parent);
-    JSFunction* constructor = JSFunction::create(vm, globalObject, 0, className, fd ? Process_functionNeedsWholeOutputStream : Process_functionNeedsWholeInputStream, JSC::ImplementationVisibility::Public);
-    target->putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-    JSObject* prototype = wrapBareStreamObject(globalObject, fd, target);
+    JSC::NativeFunction refuse = fd ? Process_functionNeedsWholeOutputStream : Process_functionNeedsWholeInputStream;
+    if (level == BareStreamLevel::EventEmitter || level == BareStreamLevel::Stream)
+        refuse = Process_functionMethodOfAnyBareStream;
+    JSFunction* constructor = nullptr;
+    for (const BareStreamMethod& method : methods) {
+        if (method.kind == BareStreamMethod::Kind::Constructor)
+            constructor = JSFunction::create(vm, globalObject, method.length, method.name, refuse, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, refuse);
+    }
+    putMethodsOfBareStream(globalObject, target, methods, refuse, constructor);
+    JSObject* prototype = wrapBareStreamObject(globalObject, fd, level, target);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    constructor->putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    if (constructor)
+        constructor->putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     return prototype;
 }
 
@@ -3530,25 +3793,38 @@ static JSObject* prototypeOfBareStream(JSC::JSGlobalObject* globalObject, JSC::J
         RETURN_IF_EXCEPTION(scope, nullptr);
         processObject->putDirect(vm, name, kept);
     }
-    auto find = [&](unsigned index, ASCIILiteral className, JSObject* parent) -> JSObject* {
+    auto find = [&](BareStreamLevel level, std::span<const BareStreamMethod> methods, JSObject* parent) -> JSObject* {
+        unsigned index = static_cast<unsigned>(level);
         JSValue made = asObject(kept)->getDirectIndex(globalObject, index);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (made && made.isObject())
             return asObject(made);
-        JSObject* prototype = constructBareStreamPrototype(globalObject, fd, className, parent);
+        JSObject* prototype = constructBareStreamPrototype(globalObject, fd, level, methods, parent);
         RETURN_IF_EXCEPTION(scope, nullptr);
         asObject(kept)->putDirectIndex(globalObject, index, prototype);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return prototype;
     };
-    JSObject* emitter = find(0, "EventEmitter"_s, globalObject->objectPrototype());
+    JSObject* emitter = find(BareStreamLevel::EventEmitter, methodsOfEventEmitter, globalObject->objectPrototype());
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* stream = find(1, "Stream"_s, emitter);
+    JSObject* stream = find(BareStreamLevel::Stream, methodsOfStream, emitter);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* direction = find(fd ? 2 : 4, fd ? "Writable"_s : "Readable"_s, stream);
+    if (!fd) {
+        JSObject* readable = find(BareStreamLevel::Readable, methodsOfReadable, stream);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        JSObject* prototype = find(BareStreamLevel::ReadStream, methodsOfReadStream, readable);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (bun_stdio_tty[fd])
+            RELEASE_AND_RETURN(scope, find(BareStreamLevel::TerminalReadStream, methodsOfTerminalReadStream, prototype));
+        return prototype;
+    }
+    JSObject* writable = find(BareStreamLevel::Writable, methodsOfWritable, stream);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* prototype = find(fd ? 3 : 5, fd ? "WriteStream"_s : "ReadStream"_s, direction);
+    JSObject* prototype = find(BareStreamLevel::WriteStream, methodsOfWriteStream, writable);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* target = uncheckedDowncast<JSC::ProxyObject>(prototype)->target();
+    if (bun_stdio_tty[fd] && !target->getDirect(vm, Identifier::fromString(vm, methodsOfTerminalWriteStream[0].key)))
+        putMethodsOfBareStream(globalObject, target, methodsOfTerminalWriteStream, Process_functionNeedsWholeOutputStream);
     return prototype;
 }
 
@@ -3563,9 +3839,17 @@ static JSValue constructBareStream(JSC::JSGlobalObject* globalObject, JSC::JSObj
     target->putDirect(vm, Identifier::fromString(vm, "fd"_s), jsNumber(fd));
     if (bun_stdio_tty[fd])
         target->putDirect(vm, Identifier::fromString(vm, "isTTY"_s), jsBoolean(true));
-    if (write)
+    if (write) {
+        putMethodsOfBareStream(globalObject, target, methodsOfOutputBeforeWrite, Process_functionNeedsWholeOutputStream);
         target->putDirect(vm, Identifier::fromString(vm, "write"_s), write);
-    RELEASE_AND_RETURN(scope, wrapBareStreamObject(globalObject, fd, target));
+        putMethodsOfBareStream(globalObject, target, methodsOfOutputAfterWrite, Process_functionNeedsWholeOutputStream);
+        RELEASE_AND_RETURN(scope, wrapBareStreamObject(globalObject, fd, BareStreamLevel::Output, target));
+    }
+    putMethodsOfBareStream(globalObject, target, methodsOfInputBeforeRef, Process_functionNeedsWholeInputStream);
+    if (bun_stdio_tty[fd] || Bun__Process__getStdinFdType(Bun::vm(vm), fd) != BunProcessStdinFdType::file)
+        putMethodsOfBareStream(globalObject, target, methodsOfInputThatWaits, Process_functionNeedsWholeInputStream);
+    putMethodsOfBareStream(globalObject, target, methodsOfInputAfterRef, Process_functionNeedsWholeInputStream);
+    RELEASE_AND_RETURN(scope, wrapBareStreamObject(globalObject, fd, BareStreamLevel::Input, target));
 }
 
 static JSValue constructBareStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)

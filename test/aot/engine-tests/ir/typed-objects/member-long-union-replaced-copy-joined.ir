@@ -256,33 +256,35 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f7 visibility=Private
 # CHECK-NEXT: v27: anything ~ undefined|null|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9" = GetSlotOrUndefined v26 key="state" receivers=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13] level=Proven accessSite=5
 # CHECK-NEXT: v28: undefined|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9" = AssumeType v27 provenType=undefined|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9"
 # CHECK-NEXT: v29: undefined|boolean = GetSlotOrUndefined v26 key="saving" receivers=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13] level=Proven accessSite=6
-# CHECK-NEXT: v30: undefined = CallBuiltin -, v28, v29 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v30: undefined|true = AssumeType v29 provenType=undefined|true
+# CHECK-NEXT: v31: undefined = CallBuiltin -, v28, v30 overload=ConsoleLog/0 accessSite=7
 # CHECK-NEXT: Jump -> next b3(v20)
 # CHECK-NEXT: b6() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v32: int[0, 4294967295] = CallBuiltin v5 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v33: boolean = Less v7, v32
-# CHECK-NEXT: Branch v33 -> taken b7(| 0), notTaken b9()
-# CHECK-NEXT: b7(v34: int[0, 4294967294] ~ 0) frequency=Rare:
-# CHECK-NEXT: Jump -> next b8(v34)
-# CHECK-NEXT: b8(v35: int[0, 4294967294]) frequency=Rare:
-# CHECK-NEXT: v36: undefined|object = ElemGet v5, v35 [keyIsIntegral]
-# CHECK-NEXT: v37: 1 = Integer integer=1
-# CHECK-NEXT: v38: int[1, 4294967295] = Add v35, v37
-# CHECK-NEXT: v39: fact = Specified
-# CHECK-NEXT: v40: undefined|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13 = AssumeType v36, v39 provenType=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13
-# CHECK-NEXT: PutModuleVariable v40 variable=g0
-# CHECK-NEXT: v42: undefined = CallDirect function=f12 accessSite=2
-# CHECK-NEXT: v43: undefined|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13 = GetModuleVariable variable=g0
-# CHECK-NEXT: v44: L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13 = RequireObjectCoercible v43 name="state"
-# CHECK-NEXT: v45: anything ~ undefined|null|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9" = GetSlotOrUndefined v44 key="state" receivers=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13] level=Proven accessSite=5
-# CHECK-NEXT: v46: undefined|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9" = AssumeType v45 provenType=undefined|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9"
-# CHECK-NEXT: v47: undefined|boolean = GetSlotOrUndefined v44 key="saving" receivers=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13] level=Proven accessSite=6
-# CHECK-NEXT: v48: undefined = CallBuiltin -, v46, v47 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: Jump -> next b1(v38)
+# CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v5 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v34: boolean = Less v7, v33
+# CHECK-NEXT: Branch v34 -> taken b7(| 0), notTaken b9()
+# CHECK-NEXT: b7(v35: int[0, 4294967294] ~ 0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b8(v35)
+# CHECK-NEXT: b8(v36: int[0, 4294967294]) frequency=Rare:
+# CHECK-NEXT: v37: undefined|object = ElemGet v5, v36 [keyIsIntegral]
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: int[1, 4294967295] = Add v36, v38
+# CHECK-NEXT: v40: fact = Specified
+# CHECK-NEXT: v41: undefined|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13 = AssumeType v37, v40 provenType=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13
+# CHECK-NEXT: PutModuleVariable v41 variable=g0
+# CHECK-NEXT: v43: undefined = CallDirect function=f12 accessSite=2
+# CHECK-NEXT: v44: undefined|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13 = GetModuleVariable variable=g0
+# CHECK-NEXT: v45: L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13 = RequireObjectCoercible v44 name="state"
+# CHECK-NEXT: v46: anything ~ undefined|null|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9" = GetSlotOrUndefined v45 key="state" receivers=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13] level=Proven accessSite=5
+# CHECK-NEXT: v47: undefined|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9" = AssumeType v46 provenType=undefined|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9"
+# CHECK-NEXT: v48: undefined|boolean = GetSlotOrUndefined v45 key="saving" receivers=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13] level=Proven accessSite=6
+# CHECK-NEXT: v49: undefined|true = AssumeType v48 provenType=undefined|true
+# CHECK-NEXT: v50: undefined = CallBuiltin -, v47, v49 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: Jump -> next b1(v39)
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v49: undefined = Undefined
-# CHECK-NEXT: Return v49
+# CHECK-NEXT: v51: undefined = Undefined
+# CHECK-NEXT: Return v51
 # CHECK-NEXT: }
 # CHECK-LABEL: function f2 module=
 # CHECK: m0 position=2117 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13 site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13 site=w6 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

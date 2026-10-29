@@ -215,44 +215,28 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: object, v1: number):
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: boolean = TypeTest v1 testedType=i32
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b7(v2)
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4(v2)
 # CHECK-NEXT: b1(v4: i32):
 # CHECK-NEXT: Jump -> next b2(v2)
 # CHECK-NEXT: b2(v5: int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v7: boolean = Less v5, v4
-# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b12()
+# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b6()
 # CHECK-NEXT: b3(v8: int[0, 2147483646]):
 # CHECK-NEXT: v9: anything = PropGet v0 key="n" accessSite=9
-# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=number
-# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5(| 0)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5(v11: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
-# CHECK-NEXT: v12: number|string|bigint = Add v11, v8
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v13: int[1, 2147483647] = Increment v8
-# CHECK-NEXT: Jump -> next b2(v13)
-# CHECK-NEXT: b7(v14: int|whole ~ 0) frequency=Rare:
+# CHECK-NEXT: v10: int[1, 2147483647] = Increment v8
+# CHECK-NEXT: Jump -> next b2(v10)
+# CHECK-NEXT: b4(v11: int|whole ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v16: boolean = Less v14, v1
-# CHECK-NEXT: Branch v16 -> taken b8(), notTaken b12()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v17: anything = PropGet v0 key="n" accessSite=9
-# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=number
-# CHECK-NEXT: Branch v18 -> taken b9(), notTaken b10(| 0)
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b10(v19: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
-# CHECK-NEXT: v20: number|string|bigint = Add v19, v14
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v21: int|whole ~ 1 = Increment v14
-# CHECK-NEXT: Jump -> next b7(v21)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v22: undefined = Undefined
-# CHECK-NEXT: Return v22
+# CHECK-NEXT: v13: boolean = Less v11, v1
+# CHECK-NEXT: Branch v13 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v14: anything = PropGet v0 key="n" accessSite=9
+# CHECK-NEXT: v15: int|whole ~ 1 = Increment v11
+# CHECK-NEXT: Jump -> next b4(v15)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Looping"
 # CHECK: module=m0 position=1852 role=GenericVersion flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=object} parameters=[{type=number site=w9 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f14} {
@@ -265,12 +249,11 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: TestAndBranch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2(v6: int|whole) frequency=Unlikely:
 # CHECK-NEXT: v7: anything = PropGet v0 key="n" accessSite=9
-# CHECK-NEXT: v8: number|string|bigint = Add v7, v6 form=Generic
-# CHECK-NEXT: v9: int|whole = Increment v6 form=Numbers
-# CHECK-NEXT: Jump -> next b1(v9)
+# CHECK-NEXT: v8: int|whole = Increment v6 form=Numbers
+# CHECK-NEXT: Jump -> next b1(v8)
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ByName"
 # CHECK: module=m0 position=1306 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} inlineFrames=[{}, {callee=f3 callPosition=1306 isTailCall=true module=m0}] {

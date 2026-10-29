@@ -196,6 +196,14 @@ fn write_product(
         true => find_root_below_working_directory(&build.root_directory),
         false => None,
     };
+    let root_from_executable = match &request.product {
+        CompileProduct::Executable { outfile }
+            if options.loads_code_from_disk && !options.runs_in_place =>
+        {
+            find_root_from_executable(&build.root_directory, outfile)
+        }
+        _ => None,
+    };
     let settings = &mut request.executable;
     let graph = GraphRequest {
         target: settings.target,
@@ -213,6 +221,12 @@ fn write_product(
             package_names: &package_names,
             path_aliases: &path_aliases,
             root_below_working_directory: root_below_working_directory.as_deref(),
+            root_from_executable: root_from_executable.as_deref(),
+            further_package_names: &build.further_package_names,
+            root_folders_spelled: match options.runs_in_place {
+                true => b"",
+                false => &build.root_folders_spelled,
+            },
             allows_code_from_disk: options.loads_code_from_disk,
             preserves_source_paths: options.runs_in_place,
             symbols: build.engine.symbols(),
@@ -220,6 +234,10 @@ fn write_product(
     };
     let Some(outfile) = product.outfile else {
         outcome.graph_bytes = Some(to_graph_bytes(&graph).map_err(CompileFailure::Graph)?);
+        if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+            let bytes = outcome.graph_bytes.as_ref().map_or(0, |bytes| bytes.len());
+            bun_core::print_errorln!("AOT test build | program bytes {}", bytes);
+        }
         outcome.executable_time = started.elapsed();
         return Ok(());
     };
@@ -707,6 +725,24 @@ fn find_root_below_working_directory(root_directory: &[u8]) -> Option<Vec<u8>> {
     let mut names = root.split(|&byte| bun_paths::is_sep_native(byte));
     let goes_up = names.next() == Some(b"..");
     (!goes_up || names.all(|name| name == b"..")).then(|| root.to_vec())
+}
+
+/// Where the root directory lies, seen from the folder of the executable: the folders of an installed program keep their places. Nothing is recorded
+/// where the two have no folder in common but the root of the disk, or where the way there names more than two folders: that tells where the program was built.
+fn find_root_from_executable(root_directory: &[u8], outfile: &[u8]) -> Option<Vec<u8>> {
+    let working_directory = bun_sys::getcwd_alloc().ok()?;
+    let outfile =
+        resolve_path::join_abs_string::<platform::Auto>(working_directory.as_bytes(), &[outfile]);
+    let folder = resolve_path::dirname::<platform::Auto>(outfile);
+    let root = resolve_path::relative(folder, trim_trailing_separators(root_directory));
+    if bun_paths::is_absolute(root) {
+        return None;
+    }
+    let is_sep = |&byte: &u8| bun_paths::is_sep_native(byte);
+    let ups = root.split(is_sep).take_while(|name| *name == b"..").count();
+    let names = root.split(is_sep).filter(|name| !name.is_empty()).count() - ups;
+    let depth = folder.split(is_sep).filter(|name| !name.is_empty()).count();
+    (ups < depth && names <= 2).then(|| root.to_vec())
 }
 
 pub(super) fn pair_entry_points<'b>(

@@ -7,10 +7,6 @@ export const knownToday: Record<string, string> = {
     "bundled: code bytes 202 -> 106, operations 10 -> 6, run-time operations 239 -> 238",
   "built-in constructors and calls on constants: an element of a constant list [ts, two files]":
     "bundled: code bytes 202 -> 106, operations 10 -> 6, run-time operations 239 -> 238",
-  "built-in constructors and calls on constants: methods of a constant text [js]":
-    "each file: code bytes 489 -> 392, operations 16 -> 15; bundled: code bytes 489 -> 392, operations 16 -> 15",
-  "built-in constructors and calls on constants: methods of a constant text [ts]":
-    "each file: code bytes 489 -> 392, operations 16 -> 15; bundled: code bytes 489 -> 392, operations 16 -> 15",
   "bundler_merged_enum: ts/EnumCrossModuleInliningMergedDeclarations":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify+whitespace/Infinity":
@@ -495,30 +491,4 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 171 -> 105, operations 9 -> 5, run-time operations 240 -> 239; bundled: code bytes 171 -> 105, operations 9 -> 5, run-time operations 240 -> 239",
   "process.env, NODE_ENV and what the build knows of the target: process.env.NODE_ENV in brackets [ts]":
     "each file: code bytes 171 -> 105, operations 9 -> 5, run-time operations 240 -> 239; bundled: code bytes 171 -> 105, operations 9 -> 5, run-time operations 240 -> 239",
-  "texts, numbers and templates are computed: a character of a text [js]":
-    "each file: code bytes 525 -> 243; bundled: code bytes 525 -> 243",
-  "texts, numbers and templates are computed: a character of a text [ts]":
-    "each file: code bytes 525 -> 243; bundled: code bytes 525 -> 243",
-  "texts, numbers and templates are computed: a template around an unknown [js]":
-    "each file: code bytes 226 -> 204, operations 14 -> 12; bundled: code bytes 226 -> 204, operations 14 -> 12",
-  "texts, numbers and templates are computed: a template around an unknown [ts]":
-    "each file: operations 13 -> 12; bundled: operations 13 -> 12",
-  "texts, numbers and templates are computed: texts joined around an unknown [js]":
-    "each file: operations 12 -> 11; bundled: operations 12 -> 11",
-  "texts, numbers and templates are computed: texts joined around an unknown [ts]":
-    "each file: operations 12 -> 11; bundled: operations 12 -> 11",
-  "texts, numbers and templates are computed: texts joined behind an unknown [js]":
-    "each file: operations 11 -> 10; bundled: operations 11 -> 10",
-  "texts, numbers and templates are computed: texts joined behind an unknown [ts]":
-    "each file: operations 11 -> 10; bundled: operations 11 -> 10",
-  "typeof, void, ! and equality of constants: typeof of literals [js]":
-    "each file: code bytes 481 -> 425, operations 24 -> 19, run-time operations 249 -> 247; bundled: code bytes 481 -> 425, operations 24 -> 19, run-time operations 249 -> 247",
-  "typeof, void, ! and equality of constants: typeof of literals [ts]":
-    "each file: code bytes 481 -> 425, operations 24 -> 19, run-time operations 249 -> 247; bundled: code bytes 481 -> 425, operations 24 -> 19, run-time operations 249 -> 247",
-  "using: using null and undefined [js]":
-    "each file: code bytes 219 -> 147, operations 15 -> 7; bundled: code bytes 219 -> 147, operations 15 -> 7",
-  "using: using null and undefined [ts]":
-    "each file: code bytes 219 -> 147, operations 15 -> 7; bundled: code bytes 219 -> 147, operations 15 -> 7",
-  "what only the checker reads: declared fields [ts]":
-    "each file: code bytes 490 -> 468, operations 13 -> 9; bundled: code bytes 490 -> 468, operations 13 -> 9",
 };

@@ -30,9 +30,18 @@ pub(crate) fn create_application_fold_inputs<'s>(
     atoms: &Interner<'s>,
     limits: &LimitValues,
     platform: Platforms,
+    runs_in_place: bool,
 ) -> FoldInputs<'s> {
+    let mut defines = after_constant_globals(provided.defines, platform, arena, atoms);
+    // A test may redefine `process.versions.bun` to pose as another runtime, as under plain `bun test`.
+    if runs_in_place {
+        let open = defines
+            .iter()
+            .filter(|define| !names_version_of_runtime(define, atoms));
+        defines = arena.alloc_slice_copy(&open.copied().collect::<Vec<_>>());
+    }
     let options = FoldOptions {
-        defines: after_constant_globals(provided.defines, platform, arena, atoms),
+        defines,
         max_string_bytes: max_string_bytes(limits),
         ..*provided
     };
@@ -108,6 +117,19 @@ fn after_constant_globals<'s>(
 
 fn is_at_or_under(path: DefinePath<'_>, holder: DefinePath<'_>) -> bool {
     path.root == holder.root && path.members.starts_with(holder.members)
+}
+
+fn names_version_of_runtime(define: &Define<'_>, atoms: &Interner<'_>) -> bool {
+    let mut names = define
+        .path
+        .members
+        .iter()
+        .rev()
+        .map(|&name| atoms.bytes(name));
+    let (name, holder) = (names.next(), names.next());
+    matches!(define.value, DefineValue::RuntimeConstant(_))
+        && holder == Some(&b"versions"[..])
+        && matches!(name, Some(b"bun" | b"node"))
 }
 
 // `bun build --compile` defines `process.versions.bun` as the text that the run has there.
@@ -221,6 +243,7 @@ mod tests {
                 atoms,
                 limits,
                 Platforms::LINUX,
+                false,
             ),
             runtime: create_runtime_fold_inputs(
                 Archive::embedded().manifest(),

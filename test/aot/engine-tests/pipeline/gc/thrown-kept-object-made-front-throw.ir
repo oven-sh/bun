@@ -523,64 +523,65 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: v43: string = Add v42, v41
 # CHECK-NEXT: v44: Error = CallBuiltin -, v43 overload=Error/1 accessSite=8
 # CHECK-NEXT: v45: anything = CallBuiltin v44 overload=ErrorPrototypeMessage/0 accessSite=9
-# CHECK-NEXT: v46: anything = PropGet v45 key="length" accessSite=10 receivers=[]
-# CHECK-NEXT: v47: number = AssumeType v46 provenType=number
-# CHECK-NEXT: v48: number = Add v36, v47
-# CHECK-NEXT: v49: int[1, 200] = Increment v41
-# CHECK-NEXT: Jump -> next b9(v48, v49)
+# CHECK-NEXT: v46: undefined|string = AssumeType v45 provenType=undefined|string
+# CHECK-NEXT: v47: string = RequireObjectCoercible v46 name="length"
+# CHECK-NEXT: v48: int[0, 2147483647] = GetStringLength v47
+# CHECK-NEXT: v49: number = Add v36, v48
+# CHECK-NEXT: v50: int[1, 200] = Increment v41
+# CHECK-NEXT: Jump -> next b9(v49, v50)
 # CHECK-NEXT: b11():
 # CHECK-NEXT: Jump -> next b12(v36)
-# CHECK-NEXT: b12(v50: number):
-# CHECK-NEXT: v51: int[1, 300] = Increment v11
-# CHECK-NEXT: Jump -> next b1(v50, v51)
+# CHECK-NEXT: b12(v51: number):
+# CHECK-NEXT: v52: int[1, 300] = Increment v11
+# CHECK-NEXT: Jump -> next b1(v51, v52)
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v52: 0 = Integer
 # CHECK-NEXT: v53: 0 = Integer
-# CHECK-NEXT: Jump -> next b14(v52, v53)
-# CHECK-NEXT: b14(v54: int|whole, v55: int[0, 4294967295]):
+# CHECK-NEXT: v54: 0 = Integer
+# CHECK-NEXT: Jump -> next b14(v53, v54)
+# CHECK-NEXT: b14(v55: int|whole, v56: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v57: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v58: boolean = Less v55, v57
-# CHECK-NEXT: Branch v58 -> taken b15(| 0), notTaken b22()
-# CHECK-NEXT: b15(v59: int[0, 4294967294]):
-# CHECK-NEXT: v60: undefined|L1 = GetArrayElement v3, v59 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v61: 1 = Integer integer=1
-# CHECK-NEXT: v62: int[1, 4294967295] = Add v59, v61
-# CHECK-NEXT: v63: L1 = RequireObjectCoercible v60 name="error"
-# CHECK-NEXT: v64: anything = GetSlot v63 key="error" receivers=[L1] level=Proven accessSite=15
-# CHECK-NEXT: v65: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v64 castType=anything
-# CHECK-NEXT: v66: anything = PropGet v65 key="message" accessSite=16
-# CHECK-NEXT: v67: string = CallBuiltin -, v66 overload=String/0 builtinCallForm=AnyReceiver accessSite=17
-# CHECK-NEXT: v68: int[0, 2147483647] = GetStringLength v67
-# CHECK-NEXT: v69: 0 = Integer
-# CHECK-NEXT: v70: boolean = Greater v68, v69
-# CHECK-NEXT: Branch v70 -> taken b16(), notTaken b17()
+# CHECK-NEXT: v58: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v59: boolean = Less v56, v58
+# CHECK-NEXT: Branch v59 -> taken b15(| 0), notTaken b22()
+# CHECK-NEXT: b15(v60: int[0, 4294967294]):
+# CHECK-NEXT: v61: undefined|L1 = GetArrayElement v3, v60 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v62: 1 = Integer integer=1
+# CHECK-NEXT: v63: int[1, 4294967295] = Add v60, v62
+# CHECK-NEXT: v64: L1 = RequireObjectCoercible v61 name="error"
+# CHECK-NEXT: v65: anything = GetSlot v64 key="error" receivers=[L1] level=Proven accessSite=15
+# CHECK-NEXT: v66: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v65 castType=anything
+# CHECK-NEXT: v67: anything = PropGet v66 key="message" accessSite=16
+# CHECK-NEXT: v68: string = CallBuiltin -, v67 overload=String/0 builtinCallForm=AnyReceiver accessSite=17
+# CHECK-NEXT: v69: int[0, 2147483647] = GetStringLength v68
+# CHECK-NEXT: v70: 0 = Integer
+# CHECK-NEXT: v71: boolean = Greater v69, v70
+# CHECK-NEXT: Branch v71 -> taken b16(), notTaken b17()
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v71: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b18(v71)
-# CHECK-NEXT: b17():
-# CHECK-NEXT: v72: 1000 = Integer integer=1000
+# CHECK-NEXT: v72: 1 = Integer integer=1
 # CHECK-NEXT: Jump -> next b18(v72)
-# CHECK-NEXT: b18(v73: int[1, 1000]):
-# CHECK-NEXT: v74: anything = GetSlot v63 key="error" receivers=[L1] level=Proven accessSite=19
-# CHECK-NEXT: v75: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
-# CHECK-NEXT: v76: boolean = HasInPrototypeChain v74, v75
-# CHECK-NEXT: Branch v76 -> taken b19(), notTaken b20()
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v73: 1000 = Integer integer=1000
+# CHECK-NEXT: Jump -> next b18(v73)
+# CHECK-NEXT: b18(v74: int[1, 1000]):
+# CHECK-NEXT: v75: anything = GetSlot v64 key="error" receivers=[L1] level=Proven accessSite=19
+# CHECK-NEXT: v76: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
+# CHECK-NEXT: v77: boolean = HasInPrototypeChain v75, v76
+# CHECK-NEXT: Branch v77 -> taken b19(), notTaken b20()
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v77: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b21(v77)
-# CHECK-NEXT: b20():
-# CHECK-NEXT: v78: 1000000 = Integer integer=1000000
+# CHECK-NEXT: v78: 1 = Integer integer=1
 # CHECK-NEXT: Jump -> next b21(v78)
-# CHECK-NEXT: b21(v79: int[1, 1000000]):
-# CHECK-NEXT: v80: int[2, 1001000] = Add v73, v79
-# CHECK-NEXT: v81: int|whole = Add v54, v80
-# CHECK-NEXT: Jump -> next b14(v81, v62)
+# CHECK-NEXT: b20():
+# CHECK-NEXT: v79: 1000000 = Integer integer=1000000
+# CHECK-NEXT: Jump -> next b21(v79)
+# CHECK-NEXT: b21(v80: int[1, 1000000]):
+# CHECK-NEXT: v81: int[2, 1001000] = Add v74, v80
+# CHECK-NEXT: v82: int|whole = Add v55, v81
+# CHECK-NEXT: Jump -> next b14(v82, v63)
 # CHECK-NEXT: b22():
-# CHECK-NEXT: v82: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=13
-# CHECK-NEXT: v83: undefined = CallBuiltin -, v82, v6, v54 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v84: undefined = Undefined
-# CHECK-NEXT: Return v84
+# CHECK-NEXT: v83: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=13
+# CHECK-NEXT: v84: undefined = CallBuiltin -, v83, v6, v55 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v85: undefined = Undefined
+# CHECK-NEXT: Return v85
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fill"
 # CHECK: module=m0 position=349 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

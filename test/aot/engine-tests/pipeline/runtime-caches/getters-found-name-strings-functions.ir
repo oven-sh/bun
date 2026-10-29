@@ -287,10 +287,10 @@ function f3 name="Counter" module=m0 position=925 kind=BaseConstructor flags=[Ha
   b0(v0: anything):
     Jump -> next b1() @925
   b1():
-    v1 = GetConstructPrototype v0 layout=L3 @919
-    v2 = NewObject v1 layout=L3 @919
-    v3 = Convert v2 declared={type=L3|L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @919
-    Return v3 @919
+    v1 = GetConstructPrototype v0 layout=L3 @925
+    v2 = NewObject v1 layout=L3 @925
+    v3 = Convert v2 declared={type=L3|L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @925
+    Return v3 @925
 }
 function f4 name="made" module=m0 position=939 kind=Getter flags=[HasThis, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=env L2 flags=[IsFromCompiler]}] thisType={type=function flags=[IsExpected]} results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1, v1: env L2, v2: function):
@@ -510,13 +510,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f22 visibility=Private
 # CHECK-NEXT: v59: int[0, 1] = BitAnd v56, v58
 # CHECK-NEXT: v60: string = Add v57, v59
 # CHECK-NEXT: v61: undefined = CallDirect v60, v56, v56 function=f24
-# CHECK-NEXT: v62: anything = ResultAt v61
-# CHECK-NEXT: v63: anything = ResultAt v61 index=1
-# CHECK-NEXT: v64: anything = ResultAt v61 index=2
-# CHECK-NEXT: v65: anything = ResultAt v61 index=3
+# CHECK-NEXT: v62: undefined|number|string|bigint = ResultAt v61
+# CHECK-NEXT: v63: undefined|number|bigint = ResultAt v61 index=1
+# CHECK-NEXT: v64: undefined|string = ResultAt v61 index=2
+# CHECK-NEXT: v65: undefined|int|whole|"plain now" = ResultAt v61 index=3
 # CHECK-NEXT: v66: undefined|int|"a"|"another getter"|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = ResultAt v61 index=4
-# CHECK-NEXT: v67: anything = ResultAt v61 index=5
-# CHECK-NEXT: v68: anything = ResultAt v61 index=6
+# CHECK-NEXT: v67: undefined|boolean = ResultAt v61 index=5
+# CHECK-NEXT: v68: undefined|boolean = ResultAt v61 index=6
 # CHECK-NEXT: v69: number = ResultAt v61 index=7
 # CHECK-NEXT: v70: int[0, 4294967295] = ResultAt v61 index=8
 # CHECK-NEXT: v71: int[0, 2147483647] = ResultAt v61 index=9
@@ -548,13 +548,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f22 visibility=Private
 # CHECK-NEXT: v95: 7 = Integer integer=7
 # CHECK-NEXT: v96: -1 = Integer integer=-1
 # CHECK-NEXT: v97: undefined = CallDirect v94, v95, v96 function=f24
-# CHECK-NEXT: v98: anything = ResultAt v97
-# CHECK-NEXT: v99: anything = ResultAt v97 index=1
-# CHECK-NEXT: v100: anything = ResultAt v97 index=2
-# CHECK-NEXT: v101: anything = ResultAt v97 index=3
+# CHECK-NEXT: v98: undefined|number|string|bigint = ResultAt v97
+# CHECK-NEXT: v99: undefined|number|bigint = ResultAt v97 index=1
+# CHECK-NEXT: v100: undefined|string = ResultAt v97 index=2
+# CHECK-NEXT: v101: undefined|int|whole|"plain now" = ResultAt v97 index=3
 # CHECK-NEXT: v102: undefined|int|"a"|"another getter"|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = ResultAt v97 index=4
-# CHECK-NEXT: v103: anything = ResultAt v97 index=5
-# CHECK-NEXT: v104: anything = ResultAt v97 index=6
+# CHECK-NEXT: v103: undefined|boolean = ResultAt v97 index=5
+# CHECK-NEXT: v104: undefined|boolean = ResultAt v97 index=6
 # CHECK-NEXT: v105: number = ResultAt v97 index=7
 # CHECK-NEXT: v106: int[0, 4294967295] = ResultAt v97 index=8
 # CHECK-NEXT: v107: int[0, 2147483647] = ResultAt v97 index=9
@@ -605,14 +605,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f22 visibility=Private
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
-# CHECK: module=m0 position=569 kind=Method flags=[HasThis, HasExplicitName] thisType={type=f1} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=569 kind=Method flags=[HasThis, HasExplicitName] thisType={type=f1} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: f1):
 # CHECK-NEXT: v1: int|whole = GetModuleVariable variable=g2
 # CHECK-NEXT: v2: int|whole = Increment v1
 # CHECK-NEXT: PutModuleVariable v2 variable=g2
-# CHECK-NEXT: v4: string = TypeOf v0
-# CHECK-NEXT: v5: string ~ "bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Upcast v4 castType=string
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v4: "function" = String string="function"
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m0 position=698 kind=Method flags=[HasThis, HasExplicitName] thisType={type=Array} results=[{type=int|whole}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -688,41 +687,45 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f22 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readAll"
-# CHECK: module=m0 position=1033 role=ResultWorker flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string}, {type=int[0, 49]}, {type=int[-1, 49]}] results=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=undefined|int|"a"|"another getter"|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>}, {type=anything}, {type=anything}, {type=number}, {type=int[0, 4294967295]}, {type=int[0, 2147483647]}, {type=int[-1, 49]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=ResultWorker{origin=f2} inlineFrames=[{}, {callee=f4 callPosition=1165 module=m0}, {callee=f4 callPosition=1151 module=m0}] {
+# CHECK: module=m0 position=1033 role=ResultWorker flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string}, {type=int[0, 49]}, {type=int[-1, 49]}] results=[{type=undefined|number|string|bigint}, {type=undefined|number|bigint}, {type=undefined|string}, {type=undefined|int|whole|"plain now"}, {type=undefined|int|"a"|"another getter"|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>}, {type=undefined|boolean}, {type=undefined|boolean}, {type=number}, {type=int[0, 4294967295]}, {type=int[0, 2147483647]}, {type=int[-1, 49]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=ResultWorker{origin=f2} inlineFrames=[{}, {callee=f4 callPosition=1165 module=m0}, {callee=f4 callPosition=1151 module=m0}] {
 # CHECK-NEXT: b0(v0: string, v1: int[0, 49], v2: int[-1, 49]):
 # CHECK-NEXT: v3: anything = PropGet v0 key="doubled" accessSite=34 receivers=[]
-# CHECK-NEXT: v4: anything = PropGet v1 key="negated" accessSite=35 receivers=[]
-# CHECK-NEXT: v5: f1 = GetModuleVariable variable=g1
-# CHECK-NEXT: v6: anything = PropGet v5 key="label" accessSite=36
-# CHECK-NEXT: v7: anything ~ undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Upcast v6 castType=anything
-# CHECK-NEXT: v8: Array<number> = GetModuleVariable variable=g3
-# CHECK-NEXT: v9: anything = PropGet v8 key="total" accessSite=37
-# CHECK-NEXT: v10: Map<undefined|null|string, number> = GetModuleVariable variable=g4
-# CHECK-NEXT: v11: anything = PropGet v10 key="first" accessSite=38
-# CHECK-NEXT: v12: undefined|int|"a"|"another getter"|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=undefined|int|"a"|"another getter"|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v13: fact = Entered function=f4
-# CHECK-NEXT: v14: int|whole = GetModuleVariable fact=v13 variable=g2
-# CHECK-NEXT: v15: int|whole = Increment v14
-# CHECK-NEXT: PutModuleVariable v15 variable=g2
-# CHECK-NEXT: v17: true = Boolean boolean=true
-# CHECK-NEXT: v18: int|whole = Increment v15
-# CHECK-NEXT: PutModuleVariable v18 variable=g2
-# CHECK-NEXT: v20: false = Boolean
-# CHECK-NEXT: v21: boolean = IsPristine v10 builtinClass=Map aspects=[Names]
-# CHECK-NEXT: Branch v21 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v4: undefined|number|string|bigint = AssumeType v3 provenType=undefined|number|string|bigint
+# CHECK-NEXT: v5: anything = PropGet v1 key="negated" accessSite=35 receivers=[]
+# CHECK-NEXT: v6: undefined|number|bigint = AssumeType v5 provenType=undefined|number|bigint
+# CHECK-NEXT: v7: f1 = GetModuleVariable variable=g1
+# CHECK-NEXT: v8: anything = PropGet v7 key="label" accessSite=36
+# CHECK-NEXT: v9: undefined|string = AssumeType v8 provenType=undefined|string
+# CHECK-NEXT: v10: undefined|string ~ undefined|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Upcast v9 castType=anything
+# CHECK-NEXT: v11: Array<number> = GetModuleVariable variable=g3
+# CHECK-NEXT: v12: anything = PropGet v11 key="total" accessSite=37
+# CHECK-NEXT: v13: undefined|int|whole|"plain now" = AssumeType v12 provenType=undefined|int|whole|"plain now"
+# CHECK-NEXT: v14: Map<undefined|null|string, number> = GetModuleVariable variable=g4
+# CHECK-NEXT: v15: anything = PropGet v14 key="first" accessSite=38
+# CHECK-NEXT: v16: undefined|int|"a"|"another getter"|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=undefined|int|"a"|"another getter"|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v17: fact = Entered function=f4
+# CHECK-NEXT: v18: int|whole = GetModuleVariable fact=v17 variable=g2
+# CHECK-NEXT: v19: int|whole = Increment v18
+# CHECK-NEXT: PutModuleVariable v19 variable=g2
+# CHECK-NEXT: v21: true = Boolean boolean=true
+# CHECK-NEXT: v22: int|whole = Increment v19
+# CHECK-NEXT: PutModuleVariable v22 variable=g2
+# CHECK-NEXT: v24: false = Boolean
+# CHECK-NEXT: v25: boolean = IsPristine v14 builtinClass=Map aspects=[Names]
+# CHECK-NEXT: Branch v25 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v22: int[0, 2147483647] = CallBuiltin v10 overload=MapPrototypeSize/0 accessSite=41
-# CHECK-NEXT: v23: int[0, 4294967295] = CallBuiltin v8 overload=ArrayPrototypeLength/0 accessSite=42
-# CHECK-NEXT: v24: int[0, 2147483647] = GetStringLength v0
-# CHECK-NEXT: v25: undefined = Results v3, v4, v7, v9, v12, v17, v20, v22, v23, v24, v2
-# CHECK-NEXT: Return v25
+# CHECK-NEXT: v26: int[0, 2147483647] = CallBuiltin v14 overload=MapPrototypeSize/0 accessSite=41
+# CHECK-NEXT: v27: int[0, 4294967295] = CallBuiltin v11 overload=ArrayPrototypeLength/0 accessSite=42
+# CHECK-NEXT: v28: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: v29: undefined = Results v4, v6, v10, v13, v16, v21, v24, v26, v27, v28, v2
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v26: anything = PropGet v10 key="size" accessSite=41
-# CHECK-NEXT: v27: number = AssumeType v26 provenType=number
-# CHECK-NEXT: v28: int[0, 4294967295] = CallBuiltin v8 overload=ArrayPrototypeLength/0 accessSite=42
-# CHECK-NEXT: v29: int[0, 2147483647] = GetStringLength v0
-# CHECK-NEXT: v30: undefined = Results v3, v4, v7, v9, v12, v17, v20, v27, v28, v29, v2
-# CHECK-NEXT: Return v30
+# CHECK-NEXT: v30: anything = PropGet v14 key="size" accessSite=41
+# CHECK-NEXT: v31: number = AssumeType v30 provenType=number
+# CHECK-NEXT: v32: int[0, 4294967295] = CallBuiltin v11 overload=ArrayPrototypeLength/0 accessSite=42
+# CHECK-NEXT: v33: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: v34: undefined = Results v4, v6, v10, v13, v16, v21, v24, v31, v32, v33, v2
+# CHECK-NEXT: Return v34
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="made"
 # CHECK: module=m0 position=939 kind=Getter role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} inlineFrames=[{}, {callee=f4 callPosition=939 isTailCall=true module=m0}] {
@@ -751,14 +754,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f22 visibility=Private
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m0 position=569 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f7}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} inlineFrames=[{}, {callee=f7 callPosition=569 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f7, v1: anything):
-# CHECK-NEXT: v2: f1 = AssumeType v1 provenType=f1
-# CHECK-NEXT: v3: fact = Entered function=f7 @569 tail
-# CHECK-NEXT: v4: int|whole = GetModuleVariable fact=v3 variable=g2
-# CHECK-NEXT: v5: int|whole = Increment v4
-# CHECK-NEXT: PutModuleVariable v5 variable=g2
-# CHECK-NEXT: v7: string = TypeOf v2
-# CHECK-NEXT: v8: string ~ "bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Upcast v7 castType=string
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v2: fact = Entered function=f7 @569 tail
+# CHECK-NEXT: v3: int|whole = GetModuleVariable fact=v2 variable=g2
+# CHECK-NEXT: v4: int|whole = Increment v3
+# CHECK-NEXT: PutModuleVariable v4 variable=g2
+# CHECK-NEXT: v6: "function" = String string="function"
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m0 position=698 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} inlineFrames=[{}, {callee=f8 callPosition=698 isTailCall=true module=m0}] {

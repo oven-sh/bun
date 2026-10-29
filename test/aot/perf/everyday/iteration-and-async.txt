@@ -125,6 +125,28 @@ function turn(i: number): number {
     });
   return sum | 0;
 }
+//// array-from-a-set-with-a-mapper
+const iterable = new Set([1, 2, 3, 4, 5, 6, 7, 8]);
+function turn(i: number): number {
+  return Array.from(iterable, value => value * 2).length + (i & 1);
+}
+//// set-iterator-by-hand
+const numbers = new Set([1, 2, 3, 4, 5, 6, 7, 8]);
+function turn(i: number): number {
+  const iterator = numbers.values();
+  let sum = i & 1;
+  for (let step = iterator.next(); !step.done; step = iterator.next()) sum += step.value;
+  return sum;
+}
+//// first-key-of-a-map
+const recent = new Map([
+  ["a", 1],
+  ["b", 2],
+  ["c", 3],
+]);
+function turn(i: number): number {
+  return recent.keys().next().value!.length + (i & 1);
+}
 //// array-iterator-by-hand
 const letters = ["a", "bb", "ccc"];
 function turn(i: number): number {

@@ -499,6 +499,7 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
     state: &mut WalkState<'_, 'r>,
 ) -> bool {
     let mut looked_up = std::mem::take(&mut state.names_looked_up);
+    looked_up.mocks_any_file |= context.inputs.code.mocks_any_file;
     let mut parsed = std::mem::take(&mut looked_up.parsed_since);
     // Which file runs in place of which hangs on the files that are there.
     let mut asks_every_file = false;

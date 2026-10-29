@@ -918,11 +918,10 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f50
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: v11: string = TypeOf v10
-# CHECK-NEXT: v12: " " = String string=" "
-# CHECK-NEXT: v13: string = CallBuiltin -, v10 overload=String/0 accessSite=75
-# CHECK-NEXT: v14: string = Strcat v11, v12, v13
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v11: "undefined " = String string="undefined "
+# CHECK-NEXT: v12: string = CallBuiltin -, v10 overload=String/0 accessSite=75
+# CHECK-NEXT: v13: string = Add v11, v12
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="NoParameter"
 # CHECK: module=m0 position=406 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

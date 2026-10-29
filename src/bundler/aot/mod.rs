@@ -23,10 +23,12 @@ use bun_aot::link::ProgramNames;
 use bun_aot::module_list::ModuleList;
 use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
-use bun_aot::{BuildFailed, Compilation, RefusedEntryPoints};
+use bun_aot::{BuildFailed, Compilation};
 use bun_ast::{Loc, Log};
 use bun_options_types::aot_options::AotOptions;
-use bun_resolver::package_names::{BuildPaths, PackageName, PathAlias, add_written_names};
+use bun_resolver::package_names::{
+    BuildPaths, FurtherPackageName, PackageName, PathAlias, add_written_names,
+};
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
 pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
@@ -64,6 +66,12 @@ pub struct AotEntryPoint {
 }
 
 pub struct AotBuild {
+    /// `Compilation::root_folders_spelled`
+    pub root_folders_spelled: Vec<u8>,
+    /// `Compilation::imports_file_with_query`
+    pub imports_file_with_query: bool,
+    /// `Resolver::find_further_package_names`
+    pub further_package_names: Vec<FurtherPackageName>,
     pub output_files: Vec<OutputFile>,
     pub engine: EngineResult,
     /// `Compilation::further_programs`
@@ -88,7 +96,7 @@ pub struct AotBuildFailure {
     pub is_internal_error: bool,
     pub statistics: Statistics,
     pub compilation: Option<Box<Compilation>>,
-    pub refused_entry_points: Option<RefusedEntryPoints>,
+    pub refused_entry_points: Option<Vec<u32>>,
 }
 
 pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailure> {
@@ -204,6 +212,24 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         }
         Ok(_) | Err(_) => (Vec::new(), Vec::new()),
     };
+    let further_package_names = match &result {
+        Ok(compilation) if !compilation.program_files.is_empty() => {
+            let files = compilation.program_files.iter();
+            let files: Vec<BuildPaths<'_>> = files
+                .map(|it| BuildPaths {
+                    source_path: &it.source_path,
+                    public_path: &it.public_path,
+                })
+                .collect();
+            let root = BuildPaths {
+                source_path: &options.paths.root_directory,
+                public_path: module_prefix,
+            };
+            let resolver = &mut bundle.transpiler.resolver;
+            resolver.find_further_package_names(&files, root)
+        }
+        Ok(_) | Err(_) => Vec::new(),
+    };
     bundle.deinit_without_freeing_arena();
     bun_sema_driver::wake_idle_region_threads();
     drop(bundle);
@@ -217,6 +243,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             };
             let mut build = output::finish_build(compilation, &names, embedded);
             build.package_names = package_names;
+            build.further_package_names = further_package_names;
             build.path_aliases = path_aliases;
             build.root_directory = options.paths.root_directory;
             Ok(build)

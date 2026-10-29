@@ -267,6 +267,12 @@ const lines: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
 function turn(i: number): number {
   return /\[.+?\]\(#/.test(lines[i & 1]!) ? 1 : 2;
 }
+//// a-lazy-run-behind-a-lazy-run-of-a-long-line
+const pattern = /\[.*?\].*?#/;
+const subjects: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
 //// a-greedy-run-from-every-bracket-of-a-long-line
 const lines: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
 function turn(i: number): number {

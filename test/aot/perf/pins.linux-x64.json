@@ -418,8 +418,8 @@
     "jit": 6802.7
   },
   "keyed/symbol": {
-    "typed": 104.1,
-    "untyped": 93,
+    "typed": 3.1,
+    "untyped": 3.1,
     "jit": 27
   },
   "keyed/read-by-concatenated-key": {
@@ -428,8 +428,8 @@
     "jit": 20.8
   },
   "keyed/store-through-global-this": {
-    "typed": 39,
-    "untyped": 39,
+    "typed": 36,
+    "untyped": 36,
     "jit": 9.6
   },
   "literal/computed-name-in-function": {
@@ -1485,5 +1485,10 @@
     "typed": 235,
     "untyped": 196.7,
     "jit": 258.8
+  },
+  "text/two-texts-joined-and-read-at-once": {
+    "typed": 527.1,
+    "untyped": 547.1,
+    "jit": 686.6
   }
 }

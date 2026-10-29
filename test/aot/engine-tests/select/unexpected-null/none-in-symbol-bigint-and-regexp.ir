@@ -481,7 +481,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: b0(v0: undefined|null|symbol):
 # CHECK-NEXT: v1: symbol = RequireObjectCoercible v0 name="description"
 # CHECK-NEXT: v2: anything = PropGet v1 key="description" accessSite=8 receivers=[]
-# CHECK-NEXT: v3: undefined|null|string = AssumeType v2 provenType=undefined|null|string
+# CHECK-NEXT: v3: undefined|string = AssumeType v2 provenType=undefined|string
 # CHECK-NEXT: v4: boolean = TypeTest v3 testedType=undefined|null
 # CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
@@ -548,7 +548,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: v0: "s" = String string="s"
 # CHECK-NEXT: v1: symbol = CallBuiltin -, v0 overload=Symbol/0 accessSite=27
 # CHECK-NEXT: v2: anything = PropGet v1 key="description" accessSite=8 receivers=[]
-# CHECK-NEXT: v3: undefined|null|string = AssumeType v2 provenType=undefined|null|string
+# CHECK-NEXT: v3: undefined|string = AssumeType v2 provenType=undefined|string
 # CHECK-NEXT: v4: boolean = TypeTest v3 testedType=undefined|null
 # CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():

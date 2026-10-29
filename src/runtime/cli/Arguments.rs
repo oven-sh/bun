@@ -189,6 +189,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--aot-log-type-mismatches         Compile the program like bun compile, run it, and log every value that doesn't match its declared type"
     ),
     parse_param!(
+        "--aot-allow-code-from-disk        With --aot: let import() and require() load code from disk that wasn't compiled. The build takes longer"
+    ),
+    parse_param!(
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
@@ -431,6 +434,10 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         ),
         (
             Long(b"aot-log-type-mismatches"),
+            RuntimeRequirement::Feature(Feature::AotCompiler),
+        ),
+        (
+            Long(b"aot-allow-code-from-disk"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
         ),
         (Long(b"smol"), Nothing),

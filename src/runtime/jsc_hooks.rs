@@ -493,7 +493,13 @@ unsafe fn init_runtime_state(
                     // `apply_standalone_runtime_flags` can set
                     // `resolver.opts.load_tsconfig_json = false`, defeating
                     // `compile.autoloadTsconfig: false`.
-                    if opts.graph.is_some() {
+                    // Code from disk is transpiled by the tsconfig.json that lies there, as under `bun run`.
+                    let reads_tsconfig = opts.graph.is_none_or(|graph| {
+                        graph
+                            .compiled_program()
+                            .is_some_and(|program| program.allows_code_from_disk)
+                    });
+                    if !reads_tsconfig {
                         t.configure_linker_with_auto_jsx(false);
                     } else {
                         t.configure_linker();

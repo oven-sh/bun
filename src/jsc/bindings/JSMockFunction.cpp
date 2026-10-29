@@ -395,8 +395,10 @@ public:
                 RETURN_IF_EXCEPTION(scope, );
             }
 #if ENABLE(AOT)
-            else if (JSC::AOT::isModuleNamespace(target))
+            else if (JSC::AOT::isModuleNamespace(target)) {
                 JSC::AOT::tryReplaceExport(target, identifier.impl(), implValue);
+                RETURN_IF_EXCEPTION(scope, );
+            }
 #endif
         } else if (auto index = parseIndex(identifier)) {
             // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
@@ -1575,7 +1577,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     constexpr unsigned fixedByLanguage = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     bool isFixedMemberOfLockedObject = object->structure()->mayHaveImmutableProperties() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
     if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.uid()) || isFixedMemberOfLockedObject)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because this property of a built-in object is read-only in a compiled executable"_s));
+        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s));
         return {};
     }
 
@@ -1630,6 +1632,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
             JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
             if (replaceExport(mock)) {
+                RETURN_IF_EXCEPTION(scope, {});
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else if (auto index = parseIndex(propertyKey)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
@@ -1660,6 +1663,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
             JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
             if (replaceExport(mock)) {
+                RETURN_IF_EXCEPTION(scope, {});
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else {
                 object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);

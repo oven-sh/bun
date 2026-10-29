@@ -1,5 +1,6 @@
 declare function $call<R>(f: unknown, thisArg: unknown, ...args: unknown[]): R;
 declare function $callNoInline<R>(f: unknown, thisArg: unknown, ...args: unknown[]): R;
+declare var $visibility: "Public" | "Private" | "PrivateRecursive";
 declare function $arrayStorageKind(a: unknown[]): number;
 declare const $arrayStorageInt32: number;
 declare const $arrayStorageDouble: number;
@@ -7,6 +8,11 @@ declare const $arrayStorageContiguous: number;
 declare function $getDoubleIndex(a: unknown[], k: number): number;
 declare function $hasContiguousIndex(a: unknown[], k: number): boolean;
 declare function $getContiguousIndex<T>(a: unknown[], k: number): T;
+// For the arrays that this file made and filled up to `count`: every position that is asked lies below it. The comparator never sees them.
+declare function $getOwnContiguousIndex<T>(a: unknown[], k: number): T;
+declare function $getOwnDoubleIndex(a: unknown[], k: number): number;
+declare function $putOwnContiguousIndex(a: unknown[], k: number, value: unknown): void;
+declare function $putOwnDoubleIndex(a: unknown[], k: number, value: number): void;
 declare function $truncateNewArray<T>(out: T[], n: number): T[];
 declare function $newDoubleArray(n: number): number[];
 declare function $newContiguousArray<T>(n: number): T[];
@@ -144,8 +150,8 @@ function computeRunPower(previousBegin: number, begin: number, end: number, coun
 
 function extendValueRun<T>(from: T[], end: number, count: number, comparator: unknown): number {
   for (; end + 1 < count; end = (end + 1) | 0) {
-    const next: T = $getContiguousIndex<T>(from, end + 1);
-    const last: T = $getContiguousIndex<T>(from, end);
+    const next: T = $getOwnContiguousIndex<T>(from, end + 1);
+    const last: T = $getOwnContiguousIndex<T>(from, end);
     if (isLess($call<unknown>(comparator, undefined, next, last))) break;
   }
   return end;
@@ -154,44 +160,44 @@ function extendValueRun<T>(from: T[], end: number, count: number, comparator: un
 function findNaturalValueRun<T>(from: T[], begin: number, count: number, comparator: unknown): number {
   let end = begin;
   if (end + 1 >= count) return end;
-  const first: T = $getContiguousIndex<T>(from, end);
-  const second: T = $getContiguousIndex<T>(from, end + 1);
+  const first: T = $getOwnContiguousIndex<T>(from, end);
+  const second: T = $getOwnContiguousIndex<T>(from, end + 1);
   end = (end + 1) | 0;
   if (!isLess($call<unknown>(comparator, undefined, second, first)))
     return extendValueRun<T>(from, end, count, comparator);
   for (; end + 1 < count; end = (end + 1) | 0) {
-    const next: T = $getContiguousIndex<T>(from, end + 1);
-    const last: T = $getContiguousIndex<T>(from, end);
+    const next: T = $getOwnContiguousIndex<T>(from, end + 1);
+    const last: T = $getOwnContiguousIndex<T>(from, end);
     if (!isLess($call<unknown>(comparator, undefined, next, last))) break;
   }
   for (let low = begin, high = end; low < high; low = (low + 1) | 0, high = (high - 1) | 0) {
-    const swapped: T = $getContiguousIndex<T>(from, low);
-    $putContiguousIndex(from, low, $getContiguousIndex<T>(from, high));
-    $putContiguousIndex(from, high, swapped);
+    const swapped: T = $getOwnContiguousIndex<T>(from, low);
+    $putOwnContiguousIndex(from, low, $getOwnContiguousIndex<T>(from, high));
+    $putOwnContiguousIndex(from, high, swapped);
   }
   return end;
 }
 
 function insertionSortValues<T>(from: T[], begin: number, end: number, limit: number, comparator: unknown): void {
   for (let i = (end + 1) | 0; i < limit; i = (i + 1) | 0) {
-    const inserted: T = $getContiguousIndex<T>(from, i);
+    const inserted: T = $getOwnContiguousIndex<T>(from, i);
     let left = begin;
     let right = i;
     while (left < right) {
       const middle = (left + ((right - left) >> 1)) | 0;
-      const probe: T = $getContiguousIndex<T>(from, middle);
+      const probe: T = $getOwnContiguousIndex<T>(from, middle);
       if (isLess($call<unknown>(comparator, undefined, inserted, probe))) right = middle;
       else left = (middle + 1) | 0;
     }
     let j = i;
     for (; j - 1 > left; j = (j - 2) | 0) {
-      const above: T = $getContiguousIndex<T>(from, j - 1);
-      const below: T = $getContiguousIndex<T>(from, j - 2);
-      $putContiguousIndex(from, j, above);
-      $putContiguousIndex(from, j - 1, below);
+      const above: T = $getOwnContiguousIndex<T>(from, j - 1);
+      const below: T = $getOwnContiguousIndex<T>(from, j - 2);
+      $putOwnContiguousIndex(from, j, above);
+      $putOwnContiguousIndex(from, j - 1, below);
     }
-    if (j > left) $putContiguousIndex(from, j, $getContiguousIndex<T>(from, j - 1));
-    $putContiguousIndex(from, left, inserted);
+    if (j > left) $putOwnContiguousIndex(from, j, $getOwnContiguousIndex<T>(from, j - 1));
+    $putOwnContiguousIndex(from, left, inserted);
   }
 }
 
@@ -322,8 +328,8 @@ function mergeFurtherValueRuns<T>(from: T[], count: number, endOfFirstRun: numbe
 
 function extendDoubleRun(from: number[], end: number, count: number, comparator: unknown): number {
   for (; end + 1 < count; end = (end + 1) | 0) {
-    const next: number = $getDoubleIndex(from, end + 1);
-    const last: number = $getDoubleIndex(from, end);
+    const next: number = $getOwnDoubleIndex(from, end + 1);
+    const last: number = $getOwnDoubleIndex(from, end);
     if (isLess($call<unknown>(comparator, undefined, next, last))) break;
   }
   return end;
@@ -332,44 +338,44 @@ function extendDoubleRun(from: number[], end: number, count: number, comparator:
 function findNaturalDoubleRun(from: number[], begin: number, count: number, comparator: unknown): number {
   let end = begin;
   if (end + 1 >= count) return end;
-  const first: number = $getDoubleIndex(from, end);
-  const second: number = $getDoubleIndex(from, end + 1);
+  const first: number = $getOwnDoubleIndex(from, end);
+  const second: number = $getOwnDoubleIndex(from, end + 1);
   end = (end + 1) | 0;
   if (!isLess($call<unknown>(comparator, undefined, second, first)))
     return extendDoubleRun(from, end, count, comparator);
   for (; end + 1 < count; end = (end + 1) | 0) {
-    const next: number = $getDoubleIndex(from, end + 1);
-    const last: number = $getDoubleIndex(from, end);
+    const next: number = $getOwnDoubleIndex(from, end + 1);
+    const last: number = $getOwnDoubleIndex(from, end);
     if (!isLess($call<unknown>(comparator, undefined, next, last))) break;
   }
   for (let low = begin, high = end; low < high; low = (low + 1) | 0, high = (high - 1) | 0) {
-    const swapped: number = $getDoubleIndex(from, low);
-    $putDoubleIndex(from, low, $getDoubleIndex(from, high));
-    $putDoubleIndex(from, high, swapped);
+    const swapped: number = $getOwnDoubleIndex(from, low);
+    $putOwnDoubleIndex(from, low, $getOwnDoubleIndex(from, high));
+    $putOwnDoubleIndex(from, high, swapped);
   }
   return end;
 }
 
 function insertionSortDoubles(from: number[], begin: number, end: number, limit: number, comparator: unknown): void {
   for (let i = (end + 1) | 0; i < limit; i = (i + 1) | 0) {
-    const inserted: number = $getDoubleIndex(from, i);
+    const inserted: number = $getOwnDoubleIndex(from, i);
     let left = begin;
     let right = i;
     while (left < right) {
       const middle = (left + ((right - left) >> 1)) | 0;
-      const probe: number = $getDoubleIndex(from, middle);
+      const probe: number = $getOwnDoubleIndex(from, middle);
       if (isLess($call<unknown>(comparator, undefined, inserted, probe))) right = middle;
       else left = (middle + 1) | 0;
     }
     let j = i;
     for (; j - 1 > left; j = (j - 2) | 0) {
-      const above: number = $getDoubleIndex(from, j - 1);
-      const below: number = $getDoubleIndex(from, j - 2);
-      $putDoubleIndex(from, j, above);
-      $putDoubleIndex(from, j - 1, below);
+      const above: number = $getOwnDoubleIndex(from, j - 1);
+      const below: number = $getOwnDoubleIndex(from, j - 2);
+      $putOwnDoubleIndex(from, j, above);
+      $putOwnDoubleIndex(from, j - 1, below);
     }
-    if (j > left) $putDoubleIndex(from, j, $getDoubleIndex(from, j - 1));
-    $putDoubleIndex(from, left, inserted);
+    if (j > left) $putOwnDoubleIndex(from, j, $getOwnDoubleIndex(from, j - 1));
+    $putOwnDoubleIndex(from, left, inserted);
   }
 }
 
@@ -612,6 +618,94 @@ export function sort<T>(this: T[], comparator: unknown): T[] {
   }
   if (index < length) putRestOfSortedValues<T>(this, length, from, count, index, undefinedCount);
   return this;
+}
+
+function storeRefused<T>(array: T[], index: number, value: number): void {
+  array[index] = value as unknown as T;
+}
+
+// A short list of numbers, sorted where it lies. Any stable order of numbers is the order that sort() makes, and nothing watches: no comparator runs.
+// False where it meets something else: a hole, another kind of list, a store that is refused. Numbers moved in front of a hole are moved as a stable sort moves them, and sort() ends with the same list.
+// No call comes back into a loop: the storage and its length stay in registers.
+function trySortNumbersInPlace<T>(array: T[], isDescending: boolean): boolean {
+  const forceRunLength = 64;
+  const count = array.length;
+  // Up to this length sort() sorts by insertion as well.
+  if (count > forceRunLength) return false;
+  const kind = $arrayStorageKind(array);
+  if (kind === $arrayStorageDouble) {
+    // In this storage NaN means a hole: a list that holds NaN has boxed values, and goes to sort() with nothing moved.
+    const first: number = $getDoubleIndex(array, 0);
+    if (first !== first) return false;
+    // This store copies shared storage and throws on a frozen array.
+    const isFirstStored: boolean = $tryPutIndex(array, 0, first);
+    if (!isFirstStored) storeRefused<T>(array, 0, first);
+    for (let index = 1; index < count; index = (index + 1) | 0) {
+      const value: number = $getDoubleIndex(array, index);
+      if (value !== value) return false;
+      let position = index;
+      while (position > 0) {
+        const before: number = $getDoubleIndex(array, (position - 1) | 0);
+        if (!(isDescending ? before < value : value < before)) break;
+        const isMoved: boolean = $tryPutDoubleIndex(array, position, before);
+        if (!isMoved) {
+          storeRefused<T>(array, position, before);
+          storeRefused<T>(array, position - 1, value);
+          return false;
+        }
+        position = (position - 1) | 0;
+      }
+      if (position === index) continue;
+      const isStored: boolean = $tryPutDoubleIndex(array, position, value);
+      if (!isStored) {
+        storeRefused<T>(array, position, value);
+        return false;
+      }
+    }
+    return true;
+  }
+  if (kind !== $arrayStorageInt32) return false;
+  const first = $getContiguousIndex<number | undefined>(array, 0);
+  if (first === undefined) return false;
+  const isFirstStored: boolean = $tryPutIndex(array, 0, first);
+  if (!isFirstStored) storeRefused<T>(array, 0, first);
+  for (let index = 1; index < count; index = (index + 1) | 0) {
+    const element = $getContiguousIndex<number | undefined>(array, index);
+    if (element === undefined) return false;
+    const value = element | 0;
+    let position = index;
+    while (position > 0) {
+      const before = $getContiguousIndex<number>(array, (position - 1) | 0) | 0;
+      if (!(isDescending ? before < value : value < before)) break;
+      const isMoved: boolean = $tryPutIndex(array, position, before);
+      if (!isMoved) {
+        storeRefused<T>(array, position, before);
+        storeRefused<T>(array, position - 1, value);
+        return false;
+      }
+      position = (position - 1) | 0;
+    }
+    if (position === index) continue;
+    const isStored: boolean = $tryPutIndex(array, position, value);
+    if (!isStored) {
+      storeRefused<T>(array, position, value);
+      return false;
+    }
+  }
+  return true;
+}
+
+// The compiler calls these two in the place of sort() where it sees that the comparator is `(a, b) => a - b` or `(a, b) => b - a`.
+$visibility = "Private";
+export function sortByDifference<T>(array: T[], comparator: unknown): T[] {
+  if (array.length < 2 || trySortNumbersInPlace<T>(array, false)) return array;
+  return $call<T[]>(sort, array, comparator);
+}
+
+$visibility = "Private";
+export function sortByReversedDifference<T>(array: T[], comparator: unknown): T[] {
+  if (array.length < 2 || trySortNumbersInPlace<T>(array, true)) return array;
+  return $call<T[]>(sort, array, comparator);
 }
 
 export function toSorted<T>(this: T[], comparator: unknown): T[] {

@@ -265,7 +265,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn emit_allocation(&mut self, class: ClassId) -> ValueId {
         let layout = self.file.own_class_layout(class);
-        self.set_position(self.file.hir[class].start);
+        // JSC records no position for making `this`, so an error out of it is reported where the header says.
+        self.set_position(self.file.function_header(self.function).position);
         let new_target = self.builder.new_target();
         let new_target = new_target.expect("a constructor takes new.target");
         let prototype = self.builder.get_construct_prototype(new_target, layout);

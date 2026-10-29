@@ -261,7 +261,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f20]
 # -- generated: f0 roundTrip f2 TextCodec decode encode Plain f9
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=1298 module=m0}, {callee=f1 callPosition=1278 module=m0}, {callee=f3 callPosition=837 isConstruction=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=1298 module=m0}, {callee=f1 callPosition=1278 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f8 = CallDirect function=f2 accessSite=0
 # CHECK-NEXT: v1: null|object = ResolveHeritage v0
@@ -271,11 +271,11 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: PutModuleVariable v4 variable=g0
 # CHECK-NEXT: v6: f3 = FinishClass v4 layout=L0
 # CHECK-NEXT: v7: L3 = NewObject layout=L3 allocationSite=3 allocationClass=3
-# CHECK-NEXT: v8: null|object = GetSuperBase v6
-# CHECK-NEXT: v9: f8 = AssumeType v8 provenType=f8
-# CHECK-NEXT: v10: object ~ L0 = SuperConstruct v9, v6 layout=L0 accessSite=16 callees=[f8]
-# CHECK-NEXT: v11: undefined = CallDirect v10 function=f9 accessSite=17
-# CHECK-NEXT: PropDefine v7, v10 key="text" accessSite=2
+# CHECK-NEXT: v8: Array<undefined> = NewArray contents=undefined
+# CHECK-NEXT: v9: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: object = CallDirect v6, v6, v9 function=f3 accessSite=1 [isConstruction]
+# CHECK-NEXT: v11: object ~ L0 = Expect v10 expectedType=undefined|null|L0
+# CHECK-NEXT: PropDefine v7, v11 key="text" accessSite=2
 # CHECK-NEXT: v13: L3 = FinishObject v7
 # CHECK-NEXT: v14: anything ~ L0 = PropGet v13 key="text" accessSite=3 receivers=[L3]
 # CHECK-NEXT: v15: object ~ L0 = AssumeType v14 provenType=object
@@ -323,7 +323,26 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="TextCodec"
-# CHECK: module=m0 position=629 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+# CHECK: module=m0 position=629 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: Array<undefined, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v3: f3 = AssumeType v0 provenType=f3
+# CHECK-NEXT: v4: f3 = AssumeType v1 provenType=f3
+# CHECK-NEXT: v5: null|object = GetSuperBase v3
+# CHECK-NEXT: v6: f8 = AssumeType v5 provenType=f8
+# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v2 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v8: 65535 = Integer integer=65535
+# CHECK-NEXT: v9: boolean = LessEq v7, v8
+# CHECK-NEXT: Branch v9 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: object ~ L0 = SuperConstruct v6, v4 layout=L0 accessSite=16 callees=[f8]
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: object ~ L0 = SuperConstructList v6, v4, v2 layout=L0 accessSite=16 callees=[f8]
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: object ~ L0):
+# CHECK-NEXT: v13: undefined = CallDirect v12 function=f9 accessSite=17
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="decode"
 # CHECK: module=m0 position=970 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=w11 flags=[IsExpected]}] results=[{type=boolean site=w12}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ number):
@@ -539,7 +558,7 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v23 casts=[{declared={type=int|string} resolution=Assume}]
 # CHECK-NEXT: b12() frequency=Unlikely:
 # CHECK-NEXT: v24: undefined = Undefined
-# CHECK-NEXT: v25: never = Call v24, v2, v15 calleeKey="encode" calleeName="codec.encode" accessSite=15 callees=[f5, f7, f11, ..]
+# CHECK-NEXT: v25: never = Call v24, v2, v15 calleeKey="encode" calleeName="codec.encode" accessSite=15 callees=[f5, f7, f11, ..] @1208 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b13() frequency=Unlikely:
 # CHECK-NEXT: v26: undefined = Undefined
@@ -547,16 +566,13 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="TextCodec"
-# CHECK: module=m0 position=629 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 takesNewTarget=true} inlineFrames=[{}, {callee=f3 callPosition=629 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=629 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f3, v1: anything):
 # CHECK-NEXT: v2: anything = GetArgument
-# CHECK-NEXT: v3: fact = Entered function=f3 @629 tail
-# CHECK-NEXT: v4: f3 = AssumeType v2, v3 provenType=f3
-# CHECK-NEXT: v5: null|object = GetSuperBase v0
-# CHECK-NEXT: v6: f8 = AssumeType v5 provenType=f8
-# CHECK-NEXT: v7: object ~ L0 = SuperConstruct v6, v4 layout=L0 accessSite=16 callees=[f8]
-# CHECK-NEXT: v8: undefined = CallDirect v7 function=f9 accessSite=17
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v3: Array = CreateRest firstArgument=1
+# CHECK-NEXT: v4: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: object = CallDirect v0, v2, v4 function=f3
+# CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="decode"
 # CHECK: module=m0 position=970 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {

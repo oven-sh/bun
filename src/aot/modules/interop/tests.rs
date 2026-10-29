@@ -261,8 +261,14 @@ fn json_file_whose_namespace_can_be_reached_exports_every_key() {
 #[test]
 fn text_file_exports_default_only() {
     let files = [("main.js", "import './notes.txt';"), ("notes.txt", "text")];
-    check_interop_of_imported_data(&files, "notes.txt");
     with_graph(&files, |graph, input| {
+        let file = file_named(input, "notes.txt");
+        // `require()` of a text file answers its namespace, imported or not.
+        assert_eq!(
+            file_interop(input.files, input.sources, file),
+            IMPORTED_DATA
+        );
+        assert_eq!(graph.interop(ModuleRef::File(file)), IMPORTED_DATA);
         assert_eq!(export_names(graph, input, "notes.txt"), [b"default"]);
     });
 }

@@ -45,6 +45,7 @@ pub struct ModuleGraph {
     pub(super) rows: Vec<FileRow>,
     pub(super) record_files: Vec<FileId>,
     pub(super) left_out_files: Vec<FileId>,
+    pub(super) files_brought_by_calls: Vec<FileId>,
     /// Those of `left_out_files` that keep a record without code.
     pub(super) placeholder_files: Vec<FileId>,
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
@@ -384,6 +385,10 @@ impl ModuleGraph {
         files.filter(is_on_cycle_with_file_that_runs).collect()
     }
 
+    pub fn set_files_brought_by_calls(&mut self, files: Vec<FileId>) {
+        self.files_brought_by_calls = files;
+    }
+
     pub fn is_placeholder(&self, file: FileId) -> bool {
         self.placeholder_files.binary_search(&file).is_ok()
     }
@@ -417,6 +422,10 @@ impl ModuleGraph {
                             pending.extend(imports.map(|&request| (request, false)));
                         }
                     }
+                    // Only a call wants it, and it says that nothing is lost until then.
+                    ModuleRef::File(target)
+                        if !is_written_here
+                            && self.files_brought_by_calls.binary_search(&target).is_ok() => {}
                     // It goes with its importer, as a file does that only a file asks for that is left out.
                     ModuleRef::External { importer, .. } if is_left_out(importer) => {}
                     // What the file asks for itself stays as it is written, also twice.

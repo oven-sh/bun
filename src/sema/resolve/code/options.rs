@@ -23,8 +23,9 @@ pub struct CodeOptions {
     pub jsx: JsxSettings,
     pub forced_jsx_development: Option<bool>,
     pub max_computed_candidates: u32,
-    /// Compiled as JavaScript is: no other file takes a type of theirs for a fact.
-    pub files_without_types: Vec<Vec<u8>>,
+    /// As if a file called `mock.module` with a path that the build does not know: no file reads a constant of another.
+    /// Tests have it from the start: a test build learns only behind this load whether it mocks any module.
+    pub mocks_any_file: bool,
 }
 
 /// The condition of `exports` and `imports` that names what `--aot` compiles.
@@ -63,7 +64,7 @@ impl CodeOptions {
             jsx: JsxSettings::default(),
             forced_jsx_development: None,
             max_computed_candidates: 1024,
-            files_without_types: Vec::new(),
+            mocks_any_file: false,
         };
         options.add_custom_condition(AOT_CONDITION);
         options

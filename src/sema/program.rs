@@ -5486,8 +5486,10 @@ impl<'s> Files<'s> {
 
         let early_prefetch: OnceLock<Prefetch> = OnceLock::new();
         let mut find_root_files = Some(|| {
-            let waits_for_its_name =
-                |path: &[u8]| compile.is_some_and(|it| it.host.is_seen_only_by_name(path));
+            let waits_for_its_name = |path: &[u8]| {
+                options.roots_read_when_named.contains(path)
+                    || compile.is_some_and(|it| it.host.is_seen_only_by_name(path))
+            };
             let (roots, listed_roots): (&[Vec<u8>], Option<&'s [Vec<u8>]>) = match root_file_names {
                 RootFileNames::Listed(roots) => (roots, None),
                 RootFileNames::Unlisted(list) => {

@@ -195,62 +195,56 @@ function f4 module=m0 position=442 kind=Initializer flags=[HasThis, IsChecked, I
 }
 # -- generated: f0 first Second
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=384 module=m0}, {callee=f3 callPosition=809 isConstruction=true module=m0}, {callee=f2 callPosition=664 parent=2 isConstruction=true module=m0}, {callee=f4 callPosition=442 parent=3 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=384 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = Undefined
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
-# CHECK-NEXT: v1: absent = Absent
-# CHECK-NEXT: v2: never = CheckInitialized v1 name="first"
+# CHECK-NEXT: v0: absent = Absent
+# CHECK-NEXT: v1: never = CheckInitialized v0 name="first"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b2() role=CatchHandler:
-# CHECK-NEXT: v3: anything = CatchValue
-# CHECK-NEXT: v4: "first:" = String string="first:"
-# CHECK-NEXT: v5: string = CallBuiltin -, v3 overload=String/0 builtinCallForm=AnyReceiver accessSite=3
-# CHECK-NEXT: v6: undefined = CallBuiltin -, v4, v5 overload=ConsoleLog/0 accessSite=4
-# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v2: anything = CatchValue
+# CHECK-NEXT: v3: "first:" = String string="first:"
+# CHECK-NEXT: v4: string = CallBuiltin -, v2 overload=String/0 builtinCallForm=AnyReceiver accessSite=3
+# CHECK-NEXT: v5: undefined = CallBuiltin -, v3, v4 overload=ConsoleLog/0 accessSite=4
+# CHECK-NEXT: v6: undefined = Undefined
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b5():
-# CHECK-NEXT: v8: null|object = ResolveHeritage v0
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: null|object = ResolveHeritage v7
 # CHECK-NEXT: v9: f3 = GetModuleVariable variable=g2
 # CHECK-NEXT: v10: f3 = FinishClass v9 layout=L1
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b8(v10):
-# CHECK-NEXT: v11: null|object = GetSuperBase v10
-# CHECK-NEXT: v12: f2 = AssumeType v11 provenType=f2
-# CHECK-NEXT: v13: null|object = GetSuperBase v12
-# CHECK-NEXT: v14: builtin(Int16Array) = AssumeType v13 provenType=builtin(Int16Array)
-# CHECK-NEXT: v15: object ~ L0 = SuperConstruct v14, v10 layout=L0 accessSite=21 callees=[builtin(Int16Array)]
-# CHECK-NEXT: v16: object ~ Int16Array = Expect v15 expectedType=Int16Array
-# CHECK-NEXT: v17: string|symbol = GetModuleVariable variable=g1
-# CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: ElemDefine v16, v17, v18 accessSite=24
+# CHECK-NEXT: v11: Array<undefined> = NewArray contents=undefined
+# CHECK-NEXT: v12: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v13: object = CallDirect v10, v10, v12 function=f3 accessSite=10 [isConstruction]
 # CHECK-NEXT: Jump -> next b7(v10)
 # CHECK-NEXT: b5() role=CatchHandler:
-# CHECK-NEXT: v20: anything = CatchValue
-# CHECK-NEXT: v21: "second:" = String string="second:"
-# CHECK-NEXT: v22: string = CallBuiltin -, v20 overload=String/0 builtinCallForm=AnyReceiver accessSite=8
-# CHECK-NEXT: v23: undefined = CallBuiltin -, v21, v22 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v14: anything = CatchValue
+# CHECK-NEXT: v15: "second:" = String string="second:"
+# CHECK-NEXT: v16: string = CallBuiltin -, v14 overload=String/0 builtinCallForm=AnyReceiver accessSite=8
+# CHECK-NEXT: v17: undefined = CallBuiltin -, v15, v16 overload=ConsoleLog/0 accessSite=9
 # CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6() frequency=Unlikely handler=b8(v7):
-# CHECK-NEXT: v24: anything ~ object = Construct v7 calleeName="child" accessSite=10 callees=[f3]
-# CHECK-NEXT: Jump -> next b7(v7)
-# CHECK-NEXT: b7(v25: undefined|f3 ~ f3) handler=b8(v25):
-# CHECK-NEXT: v26: "constructed" = String string="constructed"
-# CHECK-NEXT: v27: undefined = CallBuiltin -, v26 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: Jump -> next b9(v25)
-# CHECK-NEXT: b8(v28: undefined|f3 ~ f3) role=CatchHandler:
-# CHECK-NEXT: v29: anything = CatchValue
-# CHECK-NEXT: v30: "third:" = String string="third:"
-# CHECK-NEXT: v31: string = CallBuiltin -, v29 overload=String/0 builtinCallForm=AnyReceiver accessSite=16
-# CHECK-NEXT: v32: undefined = CallBuiltin -, v30, v31 overload=ConsoleLog/0 accessSite=17
-# CHECK-NEXT: Jump -> next b9(v28)
-# CHECK-NEXT: b9(v33: undefined|f3 ~ f3):
-# CHECK-NEXT: v34: string = TypeOf v0
-# CHECK-NEXT: v35: string = TypeOf v33
-# CHECK-NEXT: v36: undefined = CallBuiltin -, v34, v35 overload=ConsoleLog/0 accessSite=20
-# CHECK-NEXT: v37: undefined = Undefined
-# CHECK-NEXT: Return v37
+# CHECK-NEXT: b6() frequency=Unlikely handler=b8(v6):
+# CHECK-NEXT: v18: anything ~ object = Construct v6 calleeName="child" accessSite=10 callees=[f3]
+# CHECK-NEXT: Jump -> next b7(v6)
+# CHECK-NEXT: b7(v19: undefined|f3 ~ f3) handler=b8(v19):
+# CHECK-NEXT: v20: "constructed" = String string="constructed"
+# CHECK-NEXT: v21: undefined = CallBuiltin -, v20 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: Jump -> next b9(v19)
+# CHECK-NEXT: b8(v22: undefined|f3 ~ f3) role=CatchHandler:
+# CHECK-NEXT: v23: anything = CatchValue
+# CHECK-NEXT: v24: "third:" = String string="third:"
+# CHECK-NEXT: v25: string = CallBuiltin -, v23 overload=String/0 builtinCallForm=AnyReceiver accessSite=16
+# CHECK-NEXT: v26: undefined = CallBuiltin -, v24, v25 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: Jump -> next b9(v22)
+# CHECK-NEXT: b9(v27: undefined|f3 ~ f3):
+# CHECK-NEXT: v28: "undefined" = String string="undefined"
+# CHECK-NEXT: v29: string = TypeOf v27
+# CHECK-NEXT: v30: undefined = CallBuiltin -, v28, v29 overload=ConsoleLog/0 accessSite=20
+# CHECK-NEXT: v31: undefined = Undefined
+# CHECK-NEXT: Return v31
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="first"
 # CHECK: module=m0 position=442 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f4 callPosition=442 module=m0}] {
@@ -277,28 +271,20 @@ function f4 module=m0 position=442 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="first"
-# CHECK: module=m0 position=442 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 takesNewTarget=true} inlineFrames=[{}, {callee=f2 callPosition=442 isTailCall=true module=m0}, {callee=f4 callPosition=442 parent=1 module=m0}] {
+# CHECK: module=m0 position=442 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f2, v1: anything):
 # CHECK-NEXT: v2: anything = GetArgument
-# CHECK-NEXT: v3: fact = Entered function=f2 @442 tail
-# CHECK-NEXT: v4: f3 = AssumeType v2, v3 provenType=f3
-# CHECK-NEXT: v5: null|object = GetSuperBase v0
-# CHECK-NEXT: v6: builtin(Int16Array) = AssumeType v5 provenType=builtin(Int16Array)
-# CHECK-NEXT: v7: object ~ L0 = ConstructSuperForwardVarargs v6, v4 layout=L0 firstArgument=1 accessSite=21 callees=[builtin(Int16Array)]
-# CHECK-NEXT: v8: object ~ Int16Array = Expect v7 expectedType=Int16Array
-# CHECK-NEXT: v9: string|symbol = GetModuleVariable variable=g1
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: ElemDefine v8, v9, v10 accessSite=24
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v3: Array = CreateRest firstArgument=1
+# CHECK-NEXT: v4: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: object = CallDirect v0, v2, v4 function=f2
+# CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Second"
-# CHECK: module=m0 position=664 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 takesNewTarget=true} inlineFrames=[{}, {callee=f3 callPosition=664 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=664 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f3, v1: anything):
 # CHECK-NEXT: v2: anything = GetArgument
-# CHECK-NEXT: v3: fact = Entered function=f3 @664 tail
-# CHECK-NEXT: v4: f3 = AssumeType v2, v3 provenType=f3
-# CHECK-NEXT: v5: null|object = GetSuperBase v0
-# CHECK-NEXT: v6: f2 = AssumeType v5 provenType=f2
-# CHECK-NEXT: v7: object ~ L1 = ConstructSuperForwardVarargs v6, v4 layout=L1 firstArgument=1 accessSite=23 callees=[f2]
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v3: Array = CreateRest firstArgument=1
+# CHECK-NEXT: v4: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: object = CallDirect v0, v2, v4 function=f3
+# CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }

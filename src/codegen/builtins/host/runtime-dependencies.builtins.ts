@@ -266,6 +266,12 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "Array.prototype.flatMap": fusedTraversalFunctions,
   "Array.prototype.map": fusedTraversalFunctions,
   "Array.prototype.slice": fusedTraversalFunctions,
+  "Array.prototype.sort": functionsIn("prelude/array-sort", "sortByDifference", "sortByReversedDifference").map(
+    called => ({
+      ...called,
+      when: b.whenCallRunsOtherCode,
+    }),
+  ),
   "Buffer.from": functionsIn("builtins/JSBufferConstructor", "from"),
   "Buffer.isBuffer": functionsIn("builtins/JSBufferConstructor", "isBuffer"),
   "Buffer.prototype.offset": functionsIn("builtins/JSBufferPrototype", "offset"),

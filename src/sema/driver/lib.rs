@@ -4004,18 +4004,30 @@ fn may_declare_a_global(
     let Some(text) = host.read(path) else {
         return false;
     };
-    let has = |word: &[u8]| strings::contains(&text, word);
+    text_may_declare_a_global(path, &text, every_file_is_a_module, imports)
+}
+
+fn text_may_declare_a_global(
+    path: &[u8],
+    text: &[u8],
+    every_file_is_a_module: bool,
+    imports: &dyn Fn(&[u8]),
+) -> bool {
+    let has = |word: &[u8]| strings::contains(text, word);
     // `/// <reference lib="webworker" />`
     if has(b"<reference ") {
         return true;
     }
-    let mut from = 0;
-    while let Some(found) = strings::index_of(&text[from..], b"global") {
-        let before = text[..from + found].trim_ascii_end();
-        if before.len() < from + found && before.ends_with(b"declare") {
-            return true;
+    // `declare global`, and `declare module "x"`, which in a module adds to the module x.
+    for word in [&b"global"[..], b"module"] {
+        let mut from = 0;
+        while let Some(found) = strings::index_of(&text[from..], word) {
+            let before = text[..from + found].trim_ascii_end();
+            if before.len() < from + found && before.ends_with(b"declare") {
+                return true;
+            }
+            from += found + word.len();
         }
-        from += found + b"global".len();
     }
     let (mut from, mut has_import) = (0, false);
     while let Some(found) = strings::index_of(&text[from..], b"import") {
@@ -4031,6 +4043,125 @@ fn may_declare_a_global(
         && !has_import
         && !has(b"export")
         && !(is_javascript(path) && has(b"require"))
+}
+
+/// Calls `visit` with each string that stands behind `from`, `import` or `require`, in any form. Judged by the text: a false
+/// positive only costs a parse.
+fn for_each_imported_name(text: &[u8], visit: &mut dyn FnMut(&[u8])) {
+    for word in [&b"from"[..], b"import", b"require"] {
+        let mut from = 0;
+        while let Some(found) = strings::index_of(&text[from..], word) {
+            from += found + word.len();
+            let rest = text[from..].trim_ascii_start();
+            let rest = rest.strip_prefix(b"(").unwrap_or(rest).trim_ascii_start();
+            if let [quote @ (b'"' | b'\''), name @ ..] = rest
+                && let Some(end) = strings::index_of_char_usize(name, *quote)
+            {
+                visit(&name[..end]);
+            }
+        }
+    }
+}
+
+/// The path of `name`, which is relative, as seen from the folder `directory`.
+fn path_from_folder(directory: &[u8], name: &[u8]) -> Vec<u8> {
+    let joined = [directory, b"/", name].concat();
+    let mut parts: Vec<&[u8]> = Vec::new();
+    for part in strings::split(&joined, b"/") {
+        match part {
+            b"." => {}
+            b".." if parts.last().is_some_and(|last| !last.is_empty()) => drop(parts.pop()),
+            _ => parts.push(part),
+        }
+    }
+    parts.join(&b'/')
+}
+
+/// True if an import of `path`, a path without its resolution, may find one of `listed`.
+fn finds_listed_file(listed: &FxHashSet<&[u8]>, path: &[u8]) -> bool {
+    const ENDINGS: [&[u8]; 16] = [
+        b"",
+        b".ts",
+        b".tsx",
+        b".d.ts",
+        b".mts",
+        b".cts",
+        b".js",
+        b".jsx",
+        b".mjs",
+        b".cjs",
+        b".json",
+        b"/index.ts",
+        b"/index.tsx",
+        b"/index.d.ts",
+        b"/index.js",
+        b"/index.jsx",
+    ];
+    const WRITTEN_AS_JAVASCRIPT: [(&[u8], &[&[u8]]); 4] = [
+        (b".js", &[b".ts", b".tsx", b".d.ts"]),
+        (b".jsx", &[b".tsx"]),
+        (b".mjs", &[b".mts", b".d.mts"]),
+        (b".cjs", &[b".cts", b".d.cts"]),
+    ];
+    let is_listed =
+        |path: &[u8], ending: &[u8]| listed.contains([path, ending].concat().as_slice());
+    ENDINGS.iter().any(|ending| is_listed(path, ending))
+        || WRITTEN_AS_JAVASCRIPT.iter().any(|(written, endings)| {
+            path.strip_suffix(*written)
+                .is_some_and(|stem| endings.iter().any(|ending| is_listed(stem, ending)))
+        })
+}
+
+/// The files of `files` that a program that starts elsewhere can't see unless it names them: modules that declare nothing for
+/// other files and bring in nothing that could. A file of `files` that one imports is judged by itself. A file beyond them may
+/// declare anything, and of the files that name a package the first brings the package in. `is_wanted`: a file that counts
+/// whatever it holds. So a check of a few files of a large project reads each of the others once and parses only the few that
+/// matter.
+fn find_files_others_cannot_see(
+    host: &dyn Host,
+    files: &[Vec<u8>],
+    every_file_is_a_module: bool,
+    is_wanted: &(dyn Fn(&[u8]) -> bool + Sync),
+) -> FxHashSet<Vec<u8>> {
+    let listed: FxHashSet<&[u8]> = files.iter().map(|it| it.as_slice()).collect();
+    let may_be_seen: Vec<AtomicBool> = files.iter().map(|_| AtomicBool::new(false)).collect();
+    let packages: Guarded<Vec<(Vec<u8>, usize)>> = Guarded::new(Vec::new());
+    host.parallel(files.len(), &|at| {
+        let file = &files[at][..];
+        let is_seen = is_wanted(file) || is_declaration_file_name(file) || {
+            let text = (!file.ends_with(b".json"))
+                .then(|| host.read(file))
+                .flatten();
+            text.is_some_and(|text| {
+                let mut leads_beyond = false;
+                let mut named: Vec<(Vec<u8>, usize)> = Vec::new();
+                for_each_imported_name(&text, &mut |name| {
+                    if !is_relative(name) {
+                        named.push((name.to_vec(), at));
+                    } else if !leads_beyond {
+                        let path = path_from_folder(dirname::<Posix>(file), name);
+                        leads_beyond = !finds_listed_file(&listed, &path);
+                    }
+                });
+                if !named.is_empty() {
+                    packages.lock().append(&mut named);
+                }
+                leads_beyond
+                    || text_may_declare_a_global(file, &text, every_file_is_a_module, &|_| {})
+            })
+        };
+        may_be_seen[at].store(is_seen, Ordering::Relaxed);
+    });
+    // One file per name is enough to bring the package in, so the first counts.
+    let mut packages = std::mem::take(&mut *packages.lock());
+    packages.shared_sort_unstable();
+    packages.dedup_by(|a, b| a.0 == b.0);
+    for (_, at) in packages {
+        may_be_seen[at].store(true, Ordering::Relaxed);
+    }
+    let unseen = files.iter().zip(&may_be_seen);
+    let unseen = unseen.filter(|(_, it)| !it.load(Ordering::Relaxed));
+    unseen.map(|(file, _)| file.clone()).collect()
 }
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they refer to are checked.
@@ -4167,6 +4298,17 @@ fn check_named_files(
         && project.written.include.is_none()
         && project.written.files.is_none();
     let included = project.files.len();
+    if !request.plan_options.only_globals
+        && !project.options.reports_files_outside_its_roots()
+        && let Some(named) = named
+    {
+        let is_module = project.options.module_detection == ModuleDetection::Force;
+        let is_case_sensitive = host.is_case_sensitive();
+        project.options.roots_read_when_named =
+            find_files_others_cannot_see(host, &project.files, is_module, &|file| {
+                is_among(named, &to_path(file, is_case_sensitive))
+            });
+    }
     let raw_options = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| raw_options.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.keeps_comments = request.after_file.is_some();

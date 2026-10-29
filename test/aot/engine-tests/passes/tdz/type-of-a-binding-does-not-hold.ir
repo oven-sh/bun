@@ -561,11 +561,11 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: v55: boolean ~ true = TypeTest v54 testedType=L1
 # CHECK-NEXT: Branch v55 -> taken b20(| 0), notTaken b21()
 # CHECK-NEXT: b20(v56: L1):
-# CHECK-NEXT: v57: number = GetSlot v56 key="port" receivers=[L1] level=Expected accessSite=61
-# CHECK-NEXT: v58: string = TypeOf v57
+# CHECK-NEXT: v57: "number" = String string="number"
+# CHECK-NEXT: v58: number = GetSlot v56 key="port" receivers=[L1] level=Expected accessSite=62
 # CHECK-NEXT: v59: undefined|null|string = GetSlotOrUndefined v56 key="name" receivers=[L1] level=Expected accessSite=63
 # CHECK-NEXT: v60: string = TypeOf v59
-# CHECK-NEXT: v61: undefined = CallBuiltin -, v53, v58, v57, v60, v59 overload=ConsoleLog/0 accessSite=65
+# CHECK-NEXT: v61: undefined = CallBuiltin -, v53, v57, v58, v60, v59 overload=ConsoleLog/0 accessSite=65
 # CHECK-NEXT: Jump -> next b22()
 # CHECK-NEXT: b21() frequency=Rare:
 # CHECK-NEXT: v62: anything ~ number = PropGet v54 key="port" accessSite=61

@@ -303,10 +303,10 @@ function f6 name="Reader" module=m0 position=569 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @569
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @563
-    v2 = NewObject v1 layout=L0 @563
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @563
-    Return v3 @563
+    v1 = GetConstructPrototype v0 layout=L0 @569
+    v2 = NewObject v1 layout=L0 @569
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @569
+    Return v3 @569
 }
 function f7 name="read" module=m0 position=580 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w16}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -553,64 +553,52 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: absent|f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=absent
-# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b1()
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v2: number = CallDirect function=f54 accessSite=34
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: number = Add v2, v3
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v2: undefined = CallDirect function=f37
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v5: undefined = CallDirect function=f37
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: v3: number = CallDirect function=f54 accessSite=34
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f9 module=
 # CHECK: m0 position=1254 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w24}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: absent|f1 = GetModuleVariable variable=g1
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=absent
-# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b1()
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v2: number = CallDirect function=f54 accessSite=35
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: number = Add v2, v3
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v2: undefined = CallDirect function=f37
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v5: undefined = CallDirect function=f37
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: v3: number = CallDirect function=f54 accessSite=35
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f10 module=
 # CHECK: m0 position=1304 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w25}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: absent|f1 = GetModuleVariable variable=g2
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=absent
-# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b1()
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v2: number = CallDirect function=f54 accessSite=36
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: number = Add v2, v3
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v2: undefined = CallDirect function=f37
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v5: undefined = CallDirect function=f37
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: v3: number = CallDirect function=f54 accessSite=36
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f11 module=
 # CHECK: m0 position=1346 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w26}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: absent|L1 = GetModuleVariable variable=g3
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=absent
-# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b1()
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v2: number = CallDirect function=f54 accessSite=38
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: number = CallDirect v3 function=f3 accessSite=40
-# CHECK-NEXT: v5: number = Add v2, v4
-# CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: v7: number = CallDirect v6 function=f4 accessSite=42
-# CHECK-NEXT: v8: number = Add v5, v7
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v2: undefined = CallDirect function=f37
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v9: undefined = CallDirect function=f37
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: v3: number = CallDirect function=f54 accessSite=38
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f12 module=
 # CHECK: m0 position=1446 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w27}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -641,12 +629,10 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
-# CHECK: m0 position=1552 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[0, 2147483647] site=w29}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=1552 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w29}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: undefined|null|string = CallDirect function=f55 accessSite=47
-# CHECK-NEXT: v1: string = RequireObjectCoercible v0 name="length"
-# CHECK-NEXT: v2: int[0, 2147483647] = GetStringLength v1
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=1593 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w30}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -656,12 +642,10 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
 # CHECK-NEXT: v2: number = CallDirect function=f7 accessSite=49
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: number = Add v2, v3
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: never = Call v5 calleeName="method" accessSite=49 callees=[f7]
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: never = Call v3 calleeName="method" accessSite=49 callees=[f7]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fail"

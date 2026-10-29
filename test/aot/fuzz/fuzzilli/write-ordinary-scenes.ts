@@ -6730,7 +6730,8 @@ class Scenes {
   /**
    * A literal comes back under a second name: a built-in hands back its receiver, an argument or an element; or it calls a member, a getter, a trap or a callback of the program and hands on what
    * that returned; or it hands the literal to a function of the program as `this`. The literal is changed through the second name (a member is added, deleted, redefined or given a value of
-   * another kind; the object is frozen, sealed or given another prototype) and then read through the first: its keys in order, its members by name, whether it is frozen.
+   * another kind; the object is frozen, sealed or given another prototype) and then read through the first: its keys in order, its members by name, whether it is frozen. Half the time another
+   * function takes another literal the same way, and its callee hands back something else.
    */
   sceneOfLiteralsChangedThroughASecondName() {
     const number = ++this.count;
@@ -6971,6 +6972,32 @@ class Scenes {
       const isMadeElsewhere = this.chance(25);
       const uses = (name: string) => [more, expression, ...front].some(text => new RegExp(`\\b${name}\\b`).test(text));
       if (isMadeElsewhere && !uses("seen")) this.emit(1, `function make${id}()${any} { return ${literal}; }`);
+      // A second site of the built-in, where the callee hands back something else, makes the compiler merge both answers.
+      if (this.chance(50)) {
+        const answer = this.pick(['"x"', '"x"', "1", "{ other: 1 }"]);
+        const member = more.replace(
+          /^(\[[\w.]+\]|\w+)(: Object\.prototype\.valueOf|: function \(\) \{ return this; \}|\(\) \{ return this; \})/,
+          `$1() { return ${answer}; }`,
+        );
+        const fields = this.pick([`z: "x"`, `count: ${value}`, `count: ${other}`]);
+        this.emit(1, `function other${id}()${any} {`);
+        this.emit(
+          2,
+          ...(uses("seen") ? [`let seen${any};`] : []),
+          `const made${any} = { ${fields}${member ? `, ${member}` : ""} };`,
+          ...front,
+          `return ${expression};`,
+        );
+        this.emit(1, "}");
+        this.emit(
+          1,
+          this.pick([
+            `if (process.argv.length > 5) note(typeof other${id}());`,
+            `if (process.argv.length > 5) note(typeof other${id}());`,
+            `try { note(typeof other${id}()); } catch (error) { note("refused"); }`,
+          ]),
+        );
+      }
       this.emit(1, `function second${id}()${this.typed("void")} {`);
       this.emit(
         2,

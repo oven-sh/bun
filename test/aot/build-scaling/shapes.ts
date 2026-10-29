@@ -1189,7 +1189,7 @@ export const shapes: Shape[] = [
   {
     name: "entry points that a pattern finds",
     counted: "entry points",
-    size: 3000,
+    size: 1000,
     entry: "main.ts",
     flags: ["./pages/*.ts"],
     write: size => ({

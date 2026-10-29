@@ -155,6 +155,10 @@ impl Checker<'_, '_> {
                 },
                 _ => continue,
             };
+            // The namespace object takes `__esModule`: `bun run` sets it, and a program that does so runs.
+            if name.is_some_and(|name| self.atoms().bytes(name) == b"__esModule") {
+                continue;
+            }
             let at = self.span_of_token(file, at);
             match name {
                 Some(name) if code == 2540 => self.early_error_at(at, code, &[Arg::Atom(name)]),

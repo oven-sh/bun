@@ -1044,28 +1044,25 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-LABEL: function f22 module=
 # CHECK: m0 position=872 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = Undefined
-# CHECK-NEXT: v1: string = TypeOf v0
-# CHECK-NEXT: v2: " " = String string=" "
-# CHECK-NEXT: v3: string = Add v1, v2
-# CHECK-NEXT: v4: f3 = GetModuleVariable variable=g1
-# CHECK-NEXT: v5: anything = PropGet v4 key="prototype" accessSite=35
-# CHECK-NEXT: v6: object = AssumeType v5 provenType=object
-# CHECK-NEXT: v7: object ~ L0|L8 = Upcast v6 castType=anything
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v7 testedType=L0|L8
-# CHECK-NEXT: Branch v8 -> taken b1(), notTaken b3()
+# CHECK-NEXT: v0: f3 = GetModuleVariable variable=g1
+# CHECK-NEXT: v1: anything = PropGet v0 key="prototype" accessSite=35
+# CHECK-NEXT: v2: object = AssumeType v1 provenType=object
+# CHECK-NEXT: v3: object ~ L0|L8 = Upcast v2 castType=anything
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=L0|L8
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: Jump -> next b2(v9)
-# CHECK-NEXT: b2(v10: anything ~ undefined):
-# CHECK-NEXT: v11: string = TypeOf v10
-# CHECK-NEXT: v12: " " = String string=" "
-# CHECK-NEXT: v13: true = Boolean boolean=true
-# CHECK-NEXT: v14: string = Strcat v3, v11, v12, v13
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Jump -> next b2(v5)
+# CHECK-NEXT: b2(v6: anything ~ undefined):
+# CHECK-NEXT: v7: string = TypeOf v6
+# CHECK-NEXT: v8: " " = String string=" "
+# CHECK-NEXT: v9: true = Boolean boolean=true
+# CHECK-NEXT: v10: "undefined " = String string="undefined "
+# CHECK-NEXT: v11: string = Strcat v10, v7, v8, v9
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v15: anything = PropGet v7 key="toString" accessSite=36
-# CHECK-NEXT: Jump -> next b2(v15)
+# CHECK-NEXT: v12: anything = PropGet v3 key="toString" accessSite=36
+# CHECK-NEXT: Jump -> next b2(v12)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
 # CHECK: m0 position=1019 kind=Arrow thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f67 callPosition=1036 isConstruction=true callIsPartOfConstruction=true module=m0}] {
@@ -1113,24 +1110,14 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-LABEL: function f28 module=
 # CHECK: m0 position=1503 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=1597 module=m0}, {callee=f64 callPosition=1610 isConstruction=true module=m0}, {callee=f1 callPosition=1565 module=m0}, {callee=f1 callPosition=1516 module=m0}, {callee=f64 callPosition=1529 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = Undefined
-# CHECK-NEXT: v1: string = TypeOf v0
-# CHECK-NEXT: v2: " " = String string=" "
-# CHECK-NEXT: v3: builtin(ObjectPrototypeToString) = Builtin builtin=ObjectPrototypeToString
-# CHECK-NEXT: v4: string = TypeOf v3
-# CHECK-NEXT: v5: " " = String string=" "
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: v7: string = TypeOf v6
-# CHECK-NEXT: v8: string = Strcat v1, v2, v4, v5, v7
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v0: "undefined function undefined" = String string="undefined function undefined"
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
-# CHECK: m0 position=1698 kind=Arrow thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f97 callPosition=1715 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f64 callPosition=1640 parent=1 isConstruction=true module=m0}] {
+# CHECK: m0 position=1698 kind=Arrow thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f97 callPosition=1715 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f64 callPosition=1640 parent=1 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = Undefined
-# CHECK-NEXT: v1: string = TypeOf v0
-# CHECK-NEXT: v2: string ~ "bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Upcast v1 castType=string
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: v0: "undefined" = String string="undefined"
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
 # CHECK: m0 position=1786 kind=Arrow thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1163,11 +1150,9 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L7 = GetModuleVariable variable=g10
 # CHECK-NEXT: v1: undefined|"nothing"|"stored through the setter" = GetSlot v0 key="stored" receivers=[L7] level=Proven accessSite=66
-# CHECK-NEXT: v2: " " = String string=" "
-# CHECK-NEXT: v3: undefined = Undefined
-# CHECK-NEXT: v4: string = TypeOf v3
-# CHECK-NEXT: v5: string = Strcat v1, v2, v4
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v2: " undefined" = String string=" undefined"
+# CHECK-NEXT: v3: string = Strcat v1, v2
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f34 module=
 # CHECK: m0 position=2315 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -569,43 +569,41 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: number|bigint @JSValue = ToNumeric v0 form=Generic calledBuiltin=Number
 # CHECK-NEXT: TryCallInline -, v7 inlineBuiltin=CallNumberConstructor overload=Number/1 accessSite=46 -> done b5(), miss b6()
 # CHECK-NEXT: b1(v15: string @Cell):
-# CHECK-NEXT: v16: "x" @Cell = String string="x"
-# CHECK-NEXT: v17: "abc" @Cell = String string="abc"
-# CHECK-NEXT: v18: number @Double = ToNumber v0 form=Generic calledBuiltin=StringPrototypeCharAt
-# CHECK-NEXT: v19: int|whole @Double = ToIntegerOrInfinity v18
-# CHECK-NEXT: v20: string @Cell = StringRangeCharacterOrEmpty v17, -, -, v19
-# CHECK-NEXT: v21: Date @JSValue = CallBuiltin -, v0 overload=Date/5 builtinCallForm=AnyReceiver accessSite=58
-# CHECK-NEXT: v22: Date<pristine[Storage, Names]> @Cell = AssumeType v21 provenType=Date<pristine[Storage, Names]>
-# CHECK-NEXT: v23: number @Double = CallInline v22 inlineBuiltin=DateGetTime overload=DatePrototypeGetTime/0 accessSite=60
+# CHECK-NEXT: v16: "abc" @Cell = String string="abc"
+# CHECK-NEXT: v17: number @Double = ToNumber v0 form=Generic calledBuiltin=StringPrototypeCharAt
+# CHECK-NEXT: v18: int|whole @Double = ToIntegerOrInfinity v17
+# CHECK-NEXT: v19: string @Cell = StringRangeCharacterOrEmpty v16, -, -, v18
+# CHECK-NEXT: v20: Date @JSValue = CallBuiltin -, v0 overload=Date/5 builtinCallForm=AnyReceiver accessSite=58
+# CHECK-NEXT: v21: Date<pristine[Storage, Names]> @Cell = AssumeType v20 provenType=Date<pristine[Storage, Names]>
+# CHECK-NEXT: v22: number @Double = CallInline v21 inlineBuiltin=DateGetTime overload=DatePrototypeGetTime/0 accessSite=60
+# CHECK-NEXT: v23: "," @Cell = String string="," @0 tail
 # CHECK-NEXT: v24: "," @Cell = String string="," @0 tail
 # CHECK-NEXT: v25: "," @Cell = String string="," @0 tail
 # CHECK-NEXT: v26: "," @Cell = String string="," @0 tail
 # CHECK-NEXT: v27: "," @Cell = String string="," @0 tail
 # CHECK-NEXT: v28: "," @Cell = String string="," @0 tail
 # CHECK-NEXT: v29: "," @Cell = String string="," @0 tail
-# CHECK-NEXT: v30: "," @Cell = String string="," @0 tail
-# CHECK-NEXT: v31: "," @Cell = String string="," @0 tail
-# CHECK-NEXT: v32: "," @Cell = String string="," @0 tail
-# CHECK-NEXT: v33: string @Cell = Strcat v3, v24, v5, v25, v6, v26, v8, v27, v10, v28, v12, v29, v15, v30, v16, v31, v20, v32, v23 @0 tail
-# CHECK-NEXT: Return v33
+# CHECK-NEXT: v30: ",x," @Cell = String string=",x,"
+# CHECK-NEXT: v31: string @Cell = Strcat v3, v23, v5, v24, v6, v25, v8, v26, v10, v27, v12, v28, v15, v30, v19, v29, v22 @0 tail
+# CHECK-NEXT: Return v31
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v34: string @JSValue = CallBuiltin v14 overload=ArrayPrototypeJoin/0 accessSite=52
-# CHECK-NEXT: Jump -> next b1(v34)
+# CHECK-NEXT: v32: string @JSValue = CallBuiltin v14 overload=ArrayPrototypeJoin/0 accessSite=52
+# CHECK-NEXT: Jump -> next b1(v32)
 # CHECK-NEXT: b3(v12: number @Double):
 # CHECK-NEXT: v13: Array<L0|L1, Contiguous> @Cell = NewArray v0 contents=L0|L1 allocationSite=34 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v14: Array<L0|L1, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v13 provenType=Array<L0|L1, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: TryCallInline v14 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 accessSite=52 -> done b1(), miss b2()
 # CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v35: number @JSValue = CallBuiltin -, v11 overload=ParseInt/0 accessSite=50
-# CHECK-NEXT: Jump -> next b3(v35)
+# CHECK-NEXT: v33: number @JSValue = CallBuiltin -, v11 overload=ParseInt/0 accessSite=50
+# CHECK-NEXT: Jump -> next b3(v33)
 # CHECK-NEXT: b5(v8: number @Double):
 # CHECK-NEXT: v9: number @Double = ToNumber v0 form=Generic calledBuiltin=IsNaN
 # CHECK-NEXT: v10: boolean @Boolean = CallInline -, v9 inlineBuiltin=IsNaN overload=IsNaN/0 accessSite=48
 # CHECK-NEXT: v11: string @Cell = ToString v0 form=Generic calledBuiltin=ParseInt
 # CHECK-NEXT: TryCallInline -, v11 inlineBuiltin=ParseInt overload=ParseInt/0 accessSite=50 -> done b3(), miss b4()
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v36: number @JSValue = CallBuiltin -, v7 overload=Number/1 accessSite=46
-# CHECK-NEXT: Jump -> next b5(v36)
+# CHECK-NEXT: v34: number @JSValue = CallBuiltin -, v7 overload=Number/1 accessSite=46
+# CHECK-NEXT: Jump -> next b5(v34)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Exotic"
 # CHECK: module=m0 position=1003 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {

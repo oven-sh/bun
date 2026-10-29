@@ -695,25 +695,23 @@ runtimefunction id=ArrayTraversalTraverseArray function=f65 visibility=Private
 # CHECK-NEXT: Jump -> next b1(v4)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="made"
-# CHECK: module=m0 position=732 flags=[HasThis, HasExplicitName] length=1 thisType={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} parameters=[{type=undefined|int}] results=[{type=undefined}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything @JSValue, v1: undefined|int @OptionalInt64) frequency=Rare:
-# CHECK-NEXT: v2: anything @JSValue = CallDirect v1 function=f1 accessSite=11
-# CHECK-NEXT: PropSet v0, v2 key="value" accessSite=12 siteCache=0
-# CHECK-NEXT: v4: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v4
+# CHECK: module=m0 position=732 flags=[HasThis, HasExplicitName] length=1 thisType={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} parameters=[{type=undefined|int}] results=[{type=undefined}] functionTypes=[f28] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything @JSValue, v1: undefined|int @OptionalInt64):
+# CHECK-NEXT: v2: undefined @JSValue = CallDirect v1 function=f80
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="forwards"
 # CHECK: module=m0 position=785 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int}] results=[{type=anything}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|int @OptionalInt64) frequency=Rare:
 # CHECK-NEXT: v1: anything @JSValue = CallDirect v0 function=f1 accessSite=13
-# CHECK-NEXT: Return v1
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=452 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="bound twice"|"ends in a call"|"picked"}, {type=f16|f17|f22}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="frames"
 # CHECK: module=m0 position=206 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=string}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=4294967295 module=m0 calledBuiltin=ArrayPrototypeMap}, {callee=f77 callPosition=4294967295 parent=1 module=m3}, {callee=f65 callPosition=2337 parent=2 module=m3}, {callee=f59 callPosition=4294967295 parent=3 module=m3}] {
 # CHECK-NEXT: b0(v0: anything @JSValue) frequency=Rare:
-# CHECK-NEXT: v1: anything @JSValue = PropGet v0 key="stack" accessSite=19 siteCache=2
+# CHECK-NEXT: v1: anything @JSValue = PropGet v0 key="stack" accessSite=19 siteCache=1
 # CHECK-NEXT: v2: string @JSValue = CallBuiltin -, v1 overload=String/0 builtinCallForm=AnyReceiver accessSite=20
 # CHECK-NEXT: v3: "\n" @Cell = String string="\n"
 # CHECK-NEXT: v4: Array<string> @Cell = CallInline v2, v3 inlineBuiltin=StringSplit inlineParameters=[0] overload=StringPrototypeSplit/0 accessSite=22
@@ -762,7 +760,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f65 visibility=Private
 # CHECK: module=m0 position=732 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f3 @Cell, v1: anything @JSValue, v2: anything @JSValue):
 # CHECK-NEXT: v3: undefined|int @JSValue = AssumeType v2 provenType=undefined|int
-# CHECK-NEXT: v4: undefined @JSValue = CallDirect v1, v3 function=f3
+# CHECK-NEXT: v4: undefined @JSValue = CallDirect v3 function=f80
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="forwards"
@@ -788,7 +786,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f65 visibility=Private
 # CHECK-NEXT: v6: boolean @Boolean = IsPristine v5 builtinClass=Function aspects=[Names]
 # CHECK-NEXT: TestAndBranch v6 -> taken b3(), notTaken b2()
 # CHECK-NEXT: b2() frequency=Unlikely handler=b8():
-# CHECK-NEXT: v7: anything @JSValue = PropGet v5 key="bind" accessSite=31 siteCache=1
+# CHECK-NEXT: v7: anything @JSValue = PropGet v5 key="bind" accessSite=31 siteCache=0
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b8():
 # CHECK-NEXT: v8: null @JSValue = Null
@@ -828,10 +826,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f65 visibility=Private
 # CHECK-LABEL: function {{*}}name="made"
 # CHECK: module=m0 position=732 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f71}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f71} creator=Entrypoint{target=f71 arguments=Registers} inlineFrames=[{}, {callee=f71 callPosition=732 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f71 @Cell, v1: anything @JSValue, v2: anything @JSValue):
-# CHECK-NEXT: v3: anything @JSValue = GetCapture v0 function=f71
-# CHECK-NEXT: v4: undefined|int @JSValue = AssumeType v2 provenType=undefined|int
-# CHECK-NEXT: v5: undefined @JSValue = CallDirect v3, v4 function=f3
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK-NEXT: v3: undefined|int @JSValue = AssumeType v2 provenType=undefined|int
+# CHECK-NEXT: v4: undefined @JSValue = CallDirect v3 function=f80
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="forwards"
 # CHECK: module=m0 position=785 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f72}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f72} creator=Entrypoint{target=f72 arguments=Registers} inlineFrames=[{}, {callee=f72 callPosition=785 isTailCall=true module=m0}] {
@@ -839,4 +836,10 @@ runtimefunction id=ArrayTraversalTraverseArray function=f65 visibility=Private
 # CHECK-NEXT: v3: undefined|int @JSValue = AssumeType v2 provenType=undefined|int
 # CHECK-NEXT: v4: anything @JSValue = CallDirect v3 function=f4
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="made"
+# CHECK: module=m0 position=732 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int}] results=[{type=undefined}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3 parameterMap=[{original=1}]} {
+# CHECK-NEXT: b0(v1: undefined|int @OptionalInt64) frequency=Rare:
+# CHECK-NEXT: v2: anything @JSValue = CallDirect v1 function=f1 accessSite=11
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

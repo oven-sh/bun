@@ -498,7 +498,7 @@ runtimefunction id=ArraySearchIncludes function=f22
 runtimefunction id=ArrayTraversalTraverseArray function=f29 visibility=Private
 # -- generated: hex f3
 # CHECK-LABEL: function {{*}}name="hex"
-# CHECK: module=m0 position=543 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=string}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f38 callPosition=4294967295 module=m1}] {
+# CHECK: module=m0 position=543 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=string}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f39 callPosition=4294967295 module=m1}] {
 # CHECK-NEXT: b0(v0: anything @JSValue):
 # CHECK-NEXT: v1: Array @Cell = NewArray v0 contents=anything allocationSite=6 [contentsAreProven]
 # CHECK-NEXT: v2: Array<anything, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v1 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
@@ -527,7 +527,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f29 visibility=Private
 # CHECK-NEXT: v22: int[0, 127] @Int32 = BitAnd v20, v21 form=Numbers
 # CHECK-NEXT: PutTypedArrayElement v7, v8, v22 typedArrayType=2 level=Proven accessSite=82 [keyIsIntegral]
 # CHECK-NEXT: v24: builtin(Array) @Cell = Builtin builtin=Array
-# CHECK-NEXT: v25: anything @JSValue = CallDirect v24, v7 function=f38 accessSite=83
+# CHECK-NEXT: v25: anything @JSValue = CallDirect v24, v7 function=f39 accessSite=83
 # CHECK-NEXT: v26: anything @JSValue = Upcast v25 castType=anything
 # CHECK-NEXT: v27: Array<string, proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v26 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v28: "" @JSValue = String string=""

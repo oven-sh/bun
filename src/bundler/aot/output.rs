@@ -81,6 +81,9 @@ pub(crate) fn finish_build(
         further_programs,
         starts_workers_from_unseen_code,
         names_of_worker_files: _,
+        root_folders_spelled,
+        imports_file_with_query,
+        program_files: _,
     } = compilation;
     let ProgramSummary {
         entry_points: entry_paths,
@@ -99,6 +102,9 @@ pub(crate) fn finish_build(
         starts_workers_from_unseen_code,
         entry_points,
         root_directory: Vec::new(),
+        root_folders_spelled,
+        imports_file_with_query,
+        further_package_names: Vec::new(),
         package_names: Vec::new(),
         path_aliases: Vec::new(),
         names,

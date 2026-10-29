@@ -8,9 +8,10 @@ use bun_collections::index_sort;
 use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
-    CompiledEntryPoint, CompiledPackageName, CompiledPathAlias, CompiledProgram, ImageFile,
-    compare_source_paths,
+    CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
+    CompiledProgram, ImageFile, compare_source_paths,
 };
+use bun_resolver::package_names::FurtherPackageName;
 use bun_sys::{Fd, Stat};
 
 use crate::Error;
@@ -30,6 +31,9 @@ const HAS_IMAGE_FOR_EACH_ENTRY_POINT: u32 = 2;
 /// Behind the path aliases: the length of `CompiledProgramInput::root_below_working_directory`, then the path.
 const HAS_ROOT_BELOW_WORKING_DIRECTORY: u32 = 4;
 const ALLOWS_CODE_FROM_DISK: u32 = 8;
+const HAS_ROOT_FOLDERS_SPELLED: u32 = 16;
+const HAS_ROOT_FROM_EXECUTABLE: u32 = 32;
+const HAS_FURTHER_PACKAGE_NAMES: u32 = 64;
 /// The length of the path, what `require` and what `import` find, and whether the name hides other paths.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
 const PATH_ALIAS_SIZE: usize = 4 * size_of::<u32>();
@@ -102,6 +106,12 @@ pub struct CompiledProgramInput<'a> {
     pub root_below_working_directory: Option<&'a [u8]>,
     /// `--aot-allow-code-from-disk`
     pub allows_code_from_disk: bool,
+    /// `CompiledProgram::root_folders_spelled`. Empty where the program spells none.
+    pub root_folders_spelled: &'a [u8],
+    /// `CompiledProgram::root_from_executable`
+    pub root_from_executable: Option<&'a [u8]>,
+    /// Ascending by path.
+    pub further_package_names: &'a [FurtherPackageName],
     pub preserves_source_paths: bool,
     pub symbols: &'a [u8],
 }
@@ -142,6 +152,11 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + path_aliases
         + size_of::<u32>()
         + input.root_below_working_directory.map_or(0, <[u8]>::len)
+        + size_of::<u32>()
+        + input.root_folders_spelled.len()
+        + size_of::<u32>()
+        + input.root_from_executable.map_or(0, <[u8]>::len)
+        + encode_further_package_names(input.further_package_names).len()
 }
 
 pub(crate) fn append_image(
@@ -241,9 +256,32 @@ pub(crate) fn append_record(
             | (u32::from(has_images) * HAS_IMAGE_FOR_EACH_ENTRY_POINT)
             | (u32::from(input.root_below_working_directory.is_some())
                 * HAS_ROOT_BELOW_WORKING_DIRECTORY)
-            | (u32::from(input.allows_code_from_disk) * ALLOWS_CODE_FROM_DISK),
+            | (u32::from(input.allows_code_from_disk) * ALLOWS_CODE_FROM_DISK)
+            | (u32::from(!input.root_folders_spelled.is_empty()) * HAS_ROOT_FOLDERS_SPELLED)
+            | (u32::from(input.root_from_executable.is_some()) * HAS_ROOT_FROM_EXECUTABLE)
+            | (u32::from(!input.further_package_names.is_empty()) * HAS_FURTHER_PACKAGE_NAMES),
     };
     let root = match input.root_below_working_directory {
+        Some(root) => [
+            &u32::try_from(root.len())
+                .map_err(|_| CORRUPTED)?
+                .to_le_bytes()[..],
+            root,
+        ]
+        .concat(),
+        None => Vec::new(),
+    };
+    let root_folders = match input.root_folders_spelled {
+        b"" => Vec::new(),
+        folders => [
+            &u32::try_from(folders.len())
+                .map_err(|_| CORRUPTED)?
+                .to_le_bytes()[..],
+            folders,
+        ]
+        .concat(),
+    };
+    let root_from_executable = match input.root_from_executable {
         Some(root) => [
             &u32::try_from(root.len())
                 .map_err(|_| CORRUPTED)?
@@ -275,6 +313,9 @@ pub(crate) fn append_record(
         &package_names,
         &path_aliases,
         &root,
+        &root_folders,
+        &root_from_executable,
+        &encode_further_package_names(input.further_package_names),
         slice_as_bytes(&image_ranges),
     ]);
     Ok(())
@@ -306,6 +347,63 @@ fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) 
         bytes.extend_from_slice(name.path);
     }
     Some(bytes)
+}
+
+// The number of names, then of each: its three strings, each behind its length, a length of u32::MAX for none, and a word for `hides_other_paths`.
+fn encode_further_package_names(names: &[FurtherPackageName]) -> Vec<u8> {
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let mut bytes = (names.len() as u32).to_le_bytes().to_vec();
+    let add = |bytes: &mut Vec<u8>, text: Option<&[u8]>| match text {
+        Some(text) => {
+            bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(text);
+        }
+        None => bytes.extend_from_slice(&u32::MAX.to_le_bytes()),
+    };
+    for name in names {
+        add(&mut bytes, Some(&name.path));
+        add(&mut bytes, name.required.as_deref());
+        add(&mut bytes, name.imported.as_deref());
+        bytes.extend_from_slice(&u32::from(name.hides_other_paths).to_le_bytes());
+    }
+    bytes
+}
+
+fn read_further_package_names(
+    payload: &Payload,
+    at: &mut usize,
+) -> Option<Vec<CompiledFurtherPackageName>> {
+    let word = |at: &mut usize| {
+        let bytes = payload.bytes(*at, size_of::<u32>())?;
+        *at += size_of::<u32>();
+        Some(u32::from_le_bytes(bytes.try_into().ok()?))
+    };
+    let text = |at: &mut usize| -> Option<Option<&'static [u8]>> {
+        let length = word(at)?;
+        if length == u32::MAX {
+            return Some(None);
+        }
+        let bytes = payload.bytes(*at, length as usize)?;
+        *at += bytes.len();
+        Some(Some(bytes))
+    };
+    let count = word(at)? as usize;
+    let mut names = Vec::new();
+    for _ in 0..count {
+        let path = text(at)??;
+        let required = text(at)?;
+        let imported = text(at)?;
+        let hides_other_paths = word(at)? != 0;
+        names.push(CompiledFurtherPackageName {
+            path,
+            required,
+            imported,
+            hides_other_paths,
+        });
+    }
+    names.is_sorted_by(|a, b| a.path < b.path).then_some(names)
 }
 
 fn read_package_names(
@@ -485,6 +583,26 @@ fn try_read(
         root_below_working_directory = Some(payload.bytes(end, length)?);
         end += length;
     }
+    let mut root_folders_spelled: &'static [u8] = b"";
+    if header.flags & HAS_ROOT_FOLDERS_SPELLED != 0 {
+        let length = payload.bytes(end, size_of::<u32>())?;
+        let length = u32::from_le_bytes(length.try_into().ok()?) as usize;
+        end += size_of::<u32>();
+        root_folders_spelled = payload.bytes(end, length)?;
+        end += length;
+    }
+    let mut root_from_executable = None;
+    if header.flags & HAS_ROOT_FROM_EXECUTABLE != 0 {
+        let length = payload.bytes(end, size_of::<u32>())?;
+        let length = u32::from_le_bytes(length.try_into().ok()?) as usize;
+        end += size_of::<u32>();
+        root_from_executable = Some(payload.bytes(end, length)?);
+        end += length;
+    }
+    let mut further_package_names = Vec::new();
+    if header.flags & HAS_FURTHER_PACKAGE_NAMES != 0 {
+        further_package_names = read_further_package_names(payload, &mut end)?;
+    }
     let mut images: Vec<&'static [u8]> = Vec::new();
     if header.flags & HAS_IMAGE_FOR_EACH_ENTRY_POINT != 0 {
         let ranges = payload.bytes(
@@ -516,6 +634,9 @@ fn try_read(
     let program = program.with_package_names(package_names);
     let program = program.with_root_below_working_directory(root_below_working_directory);
     let program = program.with_code_from_disk(header.flags & ALLOWS_CODE_FROM_DISK != 0);
+    let program = program.with_root_folders_spelled(root_folders_spelled);
+    let program = program.with_root_from_executable(root_from_executable);
+    let program = program.with_further_package_names(further_package_names.into_boxed_slice());
     Some(program.with_path_aliases(path_aliases))
 }
 
@@ -912,6 +1033,9 @@ pub(crate) mod tests {
             path_aliases: &[],
             root_below_working_directory: None,
             allows_code_from_disk: false,
+            root_folders_spelled: b"",
+            root_from_executable: None,
+            further_package_names: &[],
             preserves_source_paths,
             symbols: b"",
         }

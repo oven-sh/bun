@@ -479,7 +479,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f33 visibility=Private
 # CHECK-NEXT: b4(v19: string):
 # CHECK-NEXT: StringBuilderAppend v11, v19
 # CHECK-NEXT: v21: anything = PropGet v0 key="-1" accessSite=34
-# CHECK-NEXT: v22: string = CallBuiltin -, v21 overload=String/0 builtinCallForm=AnyReceiver accessSite=35
+# CHECK-NEXT: v22: undefined|string = AssumeType v21 provenType=undefined|string
 # CHECK-NEXT: StringBuilderAppend v11, v22
 # CHECK-NEXT: v24: string = StringBuilderFinish v11 [isLikelyKey]
 # CHECK-NEXT: Return v24

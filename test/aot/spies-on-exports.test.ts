@@ -27,6 +27,8 @@ const imports = `
 async function runTests(directory: string, ...flags: string[]) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, bunEnv);
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
+  // A crash prints only there, and the comparison below would hide it.
+  if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   return { stdout, results, exitCode };
 }
 
@@ -211,6 +213,66 @@ test("a spy replaces a name of a CommonJS file for the ES modules that import it
 
 const show = `console.log(byName(1, 2), byNamespace(1, 2), insideTheModule(2), notSpiedOn(8));`;
 
+test("a spy under names out of a list replaces each", async () => {
+  const files = {
+    "doors.ts": `
+      export function front(): string { return "front"; }
+      export function back(): string { return "back"; }
+      export function side(): string { return front() + back(); }`,
+    "house.ts": `import { back, front, side } from "./doors";\nexport const show = () => console.log(front(), back(), side());`,
+    "preload.ts": `
+      import { beforeEach, spyOn } from "bun:test";
+      import * as fs from "node:fs";
+      import * as doors from "./doors";
+      beforeEach(async () => {
+        for (const door of ["front", "back"] as const) spyOn(doors, door).mockImplementation(() => "guarded " + door);
+        for (const name of ["existsSync", "accessSync"] as const) spyOn(fs, name).mockImplementation((() => "guarded") as never);
+      });`,
+    "one.test.ts": `
+      import { mock, test } from "bun:test";
+      import { existsSync } from "node:fs";
+      import { show } from "./house";
+      test("guarded", () => { show(); console.log(existsSync(".")); mock.restore(); show(); console.log(existsSync(".")); });`,
+  };
+  await expectCompiledToRunAsPlain(files, "--preload", "./preload.ts");
+
+  using dir = tempDir("spies-on-exports", files);
+  const { stderr } = await run([bunExe(), "test", "--debug-aot", "--preload", "./preload.ts"], String(dir), {
+    ...bunEnv,
+    BUN_JSC_logAOTPhaseTimes: "1",
+  });
+  expect(stderr).toContain("AOT phase times: front end | Load");
+  expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
+});
+
+test("a spy on an unknown object beside a load under an unknown path takes one first load", async () => {
+  using dir = tempDir("spies-on-exports", {
+    "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`,
+    "a.ts": `export function name(): string { return "real"; }`,
+    "b.ts": `import { name } from "./a";\nexport const show = () => name();`,
+    "preload.ts": `
+      import { spyOn } from "bun:test";
+      export const hold = (object: any, key: string) => spyOn(object, key);`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { show } from "./b";
+      import { hold } from "./preload";
+      const load = (path: string) => import(path);
+      test("spied", async () => {
+        const a = await load("./a");
+        hold(a, "name").mockReturnValue("spied");
+        console.log(show());
+      });`,
+  });
+  const { stdout, stderr } = await run([bunExe(), "test", "--debug-aot"], String(dir), {
+    ...bunEnv,
+    BUN_JSC_logAOTPhaseTimes: "1",
+  });
+  expect(stdout).toContain("spied");
+  expect(stderr).toContain("AOT phase times:");
+  expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
+});
+
 test("a helper that is handed the namespace object and the name replaces the export", async () => {
   await expectCompiledToRunAsPlain({
     ...math,
@@ -272,3 +334,70 @@ test("a spy on what import() and require() answer", async () => {
       });`,
   });
 });
+
+test("a namespace object handed to a helper that spies does not build the program again for its exports", async () => {
+  using dir = tempDir("spies-on-exports", {
+    ...math,
+    "one.test.ts": `${imports}
+      function replace<T extends object>(holder: T, name: keyof T & string) {
+        return spyOn(holder, name as never);
+      }
+      test("replaced", () => {
+        const name = ["a", "dd"].join("") as "add";
+        const spy = replace(math, name);
+        console.log(byName(1, 2), byNamespace(1, 2));
+        expect(spy).toHaveBeenCalledTimes(2);
+      });`,
+  });
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--debug-aot"], String(dir), {
+    ...bunEnv,
+    BUN_JSC_logAOTPhaseTimes: "1",
+  });
+  expect(stdout).toContain("3 3");
+  expect(stderr).toContain("AOT phase times: front end | Load");
+  expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
+  expect(exitCode).toBe(0);
+});
+
+// A program too large for whole-program analysis is built the same way. Nothing follows the name here, so only that build can tell.
+for (const [name, words, loads] of [
+  ["analysis switched off", "disable=flow-results", 2],
+  ["tests that look too large to analyze", "limit=MaxSourceBytesExpectedToBeAnalyzed:1", 1],
+] as const)
+  test(`${name}: a spy may replace any export, and a mock any module, after ${loads} loads`, async () => {
+    using dir = tempDir("spies-without-flow", {
+      ...math,
+      "preload.ts": `
+      import { beforeEach, spyOn } from "bun:test";
+      import * as math from "./math";
+      const names: (keyof typeof math)[] = JSON.parse('["add", "half"]');
+      beforeEach(() => {
+        for (const name of names) spyOn(math, name).mockImplementation(() => 7);
+      });`,
+      "greeting.ts": `export function greet(): string { return "real"; }`,
+      "one.test.ts": `
+      import { expect, mock, test } from "bun:test";
+      import { byName, byNamespace, insideTheModule, notSpiedOn } from "./user";
+      import { greet } from "./greeting";
+      test("spies", () => {
+        expect([byName(1, 2), byNamespace(1, 2), insideTheModule(2), notSpiedOn(8)]).toEqual([7, 7, 7, 7]);
+      });
+      test("mock", () => {
+        const member = JSON.parse('"module"') as "module";
+        mock[member](import.meta.dir + "/greeting.ts", () => ({ greet: () => "mocked" }));
+        expect(greet()).toBe("mocked");
+      });`,
+    });
+    const flags = ["--preload", "./preload.ts"];
+    const plain = await runTests(String(dir), ...flags);
+    expect(plain.results).toEqual(["pass spies", "pass mock"]);
+    const { stderr, exitCode } = await run([bunExe(), "test", "--debug-aot", ...flags], String(dir), {
+      ...bunEnv,
+      BUN_DEBUG_TEST_AOT_WORDS: words,
+      BUN_JSC_logAOTPhaseTimes: "1",
+    });
+    expect(stderr).toContain("(pass) spies");
+    expect(stderr).toContain("(pass) mock");
+    expect(exitCode).toBe(0);
+    expect(stderr.match(/AOT phase times: front end \| Load/g)?.length).toBe(loads);
+  });

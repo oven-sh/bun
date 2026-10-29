@@ -542,24 +542,25 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f27 visibilit
 # CHECK-NEXT: v9: 0 = Integer
 # CHECK-NEXT: v10: L3 = CallDirect v8, v9 function=f5 accessSite=29
 # CHECK-NEXT: v11: undefined|number|string = GetSlotOrUndefined v10 key="href" receivers=[L3] level=Proven accessSite=30
-# CHECK-NEXT: v12: L4 = NewObject layout=L4 allocationSite=15 storage=Frame allocationClass=4
-# CHECK-NEXT: v13: L4 = FinishObject v12
-# CHECK-NEXT: v14: string = CallDirect v13 function=f6 accessSite=32
-# CHECK-NEXT: v15: L4 = NewObject layout=L4 allocationSite=16 storage=Frame allocationClass=4
-# CHECK-NEXT: v16: L4 = FinishObject v15
-# CHECK-NEXT: v17: "-" = String string="-"
-# CHECK-NEXT: v18: anything ~ undefined|null|string = CallDirect v16, v17 function=f7 accessSite=34
-# CHECK-NEXT: v19: L4 = NewObject layout=L4 allocationSite=17 storage=Frame allocationClass=4
-# CHECK-NEXT: v20: L4 = FinishObject v19
-# CHECK-NEXT: v21: anything ~ undefined|null|string = CallDirect v20 function=f9 accessSite=36
-# CHECK-NEXT: v22: Array<anything, Contiguous> = NewArray v11, v14, v18, v21 contents=anything allocationSite=18 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v23: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v24: "/in" = String string="/in"
-# CHECK-NEXT: v25: "" = String string=""
-# CHECK-NEXT: v26: string = CallBuiltin v23, v25 overload=ArrayPrototypeJoin/0 accessSite=38
-# CHECK-NEXT: v27: int[0, 2147483647] = GetStringLength v26
-# CHECK-NEXT: v28: string = Add v24, v27
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v12: undefined|number|string ~ number|string = AssumeType v11 provenType=undefined|number|string
+# CHECK-NEXT: v13: L4 = NewObject layout=L4 allocationSite=15 storage=Frame allocationClass=4
+# CHECK-NEXT: v14: L4 = FinishObject v13
+# CHECK-NEXT: v15: string = CallDirect v14 function=f6 accessSite=32
+# CHECK-NEXT: v16: L4 = NewObject layout=L4 allocationSite=16 storage=Frame allocationClass=4
+# CHECK-NEXT: v17: L4 = FinishObject v16
+# CHECK-NEXT: v18: "-" = String string="-"
+# CHECK-NEXT: v19: anything ~ undefined|null|string = CallDirect v17, v18 function=f7 accessSite=34
+# CHECK-NEXT: v20: L4 = NewObject layout=L4 allocationSite=17 storage=Frame allocationClass=4
+# CHECK-NEXT: v21: L4 = FinishObject v20
+# CHECK-NEXT: v22: anything ~ undefined|null|string = CallDirect v21 function=f9 accessSite=36
+# CHECK-NEXT: v23: Array<anything, Contiguous> = NewArray v12, v15, v19, v22 contents=anything allocationSite=18 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v24: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v25: "/in" = String string="/in"
+# CHECK-NEXT: v26: "" = String string=""
+# CHECK-NEXT: v27: string = CallBuiltin v24, v26 overload=ArrayPrototypeJoin/0 accessSite=38
+# CHECK-NEXT: v28: int[0, 2147483647] = GetStringLength v27
+# CHECK-NEXT: v29: string = Add v25, v28
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pathnames"
 # CHECK: module=m0 position=1454 kind=Arrow role=ResultWrapper length=1 thisType={type=anything} parameters=[{type=int[0, 59]}] results=[{type=Array<false|int|string|L1|Array, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f16] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f38}

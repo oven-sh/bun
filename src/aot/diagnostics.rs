@@ -330,6 +330,4 @@ pub(crate) struct Diagnostics {
     error_count: u32,
     /// How many of them the language itself has: whoever loads the file reports them.
     early_error_count: u32,
-    /// Where the type checker has reported an error that code without types does not have: path, line, column, code.
-    type_errors: Vec<(Vec<u8>, i64, i64, u32)>,
 }

@@ -435,19 +435,24 @@ runtimefunction id=ArrayPrototypeReduce function=f11
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: builtin(RegExp) = Builtin builtin=RegExp
 # CHECK-NEXT: v1: anything = PropGet v0 key="lastMatch" accessSite=41
-# CHECK-NEXT: v2: builtin(RegExp) = Builtin builtin=RegExp
-# CHECK-NEXT: v3: anything = PropGet v2 key="$1" accessSite=42
-# CHECK-NEXT: v4: builtin(RegExp) = Builtin builtin=RegExp
-# CHECK-NEXT: v5: anything = PropGet v4 key="leftContext" accessSite=43
+# CHECK-NEXT: v2: undefined|string = AssumeType v1 provenType=undefined|string
+# CHECK-NEXT: v3: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v4: anything = PropGet v3 key="$1" accessSite=42
+# CHECK-NEXT: v5: undefined|string = AssumeType v4 provenType=undefined|string
 # CHECK-NEXT: v6: builtin(RegExp) = Builtin builtin=RegExp
-# CHECK-NEXT: v7: anything = PropGet v6 key="rightContext" accessSite=44
-# CHECK-NEXT: v8: builtin(RegExp) = Builtin builtin=RegExp
-# CHECK-NEXT: v9: anything = PropGet v8 key="input" accessSite=45
-# CHECK-NEXT: v10: Array<undefined|string, Contiguous> = NewArray v1, v3, v5, v7, v9 contents=undefined|string allocationSite=12 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v11: Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v12: "|" = String string="|"
-# CHECK-NEXT: v13: string = CallBuiltin v11, v12 overload=ArrayPrototypeJoin/0 accessSite=47 @0 tail
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v7: anything = PropGet v6 key="leftContext" accessSite=43
+# CHECK-NEXT: v8: undefined|string = AssumeType v7 provenType=undefined|string
+# CHECK-NEXT: v9: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v10: anything = PropGet v9 key="rightContext" accessSite=44
+# CHECK-NEXT: v11: undefined|string = AssumeType v10 provenType=undefined|string
+# CHECK-NEXT: v12: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v13: anything = PropGet v12 key="input" accessSite=45
+# CHECK-NEXT: v14: undefined|string = AssumeType v13 provenType=undefined|string
+# CHECK-NEXT: v15: Array<undefined|string, Contiguous> = NewArray v2, v5, v8, v11, v14 contents=undefined|string allocationSite=12 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v16: Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v17: "|" = String string="|"
+# CHECK-NEXT: v18: string = CallBuiltin v16, v17 overload=ArrayPrototypeJoin/0 accessSite=47 @0 tail
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function f3 module=
 # CHECK: m0 position=118 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w13}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

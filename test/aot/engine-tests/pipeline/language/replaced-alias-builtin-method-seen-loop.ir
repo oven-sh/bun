@@ -310,41 +310,40 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v14: boolean = TypeTest v13 testedType=f5
 # CHECK-NEXT: Branch v14 -> taken b5(), notTaken b8(v11 | 0)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v15: "mine" = String string="mine"
-# CHECK-NEXT: v16: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v2, v15, v16
-# CHECK-NEXT: v18: int[1, 4294967295] ~ int[1, 2147483648] = Increment v8
-# CHECK-NEXT: v19: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v18 castType=int|whole
-# CHECK-NEXT: Jump -> next b2(v19)
+# CHECK-NEXT: v15: "mine|" = String string="mine|"
+# CHECK-NEXT: StringBuilderAppend v2, v15
+# CHECK-NEXT: v17: int[1, 4294967295] ~ int[1, 2147483648] = Increment v8
+# CHECK-NEXT: v18: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v17 castType=int|whole
+# CHECK-NEXT: Jump -> next b2(v18)
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v20: undefined|" a "|" b " = GetArrayElement v0, v8 arrayStorage=Contiguous level=Proven accessSite=17 [keyIsIntegral]
-# CHECK-NEXT: v21: " a "|" b " = RequireObjectCoercible v20 name="trimRight"
-# CHECK-NEXT: v22: anything = PropGet v21 key="trimRight" accessSite=18 receivers=[]
-# CHECK-NEXT: v23: undefined|f5|builtin(StringPrototypeTrimEnd) = AssumeType v22 provenType=undefined|f5|builtin(StringPrototypeTrimEnd)
-# CHECK-NEXT: v24: boolean = TypeTest v23 testedType=f5
-# CHECK-NEXT: Branch v24 -> taken b7(), notTaken b8(v21 | 0)
+# CHECK-NEXT: v19: undefined|" a "|" b " = GetArrayElement v0, v8 arrayStorage=Contiguous level=Proven accessSite=17 [keyIsIntegral]
+# CHECK-NEXT: v20: " a "|" b " = RequireObjectCoercible v19 name="trimRight"
+# CHECK-NEXT: v21: anything = PropGet v20 key="trimRight" accessSite=18 receivers=[]
+# CHECK-NEXT: v22: undefined|f5|builtin(StringPrototypeTrimEnd) = AssumeType v21 provenType=undefined|f5|builtin(StringPrototypeTrimEnd)
+# CHECK-NEXT: v23: boolean = TypeTest v22 testedType=f5
+# CHECK-NEXT: Branch v23 -> taken b7(), notTaken b8(v20 | 0)
 # CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v25: "mine" = String string="mine"
-# CHECK-NEXT: Jump -> next b10(v25)
-# CHECK-NEXT: b8(v26: " a "|" b ", v27: undefined|builtin(StringPrototypeTrimEnd)) frequency=Rare:
-# CHECK-NEXT: v28: boolean = TypeTest v27 testedType=builtin(StringPrototypeTrimEnd)
-# CHECK-NEXT: Branch v28 -> taken b9(), notTaken b11()
+# CHECK-NEXT: v24: "mine" = String string="mine"
+# CHECK-NEXT: Jump -> next b10(v24)
+# CHECK-NEXT: b8(v25: " a "|" b ", v26: undefined|builtin(StringPrototypeTrimEnd)) frequency=Rare:
+# CHECK-NEXT: v27: boolean = TypeTest v26 testedType=builtin(StringPrototypeTrimEnd)
+# CHECK-NEXT: Branch v27 -> taken b9(), notTaken b11()
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v29: string = CallBuiltin v26 overload=StringPrototypeTrimEnd/0 accessSite=19
-# CHECK-NEXT: Jump -> next b10(v29)
-# CHECK-NEXT: b10(v30: string ~ "mine") frequency=Unlikely:
-# CHECK-NEXT: v31: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v2, v30, v31
-# CHECK-NEXT: v33: int[1, 4294967295] ~ int[1, 2147483648] = Increment v8
-# CHECK-NEXT: Jump -> next b1(v33)
+# CHECK-NEXT: v28: string = CallBuiltin v25 overload=StringPrototypeTrimEnd/0 accessSite=19
+# CHECK-NEXT: Jump -> next b10(v28)
+# CHECK-NEXT: b10(v29: string ~ "mine") frequency=Unlikely:
+# CHECK-NEXT: v30: "|" = String string="|"
+# CHECK-NEXT: StringBuilderAppend v2, v29, v30
+# CHECK-NEXT: v32: int[1, 4294967295] ~ int[1, 2147483648] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v32)
 # CHECK-NEXT: b11() frequency=Rare:
 # CHECK-NEXT: StringBuilderDiscard v2
-# CHECK-NEXT: v35: undefined = Undefined
-# CHECK-NEXT: v36: never = Call v35, v26 calleeKey="trimRight" calleeName="list[i].trimRight" accessSite=19 callees=[f5, builtin(StringPrototypeTrimEnd)]
+# CHECK-NEXT: v34: undefined = Undefined
+# CHECK-NEXT: v35: never = Call v34, v25 calleeKey="trimRight" calleeName="list[i].trimRight" accessSite=19 callees=[f5, builtin(StringPrototypeTrimEnd)]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v37: string = StringBuilderFinish v2
-# CHECK-NEXT: Return v37
+# CHECK-NEXT: v36: string = StringBuilderFinish v2
+# CHECK-NEXT: Return v36
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="end"
 # CHECK: module=m0 position=449 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<" a "|" b ", proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -1120,9 +1120,9 @@ function f97 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f30 = GetModuleVariable variable=g39
 # CHECK-NEXT: v1: anything = PropGet v0 key="n" accessSite=70
-# CHECK-NEXT: v2: anything ~ number = Upcast v1 castType=anything
+# CHECK-NEXT: v2: undefined = AssumeType v1 provenType=undefined
 # CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: number|string|bigint ~ number = Add v2, v3
+# CHECK-NEXT: v4: number = Add v2, v3
 # CHECK-NEXT: v5: int|whole = AssumeType v4 provenType=int|whole
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }

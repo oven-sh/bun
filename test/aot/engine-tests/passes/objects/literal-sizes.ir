@@ -781,76 +781,73 @@ runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # CHECK-NEXT: v2: undefined|number ~ number = AssumeType v1 provenType=undefined|number
 # CHECK-NEXT: v3: f7|f18|f19|f20|f21 = RequireObjectCoercible v0 name="name"
 # CHECK-NEXT: v4: anything = PropGet v3 key="name" accessSite=45
-# CHECK-NEXT: v5: anything ~ undefined|null|string = Upcast v4 castType=anything
+# CHECK-NEXT: v5: undefined|string = AssumeType v4 provenType=undefined|string
 # CHECK-NEXT: v6: Array<L4, proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4
 # CHECK-NEXT: v7: boolean = HasArrayStorage v6 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b11()
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b10()
 # CHECK-NEXT: b1(v8: guard):
 # CHECK-NEXT: v9: boolean ~ true = TypeTest v2 testedType=number
-# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b11()
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b10()
 # CHECK-NEXT: b2(v10: number):
 # CHECK-NEXT: v11: boolean = IsElementPresent v6, v10, v8 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b11()
+# CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b10()
 # CHECK-NEXT: b3(v12: guard):
 # CHECK-NEXT: v13: guard = AllGuards v8, v12
 # CHECK-NEXT: v14: L4 = GetArrayElement v6, v10, v13 arrayStorage=Contiguous level=Expected accessSite=46 [isPresent]
 # CHECK-NEXT: v15: string = CallDirect v14 function=f2 accessSite=47
 # CHECK-NEXT: v16: Array<L4, proven, pristine[Storage, Names]> = GetModuleVariable variable=g5
 # CHECK-NEXT: v17: boolean = HasArrayStorage v16 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b12(v15, v16)
+# CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b11(v15, v16)
 # CHECK-NEXT: b4(v18: guard):
 # CHECK-NEXT: v19: boolean = IsElementPresent v16, v10, v18 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b12(v15, v16)
+# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b11(v15, v16)
 # CHECK-NEXT: b5(v20: guard):
 # CHECK-NEXT: v21: guard = AllGuards v18, v20
 # CHECK-NEXT: v22: L4 = GetArrayElement v16, v10, v21 arrayStorage=Contiguous level=Expected accessSite=48 [isPresent]
 # CHECK-NEXT: v23: string = CallDirect v22 function=f2 accessSite=49
 # CHECK-NEXT: v24: boolean = HasArrayStorage v16 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v24 -> taken b6(| 0), notTaken b13(v15, v23, v16)
+# CHECK-NEXT: Branch v24 -> taken b6(| 0), notTaken b12(v15, v23, v16)
 # CHECK-NEXT: b6(v25: guard):
 # CHECK-NEXT: v26: boolean = IsElementPresent v16, v10, v25 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v26 -> taken b7(| 0), notTaken b13(v15, v23, v16)
+# CHECK-NEXT: Branch v26 -> taken b7(| 0), notTaken b12(v15, v23, v16)
 # CHECK-NEXT: b7(v27: guard):
 # CHECK-NEXT: v28: guard = AllGuards v25, v27
 # CHECK-NEXT: v29: L4 = GetArrayElement v16, v10, v28 arrayStorage=Contiguous level=Expected accessSite=50 [isPresent]
 # CHECK-NEXT: v30: boolean = HasLayoutPrototype v29
-# CHECK-NEXT: Branch v30 -> taken b8(| 0), notTaken b14(v15, v23, v29)
+# CHECK-NEXT: Branch v30 -> taken b8(| 0), notTaken b13(v15, v23, v29)
 # CHECK-NEXT: b8(v31: guard):
 # CHECK-NEXT: v32: boolean = HasNoExtraProperties v29, v31
-# CHECK-NEXT: Branch v32 -> taken b9(), notTaken b14(v15, v23, v29)
+# CHECK-NEXT: Branch v32 -> taken b9(), notTaken b13(v15, v23, v29)
 # CHECK-NEXT: b9():
 # CHECK-NEXT: v33: true = Boolean boolean=true
-# CHECK-NEXT: v34: boolean ~ true = TypeTest v5 testedType=undefined|null|boolean|number|string|symbol @0 tail
-# CHECK-NEXT: Branch v34 -> taken b10(| 0), notTaken b15(v15, v23, v33) @0 tail
-# CHECK-NEXT: b10(v35: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
-# CHECK-NEXT: v36: "|" = String string="|"
-# CHECK-NEXT: v37: "|" = String string="|"
-# CHECK-NEXT: v38: undefined = CallBuiltin -, v35, v15, v36, v23, v37, v33 overload=ConsoleLog/0 accessSite=52 @0 tail
-# CHECK-NEXT: Return v38
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v39: anything ~ undefined|L4 = ElemGet v6, v2 accessSite=46
-# CHECK-NEXT: v40: undefined|L4 = AssumeType v39 provenType=undefined|L4
-# CHECK-NEXT: v41: string = CallDirect v40 function=f2 accessSite=47
-# CHECK-NEXT: v42: Array<L4, proven, pristine[Storage, Names]> = GetModuleVariable variable=g5
-# CHECK-NEXT: Jump -> next b12(v41, v42)
-# CHECK-NEXT: b12(v43: string, v44: Array<L4, proven, pristine[Storage, Names]>) frequency=Unlikely:
-# CHECK-NEXT: v45: anything ~ undefined|L4 = ElemGet v44, v2 accessSite=48
-# CHECK-NEXT: v46: undefined|L4 = AssumeType v45 provenType=undefined|L4
-# CHECK-NEXT: v47: string = CallDirect v46 function=f2 accessSite=49
-# CHECK-NEXT: Jump -> next b13(v43, v47, v44)
-# CHECK-NEXT: b13(v48: string, v49: string, v50: Array<L4, proven, pristine[Storage, Names]>) frequency=Unlikely:
-# CHECK-NEXT: v51: anything ~ undefined|L4 = ElemGet v50, v2 accessSite=50
-# CHECK-NEXT: v52: undefined|L4 = AssumeType v51 provenType=undefined|L4
-# CHECK-NEXT: Jump -> next b14(v48, v49, v52)
-# CHECK-NEXT: b14(v53: string, v54: string, v55: undefined|L4 ~ L4) frequency=Unlikely:
-# CHECK-NEXT: v56: boolean = PropHas v55 key="toString" accessSite=51 receivers=[L4]
-# CHECK-NEXT: Jump -> next b15(v53, v54, v56)
-# CHECK-NEXT: b15(v57: string, v58: string, v59: boolean ~ true) frequency=Unlikely:
-# CHECK-NEXT: v60: "|" = String string="|"
-# CHECK-NEXT: v61: "|" = String string="|"
-# CHECK-NEXT: v62: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v63: undefined = CallBuiltin v62, v5, v57, v60, v58, v61, v59 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=52 @0 tail
-# CHECK-NEXT: Return v63
+# CHECK-NEXT: v34: "|" = String string="|"
+# CHECK-NEXT: v35: "|" = String string="|"
+# CHECK-NEXT: v36: undefined = CallBuiltin -, v5, v15, v34, v23, v35, v33 overload=ConsoleLog/0 accessSite=52 @0 tail
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v37: anything ~ undefined|L4 = ElemGet v6, v2 accessSite=46
+# CHECK-NEXT: v38: undefined|L4 = AssumeType v37 provenType=undefined|L4
+# CHECK-NEXT: v39: string = CallDirect v38 function=f2 accessSite=47
+# CHECK-NEXT: v40: Array<L4, proven, pristine[Storage, Names]> = GetModuleVariable variable=g5
+# CHECK-NEXT: Jump -> next b11(v39, v40)
+# CHECK-NEXT: b11(v41: string, v42: Array<L4, proven, pristine[Storage, Names]>) frequency=Unlikely:
+# CHECK-NEXT: v43: anything ~ undefined|L4 = ElemGet v42, v2 accessSite=48
+# CHECK-NEXT: v44: undefined|L4 = AssumeType v43 provenType=undefined|L4
+# CHECK-NEXT: v45: string = CallDirect v44 function=f2 accessSite=49
+# CHECK-NEXT: Jump -> next b12(v41, v45, v42)
+# CHECK-NEXT: b12(v46: string, v47: string, v48: Array<L4, proven, pristine[Storage, Names]>) frequency=Unlikely:
+# CHECK-NEXT: v49: anything ~ undefined|L4 = ElemGet v48, v2 accessSite=50
+# CHECK-NEXT: v50: undefined|L4 = AssumeType v49 provenType=undefined|L4
+# CHECK-NEXT: Jump -> next b13(v46, v47, v50)
+# CHECK-NEXT: b13(v51: string, v52: string, v53: undefined|L4 ~ L4) frequency=Unlikely:
+# CHECK-NEXT: v54: boolean = PropHas v53 key="toString" accessSite=51 receivers=[L4]
+# CHECK-NEXT: v55: "|" = String string="|"
+# CHECK-NEXT: v56: "|" = String string="|"
+# CHECK-NEXT: v57: undefined = CallBuiltin -, v5, v51, v55, v52, v56, v54 overload=ConsoleLog/0 accessSite=52 @0 tail
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v58: undefined = Undefined @0 tail
+# CHECK-NEXT: Return v58
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make1"
 # CHECK: module=m0 position=664 role=ResultWorker flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|""|"two"|L0|Array<7, proven, pristine[Storage, Names, Dense]>}] results=[{type=undefined|null|boolean|number|""|"two"|L0|Array<7, proven, pristine[Storage, Names, Dense]>}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{original=0}]} creator=ResultWorker{origin=f5}

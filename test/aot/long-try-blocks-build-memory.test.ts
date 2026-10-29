@@ -22,7 +22,7 @@ test.concurrent.skipIf(isSlowBuild || isWindows)(
 test.concurrent.skipIf(isSlowBuild || isWindows)(
   "a build keeps a bounded number of bytes for each field a try block in a hot function stores to a local",
   async () => {
-    await expectPeakBytesForEachItem(24_000, writeFieldsStoredInTryOfHotFunction, 40_000);
+    await expectPeakBytesForEachItem(16_000, writeFieldsStoredInTryOfHotFunction, 40_000);
   },
   240_000,
 );

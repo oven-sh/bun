@@ -70,6 +70,9 @@ pub struct LoadOptions {
     pub ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     /// Ascending. In an earlier compile of the same program a spy of the test runner may have replaced them, by the word of the engine, and no call spells the module and the name.
     pub replaced_exports: Vec<ReplacedExport>,
+    /// As if a file called `mock.module` with a specifier that the build does not know: every export can be replaced, and every module mocked.
+    /// An earlier compile of the same tests was not analyzed, by the word of the engine, so nobody knows what their spies and mocks replace.
+    pub mocks_any_module: bool,
     /// An earlier compile of the same program was too large for whole-program analysis, by the word of the engine.
     pub is_too_large_to_analyze: bool,
     /// An earlier compile of the same program held all of Bun's own code because it expected the analysis to stop, and the analysis came to an end, by the word of the engine.
@@ -175,6 +178,7 @@ impl LoadOptions {
             ways_read_out_of_sight: WaysBetweenModuleObjects::default(),
             ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
             replaced_exports: Vec::new(),
+            mocks_any_module: false,
             is_too_large_to_analyze: false,
             is_known_to_be_analyzed: false,
         }

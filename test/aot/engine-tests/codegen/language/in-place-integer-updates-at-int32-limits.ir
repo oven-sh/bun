@@ -835,16 +835,17 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: b4() frequency=Rare:
 # CHECK-NEXT: v14: anything ~ number = PropGet v0 key="up" accessSite=75 receivers=[L1]
-# CHECK-NEXT: v15: number|bigint ~ number = Increment v14
-# CHECK-NEXT: v16: number = AssumeType v15 provenType=number
-# CHECK-NEXT: Jump -> next b5(v16)
-# CHECK-NEXT: b5(v17: number) frequency=Rare:
-# CHECK-NEXT: PropSet v0, v17 key="up" accessSite=76 receivers=[L1]
-# CHECK-NEXT: v19: anything ~ int|whole = PropGet v0 key="any" accessSite=77 receivers=[L1]
-# CHECK-NEXT: v20: undefined|int|whole ~ int|whole = AssumeType v19 provenType=undefined|int|whole
-# CHECK-NEXT: v21: number ~ int|whole = Increment v20
-# CHECK-NEXT: v22: int|whole = AssumeType v21 provenType=int|whole
-# CHECK-NEXT: PropSet v0, v22 key="any" accessSite=78 receivers=[L1]
+# CHECK-NEXT: v15: number|string ~ number = AssumeType v14 provenType=number|string
+# CHECK-NEXT: v16: number|bigint ~ number = Increment v15
+# CHECK-NEXT: v17: number = AssumeType v16 provenType=number
+# CHECK-NEXT: Jump -> next b5(v17)
+# CHECK-NEXT: b5(v18: number) frequency=Rare:
+# CHECK-NEXT: PropSet v0, v18 key="up" accessSite=76 receivers=[L1]
+# CHECK-NEXT: v20: anything ~ int|whole = PropGet v0 key="any" accessSite=77 receivers=[L1]
+# CHECK-NEXT: v21: undefined|int|whole ~ int|whole = AssumeType v20 provenType=undefined|int|whole
+# CHECK-NEXT: v22: number ~ int|whole = Increment v21
+# CHECK-NEXT: v23: int|whole = AssumeType v22 provenType=int|whole
+# CHECK-NEXT: PropSet v0, v23 key="any" accessSite=78 receivers=[L1]
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="subtractAnySign"
@@ -888,7 +889,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21
 # CHECK: module=m1 position=1246 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=L1 site=w22 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: string, v1: L1):
 # CHECK-NEXT: v2: boolean = HasBirthFieldsFilled v1
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v3: guard):
 # CHECK-NEXT: v4: number = GetSlot v1, v3 key="up" receivers=[L1] level=Expected accessSite=119 [holdsDeclaredType]
 # CHECK-NEXT: v5: int|whole = GetSlot v1 key="down" receivers=[L1] level=Proven accessSite=120
@@ -897,27 +898,28 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
 # CHECK-NEXT: v9: whole = Double number=-0
 # CHECK-NEXT: v10: boolean = CallBuiltin -, v4, v9 overload=ObjectIs/0 accessSite=124
-# CHECK-NEXT: v11: string = TypeOf v4
+# CHECK-NEXT: v11: "number" = String string="number"
 # CHECK-NEXT: v12: undefined = CallBuiltin -, v0, v4, v5, v6, v7, v10, v11 overload=ConsoleLog/0 accessSite=126
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v13: anything ~ number = PropGet v1 key="up" accessSite=119 receivers=[L1]
-# CHECK-NEXT: v14: int|whole = GetSlot v1 key="down" receivers=[L1] level=Proven accessSite=120
-# CHECK-NEXT: v15: anything ~ int|whole = PropGet v1 key="any" accessSite=121 receivers=[L1]
-# CHECK-NEXT: v16: undefined|int|whole ~ int|whole = AssumeType v15 provenType=undefined|int|whole
-# CHECK-NEXT: v17: int[-2147483643, 2147483647] = GetSlot v1 key="other" receivers=[L1] level=Proven accessSite=122
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v14: anything ~ number = PropGet v1 key="up" accessSite=119 receivers=[L1]
+# CHECK-NEXT: v15: number|string ~ number = AssumeType v14 provenType=number|string
+# CHECK-NEXT: v16: int|whole = GetSlot v1 key="down" receivers=[L1] level=Proven accessSite=120
+# CHECK-NEXT: v17: anything ~ int|whole = PropGet v1 key="any" accessSite=121 receivers=[L1]
+# CHECK-NEXT: v18: undefined|int|whole ~ int|whole = AssumeType v17 provenType=undefined|int|whole
+# CHECK-NEXT: v19: int[-2147483643, 2147483647] = GetSlot v1 key="other" receivers=[L1] level=Proven accessSite=122
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
-# CHECK-NEXT: v19: anything ~ number = PropGet v1 key="up" accessSite=123 receivers=[L1]
-# CHECK-NEXT: v20: whole = Double number=-0
-# CHECK-NEXT: v21: boolean = CallBuiltin -, v19, v20 overload=ObjectIs/0 accessSite=124
-# CHECK-NEXT: v22: anything ~ number = PropGet v1 key="up" accessSite=125 receivers=[L1]
-# CHECK-NEXT: v23: string = TypeOf v22
-# CHECK-NEXT: v24: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v25: undefined = CallBuiltin v24, v0, v13, v14, v16, v17, v21, v23 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=126
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: Return v26
+# CHECK-NEXT: v21: anything ~ number = PropGet v1 key="up" accessSite=123 receivers=[L1]
+# CHECK-NEXT: v22: number|string ~ number = AssumeType v21 provenType=number|string
+# CHECK-NEXT: v23: whole = Double number=-0
+# CHECK-NEXT: v24: boolean = CallBuiltin -, v22, v23 overload=ObjectIs/0 accessSite=124
+# CHECK-NEXT: v25: anything ~ number = PropGet v1 key="up" accessSite=125 receivers=[L1]
+# CHECK-NEXT: v26: string = TypeOf v25
+# CHECK-NEXT: v27: undefined = CallBuiltin -, v0, v15, v16, v18, v19, v24, v26 overload=ConsoleLog/0 accessSite=126
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: }
 # CHECK-LABEL: function f16 module=
 # CHECK: m1 position=1176 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number site=w96 flags=[IsExpected]}] results=[{type=int|whole site=w97}] functionTypes=[f20] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f27 fallback=f32} {
@@ -967,14 +969,24 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21
 # CHECK-NEXT: v2: int|whole = GetModuleVariable variable=g1
 # CHECK-NEXT: v3: int|whole = Add v2, v1
 # CHECK-NEXT: PutModuleVariable v3 variable=g1
-# CHECK-NEXT: v5: int|whole = GetModuleVariable variable=g2
-# CHECK-NEXT: v6: int|whole = Increment v5
-# CHECK-NEXT: PutModuleVariable v6 variable=g2
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: int|whole = Sub v3, v8
-# CHECK-NEXT: PutModuleVariable v9 variable=g1
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v5: int[-2147483648, 9007199254740992] ~ i32 = GetModuleVariable variable=g2
+# CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=i32
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b1(v7: i32):
+# CHECK-NEXT: v8: int[-2147483647, 2147483648] = Increment v7
+# CHECK-NEXT: PutModuleVariable v8 variable=g2
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: int|whole = Sub v3, v10
+# CHECK-NEXT: PutModuleVariable v11 variable=g1
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b3(v14: int[2147483648, 9007199254740992]) frequency=Rare:
+# CHECK-NEXT: v15: int|whole = Increment v14
+# CHECK-NEXT: v16: int[-2147483647, 9007199254740992] = AssumeType v15 provenType=int[-2147483647, 9007199254740992]
+# CHECK-NEXT: PutModuleVariable v16 variable=g2
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeCounter"
 # CHECK: module=m1 position=1077 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w19}] results=[{type=f16 site=w20 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f13 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f33}
@@ -983,17 +995,18 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21
 # CHECK-NEXT: b0(v0: L1, v1: anything) frequency=Unlikely:
 # CHECK-NEXT: v2: undefined|int = AssumeType v1 provenType=undefined|int
 # CHECK-NEXT: v3: anything = PropGet v0 key="up" accessSite=97 receivers=[L1]
-# CHECK-NEXT: v4: number = Sub v3, v2 form=Generic
-# CHECK-NEXT: PropSet v0, v4 key="up" accessSite=98
-# CHECK-NEXT: v6: int|whole = GetSlot v0 key="down" receivers=[L1] level=Proven accessSite=99
-# CHECK-NEXT: v7: number = Sub v6, v2 form=Numbers
-# CHECK-NEXT: PropSet v0, v7 key="down" accessSite=100
-# CHECK-NEXT: v9: anything = PropGet v0 key="any" accessSite=101 receivers=[L1]
-# CHECK-NEXT: v10: undefined|int|whole = AssumeType v9 provenType=undefined|int|whole
-# CHECK-NEXT: v11: number = Sub v10, v2 form=Numbers
-# CHECK-NEXT: PropSet v0, v11 key="any" accessSite=102
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v4: number|string = AssumeType v3 provenType=number|string
+# CHECK-NEXT: v5: number = Sub v4, v2 form=Generic
+# CHECK-NEXT: PropSet v0, v5 key="up" accessSite=98
+# CHECK-NEXT: v7: int|whole = GetSlot v0 key="down" receivers=[L1] level=Proven accessSite=99
+# CHECK-NEXT: v8: number = Sub v7, v2 form=Numbers
+# CHECK-NEXT: PropSet v0, v8 key="down" accessSite=100
+# CHECK-NEXT: v10: anything = PropGet v0 key="any" accessSite=101 receivers=[L1]
+# CHECK-NEXT: v11: undefined|int|whole = AssumeType v10 provenType=undefined|int|whole
+# CHECK-NEXT: v12: number = Sub v11, v2 form=Numbers
+# CHECK-NEXT: PropSet v0, v12 key="any" accessSite=102
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="addToVariables"
 # CHECK: module=m1 position=999 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w18 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f12 parameterMap=[{original=0}]} creator=Version{provenVersion=f25} {
@@ -1003,14 +1016,15 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f21
 # CHECK-NEXT: v3: number = Add v2, v1 form=Numbers
 # CHECK-NEXT: v4: int|whole = AssumeType v3 provenType=int|whole
 # CHECK-NEXT: PutModuleVariable v4 variable=g1
-# CHECK-NEXT: v6: int|whole = GetModuleVariable variable=g2
-# CHECK-NEXT: v7: int|whole = Increment v6 form=Numbers
-# CHECK-NEXT: PutModuleVariable v7 variable=g2
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: int|whole = Sub v4, v9 form=Numbers
-# CHECK-NEXT: PutModuleVariable v10 variable=g1
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v6: int[-2147483648, 9007199254740992] = GetModuleVariable variable=g2
+# CHECK-NEXT: v7: int|whole = Increment v6 form=CheckedIntegers
+# CHECK-NEXT: v8: int[-2147483647, 9007199254740992] = AssumeType v7 provenType=int[-2147483647, 9007199254740992]
+# CHECK-NEXT: PutModuleVariable v8 variable=g2
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: int|whole = Sub v4, v10 form=Numbers
+# CHECK-NEXT: PutModuleVariable v11 variable=g1
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeCounter"
 # CHECK: module=m1 position=1077 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w19 flags=[IsExpected]}] results=[{type=f16 site=w20 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f13 parameterMap=[{original=0}]} creator=Version{provenVersion=f26} {

@@ -108,6 +108,8 @@ pub(crate) struct CompileOutcome {
     pub(crate) executable: Option<ExecutableDetails>,
     pub(crate) untyped_note: Vec<u8>,
     pub(crate) module_count: u32,
+    /// `Compilation::imports_file_with_query`
+    pub(crate) imports_file_with_query: bool,
     pub(crate) engine_time: Duration,
     pub(crate) executable_time: Duration,
 }
@@ -144,7 +146,7 @@ pub(crate) enum CompileFailure {
     },
     /// `files_checked`: 0 where the build ended before it had counted them.
     Build {
-        refused_entry_points: Option<bun_aot::RefusedEntryPoints>,
+        refused_entry_points: Option<Vec<u32>>,
         files_checked: u32,
     },
     Assets(AssetError),

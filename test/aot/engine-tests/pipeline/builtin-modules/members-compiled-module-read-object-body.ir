@@ -325,23 +325,20 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v11: Array<boolean|number|string|symbol|bigint, Contiguous> = NewArray v8, v9, v10 contents=boolean|number|string|symbol|bigint allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v12: Array<boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v13: number = CallDirect v12 function=f1 accessSite=4
-# CHECK-NEXT: v14: object = Builtin builtin=NodePath
-# CHECK-NEXT: v15: L0 = AssumeType v14 provenType=L0
-# CHECK-NEXT: v16: builtin(NativeFunctionsNode_pathBindTsJoinPosix)|builtin(NativeFunctionsNode_pathBindTsJoinWin32) = GetSlot v15 key="join" receivers=[L0] level=Proven accessSite=5
-# CHECK-NEXT: v17: string = TypeOf v16
-# CHECK-NEXT: v18: object = Builtin builtin=NodePath
-# CHECK-NEXT: v19: L0 = AssumeType v18 provenType=L0
-# CHECK-NEXT: v20: "/"|"\\" = GetSlot v19 key="sep" receivers=[L0] level=Proven accessSite=6
-# CHECK-NEXT: v21: "/" = AssumeType v20 provenType="/"
+# CHECK-NEXT: v14: "function" = String string="function"
+# CHECK-NEXT: v15: object = Builtin builtin=NodePath
+# CHECK-NEXT: v16: L0 = AssumeType v15 provenType=L0
+# CHECK-NEXT: v17: "/"|"\\" = GetSlot v16 key="sep" receivers=[L0] level=Proven accessSite=6
+# CHECK-NEXT: v18: "/" = AssumeType v17 provenType="/"
+# CHECK-NEXT: v19: object = Builtin builtin=NodePath
+# CHECK-NEXT: v20: L0 = AssumeType v19 provenType=L0
+# CHECK-NEXT: v21: undefined|L0 = GetSlot v20 key="posix" receivers=[L0] level=Proven accessSite=7
 # CHECK-NEXT: v22: object = Builtin builtin=NodePath
-# CHECK-NEXT: v23: L0 = AssumeType v22 provenType=L0
-# CHECK-NEXT: v24: undefined|L0 = GetSlot v23 key="posix" receivers=[L0] level=Proven accessSite=7
-# CHECK-NEXT: v25: object = Builtin builtin=NodePath
-# CHECK-NEXT: v26: object ~ builtin(NodePath) = Upcast v25 castType=object
-# CHECK-NEXT: v27: boolean ~ false = StrictEq v24, v26
-# CHECK-NEXT: v28: undefined = CallBuiltin -, v13, v17, v21, v27 overload=ConsoleLog/0 accessSite=8
-# CHECK-NEXT: v29: undefined = Undefined
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: v23: object ~ builtin(NodePath) = Upcast v22 castType=object
+# CHECK-NEXT: v24: boolean ~ false = StrictEq v21, v23
+# CHECK-NEXT: v25: undefined = CallBuiltin -, v13, v14, v18, v24 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v26: undefined = Undefined
+# CHECK-NEXT: Return v26
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="countCharacters"
 # CHECK: module=m0 position=431 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

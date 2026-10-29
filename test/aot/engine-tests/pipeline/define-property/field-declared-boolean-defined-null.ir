@@ -198,18 +198,19 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b7() frequency=Rare:
 # CHECK-NEXT: v22: anything ~ true = PropGet v4 key="flag" accessSite=6 receivers=[L0]
-# CHECK-NEXT: v23: boolean ~ true = ToBoolean v22
-# CHECK-NEXT: Branch v23 -> taken b8(), notTaken b9()
+# CHECK-NEXT: v23: null|true ~ true = AssumeType v22 provenType=null|true
+# CHECK-NEXT: v24: boolean ~ true = ToBoolean v23
+# CHECK-NEXT: Branch v24 -> taken b8(), notTaken b9()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v24: int[1, 401] = Increment v5
-# CHECK-NEXT: Jump -> next b10(v24)
+# CHECK-NEXT: v25: int[1, 401] = Increment v5
+# CHECK-NEXT: Jump -> next b10(v25)
 # CHECK-NEXT: b9():
 # CHECK-NEXT: Jump -> next b10(v5)
-# CHECK-NEXT: b10(v25: int[0, 401]):
-# CHECK-NEXT: v26: int[1, 400] = Increment v10
-# CHECK-NEXT: v27: fact = Specified
-# CHECK-NEXT: v28: int[0, 400] = AssumeType v25, v27 provenType=int[0, 400]
-# CHECK-NEXT: Jump -> next b1(v28, v26)
+# CHECK-NEXT: b10(v26: int[0, 401]):
+# CHECK-NEXT: v27: int[1, 400] = Increment v10
+# CHECK-NEXT: v28: fact = Specified
+# CHECK-NEXT: v29: int[0, 400] = AssumeType v26, v28 provenType=int[0, 400]
+# CHECK-NEXT: Jump -> next b1(v29, v27)
 # CHECK-NEXT: b11():
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }

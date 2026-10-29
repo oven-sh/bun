@@ -2,7 +2,7 @@ use core::cmp::Reverse;
 use core::mem::{replace, take};
 use core::ops::Range;
 
-use bun_core::strings::{last_index_of_char, split};
+use bun_core::strings::{last_index_of, last_index_of_char, split};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, Parent, SymbolId};
 use bun_sema::check::aot::FunctionRef;
@@ -12,7 +12,7 @@ use bun_sema::hir::{
     MemberKey, MemberKind, ModifierKind, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp,
     VarDeclId, VarKind,
 };
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::module_format::{ThisPositions, evaluates_own_this};
 use bun_sema::program::{CodeAnswer, FileId, Files, Sym};
 use bun_sema::resolve::{DeclaredSideEffects, join};
@@ -48,6 +48,8 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub ways_read_out_of_sight: WaysBetweenModuleObjects,
     /// Code that the build has not seen names files: `AotOptions::loads_code_from_disk`. So do the helpers of a test suite: `LoadOptions::runs_tests`.
     pub any_file_is_named_at_run_time: bool,
+    /// `LoadOptions::mocks_any_module`
+    pub mocks_any_module: bool,
 }
 
 impl<'a, 's> ProgramReachInput<'a, 's> {
@@ -102,6 +104,8 @@ enum Interest {
     ModuleObject(ModuleObjectOwner, ModuleObjectUse),
     // A loader is given a name that the build does not know.
     LoadByUnknownName,
+    // The same, where the answer of the load is read under this name and looked at no further.
+    NameReadFromLoadByUnknownName(Atom),
     // A read of a member of an enum of another file whose value the build knows. The value stands for it unless something gets hold of the object.
     KnownMember(Sym),
     // A read of a variable of a module of data. The value stands for it.
@@ -1430,12 +1434,73 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    // `(await import(x)).name`, `require(x).name` and `const { name } = await import(x)`, with the name of the load at the position.
+    fn find_names_read_from_load_at(&self, position: u32) -> Option<SmallVec<[Atom; 4]>> {
+        let hir = self.hir;
+        let at_position = (0..hir.exprs.len() as u32)
+            .map(ExprId)
+            .filter(|&it| hir[it].pos == position);
+        let mut calls = at_position.filter_map(|it| match self.bound.parent_of_expr(it) {
+            Parent::Expr(call)
+                if matches!(
+                    hir[call].kind,
+                    ExprKind::Call(_) | ExprKind::ImportCall { .. }
+                ) =>
+            {
+                Some(call)
+            }
+            _ => None,
+        });
+        let call = calls.next()?;
+        if calls.next().is_some_and(|other| other != call) {
+            return None;
+        }
+        let (holder, is_awaited) = match self.bound.parent_of_expr(call) {
+            Parent::Expr(awaited) if matches!(hir[awaited].kind, ExprKind::Await(_)) => {
+                (awaited, true)
+            }
+            _ => (call, false),
+        };
+        let mut names = SmallVec::new();
+        if is_awaited {
+            names.push(known::then);
+        }
+        if let Some((member, name)) = self.find_member_read_from(holder) {
+            // The function finds the object, and so every other member, in `this`.
+            if self.is_called(member) {
+                return None;
+            }
+            names.push(name);
+            return Some(names);
+        }
+        let Parent::VarInit(declaration) = self.bound.parent_of_expr(holder) else {
+            return None;
+        };
+        let PatKind::Object(properties) = hir[hir[declaration].pat].kind else {
+            return None;
+        };
+        for property in properties.iter() {
+            match hir[property].key {
+                PropKey::Name(name) if !hir[property].is_rest => names.push(name),
+                _ => return None,
+            }
+        }
+        Some(names)
+    }
+
     fn add_loads_by_unknown_names(&mut self) {
         let files = self.input.files;
         let source = parsed_source(files, self.file);
         let positions = source.map_or(&[][..], |source| &source.unknown_names_at);
         for &position in positions {
-            self.add_interest(position, Interest::LoadByUnknownName);
+            match self.find_names_read_from_load_at(position) {
+                Some(names) => {
+                    for name in names {
+                        self.add_interest(position, Interest::NameReadFromLoadByUnknownName(name));
+                    }
+                }
+                None => self.add_interest(position, Interest::LoadByUnknownName),
+            }
         }
         if source.is_none_or(|source| source.builtins.loads_unknown_modules())
             || gives_unknown_name_to_imported_loader(files, self.file)
@@ -1674,6 +1739,8 @@ struct Walk<'a, 's> {
     exporters: FxHashMap<HandedOn, SmallVec<[Exporter; 2]>>,
     is_barrel: Vec<bool>,
     is_run_by_call: Vec<bool>,
+    // An import of a program takes a name of the file, also through a file that does not run.
+    is_named_by_import: Vec<bool>,
     names_awaiting_exporter: FxHashMap<FileId, Vec<Atom>>,
     followed_imports: FxHashSet<(FileId, HandedOn)>,
     names_read_from_objects: FxHashSet<(FileId, Atom)>,
@@ -1707,6 +1774,11 @@ struct Walk<'a, 's> {
     // By a module: the modules that have a call of `require` for it. Made when something asks.
     requirers: Option<FxHashMap<ModuleRef, Vec<ModuleRef>>>,
     reaches_load_by_unknown_name: bool,
+    // The folders of the packages in which a load by an unknown name is reached.
+    packages_loading_by_unknown_name: FxHashSet<&'a [u8]>,
+    // What the loads by unknown names read of what they find: every export, or these names.
+    a_load_looks_at_every_export: bool,
+    names_read_from_loads: Vec<Atom>,
     files_found_by_name: Vec<ModuleRef>,
     objects_handed_on: FxHashSet<Sym>,
     // By an enum that is not handed on: the files that read members of it whose values the build knows.
@@ -1800,12 +1872,14 @@ impl<'a, 's> Walk<'a, 's> {
         }
         let is_barrel = find_barrels(input, &files);
         let is_run_by_call = find_files_run_by_calls(input, &files);
+        let is_named_by_import = vec![false; files.len()];
         Walk {
             input,
             files,
             exporters,
             is_barrel,
             is_run_by_call,
+            is_named_by_import,
             names_awaiting_exporter: FxHashMap::default(),
             followed_imports: FxHashSet::default(),
             names_read_from_objects: FxHashSet::default(),
@@ -1827,6 +1901,9 @@ impl<'a, 's> Walk<'a, 's> {
             required: FxHashSet::default(),
             requirers: None,
             reaches_load_by_unknown_name: false,
+            packages_loading_by_unknown_name: FxHashSet::default(),
+            a_load_looks_at_every_export: false,
+            names_read_from_loads: Vec::new(),
             files_found_by_name: Vec::new(),
             objects_handed_on: FxHashSet::default(),
             files_reading_members: FxHashMap::default(),
@@ -1928,6 +2005,7 @@ impl<'a, 's> Walk<'a, 's> {
                     || !graph.has_no_side_effects(target)
                     || self.is_run_by_call[target.idx()]
                 {
+                    self.is_named_by_import[target.idx()] = true;
                     self.evaluate(request.target);
                 } else {
                     self.reach_imports_of_skipped_file(target);
@@ -1994,6 +2072,7 @@ impl<'a, 's> Walk<'a, 's> {
         if exporters
             .any(|exporter| exporter.file == file && (!exporter.is_by_star || is_run_by_call))
         {
+            self.is_named_by_import[file.idx()] = true;
             self.evaluate(module);
         }
         self.reach_files_between(file, handed_on);
@@ -2077,19 +2156,57 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     // A loader that is given a name which the build does not know finds a module of data by its path, and a file with code that may be named that way.
-    fn hand_on_files_found_by_name(&mut self) {
-        let known = KnownMemberValues::default();
-        let members = self.input.known_objects(&known);
-        let files = self.input.files.compiled_files().iter();
-        let objects: Vec<Sym> = files
-            .filter_map(|&file| members.find_data_object(file))
-            .collect();
-        for object in objects {
-            self.hand_on_object(object);
+    fn hand_on_files_found_by_name(&mut self, loading: FileId, name_read: Option<Atom>) {
+        let package = package_of(self.input.files.module(loading).file_name());
+        let is_first = self.packages_loading_by_unknown_name.is_empty();
+        let is_new_package = self.packages_loading_by_unknown_name.insert(package);
+        if is_first {
+            let known = KnownMemberValues::default();
+            let members = self.input.known_objects(&known);
+            let files = self.input.files.compiled_files().iter();
+            let objects: Vec<Sym> = files
+                .filter_map(|&file| members.find_data_object(file))
+                .collect();
+            for object in objects {
+                self.hand_on_object(object);
+            }
         }
-        for file in find_files_named_at_run_time(self.input) {
-            self.reach_every_export(ModuleRef::File(file));
-            self.files_found_by_name.push(ModuleRef::File(file));
+        match name_read {
+            Some(name) if !self.input.any_file_is_named_at_run_time => {
+                if !self.names_read_from_loads.contains(&name) {
+                    self.names_read_from_loads.push(name);
+                    if !self.a_load_looks_at_every_export {
+                        for module in self.files_found_by_name.clone() {
+                            self.reach_export(module, name);
+                        }
+                    }
+                }
+            }
+            _ => {
+                if !replace(&mut self.a_load_looks_at_every_export, true) {
+                    for module in self.files_found_by_name.clone() {
+                        self.reach_every_export(module);
+                    }
+                }
+            }
+        }
+        if !is_new_package || (!is_first && self.input.any_file_is_named_at_run_time) {
+            return;
+        }
+        for file in find_files_named_at_run_time(self.input, package) {
+            let module = ModuleRef::File(file);
+            if self.files_found_by_name.contains(&module) {
+                continue;
+            }
+            self.files_found_by_name.push(module);
+            self.evaluate(module);
+            if self.a_load_looks_at_every_export {
+                self.reach_every_export(module);
+            } else {
+                for name in self.names_read_from_loads.clone() {
+                    self.reach_export(module, name);
+                }
+            }
         }
     }
 
@@ -2616,9 +2733,12 @@ impl<'a, 's> Walk<'a, 's> {
             Interest::Unit(unit) => self.reach_region(file, unit + 1),
             Interest::Piece(unit) => self.run_region(file, unit + 1),
             Interest::LoadByUnknownName => {
-                if !replace(&mut self.reaches_load_by_unknown_name, true) {
-                    self.hand_on_files_found_by_name();
-                }
+                self.reaches_load_by_unknown_name = true;
+                self.hand_on_files_found_by_name(file, None);
+            }
+            Interest::NameReadFromLoadByUnknownName(name) => {
+                self.reaches_load_by_unknown_name = true;
+                self.hand_on_files_found_by_name(file, Some(name));
             }
             Interest::KnownVariable(variable) => {
                 self.reach_files_between(file, HandedOn::Variable(variable));
@@ -2723,9 +2843,14 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn run(&mut self) {
-        let mut compiled_files = self.input.files.compiled_files().iter();
-        if compiled_files.any(|&file| self.loads_by_unknown_name_outside_units(file)) {
-            self.hand_on_files_found_by_name();
+        for &file in self.input.files.compiled_files() {
+            if self.loads_by_unknown_name_outside_units(file) {
+                self.hand_on_files_found_by_name(file, None);
+            }
+            // A mock is stored under every name of the module.
+            if self.input.mocks_any_module {
+                self.reach_every_export(ModuleRef::File(file));
+            }
         }
         for entry_point in self.input.sources.entry_points() {
             self.reach_every_export(ModuleRef::File(entry_point.file));
@@ -2783,9 +2908,99 @@ fn directory_of(path: &[u8]) -> &[u8] {
     &path[..last_index_of_char(path, b'/').unwrap_or(0)]
 }
 
-// The files with code that a load may find under a name the build does not follow to it: any file where code comes from disk, else
-// those that a relative path spells which some file writes as a string. The extension may differ, and a folder stands for its index file.
-fn find_files_named_at_run_time(input: &ProgramReachInput<'_, '_>) -> Vec<FileId> {
+// The folder of the package that holds the file: `../node_modules/name` or `../node_modules/@scope/name`. Nothing for a file of the program itself.
+fn package_of(path: &[u8]) -> &[u8] {
+    const FOLDER: &[u8] = b"/node_modules/";
+    let Some(at) = last_index_of(path, FOLDER) else {
+        return b"";
+    };
+    let name = at + FOLDER.len();
+    let parts = if path.get(name) == Some(&b'@') { 2 } else { 1 };
+    let slashes = (name..path.len()).filter(|&index| path[index] == b'/');
+    &path[..slashes.take(parts).last().unwrap_or(path.len())]
+}
+
+// The files with code that a load in the package may find under a name the build does not follow to it: any file where code comes from disk,
+// else those that a relative path spells which a file writes as a string. The path comes from the package, from a file that imports from it, or from a package that one of those imports.
+// The extension may differ, and a folder stands for its index file.
+// Whether a call of `import()` that is not dead is given the path of a file with a query, as far as the build knows its argument: each query is an instance of its own, which only code
+// from disk can be. A query that reaches the call through a parameter or a call shows nowhere: flow has no strings. That load is refused with an error that names the option.
+pub(crate) fn imports_file_with_query(files: &Files<'_>, sources: &Sources) -> bool {
+    let holds_query =
+        |text: Atom| bun_core::strings::index_of_char(files.atoms.bytes(text), b'?').is_some();
+    files.compiled_files().iter().any(|&file| {
+        if sources.kind(file) != SourceKind::Program {
+            return false;
+        }
+        let analysis = files.analysis(file);
+        analysis.import_sites.iter().any(|site| {
+            let ImportSiteKind::ImportCall(call) = site.kind else {
+                return false;
+            };
+            !analysis.decisions.is_dead_expr(call)
+                && analysis.alternatives_of(&site.specifier).iter().any(
+                    |specifier| match *specifier {
+                        ImportSpecifier::Constant(text) => holds_query(text),
+                        ImportSpecifier::Pattern { prefix, suffix } => {
+                            holds_query(prefix) || holds_query(suffix)
+                        }
+                        ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => false,
+                    },
+                )
+        })
+    })
+}
+
+// The last folders of the root directory that a path in the program goes up out of and comes back through: "../app/a.ts" in a file of the root directory
+// `/work/app`. Such a path names a file of the executable, and the executable knows no more of where it was built than the program writes itself.
+pub(crate) fn find_root_folders_spelled(
+    files: &Files<'_>,
+    sources: &Sources,
+    root_directory: &[u8],
+) -> Vec<u8> {
+    let root_directory = root_directory.strip_suffix(b"/").unwrap_or(root_directory);
+    let folders_of_root: Vec<&[u8]> = split(root_directory, b"/").collect();
+    let mut longest: Vec<u8> = Vec::new();
+    for &file in files.compiled_files() {
+        if sources.kind(file) != SourceKind::Program {
+            continue;
+        }
+        let directory = directory_of(files.module(file).file_name());
+        let Some(below_root) = directory.strip_prefix(root_directory) else {
+            continue;
+        };
+        let depth = split(below_root, b"/")
+            .filter(|part| !part.is_empty())
+            .count();
+        for expression in &files.hir(file).exprs {
+            let ExprKind::String(text) = expression.kind else {
+                continue;
+            };
+            let text = files.atoms.bytes(text);
+            if !text.starts_with(b"../") {
+                continue;
+            }
+            let parts: Vec<&[u8]> = split(text, b"/").collect();
+            let ups = parts.iter().take_while(|part| **part == b"..").count();
+            let Some(above) = ups.checked_sub(depth).filter(|&above| above > 0) else {
+                continue;
+            };
+            let Some(start) = folders_of_root.len().checked_sub(above) else {
+                continue;
+            };
+            let spelled = &folders_of_root[start..];
+            if parts.len() > ups + above && parts[ups..ups + above] == *spelled {
+                let folders = spelled.join(&b"/"[..]);
+                if folders.len() > longest.len() {
+                    longest = folders;
+                }
+            }
+        }
+    }
+    longest
+}
+
+fn find_files_named_at_run_time(input: &ProgramReachInput<'_, '_>, package: &[u8]) -> Vec<FileId> {
     let files = input.files;
     let is_code = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Program;
     let code_files = || files.compiled_files().iter().filter(is_code).copied();
@@ -2801,8 +3016,29 @@ fn find_files_named_at_run_time(input: &ProgramReachInput<'_, '_>) -> Vec<FileId
             files_by_spelling.entry(folder).or_default().push(file);
         }
     }
+    let package_of_file = |file: FileId| package_of(files.module(file).file_name());
+    let imported_files = |file: FileId| {
+        let requests = input.graph.requests(file).iter();
+        requests.filter_map(|it| match it.target {
+            ModuleRef::File(target) | ModuleRef::Face(target) => Some(target),
+            _ => None,
+        })
+    };
+    let mut packages: FxHashSet<&[u8]> = FxHashSet::default();
+    packages.insert(package);
+    for file in code_files() {
+        if package_of_file(file) == package
+            || imported_files(file).any(|it| package_of_file(it) == package)
+        {
+            packages.insert(package_of_file(file));
+            packages.extend(imported_files(file).map(package_of_file));
+        }
+    }
     let mut found = Vec::new();
     for file in code_files() {
+        if !packages.contains(package_of_file(file)) {
+            continue;
+        }
         let directory = directory_of(files.module(file).file_name());
         let sites = files.analysis(file).import_sites.iter();
         let resolved: FxHashSet<ExprId> = sites.map(|site| site.specifier_node).collect();
@@ -2994,6 +3230,8 @@ pub(crate) struct ReachedModules {
     pub left_out_inner_modules: Vec<ModuleRef>,
     // A load under a name that the build does not follow may find the file.
     pub found_by_name: Vec<ModuleRef>,
+    // A file that does not run hands its imports to its importers, but not these. In order.
+    pub brought_by_calls: Vec<FileId>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
 }
 
@@ -3145,6 +3383,16 @@ fn find_left_out_code_following(
         }
     }
     leave_out_texts_of_left_out_files(input.sources, &mut left_out.files);
+    // Of the files that say nothing is lost without them, the ones in the program that no import takes a name of: a call has brought them.
+    reached_modules.brought_by_calls = (0..walk.files.len())
+        .map(|index| FileId(index as u32))
+        .filter(|&file| {
+            input.graph.has_record(file)
+                && input.graph.has_no_side_effects(file)
+                && !walk.is_named_by_import[file.idx()]
+                && walk.is_run_by_call[file.idx()]
+        })
+        .collect();
     let is_evaluated = |module: &ModuleRef| {
         walk.find_module(*module)
             .is_some_and(|found| walk.is_body_reached(found))

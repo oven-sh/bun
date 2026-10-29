@@ -492,7 +492,7 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: b5(v19: guard):
 # CHECK-NEXT: v20: guard = AllGuards v17, v19
 # CHECK-NEXT: v21: int|whole = GetArrayElement v7, v15, v20 arrayStorage=Double level=Expected accessSite=0 [keyIsIntegral, isInBounds, readsHoleAsNaN]
-# CHECK-NEXT: v22: int = CallDirect function=f4 accessSite=1
+# CHECK-NEXT: v22: 7 = CallDirect function=f4 accessSite=1
 # CHECK-NEXT: Jump -> next b9(v21, v22)
 # CHECK-NEXT: b6() frequency=Rare:
 # CHECK-NEXT: ConvertToDoubleStorage v7
@@ -500,12 +500,12 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: b7() frequency=Rare:
 # CHECK-NEXT: v24: undefined|int|whole = ElemGet v7, v15 accessSite=0 [keyIsIntegral]
 # CHECK-NEXT: v25: undefined|int|whole ~ int|whole = Expect v24 expectedType=number
-# CHECK-NEXT: v26: int = CallDirect function=f4 accessSite=1
+# CHECK-NEXT: v26: 7 = CallDirect function=f4 accessSite=1
 # CHECK-NEXT: v27: boolean ~ true = TypeTest v25 testedType=int|whole
 # CHECK-NEXT: Branch v27 -> taken b8(| 0), notTaken b14()
 # CHECK-NEXT: b8(v28: int|whole) frequency=Rare:
 # CHECK-NEXT: Jump -> next b9(v28, v26)
-# CHECK-NEXT: b9(v29: int|whole, v30: int):
+# CHECK-NEXT: b9(v29: int|whole, v30: 7):
 # CHECK-NEXT: v31: int|whole = Add v29, v30
 # CHECK-NEXT: v32: boolean = HasArrayStorage v7 arrayStorage=Double [isWritable]
 # CHECK-NEXT: Branch v32 -> taken b10(| 0), notTaken b13()
@@ -672,7 +672,7 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readsMember"
-# CHECK: module=m0 position=641 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=641 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=7 site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: anything = GetGlobalBinding key="SharedArrayBuffer" level=Expected accessSite=22 [seesScriptBindings]
 # CHECK-NEXT: v1: undefined|builtin(SharedArrayBuffer) = AssumeType v0 provenType=undefined|builtin(SharedArrayBuffer)
@@ -703,16 +703,10 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Branch v14 -> taken b8(), notTaken b7(| 0)
 # CHECK-NEXT: b7(v15: SharedArrayBuffer<pristine[Storage, Names]>):
 # CHECK-NEXT: v16: anything = PropGet v15 key="held" accessSite=26
-# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=undefined|null
-# CHECK-NEXT: Branch v17 -> taken b8(), notTaken b9(| 0)
+# CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v18: 7 = Integer integer=7
-# CHECK-NEXT: Jump -> next b10(v18)
-# CHECK-NEXT: b9(v19: boolean|number|string|symbol|bigint|object):
-# CHECK-NEXT: v20: int = AssumeType v19 provenType=int
-# CHECK-NEXT: Jump -> next b10(v20)
-# CHECK-NEXT: b10(v21: int ~ 7):
-# CHECK-NEXT: Return v21
+# CHECK-NEXT: v17: 7 = Integer integer=7
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="comparesWithUndefined"
 # CHECK: module=m0 position=807 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

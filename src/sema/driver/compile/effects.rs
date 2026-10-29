@@ -28,6 +28,7 @@ fn origin_of(
         FileOrigin::Runtime => return FileOrigin::Runtime,
         FileOrigin::NoFile
         | FileOrigin::ProgramSource
+        | FileOrigin::TestedSource
         | FileOrigin::ProgramJavaScript
         | FileOrigin::DependencySource
         | FileOrigin::DependencyJavaScript
@@ -42,6 +43,9 @@ fn origin_of(
     match (files.role(file), is_dependency) {
         (FileRole::TypesOnly, _) => FileOrigin::Declarations,
         (FileRole::Checked, true) => FileOrigin::DependencySource,
+        (FileRole::Checked, false) if project_origin == FileOrigin::TestedSource => {
+            FileOrigin::TestedSource
+        }
         (FileRole::Checked, false) => FileOrigin::ProgramSource,
         (FileRole::Inferred, true) => FileOrigin::DependencyJavaScript,
         (FileRole::Inferred, false) => FileOrigin::ProgramJavaScript,
@@ -80,6 +84,7 @@ pub(super) fn requested_diagnostics(origin: FileOrigin, role: FileRole) -> Reque
         | (
             FileOrigin::NoFile
             | FileOrigin::ProgramSource
+            | FileOrigin::TestedSource
             | FileOrigin::ProgramJavaScript
             | FileOrigin::DependencySource
             | FileOrigin::DependencyJavaScript
@@ -129,6 +134,7 @@ impl ProgramOrigins<'_, '_> {
     fn origin_of(&self, diagnostic: &Diagnostic) -> FileOrigin {
         match diagnostic.file {
             Some(file) => self.origins[file.idx()],
+            None if self.project_origin == FileOrigin::TestedSource => FileOrigin::NoFile,
             None => self.project_origin,
         }
     }
@@ -138,7 +144,7 @@ impl ProgramOrigins<'_, '_> {
             return false;
         };
         let code = diagnostic.code;
-        if origin != FileOrigin::ProgramSource {
+        if origin != FileOrigin::ProgramSource && origin != FileOrigin::TestedSource {
             return false;
         }
         if UNKNOWN_MODULE_CODES.contains(&code) {
@@ -222,6 +228,17 @@ impl ProgramOrigins<'_, '_> {
                 }
                 Effect::StopsBuild if diagnostic.code == UNUSED_EXPECT_ERROR_CODE => Effect::Warns,
                 Effect::StopsBuild if is_for_lack_of_bun_types => return None,
+                Effect::WithdrawsTrust | Effect::Warns
+                    if origin == FileOrigin::TestedSource && is_for_lack_of_bun_types =>
+                {
+                    return None;
+                }
+                Effect::WithdrawsTrust
+                    if origin == FileOrigin::TestedSource
+                        && diagnostic.code == UNUSED_EXPECT_ERROR_CODE =>
+                {
+                    Effect::Warns
+                }
                 Effect::StopsBuild if names_missing_type_library => Effect::Warns,
                 Effect::WithdrawsTrust if diagnostic.file.is_none() => Effect::InternalError,
                 effect @ (Effect::StopsBuild
@@ -246,6 +263,7 @@ mod tests {
         use FileOrigin::*;
         let expected = [
             (ProgramSource, FileRole::Checked, Requested::All),
+            (TestedSource, FileRole::Checked, Requested::All),
             (
                 ProgramJavaScript,
                 FileRole::Inferred,
@@ -277,6 +295,7 @@ mod tests {
             (DependencySource, FileRole::Inferred, false),
             (EvaluatedText, FileRole::Inferred, true),
             (ProgramSource, FileRole::Checked, false),
+            (TestedSource, FileRole::Checked, true),
             (ProgramJavaScript, FileRole::Inferred, false),
             (Runtime, FileRole::Checked, true),
             (Runtime, FileRole::Inferred, false),

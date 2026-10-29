@@ -54,6 +54,92 @@ mod coverage {
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 
+// The strings behind `from`, `import`, `require` and `module` (of `mock.module`). One too many names a file too many.
+fn for_each_imported_name(text: &[u8], mut visit: impl FnMut(&[u8])) {
+    const WORDS: [&[u8]; 4] = [b"from", b"import", b"require", b"module"];
+    let mut at = 0;
+    while let Some(found) = strings::index_of_any(&text[at..], b"fimr") {
+        at += found;
+        let Some(word) = WORDS.iter().find(|word| text[at..].starts_with(word)) else {
+            at += 1;
+            continue;
+        };
+        at += word.len();
+        let rest = &text[at..];
+        let skipped = rest.len() - rest.trim_ascii_start().len();
+        let rest = &rest[skipped..];
+        let rest = rest
+            .strip_prefix(b"(")
+            .map_or(rest, <[u8]>::trim_ascii_start);
+        let Some((&quote @ (b'"' | b'\'' | b'`'), name)) = rest.split_first() else {
+            continue;
+        };
+        if let Some(end) = strings::index_of_any(name, &[quote, b'\n'])
+            && name[end] == quote
+        {
+            visit(&name[..end]);
+        }
+    }
+}
+
+// A trial. The files with code that the test files import, each once, in the order found. The test files are not among them.
+fn find_files_imported_by(vm: &mut VirtualMachine, test_files: &[Interned]) -> Vec<Box<[u8]>> {
+    const EXTENSIONS: [&[u8]; 8] = [
+        b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
+    ];
+    let mut seen = bun_collections::StringSet::new();
+    for path in test_files {
+        let _ = seen.insert(&**path);
+    }
+    let mut found = Vec::new();
+    for test_file in test_files {
+        let Ok(text) = File::read_from(Fd::cwd(), test_file) else {
+            continue;
+        };
+        let folder = resolve_path::dirname::<bun_path::platform::Auto>(test_file);
+        for_each_imported_name(&text, |name| {
+            let kind = bun_ast::ImportKind::Stmt;
+            let Ok(result) = vm.transpiler.resolver.resolve(folder, name, kind) else {
+                return;
+            };
+            let path = result.path_pair.primary.text();
+            let is_code = bun_path::is_absolute(path)
+                && EXTENSIONS.iter().any(|extension| path.ends_with(extension));
+            if is_code && !seen.contains(path) {
+                let _ = seen.insert(path);
+                found.push(Box::from(path));
+            }
+        });
+    }
+    found
+}
+
+// A trial. The build does not see the test files. This file stands in for what they do: it mocks a module and loads code under names that nothing says. The condition is one that flow cannot
+// fold: it proves a load of a name that is never set dead, and the option that admits an inspector instead costs 3.4 times the run (classes and prototype chains made one by one).
+fn write_stand_in_for_files_from_disk() -> Box<[u8]> {
+    const TEXT: &[u8] = b"import { mock } from \"bun:test\";
+const name = (globalThis as any)[Symbol.for(\"bun.test.nameThatIsNeverSet\")];
+if (name) mock.module(name, () => ({}));
+const other = process.argv.at(-1)!;
+if (other === \"\\0never\") {
+  await import(other);
+  require(other);
+}
+";
+    let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
+        FileSystem::get().top_level_dir(),
+        &[b"node_modules/.cache/bun-test-files-from-disk.ts"],
+    )
+    .to_vec();
+    let folder = resolve_path::dirname::<bun_path::platform::Auto>(&path);
+    let _ = bun_sys::Dir::cwd().make_path(folder);
+    if let Err(error) = File::write_file(Fd::cwd(), &bun::ZBox::from_bytes(&path), TEXT) {
+        Output::err_generic("could not write {}: {}", (bstr::BStr::new(&path), &error));
+        Global::exit(1);
+    }
+    path.into_boxed_slice()
+}
+
 // ─── compat shim: map legacy paths onto the test_runner crate ────────────────
 // The body was originally written against `bun_jsc::jest::{bun_test, Snapshots,
 // TestRunner}` before `crate::test_runner` existed. Those types now live under
@@ -2294,14 +2380,25 @@ impl TestCommand {
         }
 
         if run_compiled::is_requested(ctx) && !test_files.is_empty() {
-            let mut entry_points: Vec<Box<[u8]>> =
-                test_files.iter().map(|path| Box::from(&**path)).collect();
+            let runs_files_from_disk = env_var::BUN_AOT_TEST_FILES_FROM_DISK.get() == Some(true)
+                && (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| !aot.checks_only);
+            let mut entry_points: Vec<Box<[u8]>> = match runs_files_from_disk {
+                true => find_files_imported_by(vm, test_files),
+                false => test_files.iter().map(|path| Box::from(&**path)).collect(),
+            };
+            let file_count = entry_points.len();
             entry_points.extend(ctx.preloads.iter().cloned());
+            if runs_files_from_disk {
+                entry_points.push(write_stand_in_for_files_from_disk());
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.loads_code_from_disk = true;
+                }
+            }
             // The workers of --parallel learn which files are refused from the compiled program alone.
             let aot = ctx.bundler_options.aot.as_ref();
             let independent_count = match ctx.test_options.parallel {
-                0 => test_files.len(),
-                _ if aot.is_some_and(|aot| !aot.checks_only) => test_files.len(),
+                0 => file_count,
+                _ if aot.is_some_and(|aot| !aot.checks_only) => file_count,
                 _ => 0,
             };
             run_compiled::start(ctx, entry_points, independent_count);

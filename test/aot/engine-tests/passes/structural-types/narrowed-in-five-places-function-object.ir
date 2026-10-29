@@ -560,13 +560,12 @@ function f62 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=2069 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=L1 site=w35 flags=[OmitsNull, OmitsUndefined]}, {type=f8 site=w36 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"other"|"string"|"symbol"|"undefined" site=w37 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f49] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f8 callPosition=4294967295 module=m0}] {
+# CHECK: m0 position=2069 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=L1 site=w35 flags=[OmitsNull, OmitsUndefined]}, {type=f8 site=w36 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"other"|"string"|"symbol"|"undefined" site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f49] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f8 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: L1, v1: f8):
 # CHECK-NEXT: v2: f29 = NewClosure function=f29 allocationSite=38
 # CHECK-NEXT: PutSlot v0, -, v2 key="work" receivers=[L1] level=Proven accessSite=12
-# CHECK-NEXT: v4: string = TypeOf v2
-# CHECK-NEXT: v5: string ~ "bigint"|"boolean"|"function"|"number"|"object"|"other"|"string"|"symbol"|"undefined" = Expect v4 expectedType=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"other"|"string"|"symbol"|"undefined"
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v4: "function" = String string="function"
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
 # CHECK: m0 position=3601 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|function|f15|f16|f17|f18|f19|f20|f21 site=w66 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=string}] functionTypes=[f58] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

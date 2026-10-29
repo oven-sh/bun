@@ -538,144 +538,150 @@ runtimefunction id=ArrayTraversalTraverseArray function=f67 visibility=Private
 # CHECK-NEXT: v1: Array<"x", Contiguous> = NewArray v0 contents="x" allocationSite=0 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v2: Array<"x", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"x", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutModuleVariable v2 variable=g0
-# CHECK-NEXT: v4: undefined = CallDirect function=f75 accessSite=5
-# CHECK-NEXT: v5: f2 = NewClosure function=f2 allocationSite=3 storage=Frame
-# CHECK-NEXT: v6: f3 = NewClosure function=f3 allocationSite=4 storage=Frame
-# CHECK-NEXT: v7: symbol("s")@m0:6 = KeyConstant key=symbol("s")@m0:6
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: L2 = NewObject -, v8 layout=L2 fields=[0] allocationSite=5 allocationClass=1
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: L2 = NewObject -, v10 layout=L2 fields=[0] allocationSite=6 allocationClass=1
-# CHECK-NEXT: v12: bigint = BigInt digits="10"
-# CHECK-NEXT: v13: bigint = BigInt digits="30"
-# CHECK-NEXT: v14: bigint = Pow v12, v13
-# CHECK-NEXT: v15: int[0, 4294967295] = CallBuiltin v2 overload=ArrayPrototypeLength/0 accessSite=7
-# CHECK-NEXT: v16: 8 = Integer integer=8
-# CHECK-NEXT: v17: number = Div v15, v16
-# CHECK-NEXT: v18: 0 = Integer
-# CHECK-NEXT: v19: whole = Double number=-0
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: 2 = Integer integer=2
-# CHECK-NEXT: v22: number = Mul v17, v21
-# CHECK-NEXT: v23: -1 = Integer integer=-1
-# CHECK-NEXT: v24: 2147483648 = Integer integer=2147483648
-# CHECK-NEXT: v25: 9007199254740992 = Integer integer=9007199254740992
-# CHECK-NEXT: v26: whole = Double number=NaN
+# CHECK-NEXT: v4: 3 = Integer integer=3
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f1 accessSite=5
+# CHECK-NEXT: v6: f2 = NewClosure function=f2 allocationSite=3 storage=Frame
+# CHECK-NEXT: v7: f3 = NewClosure function=f3 allocationSite=4 storage=Frame
+# CHECK-NEXT: v8: symbol("s")@m0:6 = KeyConstant key=symbol("s")@m0:6
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: v10: L2 = NewObject -, v9 layout=L2 fields=[0] allocationSite=5 allocationClass=1
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: v12: L2 = NewObject -, v11 layout=L2 fields=[0] allocationSite=6 allocationClass=1
+# CHECK-NEXT: v13: bigint = BigInt digits="10"
+# CHECK-NEXT: v14: bigint = BigInt digits="30"
+# CHECK-NEXT: v15: bigint = Pow v13, v14
+# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v2 overload=ArrayPrototypeLength/0 accessSite=7
+# CHECK-NEXT: v17: 8 = Integer integer=8
+# CHECK-NEXT: v18: number = Div v16, v17
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: v20: whole = Double number=-0
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: 2 = Integer integer=2
+# CHECK-NEXT: v23: number = Mul v18, v22
+# CHECK-NEXT: v24: -1 = Integer integer=-1
+# CHECK-NEXT: v25: 2147483648 = Integer integer=2147483648
+# CHECK-NEXT: v26: 9007199254740992 = Integer integer=9007199254740992
 # CHECK-NEXT: v27: whole = Double number=NaN
 # CHECK-NEXT: v28: whole = Double number=NaN
-# CHECK-NEXT: v29: whole = Double number=Infinity
-# CHECK-NEXT: v30: whole = Double number=-Infinity
-# CHECK-NEXT: v31: undefined = Undefined
-# CHECK-NEXT: v32: null = Null
-# CHECK-NEXT: v33: true = Boolean boolean=true
-# CHECK-NEXT: v34: false = Boolean
-# CHECK-NEXT: v35: "" = String string=""
-# CHECK-NEXT: v36: "a" = String string="a"
-# CHECK-NEXT: v37: "ab" = String string="ab"
+# CHECK-NEXT: v29: whole = Double number=NaN
+# CHECK-NEXT: v30: whole = Double number=Infinity
+# CHECK-NEXT: v31: whole = Double number=-Infinity
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: v33: null = Null
+# CHECK-NEXT: v34: true = Boolean boolean=true
+# CHECK-NEXT: v35: false = Boolean
+# CHECK-NEXT: v36: "" = String string=""
+# CHECK-NEXT: v37: "a" = String string="a"
 # CHECK-NEXT: v38: "ab" = String string="ab"
-# CHECK-NEXT: v39: anything = Call v6, -, v38 calleeName="flat" accessSite=8 callees=[f3]
-# CHECK-NEXT: v40: "abc" = String string="abc"
-# CHECK-NEXT: v41: "abd" = String string="abd"
+# CHECK-NEXT: v39: "ab" = String string="ab"
+# CHECK-NEXT: v40: anything = Call v7, -, v39 calleeName="flat" accessSite=8 callees=[f3]
+# CHECK-NEXT: v41: "abc" = String string="abc"
 # CHECK-NEXT: v42: "abd" = String string="abd"
-# CHECK-NEXT: v43: anything = Call v6, -, v42 calleeName="flat" accessSite=9 callees=[f3]
-# CHECK-NEXT: v44: "ab\u{100}" = String string="ab\u{100}"
+# CHECK-NEXT: v43: "abd" = String string="abd"
+# CHECK-NEXT: v44: anything = Call v7, -, v43 calleeName="flat" accessSite=9 callees=[f3]
 # CHECK-NEXT: v45: "ab\u{100}" = String string="ab\u{100}"
-# CHECK-NEXT: v46: anything = Call v6, -, v45 calleeName="flat" accessSite=10 callees=[f3]
-# CHECK-NEXT: v47: "\u{100}bc" = String string="\u{100}bc"
-# CHECK-NEXT: v48: "ab" = String string="ab"
-# CHECK-NEXT: v49: anything ~ undefined|null|string = Call v5, -, v48 calleeName="rope" accessSite=11 callees=[f2]
-# CHECK-NEXT: v50: "ab" = String string="ab"
-# CHECK-NEXT: v51: anything ~ undefined|null|string = Call v5, -, v50 calleeName="rope" accessSite=12 callees=[f2]
-# CHECK-NEXT: v52: "ab" = String string="ab"
-# CHECK-NEXT: v53: anything ~ undefined|null|string = Call v5, -, v52 calleeName="rope" accessSite=13 callees=[f2]
-# CHECK-NEXT: v54: anything = Call v6, -, v53 calleeName="flat" accessSite=14 callees=[f3]
-# CHECK-NEXT: v55: "ab-ab-4" = String string="ab-ab-4"
-# CHECK-NEXT: v56: "ab-ab-5" = String string="ab-ab-5"
-# CHECK-NEXT: v57: "\u{fc}" = String string="\u{fc}"
+# CHECK-NEXT: v46: "ab\u{100}" = String string="ab\u{100}"
+# CHECK-NEXT: v47: anything = Call v7, -, v46 calleeName="flat" accessSite=10 callees=[f3]
+# CHECK-NEXT: v48: "\u{100}bc" = String string="\u{100}bc"
+# CHECK-NEXT: v49: "ab" = String string="ab"
+# CHECK-NEXT: v50: anything ~ undefined|null|string = Call v6, -, v49 calleeName="rope" accessSite=11 callees=[f2]
+# CHECK-NEXT: v51: "ab" = String string="ab"
+# CHECK-NEXT: v52: anything ~ undefined|null|string = Call v6, -, v51 calleeName="rope" accessSite=12 callees=[f2]
+# CHECK-NEXT: v53: "ab" = String string="ab"
+# CHECK-NEXT: v54: anything ~ undefined|null|string = Call v6, -, v53 calleeName="rope" accessSite=13 callees=[f2]
+# CHECK-NEXT: v55: anything = Call v7, -, v54 calleeName="flat" accessSite=14 callees=[f3]
+# CHECK-NEXT: v56: "ab-ab-4" = String string="ab-ab-4"
+# CHECK-NEXT: v57: "ab-ab-5" = String string="ab-ab-5"
 # CHECK-NEXT: v58: "\u{fc}" = String string="\u{fc}"
-# CHECK-NEXT: v59: anything = Call v6, -, v58 calleeName="flat" accessSite=15 callees=[f3]
-# CHECK-NEXT: v60: "\u{1f600}" = String string="\u{1f600}"
-# CHECK-NEXT: v61: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa" = String string="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa"
-# CHECK-NEXT: v62: anything = Call v6, -, v61 calleeName="flat" accessSite=18 callees=[f3]
-# CHECK-NEXT: v63: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb" = String string="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb"
-# CHECK-NEXT: v64: anything = Call v6, -, v63 calleeName="flat" accessSite=21 callees=[f3]
-# CHECK-NEXT: v65: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa" = String string="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa"
-# CHECK-NEXT: v66: anything = Call v6, -, v65 calleeName="flat" accessSite=24 callees=[f3]
-# CHECK-NEXT: v67: "\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}" = String string="\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}"
-# CHECK-NEXT: v68: "a" = String string="a"
-# CHECK-NEXT: v69: string = Add v67, v68
-# CHECK-NEXT: v70: anything = Call v6, -, v69 calleeName="flat" accessSite=27 callees=[f3]
-# CHECK-NEXT: v71: "\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}" = String string="\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}"
-# CHECK-NEXT: v72: "b" = String string="b"
-# CHECK-NEXT: v73: string = Add v71, v72
-# CHECK-NEXT: v74: anything = Call v6, -, v73 calleeName="flat" accessSite=30 callees=[f3]
-# CHECK-NEXT: v75: "\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}" = String string="\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}"
-# CHECK-NEXT: v76: "a" = String string="a"
-# CHECK-NEXT: v77: string = Add v75, v76
-# CHECK-NEXT: v78: anything = Call v6, -, v77 calleeName="flat" accessSite=33 callees=[f3]
-# CHECK-NEXT: v79: symbol("s")@m0:27 = KeyConstant key=symbol("s")@m0:27
-# CHECK-NEXT: v80: symbol = Builtin builtin=SymbolIterator
-# CHECK-NEXT: v81: Array = NewArray contents=anything allocationSite=7
-# CHECK-NEXT: v82: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v81 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v83: bigint = BigInt digits="10"
-# CHECK-NEXT: v84: bigint = BigInt digits="30"
-# CHECK-NEXT: v85: bigint = Pow v83, v84
-# CHECK-NEXT: v86: bigint = BigInt digits="0"
-# CHECK-NEXT: v87: bigint = BigInt digits="1"
-# CHECK-NEXT: v88: f4 = NewClosure function=f4 allocationSite=8
-# CHECK-NEXT: v89: "ab" = String string="ab"
-# CHECK-NEXT: v90: String = CallBuiltin -, v89 overload=String/2 accessSite=35
-# CHECK-NEXT: v91: 1 = Integer integer=1
-# CHECK-NEXT: v92: Number = CallBuiltin -, v91 overload=Number/2 accessSite=36
-# CHECK-NEXT: v93: Array<undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String, Contiguous> = NewArray v18, v19, v20, v22, v17, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v39, v40, v41, v43, v44, v46, v47, v49, v51, v54, v55, v56, v57, v59, v60, v62, v64, v66, v70, v74, v78, v7, v79, v80, v9, v11, v82, v14, v85, v86, v87, v88, v90, v92 contents=undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v94: Array<undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v93 provenType=Array<undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v95: L3 = NewObject layout=L3 allocationSite=10 allocationClass=2
-# CHECK-NEXT: v96: L3 = FinishObject v95
-# CHECK-NEXT: v97: enumerator = ForInOpen v96
-# CHECK-NEXT: v98: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v98)
-# CHECK-NEXT: b1(v99: int[0, 8589934591]):
+# CHECK-NEXT: v59: "\u{fc}" = String string="\u{fc}"
+# CHECK-NEXT: v60: anything = Call v7, -, v59 calleeName="flat" accessSite=15 callees=[f3]
+# CHECK-NEXT: v61: "\u{1f600}" = String string="\u{1f600}"
+# CHECK-NEXT: v62: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa" = String string="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa"
+# CHECK-NEXT: v63: anything = Call v7, -, v62 calleeName="flat" accessSite=18 callees=[f3]
+# CHECK-NEXT: v64: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb" = String string="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb"
+# CHECK-NEXT: v65: anything = Call v7, -, v64 calleeName="flat" accessSite=21 callees=[f3]
+# CHECK-NEXT: v66: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa" = String string="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa"
+# CHECK-NEXT: v67: anything = Call v7, -, v66 calleeName="flat" accessSite=24 callees=[f3]
+# CHECK-NEXT: v68: "\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}" = String string="\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}"
+# CHECK-NEXT: v69: "a" = String string="a"
+# CHECK-NEXT: v70: string = Add v68, v69
+# CHECK-NEXT: v71: anything = Call v7, -, v70 calleeName="flat" accessSite=27 callees=[f3]
+# CHECK-NEXT: v72: "\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}" = String string="\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}"
+# CHECK-NEXT: v73: "b" = String string="b"
+# CHECK-NEXT: v74: string = Add v72, v73
+# CHECK-NEXT: v75: anything = Call v7, -, v74 calleeName="flat" accessSite=30 callees=[f3]
+# CHECK-NEXT: v76: "\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}" = String string="\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}\u{100}"
+# CHECK-NEXT: v77: "a" = String string="a"
+# CHECK-NEXT: v78: string = Add v76, v77
+# CHECK-NEXT: v79: anything = Call v7, -, v78 calleeName="flat" accessSite=33 callees=[f3]
+# CHECK-NEXT: v80: symbol("s")@m0:27 = KeyConstant key=symbol("s")@m0:27
+# CHECK-NEXT: v81: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v82: Array = NewArray contents=anything allocationSite=7
+# CHECK-NEXT: v83: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v82 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v84: bigint = BigInt digits="10"
+# CHECK-NEXT: v85: bigint = BigInt digits="30"
+# CHECK-NEXT: v86: bigint = Pow v84, v85
+# CHECK-NEXT: v87: bigint = BigInt digits="0"
+# CHECK-NEXT: v88: bigint = BigInt digits="1"
+# CHECK-NEXT: v89: f4 = NewClosure function=f4 allocationSite=8
+# CHECK-NEXT: v90: "ab" = String string="ab"
+# CHECK-NEXT: v91: String = CallBuiltin -, v90 overload=String/2 accessSite=35
+# CHECK-NEXT: v92: 1 = Integer integer=1
+# CHECK-NEXT: v93: Number = CallBuiltin -, v92 overload=Number/2 accessSite=36
+# CHECK-NEXT: v94: Array<undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String, Contiguous> = NewArray v19, v20, v21, v23, v18, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v40, v41, v42, v44, v45, v47, v48, v50, v52, v55, v56, v57, v58, v60, v61, v63, v65, v67, v71, v75, v79, v8, v80, v81, v10, v12, v83, v15, v86, v87, v88, v89, v91, v93 contents=undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v95: Array<undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v94 provenType=Array<undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v96: L3 = NewObject layout=L3 allocationSite=10 allocationClass=2
+# CHECK-NEXT: v97: L3 = FinishObject v96
+# CHECK-NEXT: v98: enumerator = ForInOpen v97
+# CHECK-NEXT: v99: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v99)
+# CHECK-NEXT: b1(v100: int[0, 8589934591]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v101: undefined = ForInStep v97, v96 position=v99
-# CHECK-NEXT: v102: int[0, 8589934590] = ResultAt v101 index=2
-# CHECK-NEXT: v103: 1 = Integer integer=1
-# CHECK-NEXT: v104: int[1, 8589934591] = Add v102, v103
-# CHECK-NEXT: v105: string = ResultAt v101 index=1
-# CHECK-NEXT: v106: anything = ElemGet v96, v105 accessSite=37 receivers=[L3]
-# CHECK-NEXT: v107: f12 = NewClosure v106 function=f12 allocationSite=11
-# CHECK-NEXT: v108: undefined = Undefined
-# CHECK-NEXT: v109: int[0, 4294967295] = CallBuiltin v94 overload=ArrayPrototypeLength/0 accessSite=46
-# CHECK-NEXT: v110: Array = NewArrayLike v109, v94
-# CHECK-NEXT: v111: 0 = Integer
-# CHECK-NEXT: Jump -> next b2(v111)
-# CHECK-NEXT: b2(v112: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: v102: undefined = ForInStep v98, v97 position=v100
+# CHECK-NEXT: v103: int[0, 8589934590] = ResultAt v102 index=2
+# CHECK-NEXT: v104: 1 = Integer integer=1
+# CHECK-NEXT: v105: int[1, 8589934591] = Add v103, v104
+# CHECK-NEXT: v106: string = ResultAt v102 index=1
+# CHECK-NEXT: v107: anything = ElemGet v97, v106 accessSite=37 receivers=[L3]
+# CHECK-NEXT: v108: f12 = NewClosure v107 function=f12 allocationSite=11
+# CHECK-NEXT: v109: undefined = Undefined
+# CHECK-NEXT: v110: int[0, 4294967295] = CallBuiltin v95 overload=ArrayPrototypeLength/0 accessSite=46
+# CHECK-NEXT: v111: Array = NewArrayLike v110, v95
+# CHECK-NEXT: v112: 0 = Integer
+# CHECK-NEXT: Jump -> next b2(v112)
+# CHECK-NEXT: b2(v113: int[0, 4294967295] ~ int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v114: boolean = Less v112, v109
-# CHECK-NEXT: Branch v114 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v115: int[0, 4294967294] ~ int[0, 2147483648]):
-# CHECK-NEXT: v116: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v115 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v117: undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String = GetArrayElement v94, v116 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
-# CHECK-NEXT: v118: anything ~ undefined|null|"0"|"1" = Call v107, v108, v117, v116, v94 accessSite=49
-# CHECK-NEXT: v119: int[1, 4294967295] ~ int[1, 2147483648] = Increment v116
-# CHECK-NEXT: Jump -> next b2(v119)
+# CHECK-NEXT: v115: boolean = Less v113, v110
+# CHECK-NEXT: Branch v115 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v116: int[0, 4294967294] ~ int[0, 2147483648]):
+# CHECK-NEXT: v117: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v116 castType=int[0, 9007199254740990]
+# CHECK-NEXT: v118: undefined|null|boolean|number|bigint|""|"a"|"ab"|"ab-ab-4"|"ab-ab-5"|"abc"|"abd"|"ab\u{100}"|"\u{fc}"|"\u{100}bc"|"\u{1f600}"|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String = GetArrayElement v95, v117 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
+# CHECK-NEXT: v119: anything ~ undefined|null|"0"|"1" = Call v108, v109, v118, v117, v95 accessSite=49
+# CHECK-NEXT: v120: int[1, 4294967295] ~ int[1, 2147483648] = Increment v117
+# CHECK-NEXT: Jump -> next b2(v120)
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v120: int[0, 4294967295] = CallBuiltin v94 overload=ArrayPrototypeLength/0 accessSite=46
-# CHECK-NEXT: v121: Array = NewArrayLike v120, v94
-# CHECK-NEXT: v122: 0 = Integer
-# CHECK-NEXT: v123: boolean = Less v122, v120
-# CHECK-NEXT: Branch v123 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v121: int[0, 4294967295] = CallBuiltin v95 overload=ArrayPrototypeLength/0 accessSite=46
+# CHECK-NEXT: v122: Array = NewArrayLike v121, v95
+# CHECK-NEXT: v123: 0 = Integer
+# CHECK-NEXT: v124: boolean = Less v123, v121
+# CHECK-NEXT: Branch v124 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v124: undefined = Undefined
-# CHECK-NEXT: v125: never = PropGet v124 key="call" accessSite=44 receivers=[]
+# CHECK-NEXT: v125: undefined = Undefined
+# CHECK-NEXT: v126: never = PropGet v125 key="call" accessSite=44 receivers=[]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6():
-# CHECK-NEXT: Jump -> next b1(v104)
+# CHECK-NEXT: Jump -> next b1(v105)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pick"
-# CHECK: module=m0 position=434 kind=Arrow length=1 thisType={type=anything} parameters=[{type=3}] results=[{type=undefined}] functionTypes=[f14] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
-# CHECK-LABEL: function {{*}}name="pick"
-# CHECK: module=m0 position=434 kind=Arrow length=1 thisType={type=anything} results=[{type=undefined}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1} {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: Return v1
+# CHECK: module=m0 position=434 kind=Arrow length=1 thisType={type=anything} parameters=[{type=3}] results=[{type=undefined}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: 3):
+# CHECK-NEXT: v1: Array<"x", proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: undefined|"x" = GetArrayElement v1, v0 arrayStorage=Contiguous level=Proven accessSite=42 [keyIsIntegral]
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType="x"
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }

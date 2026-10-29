@@ -136,11 +136,11 @@ function f1 name="Safe" module=m0 position=221 kind=BaseConstructor flags=[HasNe
   b0(v0: anything):
     Jump -> next b1() @221
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @215
-    v2 = NewObject v1 layout=L0 @215
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @215
-    v4 = CallDirect v3 function=f3 @215
-    Return v3 @215
+    v1 = GetConstructPrototype v0 layout=L0 @221
+    v2 = NewObject v1 layout=L0 @221
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @221
+    v4 = CallDirect v3 function=f3 @221
+    Return v3 @221
 }
 function f2 name="codeOf" module=m0 position=244 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
@@ -191,7 +191,7 @@ function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[Ha
 runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # -- generated: f0 Safe codeOf f3
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=511 module=m0}, {callee=f2 callPosition=431 module=m0}, {callee=f11 callPosition=438 isConstruction=true module=m0}, {callee=f11 callPosition=372 isConstruction=true module=m0}, {callee=f3 callPosition=215 parent=4 module=m0}, {callee=f3 callPosition=215 parent=3 module=m0}, {callee=f7 callPosition=244 parent=2 isTailCall=true module=m0}, {callee=f6 callPosition=244 parent=2 isTailCall=true module=m0}, {callee=f7 callPosition=244 parent=1 isTailCall=true module=m0}, {callee=f6 callPosition=244 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=511 module=m0}, {callee=f2 callPosition=431 module=m0}, {callee=f11 callPosition=438 isConstruction=true module=m0}, {callee=f11 callPosition=372 isConstruction=true module=m0}, {callee=f3 callPosition=221 parent=4 module=m0}, {callee=f3 callPosition=221 parent=3 module=m0}, {callee=f7 callPosition=244 parent=2 isTailCall=true module=m0}, {callee=f6 callPosition=244 parent=2 isTailCall=true module=m0}, {callee=f7 callPosition=244 parent=1 isTailCall=true module=m0}, {callee=f6 callPosition=244 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: classtoken = NewClassToken layout=L0
 # CHECK-NEXT: PutModuleVariable v0 variable=g1
@@ -266,33 +266,30 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: Return v45
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Safe"
-# CHECK: module=m0 position=221 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f3 callPosition=215 module=m0}] {
+# CHECK: module=m0 position=221 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f3 callPosition=221 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f1 = AssumeType v0 provenType=f1
 # CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: classtoken = GetModuleVariable variable=g1
-# CHECK-NEXT: v4: 42 = Integer integer=42
-# CHECK-NEXT: v5: L0 = NewObject -, v3, v4 layout=L0 fields=[0, 1] allocationSite=4 allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v3: 42 = Integer integer=42
+# CHECK-NEXT: v4: L0 = NewObject -, v3 layout=L0 fields=[1] allocationSite=4 allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v6: object = GetConstructPrototype v1 layout=L0
-# CHECK-NEXT: v7: L0 = NewObject v6 layout=L0 allocationSite=4 allocationClass=0
-# CHECK-NEXT: v8: undefined = CallDirect v7 function=f3 accessSite=18
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L0
+# CHECK-NEXT: v6: L0 = NewObject v5 layout=L0 allocationSite=4 allocationClass=0
+# CHECK-NEXT: v7: undefined = CallDirect v6 function=f3 accessSite=18
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="codeOf"
 # CHECK: module=m0 position=244 kind=Method role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int site=w4}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f6 fallback=f7}
 # CHECK-LABEL: function f3 module=
 # CHECK: m0 position=221 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: v1: classtoken = GetModuleVariable variable=g1
-# CHECK-NEXT: PutSlot v0, -, v1 key=#"#"@L0 receivers=[L0] level=Proven accessSite=20
-# CHECK-NEXT: v3: 42 = Integer integer=42
-# CHECK-NEXT: PutSlot v0, -, v3 key=#"#code"@L0 receivers=[L0] level=Proven accessSite=21
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v1: 42 = Integer integer=42
+# CHECK-NEXT: PutSlot v0, -, v1 key=#"#code"@L0 receivers=[L0] level=Proven accessSite=21
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="codeOf"
 # CHECK: module=m0 position=244 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w3}] results=[{type=int site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]}

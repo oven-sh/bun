@@ -31,6 +31,9 @@ fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
     interface::Compilation {
         starts_workers_from_unseen_code: !has_compiled_code_of_workers,
         names_of_worker_files: compilation.started_workers.names,
+        root_folders_spelled: compilation.started_workers.root_folders_spelled,
+        imports_file_with_query: compilation.started_workers.imports_file_with_query,
+        program_files: compilation.started_workers.program_files,
         engine: wrap_engine(compilation.engine),
         further_programs: further.into_iter().map(wrap_engine).collect(),
         summary: interface::compile::ProgramSummary {

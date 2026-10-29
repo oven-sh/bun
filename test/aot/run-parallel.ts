@@ -714,8 +714,9 @@ function unmetBounds(counted: Map<string, number>, bounds: Bound[], who: string)
     .filter(({ name, relation, bound }) => {
       // With AddressSanitizer the allocators have shorter free lists, so compiled code calls the run time for a new one more often.
       if (isASAN && name === "operations") return false;
-      // A function of the run time that nothing called has no line.
-      const value = counted.get(name) ?? (name.startsWith("operation:") ? 0 : undefined);
+      // A function of the run time that nothing called has no line. The same shorter free lists make a function that also refills one count more: those entries are not the ones asked about.
+      const refills = isASAN ? (counted.get(name.replace(/^operation:/, "refilled:")) ?? 0) : 0;
+      const value = counted.has(name) ? counted.get(name)! - refills : name.startsWith("operation:") ? 0 : undefined;
       return (
         value === undefined ||
         !(relation === "=" ? value === bound : relation === ">=" ? value >= bound : value <= bound)

@@ -860,7 +860,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f38 visibility=Private
 # CHECK-NEXT: v13: Array<Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray contents=Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=13 literalStorage=Profiled arrayStorage=Contiguous staticsOffset=16 [contentsAreProven]
 # CHECK-NEXT: v14: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v13 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v15: Map<undefined|null|string, number> @JSValue = AssumeType v4 provenType=object
-# CHECK-NEXT: v16: undefined @JSValue = CallDirect v14, v15 function=f41 [isNeverInlined]
+# CHECK-NEXT: v16: undefined @JSValue = CallDirect v14, v15 function=f42 [isNeverInlined]
 # CHECK-NEXT: Jump -> next b3(v12, v14)
 # CHECK-NEXT: b3(v17: string @Cell, v18: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
 # CHECK-NEXT: v19: 0 @OptionalDouble = Integer
@@ -883,7 +883,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f38 visibility=Private
 # CHECK-NEXT: v38: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v37 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v39: anything @JSValue = PropGet v1 key="counts" accessSite=38 receivers=[L3]
 # CHECK-NEXT: v40: object @JSValue = AssumeType v39 provenType=object
-# CHECK-NEXT: v41: undefined @JSValue = CallDirect v38, v40 function=f41 [isNeverInlined]
+# CHECK-NEXT: v41: undefined @JSValue = CallDirect v38, v40 function=f42 [isNeverInlined]
 # CHECK-NEXT: Jump -> next b3(v36, v38)
 # CHECK-NEXT: b6(v24: string @Cell):
 # CHECK-NEXT: v25: string @Cell = Add v17, v24 form=Strings

@@ -455,45 +455,46 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Throw v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Reader"
-# CHECK: module=m0 position=1202 role=ConstructBody flags=[HasExplicitName, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type="class"|"r"}] results=[{type=L2}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=1}]} creator=Version{provenVersion=f3} constructedClass=L2
+# CHECK: module=m0 position=1202 role=ConstructBody flags=[HasExplicitName, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type="class"|"r"}] results=[{type=L2}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=1}]} creator=Version{provenVersion=f3} constructedClass=L2 inlineFrames=[{}, {callee=f2 callPosition=4294967295 calleeIsPredicted=true module=m0}] {
+# CHECK-NEXT: b0(v0: "class"|"r"):
+# CHECK-NEXT: v1: L2 = NewObject layout=L2 allocationClass=2
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: L6 = NewObject -, v2 layout=L6 fields=[0] allocationSite=8 allocationClass=4
+# CHECK-NEXT: v4: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L0}, {kind=PrototypeLinkUnchanged layout=L1}, {kind=PrototypeLinkUnchanged layout=L2}, {kind=MemberPassedByStores layout=L2 key="_events"}]
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v5: guard):
+# CHECK-NEXT: PutSlot v1, v5, v3 key="_events" receivers=[L2] level=Expected accessSite=20
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: PropSet v1, v3 key="_events" accessSite=20 receivers=[L2]
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
-# CHECK: module=m0 position=2322 role=CalleeVersion flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f3|f14}, {type="class"|"r"}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameter=1073741824 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f7} inlineFrames=[{}, {callee=f14 callPosition=4294967295 isConstruction=true module=m0}, {callee=f38 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK: module=m0 position=2322 role=CalleeVersion flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f3|f14}, {type="class"|"r"}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameter=1073741824 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f7} {
 # CHECK-NEXT: b0(v0: f3|f14, v1: "class"|"r"):
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=f3
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b9()
-# CHECK-NEXT: b1() handler=b8():
-# CHECK-NEXT: v3: L2 = NewObject layout=L2 allocationClass=2
-# CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: v5: L6 = NewObject -, v4 layout=L6 fields=[0] allocationSite=8 allocationClass=4
-# CHECK-NEXT: v6: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L0}, {kind=PrototypeLinkUnchanged layout=L1}, {kind=PrototypeLinkUnchanged layout=L2}, {kind=MemberPassedByStores layout=L2 key="_events"}]
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v7: guard):
-# CHECK-NEXT: PutSlot v3, v7, v5 key="_events" receivers=[L2] level=Expected accessSite=20
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b3() frequency=Unlikely handler=b8():
-# CHECK-NEXT: PropSet v3, v5 key="_events" accessSite=20 receivers=[L2]
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v10: boolean = AreMembersUnchanged conditions=[{layout=L2 key="describe"}, {kind=PrototypeLinkUnchanged layout=L0}, {kind=PrototypeLinkUnchanged layout=L1}, {kind=PrototypeLinkUnchanged layout=L2}]
-# CHECK-NEXT: Branch v10 -> taken b5(), notTaken b6()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Jump -> next b7(v11)
-# CHECK-NEXT: b6() frequency=Unlikely handler=b8():
-# CHECK-NEXT: v12: anything = PropGet v3 key="describe" accessSite=27 receivers=[L2]
-# CHECK-NEXT: Jump -> next b7(v12)
-# CHECK-NEXT: b7(v13: anything ~ undefined) handler=b8():
-# CHECK-NEXT: v14: anything = Call v13, v3 calleeKey="describe" calleeName="describe" accessSite=28 callees=[]
-# CHECK-NEXT: v15: string = AssumeType v14 provenType=string
-# CHECK-NEXT: Return v15
-# CHECK-NEXT: b8() role=CatchHandler:
-# CHECK-NEXT: v16: anything = CatchValue
-# CHECK-NEXT: v17: anything = PropGet v16 key="constructor" accessSite=29
-# CHECK-NEXT: v18: anything = PropGet v17 key="name" accessSite=30
-# CHECK-NEXT: v19: ": " = String string=": "
-# CHECK-NEXT: v20: string = Add v18, v19
-# CHECK-NEXT: v21: string = Add v20, v1
-# CHECK-NEXT: Return v21
-# CHECK-NEXT: b9():
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1() handler=b4():
+# CHECK-NEXT: v3: L2 = CallDirect v1 function=f38 accessSite=26 [isConstruction]
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK-NEXT: b2(v4: f14) handler=b4():
+# CHECK-NEXT: v5: string = GetCapture v4 function=f14
+# CHECK-NEXT: v6: anything ~ object = CallDirect v5, v4, v4, v1 function=f14 accessSite=26 [isConstruction]
+# CHECK-NEXT: v7: L2 = AssumeType v6 provenType=L2
+# CHECK-NEXT: Jump -> next b3(v7)
+# CHECK-NEXT: b3(v8: L2) handler=b4():
+# CHECK-NEXT: v9: anything = PropGet v8 key="describe" accessSite=27 receivers=[L2]
+# CHECK-NEXT: v10: undefined = AssumeType v9 provenType=undefined
+# CHECK-NEXT: v11: never = Call v10, v8 calleeKey="describe" calleeName="describe" accessSite=28 callees=[]
 # CHECK-NEXT: Unreachable
+# CHECK-NEXT: b4() role=CatchHandler:
+# CHECK-NEXT: v12: anything = CatchValue
+# CHECK-NEXT: v13: anything = PropGet v12 key="constructor" accessSite=29
+# CHECK-NEXT: v14: anything = PropGet v13 key="name" accessSite=30
+# CHECK-NEXT: v15: ": " = String string=": "
+# CHECK-NEXT: v16: string = Add v14, v15
+# CHECK-NEXT: v17: string = Add v16, v1
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: }

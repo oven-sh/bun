@@ -280,7 +280,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f51 visibility=Private
 # CHECK-NEXT: v43: 2 = Integer integer=2
 # CHECK-NEXT: v44: boolean = StrictEq v42, v43
 # CHECK-NEXT: Branch v44 -> taken b4(), notTaken b5(| 0)
-# CHECK-NEXT: b4():
+# CHECK-NEXT: b4() frequency=Rare:
 # CHECK-NEXT: v45: anything = ResumeGenerator v38, v39
 # CHECK-NEXT: v46: object = AssumeType v45 provenType=object
 # CHECK-NEXT: v47: object ~ L(IteratorResult) = Upcast v46 castType=object
@@ -338,7 +338,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f51 visibility=Private
 # CHECK-NEXT: v5: 2 = Integer integer=2
 # CHECK-NEXT: v6: boolean = StrictEq v4, v5
 # CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2(| 0)
-# CHECK-NEXT: b1():
+# CHECK-NEXT: b1() frequency=Rare:
 # CHECK-NEXT: v7: anything = ResumeGenerator v0, v1
 # CHECK-NEXT: v8: object = AssumeType v7 provenType=object
 # CHECK-NEXT: v9: fact = Specified
@@ -349,7 +349,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f51 visibility=Private
 # CHECK-NEXT: v13: fact = Specified
 # CHECK-NEXT: v14: L(IteratorResult) = NewObject -, v3, v12 layout=L(IteratorResult) fields=[0, 1]
 # CHECK-NEXT: Jump -> next b3(v14)
-# CHECK-NEXT: b3(v15: object):
+# CHECK-NEXT: b3(v15: object ~ L(IteratorResult)):
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
@@ -360,7 +360,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f51 visibility=Private
 # CHECK-NEXT: v4: 2 = Integer integer=2
 # CHECK-NEXT: v5: boolean = StrictEq v3, v4
 # CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
+# CHECK-NEXT: b1() frequency=Rare:
 # CHECK-NEXT: v6: anything = ResumeGenerator v0, v1
 # CHECK-NEXT: v7: object = AssumeType v6 provenType=object
 # CHECK-NEXT: v8: 1 = Integer integer=1
@@ -382,7 +382,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f51 visibility=Private
 # CHECK-NEXT: v7: 2 = Integer integer=2
 # CHECK-NEXT: v8: boolean = StrictEq v6, v7
 # CHECK-NEXT: Branch v8 -> taken b1(), notTaken b2(| 0)
-# CHECK-NEXT: b1():
+# CHECK-NEXT: b1() frequency=Rare:
 # CHECK-NEXT: v9: anything = ResumeGenerator v3, v2
 # CHECK-NEXT: v10: object = AssumeType v9 provenType=object
 # CHECK-NEXT: v11: fact = Specified
@@ -393,6 +393,6 @@ runtimefunction id=GeneratorPrototypeThrow function=f51 visibility=Private
 # CHECK-NEXT: v15: fact = Specified
 # CHECK-NEXT: v16: L(IteratorResult) = NewObject -, v5, v14 layout=L(IteratorResult) fields=[0, 1]
 # CHECK-NEXT: Jump -> next b3(v16)
-# CHECK-NEXT: b3(v17: object):
+# CHECK-NEXT: b3(v17: object ~ L(IteratorResult)):
 # CHECK-NEXT: Return v17
 # CHECK-NEXT: }

@@ -397,7 +397,12 @@ impl FileLowering<'_, '_, '_, '_> {
                     | FieldFlags::IS_PRIVATE
                     | FieldFlags::IS_HIDDEN
                     | FieldFlags::IS_BRAND
-                    | FieldFlags::IS_IMMUTABLE,
+                    | FieldFlags::IS_IMMUTABLE
+                    | if class::brand_is_of_methods(hir, bound, class.class) {
+                        FieldFlags::IS_BRAND_OF_METHODS
+                    } else {
+                        FieldFlags::default()
+                    },
                 ..Field::default()
             });
         }

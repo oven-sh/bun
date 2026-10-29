@@ -271,7 +271,7 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # -- generated: f0 isClean shrinking
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 316, patchpoints: 55, rare instructions: 271, polls: 3
+# CHECK-NEXT: instructions: 313, patchpoints: 54, rare instructions: 256, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="isClean"
 # CHECK: role=Source
@@ -279,5 +279,5 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="shrinking"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 48, patchpoints: 10, polls: 1
+# CHECK-NEXT: instructions: 44, patchpoints: 8, polls: 1
 # CHECK-NEXT: end of function f5

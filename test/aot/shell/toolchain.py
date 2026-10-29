@@ -109,9 +109,8 @@ def front_end(source, out, flags=(), *, cwd=None, seconds=120, env=None, also=()
 
     Only the file counts, not the exit code: a Bun goes on to its own engine, which has host built-ins and rejects this program."""
     _remove_file(out)
-    command = [tool("FRONT_END"), "compile", source, *also, "--no-builtin-modules", "--aot-out=" + out, "--aot-threads=1", *flags, "--outfile", out + ".executable"]
+    command = [tool("FRONT_END"), "compile", source, *also, "--no-builtin-modules", "--aot-out=" + out, "--aot-threads=1", "--aot-testing=NoExecutable", *flags, "--outfile", out + ".executable"]
     code, said = run(command, cwd, seconds, env)
-    _remove_file(out + ".executable")
     if not os.path.isfile(out):
         raise ToolFailed(code, said)
 

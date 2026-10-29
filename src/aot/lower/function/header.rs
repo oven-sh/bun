@@ -3,6 +3,7 @@ use bun_sema::check::aot::FunctionRef;
 use bun_sema::file_analysis::has_live_await;
 use bun_sema::hir::{self, Flags, FnId, FnKind};
 
+use super::first_recorded_position::first_recorded_position;
 use crate::builtins::id::BuiltinClass;
 use crate::ir::generated::{
     Function, FunctionFlags, FunctionKind, FunctionSyntax, LimitId, SourceRange,
@@ -272,9 +273,12 @@ fn create_source_header(
     let kind = file.compute_function_kind(function);
     // JSC reports what has no position of its own in a constructor where the parameters start.
     let position = match kind {
-        FunctionKind::BaseConstructor | FunctionKind::DerivedConstructor => {
-            file.parameters_position(function)
-        }
+        FunctionKind::BaseConstructor => file
+            .bound
+            .function_class(function)
+            .and_then(|class| first_recorded_position(hir, class, function))
+            .unwrap_or_else(|| file.parameters_position(function)),
+        FunctionKind::DerivedConstructor => file.parameters_position(function),
         _ => func.start,
     };
     let mut header = create_header(file, key, kind, position);

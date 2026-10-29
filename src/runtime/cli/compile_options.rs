@@ -100,7 +100,11 @@ struct FlagGroup {
 }
 
 const RUN_FLAGS: FlagGroup = FlagGroup {
-    flags: &["--aot", "--aot-log-type-mismatches"],
+    flags: &[
+        "--aot",
+        "--aot-allow-code-from-disk",
+        "--aot-log-type-mismatches",
+    ],
     other_commands: "bun build",
     other_params: BUILD_ONLY_PARAMS,
 };
@@ -947,6 +951,7 @@ pub(crate) fn parse_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: 
         || args.flag(b"--aot")
         || args.flag(b"--debug-aot")
         || args.flag(b"--aot-log-type-mismatches")
+        || args.flag(b"--aot-allow-code-from-disk")
         || args.flag(b"--aot-huge-heap");
     if has_aot_flag {
         apply_runtime_flags(cmd, args, ctx);
@@ -980,14 +985,31 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
             b"--aot-huge-heap is only valid with bun build --compile --aot and bun compile",
         );
     }
+    let loads_code_from_disk = args.flag(b"--aot-allow-code-from-disk");
     if !(args.flag(b"--aot") || compiles) {
+        if loads_code_from_disk {
+            exit_with_message(b"--aot-allow-code-from-disk requires --aot");
+        }
         return;
+    }
+    if loads_code_from_disk && cfg!(bun_hardened) {
+        exit_with_error(
+            &OptionError::HardenedBunRunsOnlyCompiledCode,
+            RequestOrigin::BuildFlag,
+        );
     }
     check_runtime_conflicts(&ctx, compiles);
     if cmd == Tag::TestCommand && compiles {
         check_test_conflicts(&mut *ctx);
     }
+    let test_words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS
+        .get_not_empty()
+        .filter(|_| compiles && cmd == Tag::TestCommand);
+    let option_words = test_words
+        .into_iter()
+        .flat_map(|words| strings::split(words, b","));
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
+        option_words: option_words.map(Box::from).collect(),
         heap: if has_huge_heap {
             HeapSize::Huge
         } else {
@@ -997,6 +1019,9 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         runs_in_place: true,
         checks_only: !compiles,
         runs_tests: cmd == Tag::TestCommand,
+        // A test writes a module at run time and imports it, as under plain `bun test`.
+        loads_code_from_disk: loads_code_from_disk
+            || (cmd == Tag::TestCommand && compiles && !cfg!(bun_hardened)),
         ..Default::default()
     }));
 }
@@ -1005,16 +1030,16 @@ fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
     match (ctx.debug.hot_reload, compiles) {
         (HotReload::None, _) | (_, false) => {}
         (HotReload::Watch, true) if ctx.debug.watch_flag => exit_with_message(
-            b"--aot does not support --watch: the program is compiled once, before it starts",
+            b"--aot does not support --watch: the program is compiled once, before it starts. Watch without --aot, or run the command again after a change",
         ),
         (_, true) => exit_with_message(
-            b"--aot does not support --hot: the program is compiled once, before it starts",
+            b"--aot does not support --hot: the program is compiled once, before it starts. Use --hot without --aot, or run the command again after a change",
         ),
     }
     let has_debugger = !matches!(ctx.runtime_options.debugger, Debugger::Unspecified)
         || bun_core::env_var::BUN_INSPECT.get_not_empty().is_some();
     if compiles && has_debugger {
-        exit_with_message(b"--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled");
+        exit_with_message(b"--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled. Debug it without --aot");
     }
     if !ctx.runtime_options.eval.script.is_empty() || ctx.runtime_options.interactive {
         exit_with_message(
@@ -1032,7 +1057,9 @@ fn check_test_conflicts(ctx: Context<'_>) {
     let options = &mut ctx.test_options;
     isolate_reruns(options);
     if options.coverage.enabled {
-        bun_core::warn!("--coverage is ignored with --aot");
+        bun_core::warn!(
+            "--coverage is ignored with --aot: compiled code isn't counted. Run bun test --coverage without --aot for the report"
+        );
         options.coverage.enabled = false;
     }
 }

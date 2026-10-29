@@ -214,18 +214,18 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1() handler=b6():
 # CHECK-NEXT: v3: anything @JSValue = CallDirect function=f3 accessSite=3
-# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b2(v4: f4|f5 @Cell):
 # CHECK-NEXT: v5: boolean @Boolean = TypeTest v4 testedType=f4
-# CHECK-NEXT: TestAndBranch v5 -> taken b3(), notTaken b4()
+# CHECK-NEXT: TestAndBranch v5 -> taken b3(), notTaken b5()
 # CHECK-NEXT: b3() handler=b6():
 # CHECK-NEXT: v6: undefined @JSValue = CallDirect function=f4 accessSite=3
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4() frequency=Rare handler=b6():
-# CHECK-NEXT: v7: null @JSValue = CallDirect function=f5 accessSite=3
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b5() frequency=Rare handler=b6():
+# CHECK-NEXT: v7: null @JSValue = CallDirect function=f5 accessSite=3
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6() role=CatchHandler:
 # CHECK-NEXT: v8: anything @JSValue = CatchValue
 # CHECK-NEXT: v9: "throws " @JSValue = String string="throws "

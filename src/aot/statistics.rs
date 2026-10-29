@@ -257,7 +257,7 @@ fn process_info() -> (Duration, usize, usize) {
     )
 }
 
-fn logs_stages() -> bool {
+pub fn logs_stages() -> bool {
     bun_alloc::USE_MIMALLOC && bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
 }
 
@@ -294,7 +294,7 @@ impl StageClock {
             if logs_stages() {
                 // In the form of the engine's lines.
                 let (cpu, resident, peak) = process_info();
-                eprintln!(
+                bun_core::print_errorln!(
                     "AOT phase times: front end | {} | wall {:.6} ms | cpu {:.6} ms | resident {} MB | peak {} MB",
                     stage.name(),
                     wall.as_secs_f64() * 1000.0,

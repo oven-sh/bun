@@ -44,8 +44,12 @@ fn with_scanner(source: &str, check: impl FnOnce(&mut FileScanner<'_, '_>, &[Imp
         let files = program.input.files;
         let compiled = files.compiled(main);
         let compiled = compiled.expect("the loader compiles the entry point");
+        let mocked_paths = FxHashSet::default();
         let mut scanner = FileScanner {
             file: main,
+            files,
+            sources: program.input.sources,
+            mocked_paths: &mocked_paths,
             hir: files.hir(main),
             compiled,
             named_in_choices: &[],

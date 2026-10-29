@@ -507,9 +507,9 @@ function f5 name="Base" module=m0 position=245 kind=BaseConstructor flags=[HasNe
   b0(v0: anything, v1: number):
     Jump -> next b1() @245
   b1():
-    v2 = GetConstructPrototype v0 layout=L0 @195
-    v3 = NewObject v2 layout=L0 @195
-    v4 = Convert v3 declared={type=L0|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @195
+    v2 = GetConstructPrototype v0 layout=L0 @245
+    v3 = NewObject v2 layout=L0 @245
+    v4 = Convert v3 declared={type=L0|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @245
     v5 = CallDirect v4 function=f11 @245
     v6 = Convert v1 declared={type=number site=w69} @259
     PropSet v4, v6 key="v" @259
@@ -670,9 +670,9 @@ function f7 name="Alone" module=m0 position=1540 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: number):
     Jump -> next b1() @1540
   b1():
-    v2 = GetConstructPrototype v0 layout=L1 @1489
-    v3 = NewObject v2 layout=L1 @1489
-    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1489
+    v2 = GetConstructPrototype v0 layout=L1 @1540
+    v3 = NewObject v2 layout=L1 @1540
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1540
     v5 = CallDirect v4 function=f12 @1540
     v6 = Convert v1 declared={type=number site=w87} @1554
     PropSet v4, v6 key="v" @1554
@@ -996,83 +996,79 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v35: int[-4294967290, 4294967290] = Sub v28, v28
 # CHECK-NEXT: v36: int[-10737418224, 10737418231] = Add v31, v35
 # CHECK-NEXT: v37: 1 = Integer integer=1
-# CHECK-NEXT: v38: int[1, 30000] = Add v19, v37
-# CHECK-NEXT: v39: 1 = Integer integer=1
-# CHECK-NEXT: v40: int[0, 1] = BitAnd v38, v39
-# CHECK-NEXT: Switch v40 cases=[0] -> case b6(v10), otherwise b6(v11)
-# CHECK-NEXT: b6(v41: L1):
-# CHECK-NEXT: v42: i32 = GetSlot v41 key="w" receivers=[L1] level=Proven accessSite=69
-# CHECK-NEXT: v43: i32 = CallDirect v25, v19 function=f1 accessSite=70
-# CHECK-NEXT: v44: i32 = GetSlot v41 key="w" receivers=[L1] level=Proven accessSite=71
-# CHECK-NEXT: v45: int[-4294967296, 4294967294] = Add v42, v44
-# CHECK-NEXT: v46: int[-15032385520, 15032385525] = Add v36, v45
-# CHECK-NEXT: v47: i32 = GetSlot v25 key="w" receivers=[L1] level=Proven accessSite=69
-# CHECK-NEXT: v48: i32 = CallDirect v25, v19 function=f1 accessSite=70
-# CHECK-NEXT: v49: i32 = GetSlot v25 key="w" receivers=[L1] level=Proven accessSite=71
-# CHECK-NEXT: v50: int[-4294967296, 4294967294] = Add v47, v49
-# CHECK-NEXT: v51: int[-19327352816, 19327352819] = Add v46, v50
-# CHECK-NEXT: v52: 0 = Integer
-# CHECK-NEXT: v53: i32 = BitOr v51, v52
-# CHECK-NEXT: v54: 1023 = Integer integer=1023
-# CHECK-NEXT: v55: int[0, 1023] = BitAnd v19, v54
-# CHECK-NEXT: v56: 0 = Integer
-# CHECK-NEXT: v57: boolean = StrictEq v55, v56
-# CHECK-NEXT: Branch v57 -> taken b9(v53), notTaken b10(v53)
+# CHECK-NEXT: v38: int[0, 1] = BitAnd v33, v37
+# CHECK-NEXT: Switch v38 cases=[0] -> case b6(v10), otherwise b6(v11)
+# CHECK-NEXT: b6(v39: L1):
+# CHECK-NEXT: v40: i32 = GetSlot v39 key="w" receivers=[L1] level=Proven accessSite=69
+# CHECK-NEXT: v41: i32 = CallDirect v25, v19 function=f1 accessSite=70
+# CHECK-NEXT: v42: i32 = GetSlot v39 key="w" receivers=[L1] level=Proven accessSite=71
+# CHECK-NEXT: v43: int[-4294967296, 4294967294] = Add v40, v42
+# CHECK-NEXT: v44: int[-15032385520, 15032385525] = Add v36, v43
+# CHECK-NEXT: v45: i32 = GetSlot v25 key="w" receivers=[L1] level=Proven accessSite=69
+# CHECK-NEXT: v46: i32 = CallDirect v25, v19 function=f1 accessSite=70
+# CHECK-NEXT: v47: i32 = GetSlot v25 key="w" receivers=[L1] level=Proven accessSite=71
+# CHECK-NEXT: v48: int[-4294967296, 4294967294] = Add v45, v47
+# CHECK-NEXT: v49: int[-19327352816, 19327352819] = Add v44, v48
+# CHECK-NEXT: v50: 0 = Integer
+# CHECK-NEXT: v51: i32 = BitOr v49, v50
+# CHECK-NEXT: v52: 1023 = Integer integer=1023
+# CHECK-NEXT: v53: int[0, 1023] = BitAnd v19, v52
+# CHECK-NEXT: v54: 0 = Integer
+# CHECK-NEXT: v55: boolean = StrictEq v53, v54
+# CHECK-NEXT: Branch v55 -> taken b9(v51), notTaken b10(v51)
 # CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v58: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v22 key="w" accessSite=63 receivers=[L2]
-# CHECK-NEXT: v59: int ~ int[-2147483643, 2147483647] = AssumeType v58 provenType=int
-# CHECK-NEXT: v60: i32 = CallDirect v25, v19 function=f1 accessSite=64
-# CHECK-NEXT: v61: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v22 key="w" accessSite=65 receivers=[L2]
-# CHECK-NEXT: v62: int ~ int[-2147483643, 2147483647] = AssumeType v61 provenType=int
-# CHECK-NEXT: v63: int|whole ~ int[-4294967286, 4294967294] = Add v59, v62
-# CHECK-NEXT: v64: int|whole ~ int[-6442450934, 6442450941] = Add v14, v63
-# CHECK-NEXT: v65: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v22 key="w" accessSite=66 receivers=[L2]
-# CHECK-NEXT: v66: int ~ int[-2147483643, 2147483647] = AssumeType v65 provenType=int
-# CHECK-NEXT: v67: 1 = Integer integer=1
-# CHECK-NEXT: v68: int[1, 30000] = Add v19, v67
-# CHECK-NEXT: v69: i32 = CallDirect v25, v68 function=f1 accessSite=67
-# CHECK-NEXT: v70: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v22 key="w" accessSite=68 receivers=[L2]
-# CHECK-NEXT: v71: int ~ int[-2147483643, 2147483647] = AssumeType v70 provenType=int
-# CHECK-NEXT: v72: int|whole ~ int[-4294967290, 4294967290] = Sub v66, v71
-# CHECK-NEXT: v73: int|whole ~ int[-10737418224, 10737418231] = Add v64, v72
-# CHECK-NEXT: v74: 1 = Integer integer=1
-# CHECK-NEXT: v75: int[1, 30000] = Add v19, v74
-# CHECK-NEXT: v76: 1 = Integer integer=1
-# CHECK-NEXT: v77: int[0, 1] = BitAnd v75, v76
-# CHECK-NEXT: Switch v77 cases=[0] -> case b8(v10), otherwise b8(v11)
-# CHECK-NEXT: b8(v78: L1) frequency=Rare:
-# CHECK-NEXT: v79: i32 = GetSlot v78 key="w" receivers=[L1] level=Proven accessSite=69
-# CHECK-NEXT: v80: i32 = CallDirect v25, v19 function=f1 accessSite=70
-# CHECK-NEXT: v81: i32 = GetSlot v78 key="w" receivers=[L1] level=Proven accessSite=71
-# CHECK-NEXT: v82: int[-4294967296, 4294967294] = Add v79, v81
-# CHECK-NEXT: v83: int|whole ~ int[-15032385520, 15032385525] = Add v73, v82
-# CHECK-NEXT: v84: i32 = GetSlot v25 key="w" receivers=[L1] level=Proven accessSite=69
-# CHECK-NEXT: v85: i32 = CallDirect v25, v19 function=f1 accessSite=70
-# CHECK-NEXT: v86: i32 = GetSlot v25 key="w" receivers=[L1] level=Proven accessSite=71
-# CHECK-NEXT: v87: int[-4294967296, 4294967294] = Add v84, v86
-# CHECK-NEXT: v88: int|whole ~ int[-19327352816, 19327352819] = Add v83, v87
+# CHECK-NEXT: v56: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v22 key="w" accessSite=63 receivers=[L2]
+# CHECK-NEXT: v57: int ~ int[-2147483643, 2147483647] = AssumeType v56 provenType=int
+# CHECK-NEXT: v58: i32 = CallDirect v25, v19 function=f1 accessSite=64
+# CHECK-NEXT: v59: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v22 key="w" accessSite=65 receivers=[L2]
+# CHECK-NEXT: v60: int ~ int[-2147483643, 2147483647] = AssumeType v59 provenType=int
+# CHECK-NEXT: v61: int|whole ~ int[-4294967286, 4294967294] = Add v57, v60
+# CHECK-NEXT: v62: int|whole ~ int[-6442450934, 6442450941] = Add v14, v61
+# CHECK-NEXT: v63: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v22 key="w" accessSite=66 receivers=[L2]
+# CHECK-NEXT: v64: int ~ int[-2147483643, 2147483647] = AssumeType v63 provenType=int
+# CHECK-NEXT: v65: 1 = Integer integer=1
+# CHECK-NEXT: v66: int[1, 30000] = Add v19, v65
+# CHECK-NEXT: v67: i32 = CallDirect v25, v66 function=f1 accessSite=67
+# CHECK-NEXT: v68: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v22 key="w" accessSite=68 receivers=[L2]
+# CHECK-NEXT: v69: int ~ int[-2147483643, 2147483647] = AssumeType v68 provenType=int
+# CHECK-NEXT: v70: int|whole ~ int[-4294967290, 4294967290] = Sub v64, v69
+# CHECK-NEXT: v71: int|whole ~ int[-10737418224, 10737418231] = Add v62, v70
+# CHECK-NEXT: v72: 1 = Integer integer=1
+# CHECK-NEXT: v73: int[0, 1] = BitAnd v66, v72
+# CHECK-NEXT: Switch v73 cases=[0] -> case b8(v10), otherwise b8(v11)
+# CHECK-NEXT: b8(v74: L1) frequency=Rare:
+# CHECK-NEXT: v75: i32 = GetSlot v74 key="w" receivers=[L1] level=Proven accessSite=69
+# CHECK-NEXT: v76: i32 = CallDirect v25, v19 function=f1 accessSite=70
+# CHECK-NEXT: v77: i32 = GetSlot v74 key="w" receivers=[L1] level=Proven accessSite=71
+# CHECK-NEXT: v78: int[-4294967296, 4294967294] = Add v75, v77
+# CHECK-NEXT: v79: int|whole ~ int[-15032385520, 15032385525] = Add v71, v78
+# CHECK-NEXT: v80: i32 = GetSlot v25 key="w" receivers=[L1] level=Proven accessSite=69
+# CHECK-NEXT: v81: i32 = CallDirect v25, v19 function=f1 accessSite=70
+# CHECK-NEXT: v82: i32 = GetSlot v25 key="w" receivers=[L1] level=Proven accessSite=71
+# CHECK-NEXT: v83: int[-4294967296, 4294967294] = Add v80, v82
+# CHECK-NEXT: v84: int|whole ~ int[-19327352816, 19327352819] = Add v79, v83
+# CHECK-NEXT: v85: 0 = Integer
+# CHECK-NEXT: v86: i32 = BitOr v84, v85
+# CHECK-NEXT: v87: 1023 = Integer integer=1023
+# CHECK-NEXT: v88: int[0, 1023] = BitAnd v19, v87
 # CHECK-NEXT: v89: 0 = Integer
-# CHECK-NEXT: v90: i32 = BitOr v88, v89
-# CHECK-NEXT: v91: 1023 = Integer integer=1023
-# CHECK-NEXT: v92: int[0, 1023] = BitAnd v19, v91
-# CHECK-NEXT: v93: 0 = Integer
-# CHECK-NEXT: v94: boolean = StrictEq v92, v93
-# CHECK-NEXT: Branch v94 -> taken b9(v90), notTaken b10(v90)
-# CHECK-NEXT: b9(v95: i32):
-# CHECK-NEXT: v96: i32 = CallDirect v22, v19 function=f10 accessSite=12
-# CHECK-NEXT: v97: int[-4294967296, 4294967294] = Add v95, v96
-# CHECK-NEXT: v98: i32 = CallDirect v25, v19 function=f8 accessSite=14
-# CHECK-NEXT: v99: int[-6442450944, 6442450941] = Add v97, v98
-# CHECK-NEXT: v100: 0 = Integer
-# CHECK-NEXT: v101: i32 = BitOr v99, v100
-# CHECK-NEXT: Jump -> next b10(v101)
-# CHECK-NEXT: b10(v102: i32):
-# CHECK-NEXT: v103: int[1, 30000] = Increment v19
-# CHECK-NEXT: Jump -> next b1(v102, v103)
+# CHECK-NEXT: v90: boolean = StrictEq v88, v89
+# CHECK-NEXT: Branch v90 -> taken b9(v86), notTaken b10(v86)
+# CHECK-NEXT: b9(v91: i32):
+# CHECK-NEXT: v92: i32 = CallDirect v22, v19 function=f10 accessSite=12
+# CHECK-NEXT: v93: int[-4294967296, 4294967294] = Add v91, v92
+# CHECK-NEXT: v94: i32 = CallDirect v25, v19 function=f8 accessSite=14
+# CHECK-NEXT: v95: int[-6442450944, 6442450941] = Add v93, v94
+# CHECK-NEXT: v96: 0 = Integer
+# CHECK-NEXT: v97: i32 = BitOr v95, v96
+# CHECK-NEXT: Jump -> next b10(v97)
+# CHECK-NEXT: b10(v98: i32):
+# CHECK-NEXT: v99: int[1, 30000] = Increment v19
+# CHECK-NEXT: Jump -> next b1(v98, v99)
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v104: undefined = CallBuiltin -, v14 overload=ConsoleLog/0 accessSite=17
-# CHECK-NEXT: v105: undefined = Undefined
-# CHECK-NEXT: Return v105
+# CHECK-NEXT: v100: undefined = CallBuiltin -, v14 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: v101: undefined = Undefined
+# CHECK-NEXT: Return v101
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="stepOf"
 # CHECK: module=m0 position=2141 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|L1 site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=int site=w1}] results=[{type=i32 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

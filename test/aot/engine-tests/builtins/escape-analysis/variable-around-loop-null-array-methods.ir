@@ -305,4 +305,4 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f43
 # CHECK-LABEL: function {{*}}name="showList"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 125, patchpoints: 8, rare instructions: 23, polls: 1
-# CHECK-NEXT: end of function f55
+# CHECK-NEXT: end of function f56

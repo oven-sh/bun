@@ -33,6 +33,13 @@ struct Dictionary {
 
 impl FileLowering<'_, '_, '_, '_> {
     // The types are asked in the order in which a literal finds its layout: the type it is written under, then its own.
+    fn is_keyed_by_symbols_alone(&mut self, dictionary: CheckerTypeId) -> bool {
+        matches!(
+            self.queries.index_signatures(dictionary),
+            Ok(signatures) if signatures.iter().all(|signature| matches!(signature.key, IndexKey::Symbol))
+        )
+    }
+
     fn find_dictionary(&mut self, literal: ExprId) -> Option<Dictionary> {
         if let ExprKind::Object(properties) = self.hir[literal].kind
             && properties.iter().next().is_none()
@@ -556,6 +563,11 @@ pub(crate) fn lower_object_literal(
             let mut object = lowering.begin_object(layout);
             lowering.open_head(&mut object);
             object
+        }
+        // `{ [symbol]: value }`: few objects hold many symbols, and flow may know which one this is.
+        Some(found) if lowering.file.is_keyed_by_symbols_alone(found.ty) => {
+            let layout = lowering.file.literal_layout(literal);
+            lowering.begin_object(layout)
         }
         Some(_) => lowering.begin_dictionary(),
         None if is_prototype_object => lowering.begin_dictionary(),

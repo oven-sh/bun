@@ -315,19 +315,19 @@ function f2 name="Base" module=m0 position=1003 kind=BaseConstructor flags=[HasN
   b0(v0: anything):
     Jump -> next b1() @1003
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @997
-    v2 = NewObject v1 layout=L0 @997
-    v3 = Convert v2 declared={type=L0|L2|L3|L4|L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @997
-    v4 = CallDirect v3 function=f10 @997
-    Return v3 @997
+    v1 = GetConstructPrototype v0 layout=L0 @1003
+    v2 = NewObject v1 layout=L0 @1003
+    v3 = Convert v2 declared={type=L0|L2|L3|L4|L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1003
+    v4 = CallDirect v3 function=f10 @1003
+    Return v3 @1003
 }
 function f3 name="WithArrow" module=m0 position=1735 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
   b0(v0: anything, v1: number):
     Jump -> next b1() @1735
   b1():
-    v2 = GetConstructPrototype v0 layout=L1 @1670
-    v3 = NewObject v2 layout=L1 @1670
-    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1670
+    v2 = GetConstructPrototype v0 layout=L1 @1735
+    v3 = NewObject v2 layout=L1 @1735
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1735
     v5 = CallDirect v4 function=f11 @1735
     v6 = Convert v1 declared={type=number site=w37} @1753
     PropSet v4, v6 key="n" @1753
@@ -489,9 +489,9 @@ function f8 name="WithComputed" module=m0 position=1858 kind=BaseConstructor fla
   b0(v0: anything, v1: number):
     Jump -> next b1() @1858
   b1():
-    v2 = GetConstructPrototype v0 layout=L5 @1798
-    v3 = NewObject v2 layout=L5 @1798
-    v4 = Convert v3 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1798
+    v2 = GetConstructPrototype v0 layout=L5 @1858
+    v3 = NewObject v2 layout=L5 @1858
+    v4 = Convert v3 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1858
     v5 = CallDirect v4 function=f15 @1858
     v6 = Convert v1 declared={type=number site=w41} @1876
     PropSet v4, v6 key="n" @1876
@@ -667,50 +667,83 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 makeWithCounter Base Alone WithList WithCounter
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f36 callPosition=2375 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f17 callPosition=2342 module=m0}, {callee=f29 callPosition=2293 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f7 callPosition=2264 module=m0}, {callee=f33 callPosition=2209 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f38 callPosition=2121 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f31 callPosition=2011 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f30 callPosition=1976 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f12 callPosition=1101 parent=8 module=m0}, {callee=f27 callPosition=1101 parent=8 isConstruction=true module=m0}, {callee=f13 callPosition=1229 parent=7 module=m0}, {callee=f27 callPosition=1229 parent=7 isConstruction=true module=m0}, {callee=f16 callPosition=1425 parent=6 module=m0}, {callee=f27 callPosition=1425 parent=6 isConstruction=true module=m0}, {callee=f14 callPosition=1599 parent=5 module=m0}, {callee=f27 callPosition=1599 parent=5 isConstruction=true module=m0}, {callee=f11 callPosition=1735 parent=3 module=m0}, {callee=f15 callPosition=1858 parent=1 module=m0}, {callee=f10 callPosition=997 parent=16 module=m0}, {callee=f10 callPosition=997 parent=14 module=m0}, {callee=f10 callPosition=997 parent=12 module=m0}, {callee=f10 callPosition=997 parent=10 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f36 callPosition=2375 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f17 callPosition=2342 module=m0}, {callee=f29 callPosition=2293 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f7 callPosition=2264 module=m0}, {callee=f33 callPosition=2209 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f38 callPosition=2121 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f31 callPosition=2011 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f30 callPosition=1976 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f12 callPosition=1101 parent=8 module=m0}, {callee=f27 callPosition=1101 parent=8 isConstruction=true module=m0}, {callee=f13 callPosition=1229 parent=7 module=m0}, {callee=f27 callPosition=1229 parent=7 isConstruction=true module=m0}, {callee=f16 callPosition=1425 parent=6 module=m0}, {callee=f27 callPosition=1425 parent=6 isConstruction=true module=m0}, {callee=f14 callPosition=1599 parent=5 module=m0}, {callee=f27 callPosition=1599 parent=5 isConstruction=true module=m0}, {callee=f11 callPosition=1735 parent=3 module=m0}, {callee=f15 callPosition=1858 parent=1 module=m0}, {callee=f10 callPosition=1003 parent=16 module=m0}, {callee=f10 callPosition=1003 parent=14 module=m0}, {callee=f10 callPosition=1003 parent=12 module=m0}, {callee=f10 callPosition=1003 parent=10 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f9 = CallDirect function=f1 accessSite=0
 # CHECK-NEXT: v1: classtoken = NewClassToken layout=L4
 # CHECK-NEXT: PutModuleVariable v1 variable=g6
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v3, v4)
-# CHECK-NEXT: b1(v5: int|whole, v6: int[0, 100]):
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: Array<int[0, 15], Int32> = NewArray v4 contents=int[0, 15] allocationSite=14 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v7: Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v7 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v10: int[0, 4294967295] = Add v4, v9
+# CHECK-NEXT: v11: int[0, 4294967295] = Add v5, v10
+# CHECK-NEXT: v12: fact = Entered function=f16
+# CHECK-NEXT: v13: int[0, 9007199254740992] ~ int[0, 2147483647] = GetModuleVariable fact=v12 variable=g9
+# CHECK-NEXT: v14: int[0, 9007199254740992] ~ int[0, 2147483647] = ToNumeric v13
+# CHECK-NEXT: v15: boolean ~ true = TypeTest v14 testedType=i32
+# CHECK-NEXT: Branch v15 -> taken b1(| 0), notTaken b2(v3, v4, v11, v14 | 0)
+# CHECK-NEXT: b1(v16: int[0, 2147483647]):
+# CHECK-NEXT: v17: int[1, 2147483648] = Increment v16
+# CHECK-NEXT: PutModuleVariable v17 variable=g9
+# CHECK-NEXT: v19: int[0, 2147483647] = Add v4, v16
+# CHECK-NEXT: v20: int[0, 6442450942] = Add v11, v19
+# CHECK-NEXT: Jump -> next b3(v20, v3, v4, v17)
+# CHECK-NEXT: b2(v21: int[0, 99], v22: int[0, 15], v23: int|whole, v24: int[0, 9007199254740992] ~ int[0, 2147483647], v25: int[2147483648, 9007199254740992]) frequency=Rare:
+# CHECK-NEXT: v26: int|whole = Increment v25
+# CHECK-NEXT: v27: int[1, 9007199254740992] = AssumeType v26 provenType=int[1, 9007199254740992]
+# CHECK-NEXT: PutModuleVariable v27 variable=g9
+# CHECK-NEXT: v29: int|whole ~ int[0, 2147483662] = Add v22, v24
+# CHECK-NEXT: v30: int|whole = Add v23, v29
+# CHECK-NEXT: Jump -> next b3(v30, v21, v22, v27)
+# CHECK-NEXT: b3(v31: int|whole ~ int[0, 6442450942], v32: int[0, 99] ~ 0, v33: int[0, 15] ~ 0, v34: int[1, 9007199254740992] ~ int[1, 2147483647]):
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: int[1, 16] ~ 1 = Add v33, v35
+# CHECK-NEXT: v37: int|whole ~ int[1, 6442450943] = Add v31, v36
+# CHECK-NEXT: v38: int[0, 30] ~ 0 = Add v33, v33
+# CHECK-NEXT: v39: int|whole ~ int[1, 6442450943] = Add v37, v38
+# CHECK-NEXT: v40: int|whole ~ int[2, 6442450944] = Add v39, v36
+# CHECK-NEXT: v41: int[1, 100] ~ 1 = Increment v32
+# CHECK-NEXT: v42: int[1, 9007199254740992] ~ int[1, 2147483647] = Upcast v34 castType=int[0, 9007199254740992]
+# CHECK-NEXT: Jump -> next b4(v40, v41, v42)
+# CHECK-NEXT: b4(v43: int|whole, v44: int[1, 100], v45: int[1, 9007199254740992] ~ int[1, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: 100 = Integer integer=100
-# CHECK-NEXT: v9: boolean = Less v6, v8
-# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v10: int[0, 99]):
-# CHECK-NEXT: v11: 15 = Integer integer=15
-# CHECK-NEXT: v12: int[0, 15] = BitAnd v10, v11
-# CHECK-NEXT: v13: int|whole = Add v5, v12
-# CHECK-NEXT: v14: Array<int[0, 15], Int32> = NewArray v12 contents=int[0, 15] allocationSite=14 arrayStorage=Int32 [contentsAreProven]
-# CHECK-NEXT: v15: Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v16: 1 = Integer integer=1
-# CHECK-NEXT: v17: int[0, 4294967295] = CallBuiltin v15 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v18: int[0, 4294967310] = Add v12, v17
-# CHECK-NEXT: v19: int|whole = Add v13, v18
-# CHECK-NEXT: v20: fact = Entered function=f16
-# CHECK-NEXT: v21: int|whole = GetModuleVariable fact=v20 variable=g9
-# CHECK-NEXT: v22: int|whole = ToNumeric v21
-# CHECK-NEXT: v23: int|whole = Increment v22
-# CHECK-NEXT: PutModuleVariable v23 variable=g9
-# CHECK-NEXT: v25: int|whole = Add v12, v22
-# CHECK-NEXT: v26: int|whole = Add v19, v25
-# CHECK-NEXT: v27: 1 = Integer integer=1
-# CHECK-NEXT: v28: int[1, 16] = Add v12, v27
-# CHECK-NEXT: v29: int|whole = Add v26, v28
-# CHECK-NEXT: v30: int[0, 30] = Add v12, v12
-# CHECK-NEXT: v31: int|whole = Add v29, v30
-# CHECK-NEXT: v32: 1 = Integer integer=1
-# CHECK-NEXT: v33: int[1, 16] = Add v12, v32
-# CHECK-NEXT: v34: int|whole = Add v31, v33
-# CHECK-NEXT: v35: int[1, 100] = Increment v10
-# CHECK-NEXT: Jump -> next b1(v34, v35)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v36: undefined = CallBuiltin -, v5 overload=ConsoleLog/0 accessSite=27
-# CHECK-NEXT: v37: undefined = Undefined
-# CHECK-NEXT: Return v37
+# CHECK-NEXT: v47: 100 = Integer integer=100
+# CHECK-NEXT: v48: boolean = Less v44, v47
+# CHECK-NEXT: Branch v48 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v49: int[1, 99]):
+# CHECK-NEXT: v50: 15 = Integer integer=15
+# CHECK-NEXT: v51: int[0, 15] = BitAnd v49, v50
+# CHECK-NEXT: v52: int|whole = Add v43, v51
+# CHECK-NEXT: v53: Array<int[0, 15], Int32> = NewArray v51 contents=int[0, 15] allocationSite=14 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v54: Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v53 provenType=Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v55: 1 = Integer integer=1
+# CHECK-NEXT: v56: int[0, 4294967295] = CallBuiltin v54 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v57: int[0, 4294967310] = Add v51, v56
+# CHECK-NEXT: v58: int|whole = Add v52, v57
+# CHECK-NEXT: v59: int[1, 9007199254740992] ~ int[1, 2147483647] = ToNumeric v45
+# CHECK-NEXT: v60: boolean ~ true = TypeTest v59 testedType=i32
+# CHECK-NEXT: Branch v60 -> taken b6(| 0), notTaken b2(v49, v51, v58, v59 | 0)
+# CHECK-NEXT: b6(v61: int[1, 2147483647]):
+# CHECK-NEXT: v62: int[2, 2147483648] = Increment v61
+# CHECK-NEXT: PutModuleVariable v62 variable=g9
+# CHECK-NEXT: v64: int[1, 2147483662] = Add v51, v61
+# CHECK-NEXT: v65: int|whole = Add v58, v64
+# CHECK-NEXT: v66: 1 = Integer integer=1
+# CHECK-NEXT: v67: int[1, 16] = Add v51, v66
+# CHECK-NEXT: v68: int|whole = Add v65, v67
+# CHECK-NEXT: v69: int[0, 30] = Add v51, v51
+# CHECK-NEXT: v70: int|whole = Add v68, v69
+# CHECK-NEXT: v71: int|whole = Add v70, v67
+# CHECK-NEXT: v72: int[2, 100] = Increment v49
+# CHECK-NEXT: Jump -> next b4(v71, v72, v62)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v73: undefined = CallBuiltin -, v43 overload=ConsoleLog/0 accessSite=27
+# CHECK-NEXT: v74: undefined = Undefined
+# CHECK-NEXT: Return v74
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeWithCounter"
 # CHECK: module=m0 position=1260 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=f9 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -726,7 +759,7 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Base"
-# CHECK: module=m0 position=1003 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L2|L3|L4|L7 flags=[IsFromCompiler]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f10 callPosition=997 module=m0}] {
+# CHECK: module=m0 position=1003 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L2|L3|L4|L7 flags=[IsFromCompiler]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f10 callPosition=1003 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f4|f5|f6|f9 = AssumeType v0 provenType=f4|f5|f6|f9
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
@@ -735,7 +768,7 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Alone"
-# CHECK: module=m0 position=1083 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 15] site=w6}] results=[{type=L2 flags=[IsFromCompiler]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 inlineFrames=[{}, {callee=f12 callPosition=1101 module=m0}, {callee=f2 callPosition=1101 isConstruction=true module=m0}, {callee=f10 callPosition=997 parent=2 module=m0}] {
+# CHECK: module=m0 position=1083 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 15] site=w6}] results=[{type=L2 flags=[IsFromCompiler]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 inlineFrames=[{}, {callee=f12 callPosition=1101 module=m0}, {callee=f2 callPosition=1101 isConstruction=true module=m0}, {callee=f10 callPosition=1003 parent=2 module=m0}] {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: int[0, 15]):
 # CHECK-NEXT: v3: f4 = AssumeType v1 provenType=f4
 # CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L0
@@ -749,7 +782,7 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="WithList"
-# CHECK: module=m0 position=1211 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 15] site=w8}] results=[{type=L3 flags=[IsFromCompiler]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 inlineFrames=[{}, {callee=f13 callPosition=1229 module=m0}, {callee=f2 callPosition=1229 isConstruction=true module=m0}, {callee=f10 callPosition=997 parent=2 module=m0}] {
+# CHECK: module=m0 position=1211 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 15] site=w8}] results=[{type=L3 flags=[IsFromCompiler]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 inlineFrames=[{}, {callee=f13 callPosition=1229 module=m0}, {callee=f2 callPosition=1229 isConstruction=true module=m0}, {callee=f10 callPosition=1003 parent=2 module=m0}] {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: int[0, 15]):
 # CHECK-NEXT: v3: f5 = AssumeType v1 provenType=f5
 # CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L0
@@ -766,7 +799,7 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="WithCounter"
-# CHECK: module=m0 position=1405 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 15] site=w36}] results=[{type=L7 flags=[IsFromCompiler]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 inlineFrames=[{}, {callee=f16 callPosition=1425 module=m0}, {callee=f2 callPosition=1425 isConstruction=true module=m0}, {callee=f10 callPosition=997 parent=2 module=m0}] {
+# CHECK: module=m0 position=1405 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 15] site=w36}] results=[{type=L7 flags=[IsFromCompiler]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 inlineFrames=[{}, {callee=f16 callPosition=1425 module=m0}, {callee=f2 callPosition=1425 isConstruction=true module=m0}, {callee=f10 callPosition=1003 parent=2 module=m0}] {
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: int[0, 15]):
 # CHECK-NEXT: v3: f9 = AssumeType v1 provenType=f9
 # CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L0
@@ -775,13 +808,29 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: L2|L3|L4|L7 ~ L7 = Upcast v6 castType=object
 # CHECK-NEXT: v8: L7 = AssumeType v7 provenType=L7
 # CHECK-NEXT: v9: fact = Entered function=f16
-# CHECK-NEXT: v10: int|whole = GetModuleVariable fact=v9 variable=g9
-# CHECK-NEXT: v11: int|whole = ToNumeric v10
-# CHECK-NEXT: v12: int|whole = Increment v11
-# CHECK-NEXT: PutModuleVariable v12 variable=g9
-# CHECK-NEXT: PutSlot v8, -, v11 key="order" receivers=[L7] level=Proven accessSite=58
-# CHECK-NEXT: v15: 0 = Integer
-# CHECK-NEXT: PutSlot v8, -, v15 key="n" receivers=[L7] level=Proven accessSite=59
+# CHECK-NEXT: v10: int[0, 9007199254740992] ~ int[0, 2147483647] = GetModuleVariable fact=v9 variable=g9
+# CHECK-NEXT: v11: int[0, 9007199254740992] ~ int[0, 2147483647] = ToNumeric v10
+# CHECK-NEXT: v12: boolean ~ true = TypeTest v11 testedType=i32
+# CHECK-NEXT: Branch v12 -> taken b1(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b1(v13: int[0, 2147483647]):
+# CHECK-NEXT: v14: int[1, 2147483648] = Increment v13
+# CHECK-NEXT: PutModuleVariable v14 variable=g9
+# CHECK-NEXT: v16: boolean = HasNoFieldOutsideSlot v8
+# CHECK-NEXT: Branch v16 -> taken b2(| 0), notTaken b4()
+# CHECK-NEXT: b2(v17: guard):
+# CHECK-NEXT: PutSlot v8, v17, v13 key="order" receivers=[L7] level=Expected accessSite=58
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b3(v19: int[2147483648, 9007199254740992]) frequency=Rare:
+# CHECK-NEXT: v20: int|whole = Increment v19
+# CHECK-NEXT: v21: int[1, 9007199254740992] = AssumeType v20 provenType=int[1, 9007199254740992]
+# CHECK-NEXT: PutModuleVariable v21 variable=g9
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: PropDefine v8, v11 key="order" accessSite=58 receivers=[L7]
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v24: 0 = Integer
+# CHECK-NEXT: PutSlot v8, -, v24 key="n" receivers=[L7] level=Proven accessSite=59
 # CHECK-NEXT: PutSlot v8, -, v2 key="n" receivers=[L7] level=Proven accessSite=45
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }

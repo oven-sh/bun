@@ -564,16 +564,15 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: module=m0 position=205 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w4}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} {
 # CHECK-NEXT: b0(v0: number):
-# CHECK-NEXT: v1: string = TypeOf v0
-# CHECK-NEXT: v2: " " = String string=" "
-# CHECK-NEXT: v3: string = CallBuiltin -, v0 overload=String/0 accessSite=31
-# CHECK-NEXT: v4: " " = String string=" "
-# CHECK-NEXT: v5: string = Strcat v1, v2, v3, v4
+# CHECK-NEXT: v1: "number " = String string="number "
+# CHECK-NEXT: v2: string = CallBuiltin -, v0 overload=String/0 accessSite=31
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Strcat v1, v2, v3
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
-# CHECK-NEXT: v7: whole = Double number=-0
-# CHECK-NEXT: v8: boolean = CallBuiltin -, v0, v7 overload=ObjectIs/0 accessSite=32
-# CHECK-NEXT: v9: string = Add v5, v8
-# CHECK-NEXT: Return v9
+# CHECK-NEXT: v6: whole = Double number=-0
+# CHECK-NEXT: v7: boolean = CallBuiltin -, v0, v6 overload=ObjectIs/0 accessSite=32
+# CHECK-NEXT: v8: string = Add v4, v7
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m0 position=327 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w7}] results=[{type=number site=w8}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f2 callPosition=395 module=m0}, {callee=f1 callPosition=377 module=m0}, {callee=f18 callPosition=78 parent=2 isTailCall=true module=m0}, {callee=f19 callPosition=142 parent=1 isTailCall=true module=m0}] {

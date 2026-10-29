@@ -20,6 +20,8 @@ const greet = {
 async function runTests(directory: string, ...flags: string[]) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, bunEnv);
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
+  // A crash prints only there, and the comparison below would hide it.
+  if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   return { stdout, results, exitCode };
 }
 
@@ -90,6 +92,36 @@ test("mock.module replaces the names of a node: module and of a CommonJS file", 
         mock.module("node:os", () => ({ hostname: () => "mocked" }));
         mock.module("./legacy.cjs", () => ({ version: () => "mocked" }));
         show();
+      });`,
+  });
+});
+
+test("a mock may give a name that the ES module does not export", async () => {
+  await expectCompiledToRunAsPlain(
+    {
+      "m.ts": `export const a: number = 1;\nexport function f(): number { return 1; }`,
+      "preload.ts": `
+      import { mock } from "bun:test";
+      mock.module("./m", () => ({ a: 2, f: () => 2, extra: 3 }));`,
+      "one.test.ts": `
+      import { test } from "bun:test";
+      import { a, f } from "./m";
+      test("mocked", () => console.log(a, f()));`,
+    },
+    "--preload",
+    "./preload.ts",
+  );
+});
+
+test("a node: module that is mocked before it is loaded answers import() with the mock's names", async () => {
+  await expectCompiledToRunAsPlain({
+    "one.test.ts": `
+      import { mock, test } from "bun:test";
+      const mine = (): string => "mocked";
+      mock.module("node:os", () => ({ platform: mine }));
+      test("mocked", async () => {
+        const loaded = (await import("node:os")) as unknown as { platform: unknown };
+        console.log(loaded.platform === mine);
       });`,
   });
 });
@@ -240,6 +272,130 @@ describe("a module that Bun answers with a built-in of its own", () => {
       "./preload.ts",
     );
   });
+});
+
+test("a mock answers for a package and a file that exist nowhere", async () => {
+  await expectCompiledToRunAsPlain(
+    {
+      "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`,
+      "preload.ts": `
+        import { mock } from "bun:test";
+        mock.module("not-installed-a", () => ({ value: "from the preload" }));`,
+      "folder/user.ts": `
+        // @ts-ignore
+        import { value } from "not-installed-a";
+        export const show = () => console.log(value);`,
+      "one.test.ts": `
+        import { mock, test } from "bun:test";
+        import { show } from "./folder/user";
+        test("static", show);
+        test("import()", async () => {
+          mock.module("not-installed-b", () => ({ value: 1 }));
+          // @ts-ignore
+          console.log((await import("not-installed-b")).value);
+        });
+        test("require", () => {
+          mock.module("not-installed-c", () => ({ value: 2 }));
+          // @ts-ignore
+          console.log(require("not-installed-c").value);
+        });
+        test("a file", async () => {
+          mock.module("./not-there", () => ({ value: 3 }));
+          // @ts-ignore
+          console.log((await import("./not-there")).value);
+        });`,
+    },
+    "--preload",
+    "./preload.ts",
+  );
+});
+
+test("a CommonJS file and a library module that only a mocked module imports never run", async () => {
+  await expectCompiledToRunAsPlain(
+    {
+      "dep.cjs": `console.log("dep.cjs runs");\nexports.dep = "dep";`,
+      "nested.cjs": `console.log("nested.cjs runs");\nexports.nested = "nested";`,
+      "shared.cjs": `console.log("shared.cjs runs");\nexports.shared = "shared";`,
+      "inner.ts": `import { nested } from "./nested.cjs";\nconsole.log("inner.ts runs");\nexport const inner = nested;`,
+      "data.json": `{ "value": 1 }`,
+      "real.ts": `
+        import { dep, absent } from "./dep.cjs";
+        import { inner } from "./inner";
+        import { shared } from "./shared.cjs";
+        import data from "./data.json";
+        import { EventEmitter } from "node:events";
+        console.log("real.ts runs");
+        export const value = [dep, absent, inner, shared, data.value, typeof EventEmitter].join();`,
+      "user.ts": `
+        import { value } from "./real";
+        import { shared } from "./shared.cjs";
+        export const show = () => console.log(value, shared);`,
+      "preload.ts": `
+        import { mock } from "bun:test";
+        mock.module("./real", () => ({ value: "mocked" }));`,
+      "a.test.ts": `import { test } from "bun:test";\nimport { show } from "./user";\ntest("a", show);`,
+      "b.test.ts": `import { test } from "bun:test";\nimport { show } from "./user";\ntest("b", show);`,
+    },
+    "--preload",
+    "./preload.ts",
+  );
+});
+
+test("the factory of a module that has not loaded runs at the first import", async () => {
+  await expectCompiledToRunAsPlain(
+    {
+      "real.ts": `console.log("real runs");\nexport const value = "real";`,
+      "late.ts": `console.log("late runs");\nexport const value = "late";`,
+      "never.ts": `export const value = "never";`,
+      "user.ts": `import { value } from "./real";\nconsole.log("user runs", value);\nexport const show = () => console.log(value);`,
+      "preload.ts": `
+        import { mock } from "bun:test";
+        mock.module("./real", () => { console.log("factory of real"); return { value: "mocked" }; });
+        mock.module("./real", () => { console.log("second factory of real"); return { value: "mocked again" }; });
+        mock.module("./never", () => { console.log("factory of never"); return { value: "no" }; });
+        console.log("preload ends");`,
+      "a.test.ts": `
+        import { mock, test } from "bun:test";
+        console.log("a runs");
+        import { show } from "./user";
+        test("static", show);
+        test("import()", async () => {
+          mock.module("./late", () => { console.log("factory of late"); return { value: "mocked late" }; });
+          console.log("before the import");
+          console.log((await import("./late")).value);
+        });
+        test("require", () => {
+          mock.module("./required", () => { console.log("factory of required"); return { value: "mocked required" }; });
+          console.log("before the require");
+          console.log(require("./required").value);
+        });`,
+      "required.ts": `console.log("required runs");\nexport const value = "required";`,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        import { show } from "./user";
+        test("again", show);`,
+    },
+    "--preload",
+    "./preload.ts",
+  );
+});
+
+test("the graph waits for an async factory of a module that has not loaded", async () => {
+  await expectCompiledToRunAsPlain(
+    {
+      "real.ts": `export const value = "real";`,
+      "user.ts": `import { value } from "./real";\nexport const atLoad = value;`,
+      "preload.ts": `
+        import { mock } from "bun:test";
+        mock.module("./real", async () => { await Bun.sleep(20); return { value: "mocked later" }; });`,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import { atLoad } from "./user";
+        test("read at load", () => { console.log(atLoad); });`,
+    },
+    "--preload",
+    "./preload.ts",
+  );
 });
 
 test("a module that is imported for its side effects alone is mocked", async () => {

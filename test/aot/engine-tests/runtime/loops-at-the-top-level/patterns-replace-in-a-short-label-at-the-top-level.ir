@@ -20,7 +20,7 @@
 # END REPEAT
 # the loop
 # L0: 2950000
-# L0-NEXT: a turn: 1 calls into the run time, at most 935.2 instructions
+# L0-NEXT: a turn: 0 calls into the run time, at most 935.2 instructions
 # L0-NEXT: exited with 0
 
 module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)

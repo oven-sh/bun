@@ -661,11 +661,11 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f303 visibili
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f19 = NewClosure function=f19 allocationSite=1 storage=Frame
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f318 accessSite=0
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f319 accessSite=0
 # CHECK-NEXT: v2: f20 = NewClosure function=f20 allocationSite=2 storage=Frame
-# CHECK-NEXT: v3: undefined = CallDirect v2 function=f318 accessSite=1
+# CHECK-NEXT: v3: undefined = CallDirect v2 function=f319 accessSite=1
 # CHECK-NEXT: v4: f26 = NewClosure function=f26 allocationSite=3 storage=Frame
-# CHECK-NEXT: v5: undefined = CallDirect v4 function=f318 accessSite=2
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f319 accessSite=2
 # CHECK-NEXT: v6: f2 = GetModuleVariable variable=g1
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
@@ -704,7 +704,7 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f303 visibili
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=623 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a class extended"|"a store to the number"|"instanceof" site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=f19|f20|f26 site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f19 module=
-# CHECK: m0 position=2032 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w20 flags=[IsExpected]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f29 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK: m0 position=2032 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w20 flags=[IsExpected]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: builtin(GlobalThis) = Builtin builtin=GlobalThis
 # CHECK-NEXT: v1: anything = PropGet v0 key="HTMLElement" accessSite=30 [isFreeName]
@@ -712,21 +712,23 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f303 visibili
 # CHECK-NEXT: v3: f29 = NewClosure function=f29 allocationSite=5
 # CHECK-NEXT: v4: f29 = NewClass v3, v1, v2 layout=L0
 # CHECK-NEXT: v5: f29 = FinishClass v4 layout=L0
-# CHECK-NEXT: v6: null|object = GetSuperBase v5
-# CHECK-NEXT: v7: object ~ L0 = SuperConstruct v6, v5 layout=L0 accessSite=41
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v7 testedType=L0
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v9: L0):
-# CHECK-NEXT: v10: boolean = IsSlotFilled v9 key="size" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v11: guard):
-# CHECK-NEXT: v12: number = GetSlot v9, v11 key="size" receivers=[L0] level=Expected accessSite=32 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b4(v12)
+# CHECK-NEXT: v6: Array = NewArray contents=anything
+# CHECK-NEXT: v7: object = CallDirect v5, v5, v6 function=f29 accessSite=31 [isConstruction]
+# CHECK-NEXT: v8: object ~ L0 = Expect v7 expectedType=undefined|null|L0
+# CHECK-NEXT: v9: object ~ L0 = RequireObjectCoercible v8 name="size"
+# CHECK-NEXT: v10: boolean ~ true = TypeTest v9 testedType=L0
+# CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v11: L0):
+# CHECK-NEXT: v12: boolean = IsSlotFilled v11 key="size" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v13: guard):
+# CHECK-NEXT: v14: number = GetSlot v11, v13 key="size" receivers=[L0] level=Expected accessSite=32 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b4(v14)
 # CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v13: anything ~ number = PropGet v7 key="size" accessSite=32
-# CHECK-NEXT: Jump -> next b4(v13)
-# CHECK-NEXT: b4(v14: anything ~ number):
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v15: anything ~ number = PropGet v9 key="size" accessSite=32
+# CHECK-NEXT: Jump -> next b4(v15)
+# CHECK-NEXT: b4(v16: anything ~ number):
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=
 # CHECK: m0 position=2150 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=boolean site=w21}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -739,16 +741,21 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f303 visibili
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Card"
-# CHECK: module=m0 position=2048 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] constructedClass=L0
+# CHECK: module=m0 position=2048 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] constructedClass=L0 inlineFrames=[{}, {callee=f30 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
+# CHECK-NEXT: v3: null|object = GetSuperBase v0
+# CHECK-NEXT: v4: object ~ L0 = SuperConstructList v3, v1, v2 layout=L0 accessSite=41
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=623 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a class extended"|"a store to the number"|"instanceof" site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=f19|f20|f26}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f7}
 # CHECK-LABEL: function {{*}}name="Card"
-# CHECK: module=m0 position=2048 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f29}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f29} creator=Entrypoint{target=f29 takesNewTarget=true} inlineFrames=[{}, {callee=f29 callPosition=2048 isTailCall=true module=m0}, {callee=f30 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK: module=m0 position=2048 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f29}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f29} creator=Entrypoint{target=f29 takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f29, v1: anything):
 # CHECK-NEXT: v2: anything = GetArgument
-# CHECK-NEXT: v3: null|object = GetSuperBase v0
-# CHECK-NEXT: v4: object ~ L0 = ConstructSuperForwardVarargs v3, v2 layout=L0 firstArgument=1 accessSite=41
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v3: Array = CreateRest firstArgument=1
+# CHECK-NEXT: v4: object = CallDirect v0, v2, v3 function=f29
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=623 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f19|f20|f26}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameter=1073741825 parameterMap=[{original=1}]} creator=Version{provenVersion=f7} inlineFrames=[{}, {callee=f26 callPosition=4294967295 module=m0}] {

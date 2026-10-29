@@ -4,7 +4,9 @@ mod tests;
 pub use crate::ir::generated::{ImportPhase, ModuleKind, RequireResult, SyntheticExportRule};
 
 use crate::builtins::table;
+use crate::load::sources::parsed_source;
 use crate::load::{SourceKind, Sources};
+use bun_ast::Loader;
 use bun_sema::atom::known;
 use bun_sema::bind::Bound;
 use bun_sema::module_format::ModuleFormat;
@@ -85,6 +87,16 @@ pub(crate) fn file_interop(files: &Files<'_>, sources: &Sources, file: FileId) -
         SourceKind::RuntimeFunctions | SourceKind::TypesOnly => Interop::ES_MODULE,
         SourceKind::RuntimeModule(module) if table::is_es_module(module) => Interop::ES_MODULE,
         SourceKind::RuntimeModule(_) => Interop::RUNTIME_SOURCE,
+        // `bun run` answers `require()` of a text file with its namespace: `{ default }`.
+        SourceKind::Data
+            if parsed_source(files, file).is_some_and(|it| it.loader == Loader::Text) =>
+        {
+            Interop::new(
+                ModuleKind::Data,
+                SyntheticExportRule::None,
+                RequireResult::Namespace,
+            )
+        }
         SourceKind::Data => data_module_interop(files.bound(file)),
         SourceKind::Program | SourceKind::EvaluatedText => program_file_interop(files, file),
     }

@@ -401,29 +401,28 @@ function f30 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v23: f15 = NewClosure function=f15 allocationSite=7 storage=Frame
 # CHECK-NEXT: v24: undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Call v23 calleeName="run" accessSite=11 callees=[f3, f4, f5, f6, f13, f14, f15, f16]
 # CHECK-NEXT: v25: undefined = AssumeType v24 provenType=undefined|"Computed"|"yes"
-# CHECK-NEXT: v26: string = TypeOf v25
-# CHECK-NEXT: v27: " " = String string=" "
-# CHECK-NEXT: v28: string = CallBuiltin -, v25 overload=String/0 accessSite=12
-# CHECK-NEXT: v29: string = Strcat v26, v27, v28
-# CHECK-NEXT: Jump -> next b8(v29)
+# CHECK-NEXT: v26: "undefined " = String string="undefined "
+# CHECK-NEXT: v27: string = CallBuiltin -, v25 overload=String/0 accessSite=12
+# CHECK-NEXT: v28: string = Add v26, v27
+# CHECK-NEXT: Jump -> next b8(v28)
 # CHECK-NEXT: b7() role=CatchHandler:
-# CHECK-NEXT: v30: anything = CatchValue
-# CHECK-NEXT: v31: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
-# CHECK-NEXT: v32: boolean = HasInPrototypeChain v30, v31
-# CHECK-NEXT: v33: "TypeError" = String string="TypeError"
-# CHECK-NEXT: Jump -> next b8(v33)
-# CHECK-NEXT: b8(v34: string) handler=b9():
-# CHECK-NEXT: v35: f16 = NewClosure function=f16 allocationSite=8 storage=Frame
-# CHECK-NEXT: v36: number = Call v35 calleeName="run" accessSite=11 callees=[f3, f4, f5, f6, f13, f14, f15, f16]
+# CHECK-NEXT: v29: anything = CatchValue
+# CHECK-NEXT: v30: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
+# CHECK-NEXT: v31: boolean = HasInPrototypeChain v29, v30
+# CHECK-NEXT: v32: "TypeError" = String string="TypeError"
+# CHECK-NEXT: Jump -> next b8(v32)
+# CHECK-NEXT: b8(v33: string) handler=b9():
+# CHECK-NEXT: v34: f16 = NewClosure function=f16 allocationSite=8 storage=Frame
+# CHECK-NEXT: v35: number = Call v34 calleeName="run" accessSite=11 callees=[f3, f4, f5, f6, f13, f14, f15, f16]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b9() role=CatchHandler:
-# CHECK-NEXT: v37: anything = CatchValue
-# CHECK-NEXT: v38: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
-# CHECK-NEXT: v39: boolean = HasInPrototypeChain v37, v38
+# CHECK-NEXT: v36: anything = CatchValue
+# CHECK-NEXT: v37: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
+# CHECK-NEXT: v38: boolean = HasInPrototypeChain v36, v37
+# CHECK-NEXT: v39: "TypeError" = String string="TypeError"
 # CHECK-NEXT: v40: "TypeError" = String string="TypeError"
-# CHECK-NEXT: v41: "TypeError" = String string="TypeError"
-# CHECK-NEXT: v42: undefined = Results v0, v1, v3, v41, v20, v22, v34, v40
-# CHECK-NEXT: Return v42
+# CHECK-NEXT: v41: undefined = Results v0, v1, v3, v40, v20, v22, v33, v39
+# CHECK-NEXT: Return v41
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="constantMember"
 # CHECK: module=m0 position=1206 role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {

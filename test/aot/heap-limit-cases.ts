@@ -531,7 +531,7 @@ function fill_spreads(): string {
 function fill_listSpreads(): string {
   for (let i = 0; i < slots.length; i++) {
     try {
-      slots[i] = [...list];
+      slots[i] = [...list, i];
     } catch (error) {
       return error instanceof RangeError ? "inside" : "another error";
     }

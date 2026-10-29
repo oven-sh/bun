@@ -88,17 +88,17 @@ describe("before the program starts", () => {
     [
       "--watch",
       ["--watch", ...flags, "main.ts"],
-      "--aot does not support --watch: the program is compiled once, before it starts",
+      "--aot does not support --watch: the program is compiled once, before it starts. Watch without --aot, or run the command again after a change",
     ],
     [
       "--hot",
       ["--hot", ...flags, "main.ts"],
-      "--aot does not support --hot: the program is compiled once, before it starts",
+      "--aot does not support --hot: the program is compiled once, before it starts. Use --hot without --aot, or run the command again after a change",
     ],
     [
       "--inspect",
       ["--inspect", ...flags, "main.ts"],
-      "--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled",
+      "--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled. Debug it without --aot",
     ],
     [
       "-e",
@@ -184,7 +184,7 @@ describe("at run time", () => {
       "warn: TS100064: this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time",
     );
     expect(stdout).toMatch(
-      /^ERR_MODULE_NOT_FOUND: Cannot load '[^']*late\.ts': it isn't in this executable, which only runs code that was compiled into it\. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk\.\n$/,
+      /^ERR_MODULE_NOT_FOUND: Cannot load '[^']*late\.ts': it wasn't compiled with the program, and --aot only runs code that was\. Import the file by a constant path, or add --aot-allow-code-from-disk\.$/m,
     );
     expect(exitCode).toBe(0);
   });

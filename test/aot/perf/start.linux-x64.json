@@ -12,6 +12,11 @@
     "pageFaults": 1057,
     "systemCalls": 254
   },
+  "data-file-required-a-thousand-times-among-200-modules": {
+    "thousandInstructions": 2962,
+    "pageFaults": 818,
+    "systemCalls": 235
+  },
   "hello-world": {
     "thousandInstructions": 2671,
     "thousandInstructionsWithMusl": 8230,

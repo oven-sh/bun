@@ -313,7 +313,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v8: Array<"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h", Contiguous> = NewArray v0, v1, v2, v3, v4, v5, v6, v7 contents="a"|"b"|"c"|"d"|"e"|"f"|"g"|"h" allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v9: Array<"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutModuleVariable v9 variable=g0
-# CHECK-NEXT: v11: Array<int[-8589934588, 18014398509481982]|whole> = Data data=d1 allocationSite=4
+# CHECK-NEXT: v11: Array<int[-8589934588, 18014398509481982]|whole> = Data data=d3 allocationSite=4 [isNeverToldApart]
 # CHECK-NEXT: v12: Array<int[-8589934588, 18014398509481982]|whole, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<int[-8589934588, 18014398509481982]|whole, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v13: Array<string, Contiguous> = NewArray contents=string allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v14: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
@@ -460,7 +460,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: b39(v102: int[0, 4294967295]):
 # CHECK-NEXT: Jump -> next b3(v41)
 # CHECK-NEXT: b40(v103: never) frequency=Rare:
-# CHECK-NEXT: Jump -> next b41()
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: b41() frequency=Rare:
 # CHECK-NEXT: v104: undefined|int[-8589934588, 18014398509481982]|whole = ElemGet v12, v22 [keyIsIntegral]
 # CHECK-NEXT: v105: 1 = Integer integer=1

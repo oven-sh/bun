@@ -384,12 +384,11 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v38: Array<"flags"|"free"|"target"|"type", proven, pristine[Storage, Names, Dense]> = AssumeType v37 provenType=Array<"flags"|"free"|"target"|"type", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v39: string = ToString v38
 # CHECK-NEXT: v40: "]" = String string="]"
-# CHECK-NEXT: v41: "an own function" = String string="an own function"
+# CHECK-NEXT: v41: "an own function " = String string="an own function "
 # CHECK-NEXT: v42: " " = String string=" "
 # CHECK-NEXT: v43: " " = String string=" "
-# CHECK-NEXT: v44: " " = String string=" "
-# CHECK-NEXT: v45: string = Strcat v41, v42, v16, v43, v26, v44, v35, v36, v39, v40
-# CHECK-NEXT: Return v45
+# CHECK-NEXT: v44: string = Strcat v41, v16, v42, v26, v43, v35, v36, v39, v40
+# CHECK-NEXT: Return v44
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Links"
 # CHECK: module=m0 position=526 kind=BaseConstructor flags=[HasNewTarget, IsChecked] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

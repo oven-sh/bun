@@ -152,31 +152,29 @@ function f3 module=m0 position=291 length=1 captures=[{type=anything}, {type=any
 # CHECK-NEXT: v24: int|whole ~ int[-2147483642, 2147483648] = AssumeType v23 provenType=int|whole
 # CHECK-NEXT: PropSet v8, v24 key="calls" accessSite=33 receivers=[L0]
 # CHECK-NEXT: PutModuleVariable v24 variable=g1
-# CHECK-NEXT: v27: "m" = String string="m"
-# CHECK-NEXT: v28: string = CallDirect v27 function=f5 accessSite=12
-# CHECK-NEXT: v29: "m" = String string="m"
-# CHECK-NEXT: v30: string = CallDirect v29 function=f7 accessSite=14
-# CHECK-NEXT: v31: anything ~ int[-2147483643, 2147483647] = PropGet v8 key="calls" accessSite=15 receivers=[L0]
-# CHECK-NEXT: v32: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v31 provenType=undefined|int|whole
-# CHECK-NEXT: v33: undefined = CallBuiltin -, v28, v30, v32 overload=ConsoleLog/0 accessSite=16
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: Return v34
+# CHECK-NEXT: v27: string = CallDirect function=f17 accessSite=12
+# CHECK-NEXT: v28: string = CallDirect function=f18 accessSite=14
+# CHECK-NEXT: v29: anything ~ int[-2147483643, 2147483647] = PropGet v8 key="calls" accessSite=15 receivers=[L0]
+# CHECK-NEXT: v30: undefined|int|whole ~ int[-2147483643, 2147483647] = AssumeType v29 provenType=undefined|int|whole
+# CHECK-NEXT: v31: undefined = CallBuiltin -, v27, v28, v30 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: Return v32
 # CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v35: f5 = NewClosure function=f5 allocationSite=6
-# CHECK-NEXT: v36: L1 = NewObject -, v7, v35 layout=L1 fields=[0, 1] allocationSite=2 allocationClass=1
-# CHECK-NEXT: v37: fact = Specified
-# CHECK-NEXT: v38: undefined = AssumeType v19, v37 provenType=undefined
-# CHECK-NEXT: v39: "beta" = String string="beta"
-# CHECK-NEXT: v40: 2 = Integer integer=2
-# CHECK-NEXT: v41: never = Call v38, v8, v36, v39, v40 calleeKey="define" calleeName="helper.define" accessSite=8 callees=[f2]
+# CHECK-NEXT: v33: f5 = NewClosure function=f5 allocationSite=6
+# CHECK-NEXT: v34: L1 = NewObject -, v7, v33 layout=L1 fields=[0, 1] allocationSite=2 allocationClass=1
+# CHECK-NEXT: v35: fact = Specified
+# CHECK-NEXT: v36: undefined = AssumeType v19, v35 provenType=undefined
+# CHECK-NEXT: v37: "beta" = String string="beta"
+# CHECK-NEXT: v38: 2 = Integer integer=2
+# CHECK-NEXT: v39: never = Call v36, v8, v34, v37, v38 calleeKey="define" calleeName="helper.define" accessSite=8 callees=[f2]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v42: L1 = NewObject -, v7 layout=L1 fields=[0] allocationSite=2 allocationClass=1
-# CHECK-NEXT: v43: fact = Specified
-# CHECK-NEXT: v44: undefined = AssumeType v10, v43 provenType=undefined
-# CHECK-NEXT: v45: "alpha" = String string="alpha"
-# CHECK-NEXT: v46: 2 = Integer integer=2
-# CHECK-NEXT: v47: never = Call v44, v8, v42, v45, v46 calleeKey="define" calleeName="helper.define" accessSite=5 callees=[f2]
+# CHECK-NEXT: v40: L1 = NewObject -, v7 layout=L1 fields=[0] allocationSite=2 allocationClass=1
+# CHECK-NEXT: v41: fact = Specified
+# CHECK-NEXT: v42: undefined = AssumeType v10, v41 provenType=undefined
+# CHECK-NEXT: v43: "alpha" = String string="alpha"
+# CHECK-NEXT: v44: 2 = Integer integer=2
+# CHECK-NEXT: v45: never = Call v42, v8, v40, v43, v44 calleeKey="define" calleeName="helper.define" accessSite=5 callees=[f2]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f2 module=
@@ -219,12 +217,4 @@ function f3 module=m0 position=291 length=1 captures=[{type=anything}, {type=any
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f3 module=
-# CHECK: m0 position=291 length=1 captures=[{type="alpha"|"beta"}, {type=2}, {type=undefined|"h"}, {type=int|whole}] thisType={type=anything} parameters=[{type="m"}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: "alpha"|"beta", v1: 2, v2: undefined|"h", v3: int|whole, v4: "m"):
-# CHECK-NEXT: v5: ":" = String string=":"
-# CHECK-NEXT: v6: ":" = String string=":"
-# CHECK-NEXT: v7: ":" = String string=":"
-# CHECK-NEXT: v8: ":" = String string=":"
-# CHECK-NEXT: v9: string = Strcat v0, v5, v3, v6, v1, v7, v2, v8, v4
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: }
+# CHECK: m0 position=291 length=1 captures=[{type="alpha"|"beta"}, {type=2}, {type=undefined|"h"}, {type=int|whole}] thisType={type=anything} parameters=[{type="m"}] results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

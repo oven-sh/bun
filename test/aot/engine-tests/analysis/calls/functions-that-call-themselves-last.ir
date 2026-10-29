@@ -288,12 +288,10 @@ function f4 name="Chain" module=m0 position=2807 kind=BaseConstructor flags=[Has
 # CHECK-NEXT: Jump -> next b6(v36)
 # CHECK-NEXT: b6(v37: undefined|null|L1):
 # CHECK-NEXT: v38: L1 = RequireObjectCoercible v37 name="sum"
-# CHECK-NEXT: v39: 5 = Integer integer=5
-# CHECK-NEXT: v40: int[5, 4294967295] = Add v12, v39
-# CHECK-NEXT: Jump -> next b2(v40)
+# CHECK-NEXT: Jump -> next b2(v15)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v41: int|whole = Increment v3
-# CHECK-NEXT: Jump -> next b1(v41)
+# CHECK-NEXT: v39: int|whole = Increment v3
+# CHECK-NEXT: Jump -> next b1(v39)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tallyFrom"
 # CHECK: module=m0 position=451 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=Array<int[0, 82], proven, Int32, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}, {type=int|whole}] results=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=1}, {original=2}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}, {callee=f10 callPosition=451 parent=1 module=m0}] {

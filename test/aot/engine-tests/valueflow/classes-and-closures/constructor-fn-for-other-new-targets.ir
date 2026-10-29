@@ -595,109 +595,108 @@ function f29 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v18: "" = String string=""
 # CHECK-NEXT: v19: string = Add v18, v17
 # CHECK-NEXT: StringBuilderAppend v13, v19
-# CHECK-NEXT: v21: " " = String string=" "
-# CHECK-NEXT: v22: boolean = AreMembersUnchanged conditions=[{layout=L0 key="m"}, {kind=MemberNotHidden layout=L0 key="m"}]
-# CHECK-NEXT: Branch v22 -> taken b6(), notTaken b23()
+# CHECK-NEXT: v21: boolean = AreMembersUnchanged conditions=[{layout=L0 key="m"}, {kind=MemberNotHidden layout=L0 key="m"}]
+# CHECK-NEXT: Branch v21 -> taken b6(), notTaken b23()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v23: "Point.m" = String string="Point.m"
-# CHECK-NEXT: v24: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v13, v21, v23, v24
-# CHECK-NEXT: v26: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v27: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v27 -> taken b7(), notTaken b8()
+# CHECK-NEXT: v22: " Point.m " = String string=" Point.m "
+# CHECK-NEXT: StringBuilderAppend v13, v22
+# CHECK-NEXT: v24: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v25: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
+# CHECK-NEXT: Branch v25 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
+# CHECK-NEXT: v26: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b22(v26, v13)
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v27: boolean = HasLayoutPrototype v2
+# CHECK-NEXT: Branch v27 -> taken b9(), notTaken b20(v13, v24)
+# CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: v28: true = Boolean boolean=true
 # CHECK-NEXT: Jump -> next b22(v28, v13)
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v29: boolean = HasLayoutPrototype v2
-# CHECK-NEXT: Branch v29 -> taken b9(), notTaken b20(v13, v26)
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v30: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b22(v30, v13)
 # CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v31: anything = PropGet v0 key="extra" accessSite=40
-# CHECK-NEXT: v32: " " = String string=" "
-# CHECK-NEXT: v33: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v34: "" = String string=""
-# CHECK-NEXT: v35: string = Add v34, v31
-# CHECK-NEXT: StringBuilderAppend v33, v35, v32
-# CHECK-NEXT: Jump -> next b11(v33)
-# CHECK-NEXT: b11(v37: stringbuilder) frequency=Unlikely:
-# CHECK-NEXT: v38: anything ~ int[-2147483643, 2147483647] = PropGet v0 key="px" accessSite=41
-# CHECK-NEXT: v39: "" = String string=""
-# CHECK-NEXT: v40: string = Add v39, v38
-# CHECK-NEXT: StringBuilderAppend v37, v40
-# CHECK-NEXT: v42: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v37, v42
-# CHECK-NEXT: v44: anything ~ int[-2147483643, 2147483647] = PropGet v0 key="py" accessSite=42
-# CHECK-NEXT: v45: "" = String string=""
-# CHECK-NEXT: v46: string = Add v45, v44
-# CHECK-NEXT: StringBuilderAppend v37, v46
-# CHECK-NEXT: v48: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v37, v48
-# CHECK-NEXT: Jump -> next b12(v37)
-# CHECK-NEXT: b12(v50: stringbuilder) frequency=Unlikely:
-# CHECK-NEXT: v51: anything = PropGet v0 key="seen" accessSite=43
-# CHECK-NEXT: v52: "" = String string=""
-# CHECK-NEXT: v53: string = Add v52, v51
-# CHECK-NEXT: StringBuilderAppend v50, v53
-# CHECK-NEXT: v55: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v50, v55
-# CHECK-NEXT: Jump -> next b13(v50)
-# CHECK-NEXT: b13(v57: stringbuilder) frequency=Unlikely:
-# CHECK-NEXT: v58: anything = PropGet v0 key="m" accessSite=44
-# CHECK-NEXT: v59: anything ~ undefined|null|function = Upcast v58 castType=anything
-# CHECK-NEXT: v60: boolean = TypeTest v59 testedType=function
-# CHECK-NEXT: Branch v60 -> taken b14(), notTaken b15()
+# CHECK-NEXT: v29: anything = PropGet v0 key="extra" accessSite=40
+# CHECK-NEXT: v30: " " = String string=" "
+# CHECK-NEXT: v31: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v32: "" = String string=""
+# CHECK-NEXT: v33: string = Add v32, v29
+# CHECK-NEXT: StringBuilderAppend v31, v33, v30
+# CHECK-NEXT: Jump -> next b11(v31)
+# CHECK-NEXT: b11(v35: stringbuilder) frequency=Unlikely:
+# CHECK-NEXT: v36: anything ~ int[-2147483643, 2147483647] = PropGet v0 key="px" accessSite=41
+# CHECK-NEXT: v37: "" = String string=""
+# CHECK-NEXT: v38: string = Add v37, v36
+# CHECK-NEXT: StringBuilderAppend v35, v38
+# CHECK-NEXT: v40: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v35, v40
+# CHECK-NEXT: v42: anything ~ int[-2147483643, 2147483647] = PropGet v0 key="py" accessSite=42
+# CHECK-NEXT: v43: "" = String string=""
+# CHECK-NEXT: v44: string = Add v43, v42
+# CHECK-NEXT: StringBuilderAppend v35, v44
+# CHECK-NEXT: v46: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v35, v46
+# CHECK-NEXT: Jump -> next b12(v35)
+# CHECK-NEXT: b12(v48: stringbuilder) frequency=Unlikely:
+# CHECK-NEXT: v49: anything = PropGet v0 key="seen" accessSite=43
+# CHECK-NEXT: v50: "" = String string=""
+# CHECK-NEXT: v51: string = Add v50, v49
+# CHECK-NEXT: StringBuilderAppend v48, v51
+# CHECK-NEXT: v53: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v48, v53
+# CHECK-NEXT: Jump -> next b13(v48)
+# CHECK-NEXT: b13(v55: stringbuilder) frequency=Unlikely:
+# CHECK-NEXT: v56: anything = PropGet v0 key="m" accessSite=44
+# CHECK-NEXT: v57: anything ~ undefined|null|function = Upcast v56 castType=anything
+# CHECK-NEXT: v58: boolean = TypeTest v57 testedType=function
+# CHECK-NEXT: Branch v58 -> taken b14(), notTaken b15()
 # CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: v61: anything = PropGet v0 key="m" accessSite=45
-# CHECK-NEXT: v62: anything ~ undefined|null|function = Upcast v61 castType=anything
-# CHECK-NEXT: v63: anything = Call v62, v0 calleeKey="m" calleeName="o.m" accessSite=46 callees=[f7, f8, f9, ..]
-# CHECK-NEXT: Jump -> next b16(v63)
+# CHECK-NEXT: v59: anything = PropGet v0 key="m" accessSite=45
+# CHECK-NEXT: v60: anything ~ undefined|null|function = Upcast v59 castType=anything
+# CHECK-NEXT: v61: anything = Call v60, v0 calleeKey="m" calleeName="o.m" accessSite=46 callees=[f7, f8, f9, ..]
+# CHECK-NEXT: Jump -> next b16(v61)
 # CHECK-NEXT: b15() frequency=Unlikely:
-# CHECK-NEXT: v64: "none" = String string="none"
-# CHECK-NEXT: Jump -> next b16(v64)
-# CHECK-NEXT: b16(v65: anything) frequency=Unlikely:
-# CHECK-NEXT: v66: "" = String string=""
-# CHECK-NEXT: v67: string = Add v66, v65
-# CHECK-NEXT: StringBuilderAppend v57, v67
-# CHECK-NEXT: v69: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v57, v69
-# CHECK-NEXT: v71: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v72: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
-# CHECK-NEXT: Branch v72 -> taken b17(), notTaken b20(v57, v71)
+# CHECK-NEXT: v62: "none" = String string="none"
+# CHECK-NEXT: Jump -> next b16(v62)
+# CHECK-NEXT: b16(v63: anything) frequency=Unlikely:
+# CHECK-NEXT: v64: "" = String string=""
+# CHECK-NEXT: v65: string = Add v64, v63
+# CHECK-NEXT: StringBuilderAppend v55, v65
+# CHECK-NEXT: v67: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v55, v67
+# CHECK-NEXT: v69: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v70: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L0}]
+# CHECK-NEXT: Branch v70 -> taken b17(), notTaken b20(v55, v69)
 # CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: v73: boolean ~ true = TypeTest v0 testedType=L0
-# CHECK-NEXT: Branch v73 -> taken b18(), notTaken b19(| 0)
+# CHECK-NEXT: v71: boolean ~ true = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch v71 -> taken b18(), notTaken b19(| 0)
 # CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v74: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b21(v74, v57)
-# CHECK-NEXT: b19(v75: anything) frequency=Unlikely:
-# CHECK-NEXT: v76: object = GetClassPrototype v71 layout=L0
-# CHECK-NEXT: v77: boolean = HasInPrototypeChain v75, v76
-# CHECK-NEXT: Jump -> next b21(v77, v57)
-# CHECK-NEXT: b20(v78: stringbuilder, v79: f1) frequency=Rare:
-# CHECK-NEXT: v80: boolean = InstanceOf v0, v79 writtenExpression="o instanceof Point"
-# CHECK-NEXT: Jump -> next b21(v80, v78)
-# CHECK-NEXT: b21(v81: boolean, v82: stringbuilder) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b22(v81, v82)
-# CHECK-NEXT: b22(v83: boolean ~ true, v84: stringbuilder):
-# CHECK-NEXT: v85: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v84, v83, v85
-# CHECK-NEXT: v87: object ~ L0 = ToObject v0 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v88: Array<string> = CallBuiltin -, v87 overload=ObjectKeys/0 accessSite=47
-# CHECK-NEXT: v89: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v88 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v90: string = CallBuiltin v89 overload=ArrayPrototypeJoin/0 accessSite=49
-# CHECK-NEXT: StringBuilderAppend v84, v90
-# CHECK-NEXT: v92: string = StringBuilderFinish v84
-# CHECK-NEXT: Return v92
+# CHECK-NEXT: v72: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next b21(v72, v55)
+# CHECK-NEXT: b19(v73: anything) frequency=Unlikely:
+# CHECK-NEXT: v74: object = GetClassPrototype v69 layout=L0
+# CHECK-NEXT: v75: boolean = HasInPrototypeChain v73, v74
+# CHECK-NEXT: Jump -> next b21(v75, v55)
+# CHECK-NEXT: b20(v76: stringbuilder, v77: f1) frequency=Rare:
+# CHECK-NEXT: v78: boolean = InstanceOf v0, v77 writtenExpression="o instanceof Point"
+# CHECK-NEXT: Jump -> next b21(v78, v76)
+# CHECK-NEXT: b21(v79: boolean, v80: stringbuilder) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b22(v79, v80)
+# CHECK-NEXT: b22(v81: boolean ~ true, v82: stringbuilder):
+# CHECK-NEXT: v83: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v82, v81, v83
+# CHECK-NEXT: v85: object ~ L0 = ToObject v0 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v86: Array<string> = CallBuiltin -, v85 overload=ObjectKeys/0 accessSite=47
+# CHECK-NEXT: v87: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v86 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v88: string = CallBuiltin v87 overload=ArrayPrototypeJoin/0 accessSite=49
+# CHECK-NEXT: StringBuilderAppend v82, v88
+# CHECK-NEXT: v90: string = StringBuilderFinish v82
+# CHECK-NEXT: Return v90
 # CHECK-NEXT: b23() frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v13, v21
+# CHECK-NEXT: v91: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v13, v91
 # CHECK-NEXT: Jump -> next b13(v13)
 # CHECK-NEXT: b24() frequency=Unlikely:
-# CHECK-NEXT: v94: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v94, v6
-# CHECK-NEXT: Jump -> next b11(v94)
+# CHECK-NEXT: v93: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v93, v6
+# CHECK-NEXT: Jump -> next b11(v93)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="U"
 # CHECK: module=m0 position=217 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L3 flags=[IsFromCompiler]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {

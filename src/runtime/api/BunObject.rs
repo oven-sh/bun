@@ -1459,7 +1459,11 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    JSValue::js_boolean(global_this.bun_vm().standalone_module_graph.is_some())
+    // `bun run --aot` and `bun test --aot` hold a compiled program and are no executable that was shipped.
+    JSValue::js_boolean(
+        global_this.bun_vm().standalone_module_graph.is_some()
+            && !crate::cli::run_compiled::runs_compiled_code(),
+    )
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {

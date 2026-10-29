@@ -33,6 +33,12 @@
 #include <JavaScriptCore/Symbol.h>
 #include <wtf/SetForScope.h>
 
+#if ENABLE(AOT)
+namespace Zig {
+void runCompiledMock(Zig::GlobalObject*, JSC::AOT::ModuleID);
+}
+#endif
+
 namespace Bun {
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCallOwnFunctionsWithoutParameters, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -242,6 +248,36 @@ static std::optional<AOT::ModuleID> findModuleWithAttributes(JSGlobalObject* glo
     return module;
 }
 
+BUN_DECLARE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFactory);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFailedFactory);
+
+static JSPromise* sourceAfterFactories(Zig::GlobalObject* globalObject, JSPromise* source, JSValue record)
+{
+    auto& vm = getVM(globalObject);
+    auto& factories = globalObject->onLoadPlugins.factoriesOfCompiledMocks;
+    JSPromise* last = factories.last().get();
+    factories.removeLast();
+    last->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionCompiledSourceAfterFactory), globalObject->thenable(jsFunctionCompiledSourceAfterFailedFactory), source, record);
+    return source;
+}
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFactory, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue record = callFrame->argument(1);
+    if (globalObject->onLoadPlugins.factoriesOfCompiledMocks.isEmpty())
+        return JSValue::encode(record);
+    JSPromise* next = JSPromise::create(getVM(globalObject), globalObject->promiseStructure());
+    return JSValue::encode(sourceAfterFactories(globalObject, next, record));
+}
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFailedFactory, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    scope.throwException(globalObject, callFrame->argument(0));
+    return {};
+}
+
 JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, bool hasImportAttributes)
 {
     auto module = compiledModuleForRequest(globalObject, key, hasImportAttributes);
@@ -251,9 +287,16 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
     auto scope = DECLARE_THROW_SCOPE(vm);
     AbstractModuleRecord* record = AOT::moduleRecord(globalObject, *module);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    AOT::runMocksBelow(globalObject, *module);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     JSPromise* source = JSPromise::create(vm, globalObject->promiseStructure());
-    source->fulfill(vm, record);
-    return source;
+    auto& factories = globalObject->onLoadPlugins.factoriesOfCompiledMocks;
+    if (factories.isEmpty()) [[likely]] {
+        source->fulfill(vm, record);
+        return source;
+    }
+    // The loader of `bun run` waits for a factory before it goes on with the graph.
+    return sourceAfterFactories(globalObject, source, record);
 }
 
 JSPromise* importCompiledModule(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes, int64_t referrerAsyncOrder)
@@ -641,6 +684,11 @@ static bool hasQueuedTicks(JSGlobalObject* globalObject)
     return queue && !queue->isEmpty();
 }
 
+static void runMock(JSGlobalObject* globalObject, AOT::ModuleID module)
+{
+    Zig::runCompiledMock(uncheckedDowncast<Zig::GlobalObject>(globalObject), module);
+}
+
 const AOT::ModuleHost compiledModuleHost = {
     &createModuleObject,
     &createRequirer,
@@ -663,6 +711,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &runMainModule,
     &createModuleNotFoundError,
     &requirePrototype,
+    &runMock,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
@@ -678,8 +727,12 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
     }
     // The flag acts on the file that a Worker starts from, and where the compiler found an import() or a require() of a path that it does not know.
     const AOT::Image* image = AOT::Image::current();
-    bool startsWorker = !isDataOrBlobURL(path) && !Bun__AOT__allowsCodeFromDisk() && Bun__AOT__isStartOfWorker(globalObject, &text);
+    // --trim removed what such a Worker runs on: the flag would only lead to the refusal above.
+    bool startsWorker = !isDataOrBlobURL(path) && !Bun__AOT__allowsCodeFromDisk() && Bun__AOT__isStartOfWorker(globalObject, &text) && !Bun__AOT__isWorkerTextRefusedByTrimming(globalObject, &text);
     bool flagWouldHelp = !image || image->findsDataFilesByName() || startsWorker;
+    // `bun test --aot` makes no executable and takes no entry points.
+    if (compiledModulesRunInPlaceOfFiles())
+        return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it wasn't compiled with the program, and --aot only runs code that was. Import the file by a constant path"_s, flagWouldHelp ? ", or add --aot-allow-code-from-disk."_s : "."_s));
     return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point"_s, flagWouldHelp ? ", or build with --aot-allow-code-from-disk."_s : "."_s));
 }
 

@@ -166,7 +166,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11
 # CHECK-NEXT: b0(v0: Array<undefined|null|string>, v1: Array<undefined, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v2: builtin(Array) = Builtin builtin=Array
 # CHECK-NEXT: v3: f5 = NewClosure function=f5 allocationSite=2
-# CHECK-NEXT: v4: Array = CallBuiltin v2, v0, v3 overload=ArrayFrom/3 accessSite=9
+# CHECK-NEXT: v4: Array = CallBuiltin v2, v0, v3 overload=ArrayFrom/4 accessSite=9
 # CHECK-NEXT: v5: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v6: anything = PropGet v0 key="raw" accessSite=10
 # CHECK-NEXT: v7: anything ~ undefined|null|Array<undefined|null|string> = Expect v6 expectedType=undefined|null|Array<undefined|null|string>

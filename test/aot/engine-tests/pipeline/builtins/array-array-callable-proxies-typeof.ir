@@ -79,9 +79,11 @@ module m2 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/
 module m3 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
 module m4 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m4)
 module m5 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m5)
-module m6 path="/$bun/js/engine/ReflectObject.ts" displayPath="/$bun/js/engine/ReflectObject.ts" flags=[IsLibrary] namespaceLayout=L(m6)
-module m7 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m7)
-module m8 path="/$bun/js/prelude/written-lists.ts" displayPath="/$bun/js/prelude/written-lists.ts" flags=[IsLibrary] namespaceLayout=L(m8)
+module m6 path="/$bun/js/engine/MapIteratorPrototype.ts" displayPath="/$bun/js/engine/MapIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m6)
+module m7 path="/$bun/js/engine/ReflectObject.ts" displayPath="/$bun/js/engine/ReflectObject.ts" flags=[IsLibrary] namespaceLayout=L(m7)
+module m8 path="/$bun/js/engine/SetIteratorPrototype.ts" displayPath="/$bun/js/engine/SetIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m8)
+module m9 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m9)
+module m10 path="/$bun/js/prelude/written-lists.ts" displayPath="/$bun/js/prelude/written-lists.ts" flags=[IsLibrary] namespaceLayout=L(m10)
 entry module=m0
 typesite w0 module=m2 position=4142 kind=Variable
 typesite w1 module=m2 position=4344 kind=Variable
@@ -89,12 +91,14 @@ typesite w2 module=m3 position=973 kind=Variable
 typesite w3 module=m3 position=270 kind=Variable
 typesite w4 module=m3 position=309 kind=Variable
 typesite w5 module=m3 position=1007 kind=Variable
+typesite w6 module=m5 position=571 kind=Variable
+typesite w7 module=m5 position=1447 kind=Variable
 layout L0 kind=Instance module=m0 position=428 constructor=f11
 layout L1 kind=Instance module=m0 position=1030 constructor=f13
 layout L2 module=m0 position=1075 fields=[{key="length" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 layout L3 name="ProxyHandler<() => void>" fields=[{key="apply" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="construct" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="defineProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="deleteProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getOwnPropertyDescriptor" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="getPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="has" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="isExtensible" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ownKeys" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="preventExtensions" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="setPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] ownFieldCount=13
-layout L4 module=m7 position=3027 fields=[{key="done" declared={type=boolean}}, {key="value" declared={type=anything}}] declaredOrder=[1, 0] ownFieldCount=2
-layout L5 module=m8 position=1590 fields=[{key="length" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L4 module=m9 position=3027 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L5 module=m10 position=1590 fields=[{key="length" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 data d0 root=Object{layout=L3} module=m0
 data d1 root=Object{layout=L3} module=m0
 data d2 root=Object{layout=L3} module=m0
@@ -978,88 +982,159 @@ function f54 name="throw" module=m4 position=1077 kind=Method role=Library flags
     v13 = CreateIteratorResult v3, v12 @1489
     Return v13 @1489
 }
-function f55 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f55 name="next" module=m5 position=99 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @99
+  b1():
+    v1 = HasJSType v0 first=6 last=6 @152
+    v2 = ToBoolean v1 @152
+    Branch v2 -> taken b2(| 0), notTaken b8(| 0) @152
+  b2(v3):
+    Jump -> next b3() @152
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @264
+    v5 = GetInternalField v4 @264
+    v6 = Undefined @394
+    v7 = StepGenerator v5, v6 check=IsGenerator @351
+    v8 = ResultAt v7 @455
+    v9 = ResultAt v7 index=1 @518
+    v10 = Integer integer=1 @589
+    v11 = StrictEq v9, v10 @578
+    v12 = Convert v11 declared={type=boolean site=w6} @578
+    v13 = Integer integer=2 @639
+    v14 = StrictEq v9, v13 @628
+    Branch v14 -> taken b4(| 0), notTaken b6(| 0) @628
+  b4(v15):
+    Jump -> next b5() @628
+  b5():
+    v16 = Undefined @741
+    v17 = ResumeGenerator v5, v16 @696
+    v18 = PropGet v17 key="value" @770
+    v19 = PropGet v17 key="done" @799
+    v20 = Boolean boolean=true @815
+    v21 = StrictEq v19, v20 @799
+    v22 = Convert v21 declared={type=boolean site=w6} @792
+    Jump -> next b7(v18, v22) @792
+  b6(v23):
+    Jump -> next b7(v8, v12) @628
+  b7(v24, v25: boolean):
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @838
+    v27 = CreateIteratorResult v24, v26 @838
+    Return v27 @838
+  b8(v28):
+    Jump -> next b9() @152
+  b9():
+    v29 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @185
+    Unreachable @185
+}
+function f56 name="return" module=m5 position=904 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @904
+  b1():
+    v1 = Undefined @904
+    v2 = HasJSType v0 first=6 last=6 @960
+    v3 = ToBoolean v2 @960
+    Branch v3 -> taken b2(| 0), notTaken b19(| 0) @960
+  b2(v4):
+    Jump -> next b3() @960
+  b3():
+    v5 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1070
+    v6 = GetInternalField v5 @1070
+    v7 = IsGeneratorSuspendedAtStart v6 @1149
+    v8 = ToBoolean v7 @1149
+    Branch v8 -> taken b4(| 0), notTaken b13(| 0) @1149
+  b4(v9):
+    Jump -> next b5() @1149
+  b5():
+    v10 = Undefined @1833
+    v11 = ResumeGenerator v6, v10 resumeMode=Return @1786
+    v12 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1874
+    v13 = GetInternalField v12 index=1 @1874
+    v14 = TypeTest v13 testedType=null @1961
+    Branch v14 -> taken b6(| 0), notTaken b7(| 0) @1961
+  b6(v15):
+    Jump -> next b12() @1961
+  b7(v16):
+    Jump -> next b8() @1961
+  b8():
+    v17 = PropGet v16 key="return" @1998
+    v18 = TypeTest v17 testedType=undefined|null @1998
+    Branch v18 -> taken b9(| 0), notTaken b10(| 0) @1998
+  b9(v19):
+    Jump -> next b11() @1998
+  b10(v20):
+    v21 = Call v20, v16 @1998
+    v22 = RequireObject v21 runtimeError=IteratorResultNotObject @1998
+    Jump -> next b11() @1998
+  b11():
+    v23 = Undefined @1998
+    Jump -> next b12() @1998
+  b12():
+    v24 = Undefined @2072
+    v25 = Boolean boolean=true @2083
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @2052
+    v27 = CreateIteratorResult v24, v26 @2052
+    Return v27 @2052
+  b13(v28):
+    Jump -> next b14() @1149
+  b14():
+    v29 = Undefined @1258
+    v30 = StepGenerator v6, v29 resumeMode=Return check=IsGenerator @1213
+    v31 = ResultAt v30 @1323
+    v32 = ResultAt v30 index=1 @1390
+    v33 = Integer integer=1 @1465
+    v34 = StrictEq v32, v33 @1454
+    v35 = Convert v34 declared={type=boolean site=w7} @1454
+    v36 = Integer integer=2 @1519
+    v37 = StrictEq v32, v36 @1508
+    Branch v37 -> taken b15(| 0), notTaken b17(| 0) @1508
+  b15(v38):
+    Jump -> next b16() @1508
+  b16():
+    v39 = Undefined @1627
+    v40 = ResumeGenerator v6, v39 resumeMode=Return @1580
+    v41 = PropGet v40 key="value" @1660
+    v42 = PropGet v40 key="done" @1693
+    v43 = Boolean boolean=true @1709
+    v44 = StrictEq v42, v43 @1693
+    v45 = Convert v44 declared={type=boolean site=w7} @1686
+    Jump -> next b18(v41, v45) @1686
+  b17(v46):
+    Jump -> next b18(v31, v35) @1508
+  b18(v47, v48: boolean):
+    v49 = Convert v48 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1740
+    v50 = CreateIteratorResult v47, v49 @1740
+    Return v50 @1740
+  b19(v51):
+    Jump -> next b20() @960
+  b20():
+    v52 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @993
+    Unreachable @993
+}
+function f57 name="next" module=m6 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=MapIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @25
   b1():
-    v1 = HasJSType v0 first=6 last=6 @78
+    v1 = HasJSType v0 first=7 last=7 @78
     v2 = ToBoolean v1 @78
     Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
   b2(v3):
     Jump -> next b3() @78
   b3():
-    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @196
-    v5 = GetInternalField v4 @196
-    v6 = Undefined @283
-    v7 = ResumeGenerator v5, v6 @179
-    Return v7 @179
-  b4(v8):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepMapIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b4(v10):
     Jump -> next b5() @78
   b5():
-    v9 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @111
-    Unreachable @111
+    v11 = ThrowNewError errorKind=TypeError message="%MapIteratorPrototype%.next requires that |this| be a Map Iterator instance" @108
+    Unreachable @108
 }
-function f56 name="return" module=m5 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    Jump -> next b1() @326
-  b1():
-    v1 = Undefined @326
-    v2 = HasJSType v0 first=6 last=6 @382
-    v3 = ToBoolean v2 @382
-    Branch v3 -> taken b2(| 0), notTaken b15(| 0) @382
-  b2(v4):
-    Jump -> next b3() @382
-  b3():
-    v5 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @492
-    v6 = GetInternalField v5 @492
-    v7 = IsGeneratorSuspendedAtStart v6 @571
-    v8 = ToBoolean v7 @571
-    Branch v8 -> taken b4(| 0), notTaken b13(| 0) @571
-  b4(v9):
-    Jump -> next b5() @571
-  b5():
-    v10 = Undefined @738
-    v11 = ResumeGenerator v6, v10 resumeMode=Return @691
-    v12 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @779
-    v13 = GetInternalField v12 index=1 @779
-    v14 = TypeTest v13 testedType=null @866
-    Branch v14 -> taken b6(| 0), notTaken b7(| 0) @866
-  b6(v15):
-    Jump -> next b12() @866
-  b7(v16):
-    Jump -> next b8() @866
-  b8():
-    v17 = PropGet v16 key="return" @903
-    v18 = TypeTest v17 testedType=undefined|null @903
-    Branch v18 -> taken b9(| 0), notTaken b10(| 0) @903
-  b9(v19):
-    Jump -> next b11() @903
-  b10(v20):
-    v21 = Call v20, v16 @903
-    v22 = RequireObject v21 runtimeError=IteratorResultNotObject @903
-    Jump -> next b11() @903
-  b11():
-    v23 = Undefined @903
-    Jump -> next b12() @903
-  b12():
-    v24 = Undefined @977
-    v25 = Boolean boolean=true @988
-    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @957
-    v27 = CreateIteratorResult v24, v26 @957
-    Return v27 @957
-  b13(v28):
-    Jump -> next b14() @571
-  b14():
-    v29 = Undefined @674
-    v30 = ResumeGenerator v6, v29 resumeMode=Return @627
-    Return v30 @627
-  b15(v31):
-    Jump -> next b16() @382
-  b16():
-    v32 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @415
-    Unreachable @415
-}
-function f57 name="apply" module=m6 position=1385 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=ReflectObjectApply thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f58 name="apply" module=m7 position=1385 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=ReflectObjectApply thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1() @1385
   b1():
@@ -1091,11 +1166,34 @@ function f57 name="apply" module=m6 position=1385 kind=Method role=Library flags
     v16 = ThrowNewError errorKind=TypeError message="Reflect.apply requires the first argument be a function" @1503
     Unreachable @1503
 }
-function f58 name="next" module=m7 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f59 name="next" module=m8 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=SetIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=10 last=10 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepSetIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%SetIteratorPrototype%.next requires that |this| be a Set Iterator instance" @108
+    Unreachable @108
+}
+function f60 name="next" module=m9 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @1421
   b1():
-    v1 = HasJSType v0 first=10 last=10 @1611
+    v1 = HasJSType v0 first=12 last=12 @1611
     v2 = ToBoolean v1 @1611
     Branch v2 -> taken b2(| 0), notTaken b4(| 0) @1611
   b2(v3):
@@ -1113,12 +1211,12 @@ function f58 name="next" module=m7 position=1421 kind=Method role=Library flags=
     v10 = ThrowNewError errorKind=TypeError message="%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object" @1650
     Unreachable @1650
 }
-function f59 name="return" module=m7 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f61 name="return" module=m9 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @2171
   b1():
     v1 = Undefined @2171
-    v2 = HasJSType v0 first=10 last=10 @2364
+    v2 = HasJSType v0 first=12 last=12 @2364
     v3 = ToBoolean v2 @2364
     Branch v3 -> taken b2(| 0), notTaken b8(| 0) @2364
   b2(v4):
@@ -1151,17 +1249,19 @@ function f59 name="return" module=m7 position=2171 kind=Method role=Library flag
     Unreachable @2403
 }
 runtimefunction id=FunctionPrototypeApply function=f51
-runtimefunction id=ReflectObjectApply function=f57
+runtimefunction id=ReflectObjectApply function=f58
 runtimefunction id=FunctionPrototypeCall function=f50
 runtimefunction id=ArrayPrototypeForEach function=f49
 runtimefunction id=ArrayIteratorPrototypeNext function=f48 visibility=Private
 runtimefunction id=GeneratorPrototypeNext function=f52 visibility=Private
 runtimefunction id=JSIteratorHelperPrototypeNext function=f55 visibility=Private
-runtimefunction id=WrapForValidIteratorPrototypeNext function=f58
+runtimefunction id=WrapForValidIteratorPrototypeNext function=f60
 runtimefunction id=GeneratorPrototypeReturn function=f53 visibility=Private
 runtimefunction id=JSIteratorHelperPrototypeReturn function=f56
-runtimefunction id=WrapForValidIteratorPrototypeReturn function=f59
+runtimefunction id=WrapForValidIteratorPrototypeReturn function=f61
 runtimefunction id=GeneratorPrototypeThrow function=f54 visibility=Private
+runtimefunction id=MapIteratorPrototypeNext function=f57 visibility=Private
+runtimefunction id=SetIteratorPrototypeNext function=f59 visibility=Private
 # -- generated: f0 ofParameter behindNotObject ofFunctionOrList unused inLoop byCall byReflect f8 f9 f10 f11 f15
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f49 callPosition=2185 module=m2}] {
@@ -1303,7 +1403,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f54 visibility=Private
 # CHECK-NEXT: b18():
 # CHECK-NEXT: v107: f15 = NewClosure function=f15 allocationSite=24 storage=Frame
 # CHECK-NEXT: v108: undefined = Undefined
-# CHECK-NEXT: v109: undefined = CallDirect v79, v107, v108 function=f88 accessSite=38
+# CHECK-NEXT: v109: undefined = CallDirect v79, v107, v108 function=f90 accessSite=38
 # CHECK-NEXT: v110: undefined = Undefined
 # CHECK-NEXT: Return v110
 # CHECK-NEXT: }

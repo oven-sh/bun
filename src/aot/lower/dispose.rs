@@ -1,4 +1,5 @@
 use bun_sema::bind::FnOwner;
+use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{self, ExprId, IdList, PatKind, Span, StmtId, StmtKind, VarDeclId, VarKind};
 use smallvec::SmallVec;
 
@@ -147,6 +148,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let name = PropertyName::Constant(key);
         let value = self.lower_named_evaluation(initializer, name);
         self.set_position(pattern.pos);
+        // `using x = null` disposes of nothing. `await using` still waits once at the end of the scope.
+        let is_nothing = matches!(
+            self.file.decisions().constant(hir, initializer),
+            FoldedValue::Constant(Constant::Null | Constant::Undefined)
+        );
+        if is_nothing && get_dispose_hint(decl.kind) == Some(DisposeHint::Sync) {
+            let mapped = pattern.pos;
+            self.bind_pattern(decl.pat, value, Some(initializer), mapped);
+            return;
+        }
         add_resource(self, scope, declaration, value, Some(initializer));
     }
 

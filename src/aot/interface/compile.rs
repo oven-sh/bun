@@ -1,7 +1,7 @@
 #[path = "../compile/paths.rs"]
 mod paths;
 
-pub use self::paths::{EntryPointPaths, FolderPaths, RefusedEntryPoints};
+pub use self::paths::{EntryPointPaths, FolderPaths};
 use crate::engine::EngineResult;
 use crate::link::ProgramNames;
 pub use crate::linked::bun_aot_compile as compile;
@@ -30,6 +30,12 @@ pub struct Compilation {
     pub starts_workers_from_unseen_code: bool,
     /// The names that the programs start Workers with and that are not the paths of modules: the path that each would have as a file of the executable, and the file on disk that it leads to.
     pub names_of_worker_files: Vec<EntryPointPaths>,
+    /// The last folders of the root directory, where a path that the program writes goes up out of them and comes back. Empty where none does.
+    pub root_folders_spelled: Vec<u8>,
+    /// In a test run: a call of `import()` is given a path with a query.
+    pub imports_file_with_query: bool,
+    /// With code from disk: the files of the program, for the names of their packages.
+    pub program_files: Vec<EntryPointPaths>,
 }
 
 pub struct BuildFailed {
@@ -37,5 +43,5 @@ pub struct BuildFailed {
     pub is_internal_error: bool,
     pub statistics: Statistics,
     pub compilation: Option<Box<Compilation>>,
-    pub refused_entry_points: Option<RefusedEntryPoints>,
+    pub refused_entry_points: Option<Vec<u32>>,
 }

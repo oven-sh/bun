@@ -45,6 +45,7 @@ diagnostic_codes! {
         OutputNotWritten = 100061, Error, "Cannot write \"{0}\": {1}";
         WorkerFileNotCompiled = 100071, Warning, "This Worker may start from an embedded file that isn't compiled, and then it fails to load: {0}. Add the file as an entry point, or pass its import straight to new Worker()";
         WorkerTextNotCompiled = 100072, Warning, "The code that this Worker starts from can't be compiled, so the Worker fails to load";
+        TestedFilesCompiledWithoutTypes = 100075, Warning, "Files with type errors are compiled without their types: {0} in this run. They still work, but run slower.";
         EntryPointsCompiledTogether = 100074, Warning, "{0} entry points are compiled as one program: at most {1} can be compiled separately. It still works, but code that several entry points share may run slower.";
     }
     Fold 100100..=100149 {

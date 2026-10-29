@@ -146,7 +146,7 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v18: int|whole = AssumeType v17 provenType=int|whole
 # CHECK-NEXT: v19: boolean|number|string|symbol|bigint|object ~ function|f2 = RequireObjectCoercible v15 name="name"
 # CHECK-NEXT: v20: anything = PropGet v19 key="name" accessSite=5
-# CHECK-NEXT: v21: undefined|null|string = AssumeType v20 provenType=undefined|null|string
+# CHECK-NEXT: v21: undefined|string = AssumeType v20 provenType=undefined|string
 # CHECK-NEXT: v22: Array<string> = CallBuiltin -, v1 overload=ObjectKeys/0 accessSite=6
 # CHECK-NEXT: v23: Array<"m"|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<"m"|"v", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v24: string = CallBuiltin v23 overload=ArrayPrototypeJoin/0 accessSite=8

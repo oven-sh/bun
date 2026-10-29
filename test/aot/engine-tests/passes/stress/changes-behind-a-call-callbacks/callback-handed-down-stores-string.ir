@@ -470,47 +470,49 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b3(v8)
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: v9: anything ~ int|whole = PropGet v0 key="right" accessSite=13 receivers=[L0]
-# CHECK-NEXT: v10: number|string|bigint ~ int|whole = Add v2, v9
-# CHECK-NEXT: v11: ":" = String string=":"
-# CHECK-NEXT: v12: string = Add v10, v11
-# CHECK-NEXT: Jump -> next b3(v12)
-# CHECK-NEXT: b3(v13: string):
-# CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: v15: string = Add v13, v14
-# CHECK-NEXT: v16: fact = Entered function=f1
-# CHECK-NEXT: v17: null|L0 = GetModuleVariable fact=v16 variable=g3
-# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=null
-# CHECK-NEXT: Branch v18 -> taken b5(), notTaken b4(| 0)
-# CHECK-NEXT: b4(v19: L0):
-# CHECK-NEXT: v20: null = Null
-# CHECK-NEXT: PutModuleVariable v20 variable=g3
-# CHECK-NEXT: v22: "text" = String string="text"
-# CHECK-NEXT: PropSet v19, v22 key="right" accessSite=10 receivers=[L0]
+# CHECK-NEXT: v10: int|whole|"text" ~ int|whole = AssumeType v9 provenType=int|whole|"text"
+# CHECK-NEXT: v11: number|string|bigint ~ int|whole = Add v2, v10
+# CHECK-NEXT: v12: ":" = String string=":"
+# CHECK-NEXT: v13: string = Add v11, v12
+# CHECK-NEXT: Jump -> next b3(v13)
+# CHECK-NEXT: b3(v14: string):
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: string = Add v14, v15
+# CHECK-NEXT: v17: fact = Entered function=f1
+# CHECK-NEXT: v18: null|L0 = GetModuleVariable fact=v17 variable=g3
+# CHECK-NEXT: v19: boolean = TypeTest v18 testedType=null
+# CHECK-NEXT: Branch v19 -> taken b5(), notTaken b4(| 0)
+# CHECK-NEXT: b4(v20: L0):
+# CHECK-NEXT: v21: null = Null
+# CHECK-NEXT: PutModuleVariable v21 variable=g3
+# CHECK-NEXT: v23: "text" = String string="text"
+# CHECK-NEXT: PropSet v20, v23 key="right" accessSite=10 receivers=[L0]
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v24: 3 = Integer integer=3
-# CHECK-NEXT: v25: int[0, 3] = BitAnd v1, v24
-# CHECK-NEXT: v26: int[-2147483643, 2147483647] = GetSlot v0 key="left" receivers=[L0] level=Proven accessSite=16
-# CHECK-NEXT: v27: "," = String string=","
-# CHECK-NEXT: v28: boolean = IsSlotFilled v0 key="right" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v28 -> taken b6(| 0), notTaken b7()
-# CHECK-NEXT: b6(v29: guard):
-# CHECK-NEXT: v30: int|whole = GetSlot v0, v29 key="right" receivers=[L0] level=Expected accessSite=17 [holdsDeclaredType]
-# CHECK-NEXT: v31: 1 = Integer integer=1
-# CHECK-NEXT: v32: int|whole = Add v30, v31
-# CHECK-NEXT: v33: "," = String string=","
-# CHECK-NEXT: v34: string = Strcat v26, v27, v32, v33
-# CHECK-NEXT: v35: string = CallDirect v15, v25, v34, v30 function=f11
-# CHECK-NEXT: ReturnCall v35 requirement=Allowed
+# CHECK-NEXT: v25: 3 = Integer integer=3
+# CHECK-NEXT: v26: int[0, 3] = BitAnd v1, v25
+# CHECK-NEXT: v27: int[-2147483643, 2147483647] = GetSlot v0 key="left" receivers=[L0] level=Proven accessSite=16
+# CHECK-NEXT: v28: "," = String string=","
+# CHECK-NEXT: v29: boolean = IsSlotFilled v0 key="right" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v29 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v30: guard):
+# CHECK-NEXT: v31: int|whole = GetSlot v0, v30 key="right" receivers=[L0] level=Expected accessSite=17 [holdsDeclaredType]
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: int|whole = Add v31, v32
+# CHECK-NEXT: v34: "," = String string=","
+# CHECK-NEXT: v35: string = Strcat v27, v28, v33, v34
+# CHECK-NEXT: v36: string = CallDirect v16, v26, v35, v31 function=f11
+# CHECK-NEXT: ReturnCall v36 requirement=Allowed
 # CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v36: anything ~ int|whole = PropGet v0 key="right" accessSite=17 receivers=[L0]
-# CHECK-NEXT: v37: 1 = Integer integer=1
-# CHECK-NEXT: v38: number|string|bigint ~ int|whole = Add v36, v37
-# CHECK-NEXT: v39: "," = String string=","
-# CHECK-NEXT: v40: string = Strcat v26, v27, v38, v39
-# CHECK-NEXT: v41: anything ~ int|whole = PropGet v0 key="right" accessSite=18 receivers=[L0]
-# CHECK-NEXT: v42: string = CallDirect v15, v25, v40, v41 function=f11
-# CHECK-NEXT: ReturnCall v42 requirement=Allowed
+# CHECK-NEXT: v37: anything ~ int|whole = PropGet v0 key="right" accessSite=17 receivers=[L0]
+# CHECK-NEXT: v38: int|whole|"text" ~ int|whole = AssumeType v37 provenType=int|whole|"text"
+# CHECK-NEXT: v39: 1 = Integer integer=1
+# CHECK-NEXT: v40: number|string|bigint ~ int|whole = Add v38, v39
+# CHECK-NEXT: v41: "," = String string=","
+# CHECK-NEXT: v42: string = Strcat v27, v28, v40, v41
+# CHECK-NEXT: v43: anything ~ int|whole = PropGet v0 key="right" accessSite=18 receivers=[L0]
+# CHECK-NEXT: v44: string = CallDirect v16, v26, v42, v43 function=f11
+# CHECK-NEXT: ReturnCall v44 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="outer"
 # CHECK: module=m0 position=804 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 299] site=w9}] results=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=1030 module=m0}, {callee=f11 callPosition=552 parent=1 module=m0}, {callee=f2 callPosition=666 parent=2 module=m0}, {callee=f2 callPosition=666 parent=2 module=m0}, {callee=f1 callPosition=519 parent=3 module=m0}, {callee=f1 callPosition=519 parent=4 module=m0}] {
@@ -535,95 +537,92 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v13: L0 = NewObject -, v0, v2 layout=L0 fields=[0, 2] allocationSite=1 allocationClass=0
 # CHECK-NEXT: PutModuleVariable v13 variable=g3
-# CHECK-NEXT: v15: int[1, 599] = Add v0, v2
-# CHECK-NEXT: v16: ":" = String string=":"
-# CHECK-NEXT: v17: undefined = Undefined
-# CHECK-NEXT: v18: string = Strcat v15, v16, v17
-# CHECK-NEXT: v19: null = Null
-# CHECK-NEXT: PutModuleVariable v19 variable=g3
-# CHECK-NEXT: v21: "text" = String string="text"
-# CHECK-NEXT: PropSet v13, v21 key="right" accessSite=10 receivers=[L0]
-# CHECK-NEXT: v23: 3 = Integer integer=3
-# CHECK-NEXT: v24: int[0, 3] = BitAnd v0, v23
-# CHECK-NEXT: v25: int[-2147483643, 2147483647] = GetSlot v13 key="left" receivers=[L0] level=Proven accessSite=16
-# CHECK-NEXT: v26: "," = String string=","
-# CHECK-NEXT: v27: boolean = IsSlotFilled v13 key="right" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v27 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: v15: ":" = String string=":"
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: v17: string = Strcat v3, v15, v16
+# CHECK-NEXT: v18: null = Null
+# CHECK-NEXT: PutModuleVariable v18 variable=g3
+# CHECK-NEXT: v20: "text" = String string="text"
+# CHECK-NEXT: PropSet v13, v20 key="right" accessSite=10 receivers=[L0]
+# CHECK-NEXT: v22: 3 = Integer integer=3
+# CHECK-NEXT: v23: int[0, 3] = BitAnd v0, v22
+# CHECK-NEXT: v24: int[-2147483643, 2147483647] = GetSlot v13 key="left" receivers=[L0] level=Proven accessSite=16
+# CHECK-NEXT: v25: "," = String string=","
+# CHECK-NEXT: v26: boolean = IsSlotFilled v13 key="right" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v26 -> taken b5(| 0), notTaken b6()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v28: int[1, 599] = Add v0, v2
-# CHECK-NEXT: v29: ":" = String string=":"
-# CHECK-NEXT: v30: undefined = Undefined
-# CHECK-NEXT: v31: string = Strcat v28, v29, v30
-# CHECK-NEXT: v32: fact = Entered function=f1
-# CHECK-NEXT: v33: null|L0 = GetModuleVariable fact=v32 variable=g3
-# CHECK-NEXT: v34: boolean = TypeTest v33 testedType=null
-# CHECK-NEXT: Branch v34 -> taken b11(), notTaken b12(| 0)
-# CHECK-NEXT: b5(v35: guard):
-# CHECK-NEXT: v36: int|whole = GetSlot v13, v35 key="right" receivers=[L0] level=Expected accessSite=17 [holdsDeclaredType]
-# CHECK-NEXT: v37: 1 = Integer integer=1
-# CHECK-NEXT: v38: int|whole = Add v36, v37
-# CHECK-NEXT: v39: "," = String string=","
-# CHECK-NEXT: v40: string = Strcat v25, v26, v38, v39
-# CHECK-NEXT: v41: string = CallDirect v18, v24, v40, v36 function=f11 @619:1 tail
-# CHECK-NEXT: Jump -> next b7(v41)
+# CHECK-NEXT: v27: ":" = String string=":"
+# CHECK-NEXT: v28: undefined = Undefined
+# CHECK-NEXT: v29: string = Strcat v3, v27, v28
+# CHECK-NEXT: v30: fact = Entered function=f1
+# CHECK-NEXT: v31: null|L0 = GetModuleVariable fact=v30 variable=g3
+# CHECK-NEXT: v32: boolean = TypeTest v31 testedType=null
+# CHECK-NEXT: Branch v32 -> taken b11(), notTaken b12(| 0)
+# CHECK-NEXT: b5(v33: guard):
+# CHECK-NEXT: v34: int|whole = GetSlot v13, v33 key="right" receivers=[L0] level=Expected accessSite=17 [holdsDeclaredType]
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: int|whole = Add v34, v35
+# CHECK-NEXT: v37: "," = String string=","
+# CHECK-NEXT: v38: string = Strcat v24, v25, v36, v37
+# CHECK-NEXT: v39: string = CallDirect v17, v23, v38, v34 function=f11 @619:1 tail
+# CHECK-NEXT: Jump -> next b7(v39)
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v42: anything ~ int|whole = PropGet v13 key="right" accessSite=17 receivers=[L0]
-# CHECK-NEXT: v43: 1 = Integer integer=1
-# CHECK-NEXT: v44: number|string|bigint ~ int|whole = Add v42, v43
-# CHECK-NEXT: v45: "," = String string=","
-# CHECK-NEXT: v46: string = Strcat v25, v26, v44, v45
-# CHECK-NEXT: v47: anything ~ int|whole = PropGet v13 key="right" accessSite=18 receivers=[L0]
-# CHECK-NEXT: v48: string = CallDirect v18, v24, v46, v47 function=f11 @619:1 tail
-# CHECK-NEXT: Jump -> next b7(v48)
-# CHECK-NEXT: b7(v49: string):
-# CHECK-NEXT: v50: int[-2147483643, 2147483647] = GetSlot v13 key="left" receivers=[L0] level=Proven accessSite=23
-# CHECK-NEXT: v51: "," = String string=","
-# CHECK-NEXT: v52: boolean = IsSlotFilled v13 key="right" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v52 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v53: guard):
-# CHECK-NEXT: v54: int|whole = GetSlot v13, v53 key="right" receivers=[L0] level=Expected accessSite=24 [holdsDeclaredType]
-# CHECK-NEXT: v55: 1 = Integer integer=1
-# CHECK-NEXT: v56: int|whole = Add v54, v55
-# CHECK-NEXT: v57: "," = String string=","
-# CHECK-NEXT: v58: string = Strcat v50, v51, v56, v57
-# CHECK-NEXT: v59: string = TypeOf v54
-# CHECK-NEXT: Jump -> next b10(v58, v59, v49)
+# CHECK-NEXT: v40: anything ~ int|whole = PropGet v13 key="right" accessSite=17 receivers=[L0]
+# CHECK-NEXT: v41: int|whole|"text" ~ int|whole = AssumeType v40 provenType=int|whole|"text"
+# CHECK-NEXT: v42: 1 = Integer integer=1
+# CHECK-NEXT: v43: number|string|bigint ~ int|whole = Add v41, v42
+# CHECK-NEXT: v44: "," = String string=","
+# CHECK-NEXT: v45: string = Strcat v24, v25, v43, v44
+# CHECK-NEXT: v46: anything ~ int|whole = PropGet v13 key="right" accessSite=18 receivers=[L0]
+# CHECK-NEXT: v47: string = CallDirect v17, v23, v45, v46 function=f11 @619:1 tail
+# CHECK-NEXT: Jump -> next b7(v47)
+# CHECK-NEXT: b7(v48: string):
+# CHECK-NEXT: v49: "," = String string=","
+# CHECK-NEXT: v50: boolean = IsSlotFilled v13 key="right" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v50 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v51: guard):
+# CHECK-NEXT: v52: int|whole = GetSlot v13, v51 key="right" receivers=[L0] level=Expected accessSite=24 [holdsDeclaredType]
+# CHECK-NEXT: v53: 1 = Integer integer=1
+# CHECK-NEXT: v54: int|whole = Add v52, v53
+# CHECK-NEXT: v55: "," = String string=","
+# CHECK-NEXT: v56: string = Strcat v24, v49, v54, v55
+# CHECK-NEXT: v57: "number" = String string="number"
+# CHECK-NEXT: Jump -> next b10(v56, v57, v48)
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v60: anything ~ int|whole = PropGet v13 key="right" accessSite=24 receivers=[L0]
-# CHECK-NEXT: v61: 1 = Integer integer=1
-# CHECK-NEXT: v62: number|string|bigint ~ int|whole = Add v60, v61
-# CHECK-NEXT: v63: "," = String string=","
-# CHECK-NEXT: v64: string = Strcat v50, v51, v62, v63
-# CHECK-NEXT: v65: anything ~ int|whole = PropGet v13 key="right" accessSite=25 receivers=[L0]
-# CHECK-NEXT: v66: string = TypeOf v65
-# CHECK-NEXT: Jump -> next b10(v64, v66, v49)
-# CHECK-NEXT: b10(v67: string, v68: string, v69: string):
-# CHECK-NEXT: v70: " [" = String string=" ["
-# CHECK-NEXT: v71: "] " = String string="] "
-# CHECK-NEXT: v72: string = Strcat v6, v70, v69, v71
-# CHECK-NEXT: v73: string = Strcat v72, v67, v68
-# CHECK-NEXT: Return v73
+# CHECK-NEXT: v58: anything ~ int|whole = PropGet v13 key="right" accessSite=24 receivers=[L0]
+# CHECK-NEXT: v59: int|whole|"text" ~ int|whole = AssumeType v58 provenType=int|whole|"text"
+# CHECK-NEXT: v60: 1 = Integer integer=1
+# CHECK-NEXT: v61: number|string|bigint ~ int|whole = Add v59, v60
+# CHECK-NEXT: v62: "," = String string=","
+# CHECK-NEXT: v63: string = Strcat v24, v49, v61, v62
+# CHECK-NEXT: v64: anything ~ int|whole = PropGet v13 key="right" accessSite=25 receivers=[L0]
+# CHECK-NEXT: v65: string = TypeOf v64
+# CHECK-NEXT: Jump -> next b10(v63, v65, v48)
+# CHECK-NEXT: b10(v66: string, v67: string ~ "number", v68: string):
+# CHECK-NEXT: v69: " [" = String string=" ["
+# CHECK-NEXT: v70: "] " = String string="] "
+# CHECK-NEXT: v71: string = Strcat v6, v69, v68, v70
+# CHECK-NEXT: v72: string = Strcat v71, v66, v67
+# CHECK-NEXT: Return v72
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v74: 3 = Integer integer=3
-# CHECK-NEXT: v75: int[0, 3] = BitAnd v0, v74
-# CHECK-NEXT: v76: "," = String string=","
-# CHECK-NEXT: v77: 1 = Integer integer=1
-# CHECK-NEXT: v78: int[2, 301] = Add v2, v77
-# CHECK-NEXT: v79: "," = String string=","
-# CHECK-NEXT: v80: string = Strcat v0, v76, v78, v79
-# CHECK-NEXT: v81: string = CallDirect v31, v75, v80, v2 function=f11 @619:1 tail
+# CHECK-NEXT: v73: 3 = Integer integer=3
+# CHECK-NEXT: v74: int[0, 3] = BitAnd v0, v73
+# CHECK-NEXT: v75: "," = String string=","
+# CHECK-NEXT: v76: 1 = Integer integer=1
+# CHECK-NEXT: v77: int[2, 301] = Add v2, v76
+# CHECK-NEXT: v78: "," = String string=","
+# CHECK-NEXT: v79: string = Strcat v0, v75, v77, v78
+# CHECK-NEXT: v80: string = CallDirect v29, v74, v79, v2 function=f11 @619:1 tail
+# CHECK-NEXT: v81: "," = String string=","
 # CHECK-NEXT: v82: "," = String string=","
-# CHECK-NEXT: v83: 1 = Integer integer=1
-# CHECK-NEXT: v84: int[2, 301] = Add v2, v83
-# CHECK-NEXT: v85: "," = String string=","
-# CHECK-NEXT: v86: string = Strcat v0, v82, v84, v85
-# CHECK-NEXT: v87: string = TypeOf v2
-# CHECK-NEXT: Jump -> next b10(v86, v87, v81)
-# CHECK-NEXT: b12(v88: L0):
-# CHECK-NEXT: v89: null = Null
-# CHECK-NEXT: PutModuleVariable v89 variable=g3
-# CHECK-NEXT: v91: "text" = String string="text"
-# CHECK-NEXT: PropSet v88, v91 key="right" accessSite=10 receivers=[L0]
+# CHECK-NEXT: v83: string = Strcat v0, v81, v77, v82
+# CHECK-NEXT: v84: "number" = String string="number"
+# CHECK-NEXT: Jump -> next b10(v83, v84, v80)
+# CHECK-NEXT: b12(v85: L0):
+# CHECK-NEXT: v86: null = Null
+# CHECK-NEXT: PutModuleVariable v86 variable=g3
+# CHECK-NEXT: v88: "text" = String string="text"
+# CHECK-NEXT: PropSet v85, v88 key="right" accessSite=10 receivers=[L0]
 # CHECK-NEXT: Jump -> next b11()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="holder"

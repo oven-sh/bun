@@ -61,6 +61,25 @@ pub(in crate::lower) fn has_private_static_storage(hir: &hir::File<'_>, member: 
             || matches!(hir.runtime_member_key(member), PropKey::Private(_)))
 }
 
+/// A private field says by itself whether an object has it. A private method has no place in the object, so its brand is all that says so.
+pub(in crate::lower) fn brand_is_of_methods(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    class: ClassId,
+) -> bool {
+    let has_private_method = bound.runtime.is_computed()
+        && bound
+            .private_names_of_class(class)
+            .any(|(_, name)| !name.is_static && !matches!(name.members, PrivateMembers::Field(_)));
+    has_private_method
+        || runtime_members(hir, class).any(|member| {
+            let node = hir[member];
+            is_auto_accessor(hir, member)
+                && !node.flags.contains(Flags::STATIC)
+                && !is_declaration_only(node)
+        })
+}
+
 pub(in crate::lower) fn has_instance_brand(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,

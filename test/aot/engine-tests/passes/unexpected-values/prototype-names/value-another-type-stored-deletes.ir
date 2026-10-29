@@ -526,8 +526,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f23 visibility=Private
 # CHECK-NEXT: v108: "nine" = String string="nine"
 # CHECK-NEXT: PropSet v105, v108 key="name" accessSite=17 receivers=[L0]
 # CHECK-NEXT: v110: string = CallDirect v97 function=f6 accessSite=13
-# CHECK-NEXT: v111: undefined = Undefined
-# CHECK-NEXT: Return v111
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="handOver"
 # CHECK: module=m0 position=646 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -908,101 +908,85 @@ runtimefunction id=ArrayTraversalTraverseArray function=f139 visibility=Private
 # CHECK-NEXT: Jump -> next b9(v26, v34)
 # CHECK-NEXT: b9(v35: anything, v36: anything ~ boolean):
 # CHECK-NEXT: v37: boolean ~ true = TypeTest v22 testedType=L(IteratorResult)
-# CHECK-NEXT: Branch v37 -> taken b10(| 0), notTaken b18()
+# CHECK-NEXT: Branch v37 -> taken b10(| 0), notTaken b16()
 # CHECK-NEXT: b10(v38: L(IteratorResult)):
 # CHECK-NEXT: v39: boolean = IsSlotFilled v38 key="done" receivers=[L(IteratorResult)] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v39 -> taken b11(| 0), notTaken b18()
+# CHECK-NEXT: Branch v39 -> taken b11(| 0), notTaken b16()
 # CHECK-NEXT: b11(v40: guard):
-# CHECK-NEXT: v41: boolean ~ true = TypeTest v36 testedType=undefined|null|boolean
-# CHECK-NEXT: Branch v41 -> taken b12(| 0), notTaken b17()
-# CHECK-NEXT: b12(v42: undefined|null|boolean ~ boolean):
+# CHECK-NEXT: v41: fact = Specified
+# CHECK-NEXT: v42: undefined|boolean ~ boolean = AssumeType v36, v41 provenType=undefined|boolean
 # CHECK-NEXT: v43: boolean = ToBoolean v42
-# CHECK-NEXT: Branch v43 -> taken b13(), notTaken b15()
-# CHECK-NEXT: b13():
+# CHECK-NEXT: Branch v43 -> taken b12(), notTaken b14()
+# CHECK-NEXT: b12():
 # CHECK-NEXT: v44: "zip ends: " = String string="zip ends: "
 # CHECK-NEXT: v45: boolean = GetSlot v38, v40 key="done" receivers=[L(IteratorResult)] level=Expected accessSite=7 [holdsDeclaredType]
 # CHECK-NEXT: v46: " " = String string=" "
-# CHECK-NEXT: v47: " " = String string=" "
-# CHECK-NEXT: v48: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v48, v44, v45, v46, v42, v47
-# CHECK-NEXT: v50: boolean = IsSlotFilled v38 key="value" receivers=[L(IteratorResult)] level=Expected
-# CHECK-NEXT: Branch v50 -> taken b14(| 0), notTaken b21(v48)
-# CHECK-NEXT: b14(v51: guard):
-# CHECK-NEXT: v52: anything = GetSlot v38, v51 key="value" receivers=[L(IteratorResult)] level=Expected accessSite=9
-# CHECK-NEXT: Jump -> next b22(v48, v52)
+# CHECK-NEXT: v47: fact = Specified
+# CHECK-NEXT: v48: undefined|boolean ~ boolean = AssumeType v36, v47 provenType=undefined|boolean
+# CHECK-NEXT: v49: " " = String string=" "
+# CHECK-NEXT: v50: string = Strcat v44, v45, v46, v48, v49
+# CHECK-NEXT: v51: boolean = IsSlotFilled v38 key="value" receivers=[L(IteratorResult)] level=Expected
+# CHECK-NEXT: Branch v51 -> taken b13(| 0), notTaken b18(v50)
+# CHECK-NEXT: b13(v52: guard):
+# CHECK-NEXT: v53: anything = GetSlot v38, v52 key="value" receivers=[L(IteratorResult)] level=Expected accessSite=9
+# CHECK-NEXT: Jump -> next b19(v50, v53)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v54: boolean = IsSlotFilled v38 key="value" receivers=[L(IteratorResult)] level=Expected
+# CHECK-NEXT: Branch v54 -> taken b15(), notTaken b24()
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v53: boolean = IsSlotFilled v38 key="value" receivers=[L(IteratorResult)] level=Expected
-# CHECK-NEXT: Branch v53 -> taken b16(| 0), notTaken b27()
-# CHECK-NEXT: b16(v54: guard):
-# CHECK-NEXT: v55: anything = GetSlot v38, v54 key="value" receivers=[L(IteratorResult)] level=Expected accessSite=11
-# CHECK-NEXT: Jump -> next b28(v55)
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b16() frequency=Unlikely:
+# CHECK-NEXT: v55: anything ~ boolean = PropGet v22 key="done" accessSite=5
+# CHECK-NEXT: v56: fact = Specified
+# CHECK-NEXT: v57: undefined|boolean ~ boolean = AssumeType v36, v56 provenType=undefined|boolean
+# CHECK-NEXT: v58: boolean = ToBoolean v57
+# CHECK-NEXT: Branch v58 -> taken b17(), notTaken b23()
 # CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v56: anything ~ boolean = PropGet v22 key="done" accessSite=5
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b19() frequency=Rare:
-# CHECK-NEXT: v57: boolean = ToBoolean v36
-# CHECK-NEXT: Branch v57 -> taken b20(), notTaken b26()
+# CHECK-NEXT: v59: "zip ends: " = String string="zip ends: "
+# CHECK-NEXT: v60: anything ~ boolean = PropGet v22 key="done" accessSite=7
+# CHECK-NEXT: v61: undefined|boolean ~ boolean = AssumeType v60 provenType=undefined|boolean
+# CHECK-NEXT: v62: " " = String string=" "
+# CHECK-NEXT: v63: fact = Specified
+# CHECK-NEXT: v64: undefined|boolean ~ boolean = AssumeType v36, v63 provenType=undefined|boolean
+# CHECK-NEXT: v65: " " = String string=" "
+# CHECK-NEXT: v66: string = Strcat v59, v61, v62, v64, v65
+# CHECK-NEXT: Jump -> next b18(v66)
+# CHECK-NEXT: b18(v67: string) frequency=Unlikely:
+# CHECK-NEXT: v68: anything = PropGet v22 key="value" accessSite=9
+# CHECK-NEXT: Jump -> next b19(v67, v68)
+# CHECK-NEXT: b19(v69: string, v70: anything):
+# CHECK-NEXT: v71: undefined = AssumeType v70 provenType=undefined
+# CHECK-NEXT: v72: " " = String string=" "
+# CHECK-NEXT: v73: fact = Specified
+# CHECK-NEXT: v74: undefined = AssumeType v35, v73 provenType=undefined
+# CHECK-NEXT: v75: string = Strcat v69, v71, v72, v74
+# CHECK-NEXT: v76: undefined = AsyncGeneratorYield v4, v75, v1, v2, v3
+# CHECK-NEXT: v77: anything = ResultAt v76
+# CHECK-NEXT: v78: int[0, 2] = ResultAt v76 index=1
+# CHECK-NEXT: Switch v78 cases=[1, 2] -> case b20(), case b21(), otherwise b22()
 # CHECK-NEXT: b20() frequency=Rare:
-# CHECK-NEXT: v58: "zip ends: " = String string="zip ends: "
-# CHECK-NEXT: v59: anything ~ boolean = PropGet v22 key="done" accessSite=7
-# CHECK-NEXT: v60: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v61: "" = String string=""
-# CHECK-NEXT: v62: string = Add v61, v59
-# CHECK-NEXT: StringBuilderAppend v60, v58, v62
-# CHECK-NEXT: v64: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v60, v64
-# CHECK-NEXT: v66: "" = String string=""
-# CHECK-NEXT: v67: string = Add v66, v36
-# CHECK-NEXT: StringBuilderAppend v60, v67
-# CHECK-NEXT: v69: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v60, v69
-# CHECK-NEXT: Jump -> next b21(v60)
-# CHECK-NEXT: b21(v71: stringbuilder) frequency=Rare:
-# CHECK-NEXT: v72: anything = PropGet v22 key="value" accessSite=9
-# CHECK-NEXT: Jump -> next b22(v71, v72)
-# CHECK-NEXT: b22(v73: stringbuilder, v74: anything):
-# CHECK-NEXT: v75: "" = String string=""
-# CHECK-NEXT: v76: string = Add v75, v74
-# CHECK-NEXT: StringBuilderAppend v73, v76
-# CHECK-NEXT: v78: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v73, v78
-# CHECK-NEXT: v80: "" = String string=""
-# CHECK-NEXT: v81: string = Add v80, v35
-# CHECK-NEXT: StringBuilderAppend v73, v81
-# CHECK-NEXT: v83: string = StringBuilderFinish v73
-# CHECK-NEXT: v84: undefined = AsyncGeneratorYield v4, v83, v1, v2, v3
-# CHECK-NEXT: v85: anything = ResultAt v84
-# CHECK-NEXT: v86: int[0, 2] = ResultAt v84 index=1
-# CHECK-NEXT: Switch v86 cases=[1, 2] -> case b23(), case b24(), otherwise b25()
-# CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: Throw v85
-# CHECK-NEXT: b24() frequency=Rare:
-# CHECK-NEXT: Return v85
+# CHECK-NEXT: Throw v77
+# CHECK-NEXT: b21() frequency=Rare:
+# CHECK-NEXT: Return v77
+# CHECK-NEXT: b22():
+# CHECK-NEXT: v79: undefined = Undefined
+# CHECK-NEXT: Return v79
+# CHECK-NEXT: b23() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b24()
+# CHECK-NEXT: b24() frequency=Unlikely:
+# CHECK-NEXT: v80: anything = PropGet v22 key="value" accessSite=11
+# CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b25():
-# CHECK-NEXT: v87: undefined = Undefined
-# CHECK-NEXT: Return v87
+# CHECK-NEXT: v81: "undefined+undefined" = String string="undefined+undefined"
+# CHECK-NEXT: v82: undefined = AsyncGeneratorYield v4, v81, v1, v2, v3
+# CHECK-NEXT: v83: anything = ResultAt v82
+# CHECK-NEXT: v84: int[0, 2] = ResultAt v82 index=1
+# CHECK-NEXT: Switch v84 cases=[1, 2] -> case b26(), case b27(), otherwise b28()
 # CHECK-NEXT: b26() frequency=Rare:
-# CHECK-NEXT: Jump -> next b27()
+# CHECK-NEXT: Throw v83
 # CHECK-NEXT: b27() frequency=Rare:
-# CHECK-NEXT: v88: anything = PropGet v22 key="value" accessSite=11
-# CHECK-NEXT: Jump -> next b28(v88)
-# CHECK-NEXT: b28(v89: anything):
-# CHECK-NEXT: v90: undefined|null|string = AssumeType v89 provenType=undefined|null|string
-# CHECK-NEXT: v91: "+" = String string="+"
-# CHECK-NEXT: v92: fact = Specified
-# CHECK-NEXT: v93: undefined|null|string = AssumeType v35, v92 provenType=undefined|null|string
-# CHECK-NEXT: v94: string = Strcat v90, v91, v93
-# CHECK-NEXT: v95: undefined = AsyncGeneratorYield v4, v94, v1, v2, v3
-# CHECK-NEXT: v96: anything = ResultAt v95
-# CHECK-NEXT: v97: int[0, 2] = ResultAt v95 index=1
-# CHECK-NEXT: Switch v97 cases=[1, 2] -> case b29(), case b30(), otherwise b31()
-# CHECK-NEXT: b29() frequency=Rare:
-# CHECK-NEXT: Throw v96
-# CHECK-NEXT: b30() frequency=Rare:
-# CHECK-NEXT: Return v96
-# CHECK-NEXT: b31():
+# CHECK-NEXT: Return v83
+# CHECK-NEXT: b28():
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"

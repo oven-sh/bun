@@ -211,7 +211,7 @@ describe("bun test --aot", () => {
     expect(passed(stderr)).toEqual(["unchanged"]);
     for (const name of ["normalize", "max"])
       expect(stderr).toContain(
-        `TypeError: Cannot spy on '${name}' because this property of a built-in object is read-only in a compiled executable`,
+        `TypeError: Cannot spy on '${name}' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)`,
       );
     expect(exitCode).toBe(1);
   });

@@ -1162,8 +1162,7 @@ fn find_refused_entry_points(files: &[(&str, &str)], entry_point_count: usize) -
     let mut project = TestProject::with_entry_points(files, entry_point_count, &default_settings());
     project.aot.checks_only = true;
     let (result, _) = link_project(&project, &WithoutServices);
-    let refused = expect_failure(result).refused_entry_points;
-    refused.map(|it| it.refused)
+    expect_failure(result).refused_entry_points
 }
 
 #[test]

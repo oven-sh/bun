@@ -18,6 +18,7 @@ use crate::ir::for_each_mut;
 use crate::load::Sources;
 use crate::load::named_loads::{NamedModule, modules_named_in};
 use crate::load::sources::parsed_source;
+use bun_core::strings;
 use bun_sema::atom::Atom;
 use bun_sema::hir::{self, ExportId, ExprId, ImportId, NodeData, StmtId, StmtKind};
 use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
@@ -80,8 +81,9 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
     let compiled_files = files.compiled_files().iter();
     let mut slots: Vec<(FileId, Option<FileScan>)> =
         compiled_files.map(|&file| (file, None)).collect();
+    let mocked_paths = find_paths_only_mocks_answer(files, sources);
     for_each_mut(&mut slots, input.in_parallel, &|(file, scan)| {
-        *scan = Some(scan_file(files, sources, *file));
+        *scan = Some(scan_file(files, sources, &mocked_paths, *file));
     });
     let mut by_file = Vec::new();
     by_file.resize_with(files.modules.len(), || None);
@@ -91,10 +93,60 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
     Scans { by_file }
 }
 
-fn scan_file(files: &Files<'_>, sources: &Sources, file: FileId) -> FileScan {
+// What `specifier` names from the file: the path of a relative one, else its text.
+fn path_named(sources: &Sources, file: FileId, specifier: &[u8]) -> Vec<u8> {
+    if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
+        return specifier.to_vec();
+    }
+    let importer = sources.public_path(file);
+    let end_of_folder = strings::last_index_of_char(importer, b'/').unwrap_or(0);
+    let mut parts: Vec<&[u8]> = strings::split(&importer[..end_of_folder], b"/").collect();
+    for part in strings::split(specifier, b"/") {
+        match part {
+            b"." => {}
+            b".." => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    parts.join(&b'/')
+}
+
+// A test may mock a module that exists nowhere. Whoever imports that path gets the mock from the loader at run time.
+fn find_paths_only_mocks_answer(files: &Files<'_>, sources: &Sources) -> FxHashSet<Vec<u8>> {
+    let mut paths = FxHashSet::default();
+    for &file in files.compiled_files() {
+        let Some(compiled) = files.compiled(file) else {
+            continue;
+        };
+        let sites = compiled.analysis.import_sites.iter();
+        for (site, answer) in sites.zip(compiled.code_answers) {
+            if let (
+                ImportSiteKind::MockModule(_),
+                ImportSpecifier::Constant(specifier),
+                CodeAnswer::NotFound(_),
+            ) = (site.kind, site.specifier, answer)
+            {
+                paths.insert(path_named(sources, file, files.atoms.bytes(specifier)));
+            }
+        }
+    }
+    paths
+}
+
+fn scan_file(
+    files: &Files<'_>,
+    sources: &Sources,
+    mocked_paths: &FxHashSet<Vec<u8>>,
+    file: FileId,
+) -> FileScan {
     let compiled = files.compiled(file);
     let mut scanner = FileScanner {
         file,
+        files,
+        sources,
+        mocked_paths,
         hir: files.hir(file),
         compiled: compiled.expect("the loader analyzes every compiled file"),
         named_in_choices: parsed_source(files, file)
@@ -142,6 +194,9 @@ fn scan_file(files: &Files<'_>, sources: &Sources, file: FileId) -> FileScan {
 
 struct FileScanner<'a, 's> {
     file: FileId,
+    files: &'a Files<'s>,
+    sources: &'a Sources,
+    mocked_paths: &'a FxHashSet<Vec<u8>>,
     hir: &'a hir::File<'s>,
     compiled: &'a CompiledModule<'s>,
     named_in_choices: &'a [NamedModule],
@@ -268,6 +323,16 @@ impl FileScanner<'_, '_> {
                 | SiteForm::GetBuiltinModule
                 | SiteForm::Mock,
             ) => return answer,
+            (Err(_), SiteForm::Declaration | SiteForm::Load)
+                if !self.mocked_paths.is_empty() && self.is_answered_by_mock(specifier) =>
+            {
+                let kind = ExternalKind::UncompiledCode;
+                self.externals.push((specifier, kind));
+                return ScannedSite::Module(ModuleRef::External {
+                    importer: self.file,
+                    specifier,
+                });
+            }
             (Err(reason), SiteForm::Declaration | SiteForm::Load) => reason,
         };
         let (start, end) = range_of_node(self.hir, diagnostic_node(self.hir, site));
@@ -275,6 +340,11 @@ impl FileScanner<'_, '_> {
         let kind = ModuleFailureKind::Unresolved { specifier, reason };
         self.failures.push(written.fail(self.file, kind));
         ScannedSite::Unresolved
+    }
+
+    fn is_answered_by_mock(&self, specifier: Atom) -> bool {
+        let specifier = self.files.atoms.bytes(specifier);
+        (self.mocked_paths).contains(&path_named(self.sources, self.file, specifier))
     }
 
     fn answer_of(&mut self, answer: CodeAnswer<'_>) -> Result<ScannedSite, CodeFailure> {

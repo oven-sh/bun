@@ -1087,11 +1087,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f172 visibility=Private
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="replaceHelper"
-# CHECK: module=m0 position=137 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = Undefined
-# CHECK-NEXT: Return v0
-# CHECK-NEXT: }
+# CHECK: module=m0 position=137 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f10 module=
 # CHECK: m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
 # CHECK-NEXT: b0():
@@ -1121,11 +1117,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f172 visibility=Private
 # CHECK-LABEL: function f19 module=
 # CHECK: m4 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: Array = NewArray contents=anything allocationSite=2
-# CHECK-NEXT: v1: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: PutModuleVariable v1 variable=g51
-# CHECK-NEXT: v3: undefined = Undefined
-# CHECK-NEXT: Return v3
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
 # CHECK: m5 kind=Module role=CoroutineRamp flags=[IsAsync, IsChecked] thisType={type=anything} results=[{type=Promise}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f22 body=f177 promiseType=Promise worker=f177} {
@@ -1149,13 +1142,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f172 visibility=Private
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="callByName"
-# CHECK: module=m5 position=2713 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=L(m0) site=w33 flags=[OmitsNull, OmitsUndefined]}, {type=string site=w34 flags=[OmitsNull, OmitsUndefined]}, {type=L0 site=w35 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L(m0), v1: string, v2: L0):
-# CHECK-NEXT: v3: anything = ElemGet v0, v1 accessSite=39 receivers=[L(m0)]
-# CHECK-NEXT: v4: undefined|null|boolean|number|string|symbol|bigint|f1|f2|f3|f4|f5 = AssumeType v3 provenType=undefined|null|boolean|number|string|symbol|bigint|f1|f2|f3|f4|f5
-# CHECK-NEXT: v5: anything = Call v4, v0, v2 calleeName="ns[name]" accessSite=40 callees=[f1, f2, f3, f4, f5]
-# CHECK-NEXT: ReturnCall v5 casts=[{declared={type=undefined|L0} resolution=Assume}]
-# CHECK-NEXT: }
+# CHECK: module=m5 position=2713 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=L(m0) site=w33 flags=[OmitsNull, OmitsUndefined]}, {type=string site=w34 flags=[OmitsNull, OmitsUndefined]}, {type=L0 site=w35 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="makeThing"
 # CHECK: module=m0 position=277 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w6}] results=[{type=L0 site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f176 layout=L0}
 # CHECK-LABEL: function {{*}}name="makeThing"

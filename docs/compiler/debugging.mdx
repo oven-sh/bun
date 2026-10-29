@@ -68,6 +68,7 @@ bun test --aot
 - Type errors are printed as warnings and stop nothing, as in `bun test`. A file that has one is compiled without its types: it still works, but runs slower. `bun compile` stops at the same errors.
 - A test file that can't be compiled, for example because an import doesn't resolve, fails. The other files run.
 - `process.platform`, `process.arch` and `process.versions.bun` are read when the code runs, so a test can redefine them. In an executable they are constants.
+- `import()` and `require()` of a file that wasn't compiled load it from disk, as in `bun test`: a module that a test writes, or a path that comes from the environment. An executable throws there unless it's built with `--aot-allow-code-from-disk`.
 - `--watch`, `--hot` and `--inspect` exit with an error. `--coverage` is ignored, with a warning.
 
 ## Run under the compiler's rules

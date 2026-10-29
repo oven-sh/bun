@@ -46,7 +46,6 @@ impl Diagnostics {
             int32_flows: FxHashMap::default(),
             error_count: 0,
             early_error_count: 0,
-            type_errors: Vec::new(),
         }
     }
 
@@ -81,36 +80,6 @@ impl Diagnostics {
         self.int32_flows.extend(other.int32_flows);
         self.error_count += other.error_count;
         self.early_error_count += other.early_error_count;
-        self.type_errors.extend(other.type_errors);
-    }
-
-    pub(super) fn add_type_error(&mut self, code: u32, message: Msg) {
-        debug_assert!(message.kind == Kind::Err);
-        let entry = Entry::new(code, message);
-        let (_, path, line, column, ..) = &entry.key;
-        self.type_errors.push((path.clone(), *line, *column, code));
-        self.error_count += 1;
-        self.entries.push(entry);
-    }
-
-    pub(crate) fn files_with_type_errors(&self) -> Vec<Vec<u8>> {
-        let mut paths: Vec<Vec<u8>> = self.type_errors.iter().map(|it| it.0.clone()).collect();
-        paths.sort_unstable();
-        paths.dedup();
-        paths
-    }
-
-    pub(crate) fn paths_of_errors_that_are_no_type_errors(&self) -> Vec<&[u8]> {
-        let type_errors: FxHashSet<(&[u8], i64, i64, u32)> = (self.type_errors.iter())
-            .map(|it| (&it.0[..], it.1, it.2, it.3))
-            .collect();
-        let is_other_error = |entry: &&Entry| {
-            let (_, path, line, column, code, _) = &entry.key;
-            entry.message.kind == Kind::Err
-                && !type_errors.contains(&(&path[..], *line, *column, *code))
-        };
-        let errors = self.entries.iter().filter(is_other_error);
-        errors.map(|entry| entry.key.1.as_slice()).collect()
     }
 
     pub(super) fn add_message(&mut self, code: u32, message: Msg) {

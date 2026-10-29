@@ -22,7 +22,7 @@ const files = {
   "src/main.ts": `import path from "node:path";
 for (const file of process.argv.slice(2)) await import(path.resolve(file));
 `,
-  "tsconfig.json": `{ "compilerOptions": { "paths": { "@lib/*": ["./lib/*"] } } }`,
+  "tsconfig.json": `{ "compilerOptions": { "experimentalDecorators": true, "paths": { "@lib/*": ["./lib/*"] } } }`,
   "lib/x.ts": `export const how: string = "tsconfig paths";`,
   "node_modules/by-index/package.json": manifest("by-index", {}),
   "node_modules/by-index/index.js": `exports.how = "index.js";`,
@@ -62,6 +62,13 @@ import { how as exported } from "by-exports";
 import { how as scoped } from "@scope/by-main";
 import { how as alias } from "@lib/x";
 console.log("static", main, "|", exported, "|", scoped, "|", alias);
+function mark(_: unknown, __: string, descriptor: PropertyDescriptor) {
+  console.log("decorator of tsconfig", typeof descriptor.value);
+}
+class Marked {
+  @mark method() {}
+}
+new Marked().method();
 `,
 };
 const scripts = ["scripts/use.cjs", "scripts/use.mjs", "scripts/static.ts"];
@@ -72,6 +79,7 @@ test("a file on disk finds packages and path aliases on disk as under bun run", 
   const plain = await run([bunExe(), "src/main.ts", ...scripts], directory, bunEnv);
   expect(plain.stdout).toContain("require by-exports exports require\n");
   expect(plain.stdout).toContain("static main | exports import | scoped main | tsconfig paths\n");
+  expect(plain.stdout).toContain("decorator of tsconfig function\n");
   expect(plain.exitCode).toBe(0);
 
   const outfile = join(directory, process.platform === "win32" ? "app.exe" : "app");

@@ -47,7 +47,7 @@ console.log("the program goes on");
 /* Output:
 typeof process.stdout.write: function
 typeof process.stderr.write: function
-typeof process.stdin.on: refused: process.openStdin was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+typeof process.stdin.on: function
 typeof process.stdout.isTTY: undefined
 typeof process.stdout._writableState: refused: A built-in function was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 typeof console._stdout.write: function

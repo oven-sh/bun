@@ -33,6 +33,15 @@ pub struct PathAlias {
     pub is_base_url: bool,
 }
 
+/// A name that code from disk may ask for and that leads to a file of the program, which need not be an entry point: public paths.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FurtherPackageName {
+    pub path: Vec<u8>,
+    pub required: Option<Vec<u8>>,
+    pub imported: Option<Vec<u8>>,
+    pub hides_other_paths: bool,
+}
+
 const NODE_MODULES: &[u8] = b"node_modules";
 
 fn last_component(path: &[u8]) -> &[u8] {
@@ -155,6 +164,111 @@ impl Resolver<'_> {
             .iter()
             .position(|entry_point| compare_source_paths(entry_point.source_path, path).is_eq());
         position.map(|index| index as u32)
+    }
+
+    /// What code from disk finds by the name of a package of the program, and by the name of the program itself, wherever that code lies: names below the root directory.
+    pub fn find_further_package_names(
+        &mut self,
+        files: &[BuildPaths<'_>],
+        root: BuildPaths<'_>,
+    ) -> Vec<FurtherPackageName> {
+        let mut public_paths: Vec<(&[u8], &[u8])> = files
+            .iter()
+            .map(|file| (file.source_path, file.public_path))
+            .collect();
+        public_paths.sort_unstable();
+        let mut packages: Vec<Vec<u8>> = files
+            .iter()
+            .filter_map(|file| find_name_of_package(file.source_path))
+            .collect();
+        packages.sort_unstable();
+        packages.dedup();
+        let folder = bun_paths::strings::without_trailing_slash(root.source_path);
+        let public_root = bun_paths::strings::without_trailing_slash(root.public_path);
+        let mut unread_log = Log::default();
+        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut names = Vec::new();
+        let separator = &[bun_paths::SEP][..];
+        let written_subpaths = |resolver: &mut Self, directory: &[u8]| {
+            let manifest = resolver
+                .read_dir_info_ignore_error(directory)
+                .and_then(|directory| directory.package_json());
+            let exports = manifest.and_then(|manifest| manifest.exports.as_ref());
+            exports.map(|exports| -> Vec<Vec<u8>> {
+                let subpaths = exports.written_subpaths().into_iter();
+                subpaths.map(<[u8]>::to_vec).collect()
+            })
+        };
+        let add = |resolver: &mut Self,
+                   names: &mut Vec<FurtherPackageName>,
+                   name: &[u8],
+                   specifier: &[u8],
+                   hides_other_paths: bool| {
+            // The resolver keeps what it is asked for.
+            let store = &resolver.fs_ref().dirname_store;
+            let Ok(specifier) = store.append_parts(&[specifier]) else {
+                return;
+            };
+            let mut find = |kind: ImportKind| {
+                let found = resolver.resolve(folder, specifier, kind).ok()?;
+                let path = found.path_pair.primary.text();
+                let position = public_paths
+                    .binary_search_by_key(&path, |file| file.0)
+                    .ok()?;
+                Some(public_paths[position].1.to_vec())
+            };
+            let required = find(ImportKind::Require);
+            let imported = find(ImportKind::Dynamic);
+            if required.is_some() || imported.is_some() || hides_other_paths {
+                names.push(FurtherPackageName {
+                    path: [public_root, b"/node_modules/", name].concat(),
+                    required,
+                    imported,
+                    hides_other_paths,
+                });
+            }
+        };
+        for package in &packages {
+            let directory = [folder, separator, NODE_MODULES, separator, package].concat();
+            let subpaths = written_subpaths(self, &directory);
+            add(self, &mut names, package, package, subpaths.is_some());
+            for subpath in subpaths.iter().flatten() {
+                let name = [&package[..], &subpath[..]].concat();
+                add(self, &mut names, &name, &name, false);
+            }
+        }
+        // `import "my-app"`, from a plug-in that lies outside the program's package.
+        let mut own_folder = Some(folder);
+        while let Some(place) = own_folder {
+            let manifest = self
+                .read_dir_info_ignore_error(place)
+                .and_then(|directory| directory.package_json());
+            if let Some(manifest) = manifest {
+                let own = manifest.name.to_vec();
+                if !own.is_empty() {
+                    let subpaths = written_subpaths(self, place);
+                    match subpaths.is_some() {
+                        true => add(self, &mut names, &own, &own, true),
+                        false => {
+                            let main = [place, separator, b"."].concat();
+                            add(self, &mut names, &own, &main, false);
+                        }
+                    }
+                    for subpath in subpaths.iter().flatten() {
+                        let name = [&own[..], &subpath[..]].concat();
+                        add(self, &mut names, &name, &name, false);
+                    }
+                }
+                break;
+            }
+            own_folder = parent(place);
+        }
+        self.log = log_of_build;
+        self.prefer_module_field = prefers_module_field;
+        names.sort_by(|a, b| a.path.cmp(&b.path));
+        names.dedup_by(|later, earlier| later.path == earlier.path);
+        names
     }
 
     /// "paths" and "baseUrl" of each tsconfig.json that applies in one of `folders`, the folders of the compiled files.

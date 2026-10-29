@@ -83,6 +83,7 @@ fn file_with_sites(file: u32, sites: Vec<(ImportSiteKind, StoredSiteAnswer)>) ->
 
 fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
     ModuleGraph {
+        files_brought_by_calls: Vec::new(),
         row_by_file: vec![None; file_count],
         rows,
         record_files: Vec::new(),

@@ -552,7 +552,7 @@ function f40 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=831 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f12}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f12} creator=Entrypoint{target=f12 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f12 @Cell, v1: anything @JSValue, v2: anything @JSValue):
 # CHECK-NEXT: v3: int[10, 20] @Int32 = GetCapture v0 function=f12
-# CHECK-NEXT: v4: L3 @Cell = CallDirect v3, v2 function=f12
+# CHECK-NEXT: v4: L3 @JSValue = CallDirect v3, v2 function=f12
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="plain"

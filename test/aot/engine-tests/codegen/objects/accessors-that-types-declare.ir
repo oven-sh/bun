@@ -237,11 +237,11 @@ function f6 name="WithAccessor" module=m0 position=485 kind=BaseConstructor flag
   b0(v0: anything):
     Jump -> next b1() @485
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @479
-    v2 = NewObject v1 layout=L0 @479
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @479
-    v4 = CallDirect v3 function=f13 @479
-    Return v3 @479
+    v1 = GetConstructPrototype v0 layout=L0 @485
+    v2 = NewObject v1 layout=L0 @485
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @485
+    v4 = CallDirect v3 function=f13 @485
+    Return v3 @485
 }
 function f7 name="value" module=m0 position=508 kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0 site=w15} results=[{type=number site=w16}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0):
@@ -319,7 +319,7 @@ function f13 module=m0 position=485 kind=Initializer flags=[HasThis, IsChecked, 
 }
 # -- generated: f0 readAbove WithAccessor value f13
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=1119 module=m0}, {callee=f3 callPosition=785 module=m0}, {callee=f3 callPosition=769 module=m0}, {callee=f1 callPosition=743 module=m0}, {callee=f15 callPosition=266 parent=4 module=m0}, {callee=f18 callPosition=748 isConstruction=true module=m0}, {callee=f2 callPosition=713 module=m0}, {callee=f1 callPosition=701 module=m0}, {callee=f15 callPosition=266 parent=8 module=m0}, {callee=f1 callPosition=687 module=m0}, {callee=f15 callPosition=266 parent=10 module=m0}, {callee=f15 callPosition=298 parent=10 isTailCall=true module=m0}, {callee=f15 callPosition=298 parent=8 isTailCall=true module=m0}, {callee=f15 callPosition=298 parent=4 isTailCall=true module=m0}, {callee=f7 callPosition=298 parent=5 module=m0}, {callee=f13 callPosition=479 parent=6 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f5 callPosition=1119 module=m0}, {callee=f3 callPosition=785 module=m0}, {callee=f3 callPosition=769 module=m0}, {callee=f1 callPosition=743 module=m0}, {callee=f15 callPosition=266 parent=4 module=m0}, {callee=f18 callPosition=748 isConstruction=true module=m0}, {callee=f2 callPosition=713 module=m0}, {callee=f1 callPosition=701 module=m0}, {callee=f15 callPosition=266 parent=8 module=m0}, {callee=f1 callPosition=687 module=m0}, {callee=f15 callPosition=266 parent=10 module=m0}, {callee=f15 callPosition=298 parent=10 isTailCall=true module=m0}, {callee=f15 callPosition=298 parent=8 isTailCall=true module=m0}, {callee=f15 callPosition=298 parent=4 isTailCall=true module=m0}, {callee=f7 callPosition=298 parent=5 module=m0}, {callee=f13 callPosition=485 parent=6 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: classtoken = NewClassToken layout=L0
 # CHECK-NEXT: PutModuleVariable v0 variable=g4
@@ -461,14 +461,12 @@ function f13 module=m0 position=485 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK-LABEL: function f13 module=
 # CHECK: m0 position=485 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: v1: classtoken = GetModuleVariable variable=g4
-# CHECK-NEXT: PutSlot v0, -, v1 key=#"#"@L0 receivers=[L0] level=Proven accessSite=32
-# CHECK-NEXT: v3: 5 = Integer integer=5
-# CHECK-NEXT: PutSlot v0, -, v3 key=#"#n"@L0 receivers=[L0] level=Proven accessSite=33
-# CHECK-NEXT: v5: 4 = Integer integer=4
-# CHECK-NEXT: PutSlot v0, -, v5 key="plain" receivers=[L0] level=Proven accessSite=34
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v1: 5 = Integer integer=5
+# CHECK-NEXT: PutSlot v0, -, v1 key=#"#n"@L0 receivers=[L0] level=Proven accessSite=33
+# CHECK-NEXT: v3: 4 = Integer integer=4
+# CHECK-NEXT: PutSlot v0, -, v3 key="plain" receivers=[L0] level=Proven accessSite=34
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="WithAccessor"
 # CHECK: module=m0 position=485 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f6}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f6} creator=Entrypoint{target=f6 arguments=Registers takesNewTarget=true} {

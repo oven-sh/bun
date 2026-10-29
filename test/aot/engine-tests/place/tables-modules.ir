@@ -70,6 +70,7 @@ function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: moduleFailures 2 16
 # CHECK-NEXT: modulesByPath 5 10
 # CHECK-NEXT: modulesOfUncompiledCode 0 0
+# CHECK-NEXT: importsOfHeldFiles 0 0
 # CHECK-NEXT: compiledRuntimeModules 1 8
 
 # ROWS: module m0 kind=SourceText path="/a.ts" displayPath="a.ts" {{*}}requests=0 exports=0 syntheticExports=0 requiredNames=0 linkRequests=0 evaluationRequests=0

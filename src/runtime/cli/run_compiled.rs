@@ -121,16 +121,19 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
                 exit_or_wait_for_change(watched)
             }
             Ok(Err(failure)) => failure,
+            // Each query of a file is an instance of its own, which only code from disk can be. The program is compiled once more, for that.
+            Ok(Ok(outcome)) if outcome.imports_file_with_query => {
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.loads_code_from_disk = true;
+                }
+                // SAFETY: nothing else borrows the log between two builds.
+                unsafe { ctx.log_mut() }.reset();
+                ctx.args.define.clone_from(&defines);
+                continue;
+            }
             Ok(Ok(outcome)) => break outcome,
         };
-        // A type error stops no test run: plain `bun test` checks no types. The file is compiled as JavaScript is.
-        let untyped = match ctx.bundler_options.aot.as_mut() {
-            Some(aot) if aot.runs_tests && !checks_only => {
-                add_files_with_type_errors(&failure, &mut aot.files_without_types)
-            }
-            _ => false,
-        };
-        let Some(refused) = find_refused_files(&failure, independent_count, untyped) else {
+        let Some(refused) = find_refused_files(&failure, independent_count) else {
             let target = &ctx.bundler_options.compile_target;
             print_failure(ctx.log_ref(), RequestOrigin::BuildFlag, target, &failure);
             exit_or_wait_for_change(watched)
@@ -140,14 +143,6 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             // SAFETY: nothing else borrows the log between two builds.
             let messages = &mut unsafe { ctx.log_mut() }.msgs;
             messages.retain(|message| message.kind == bun_ast::Kind::Err);
-            let aot = ctx.bundler_options.aot.as_ref();
-            let untyped_files = aot.map_or(&[][..], |aot| &aot.files_without_types);
-            for message in messages.iter_mut() {
-                let location = message.data.location.as_ref();
-                if location.is_some_and(|it| untyped_files.contains(&it.file)) {
-                    message.kind = bun_ast::Kind::Warn;
-                }
-            }
         }
         print_log(ctx.log_ref());
         for &position in refused.iter().rev() {
@@ -170,17 +165,6 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         ctx.args.define.clone_from(&defines);
     };
     print_log(ctx.log_ref());
-    let aot = ctx.bundler_options.aot.as_ref();
-    match aot.map_or(0, |aot| aot.files_without_types.len()) {
-        0 => {}
-        1 => bun_core::warn!(
-            "1 file has type errors, so it is compiled without its types. It still works, but runs slower"
-        ),
-        count => bun_core::warn!(
-            "{} files have type errors, so they are compiled without their types. They still work, but run slower",
-            count
-        ),
-    }
     let check_result = (watched.is_some() || !refused_files.is_empty())
         .then(|| write_check_result(&refused_files, watched));
     let handover = match &outcome.graph_bytes {
@@ -319,31 +303,8 @@ fn write_check_result(refused_files: &[u8], watched: Option<&WatchedFiles>) -> V
     result
 }
 
-/// Whether the failed build found a type error in a file that still had its types.
-fn add_files_with_type_errors(failure: &CompileFailure, untyped: &mut Vec<Box<[u8]>>) -> bool {
-    let CompileFailure::Build {
-        refused_entry_points: Some(refused),
-        ..
-    } = failure
-    else {
-        return false;
-    };
-    let count_before = untyped.len();
-    for path in &refused.files_with_type_errors {
-        if !untyped.iter().any(|known| **known == **path) {
-            untyped.push(Box::from(&path[..]));
-        }
-    }
-    untyped.len() > count_before
-}
-
 /// The positions, in ascending order, of the entry points that the others can run without.
-/// `forgives_type_errors`: the next build compiles the files that have them without their types.
-fn find_refused_files(
-    failure: &CompileFailure,
-    independent_count: usize,
-    forgives_type_errors: bool,
-) -> Option<Vec<usize>> {
+fn find_refused_files(failure: &CompileFailure, independent_count: usize) -> Option<Vec<usize>> {
     let CompileFailure::Build {
         refused_entry_points: Some(refused),
         ..
@@ -351,17 +312,10 @@ fn find_refused_files(
     else {
         return None;
     };
-    let refused = match forgives_type_errors {
-        true => &refused.refused_without_types,
-        false => &refused.refused,
-    };
     let mut refused: Vec<usize> = refused.iter().map(|&position| position as usize).collect();
     refused.sort_unstable();
     refused.dedup();
-    let are_independent = match refused.last() {
-        Some(&last) => last < independent_count,
-        None => forgives_type_errors,
-    };
+    let are_independent = refused.last().is_some_and(|&last| last < independent_count);
     (are_independent && refused.len() < independent_count).then_some(refused)
 }
 

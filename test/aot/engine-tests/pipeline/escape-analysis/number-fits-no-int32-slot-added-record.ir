@@ -280,10 +280,8 @@ function f2 name="twoAdded" module=m0 position=655 flags=[IsChecked, HasExplicit
 # CHECK-NEXT: b6(v25: undefined|string ~ ""):
 # CHECK-NEXT: v26: ":" = String string=":"
 # CHECK-NEXT: v27: false = Boolean
-# CHECK-NEXT: v28: ":" = String string=":"
-# CHECK-NEXT: v29: undefined = Undefined
-# CHECK-NEXT: v30: string = TypeOf v29
-# CHECK-NEXT: StringBuilderAppend v3, v25, v26, v27, v28, v30
-# CHECK-NEXT: v32: string = StringBuilderFinish v3
-# CHECK-NEXT: Return v32
+# CHECK-NEXT: v28: ":undefined" = String string=":undefined"
+# CHECK-NEXT: StringBuilderAppend v3, v25, v26, v27, v28
+# CHECK-NEXT: v30: string = StringBuilderFinish v3
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }

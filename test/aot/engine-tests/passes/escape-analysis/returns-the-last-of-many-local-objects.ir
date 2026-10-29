@@ -3123,14 +3123,15 @@ function f1 name="make" module=m0 position=52 flags=[IsChecked, HasExplicitName]
 # CHECK-NEXT: b2(v9: int[0, 99]):
 # CHECK-NEXT: v10: L0 = CallDirect v9, v9, v9 function=f1 accessSite=0
 # CHECK-NEXT: v11: int|whole|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s14"|"s15"|"s16"|"s17"|"s18"|"s19"|"s2"|"s20"|"s21"|"s22"|"s23"|"s24"|"s25"|"s26"|"s27"|"s28"|"s29"|"s3"|"s30"|"s31"|"s32"|"s33"|"s34"|"s35"|"s36"|"s37"|"s38"|"s39"|"s4"|"s40"|"s41"|"s42"|"s43"|"s44"|"s45"|"s46"|"s47"|"s48"|"s49"|"s5"|"s50"|"s51"|"s52"|"s53"|"s54"|"s55"|"s56"|"s57"|"s58"|"s59"|"s6"|"s60"|"s61"|"s62"|"s63"|"s64"|"s65"|"s66"|"s67"|"s68"|"s69"|"s7"|"s70"|"s71"|"s8"|"s9" = GetSlot v10 key="f" receivers=[L0] level=Proven accessSite=1
-# CHECK-NEXT: v12: string = CallBuiltin -, v11 overload=String/0 accessSite=2
-# CHECK-NEXT: v13: int[0, 2147483647] = GetStringLength v12
-# CHECK-NEXT: v14: int|whole = Add v4, v13
-# CHECK-NEXT: v15: int[1, 100] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v14, v15)
+# CHECK-NEXT: v12: int|whole|"s71" = AssumeType v11 provenType=int|whole|"s71"
+# CHECK-NEXT: v13: string = CallBuiltin -, v12 overload=String/0 accessSite=2
+# CHECK-NEXT: v14: int[0, 2147483647] = GetStringLength v13
+# CHECK-NEXT: v15: int|whole = Add v4, v14
+# CHECK-NEXT: v16: int[1, 100] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v15, v16)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v16: number = GetModuleVariable variable=g0
-# CHECK-NEXT: v17: undefined = CallBuiltin -, v4, v16 overload=ConsoleLog/0 accessSite=6
-# CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: Return v18
+# CHECK-NEXT: v17: number = GetModuleVariable variable=g0
+# CHECK-NEXT: v18: undefined = CallBuiltin -, v4, v17 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: }

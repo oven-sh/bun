@@ -39,6 +39,12 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
+const SOURCE_ORIGINS: [FileOrigin; 3] = [
+    FileOrigin::ProgramSource,
+    FileOrigin::TestedSource,
+    FileOrigin::DependencySource,
+];
+
 #[derive(Clone)]
 pub(crate) struct LoweredUnit {
     // A unit is a large record, and the list of what was lowered is copied and put in order on one thread.
@@ -411,12 +417,6 @@ impl Build<'_> {
                 ProjectId::Runtime => keep_verified_roles(project.loaded, compiled_files),
             };
             if id == ProjectId::Application {
-                let files = project.loaded.files();
-                for path in &project.request.code.files_without_types {
-                    if let Some(file) = files.by_path.get(path) {
-                        roles.roles[file.idx()] = FileRole::Inferred;
-                    }
-                }
                 for &demotion in &worlds.demoted {
                     roles.roles[demotion.file.idx()] = FileRole::Inferred;
                     roles.demoted.push(demotion);
@@ -523,8 +523,7 @@ impl Build<'_> {
         for &file in files.compiled_files() {
             let is_aot_source = files.compiled(file).is_some_and(|it| it.is_aot_source);
             let origin = application.loaded.origin(file);
-            let is_source =
-                origin == FileOrigin::ProgramSource || origin == FileOrigin::DependencySource;
+            let is_source = SOURCE_ORIGINS.contains(&origin);
             let other_project = (is_source && !is_aot_source)
                 .then(|| ProgramWideOptions::of_other_project(files, file))
                 .flatten();
@@ -565,7 +564,7 @@ impl Build<'_> {
             let configuration = WorldConfiguration::OfTypedPackages(config_path.as_deref());
             (configuration, &group[..])
         });
-        let of_projects = [FileOrigin::ProgramSource, FileOrigin::DependencySource]
+        let of_projects = SOURCE_ORIGINS
             .into_iter()
             .flat_map(|origin| (of_other_projects.iter()).filter(move |group| group.0 == origin))
             .map(|(origin, options, group)| {

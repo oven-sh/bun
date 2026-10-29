@@ -207,8 +207,6 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     code.preserves_symlinks = options.preserve_symlinks;
     // As `bun run` and `bun test` transpile the same files.
     code.transpiles_by_working_directory = input.aot.checks_only || input.aot.runs_tests;
-    let files_without_types = input.aot.files_without_types.iter();
-    code.files_without_types = files_without_types.map(|path| from_native(path)).collect();
     code.tsconfig_override = (options.tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 
@@ -274,6 +272,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         ways_read_out_of_sight: Default::default(),
         ways_named_that_nobody_reads: Default::default(),
         replaced_exports: Vec::new(),
+        mocks_any_module: false,
         is_too_large_to_analyze: false,
         is_known_to_be_analyzed: false,
     }

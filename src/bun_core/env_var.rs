@@ -86,6 +86,8 @@ new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
 new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", {});
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
+// A trial: `bun test --aot` compiles what the test files import and runs the test files themselves from disk.
+new!(pub BUN_AOT_TEST_FILES_FROM_DISK: boolean, "BUN_AOT_TEST_FILES_FROM_DISK", { default: false });
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });
@@ -105,6 +107,9 @@ new!(pub BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: unsigned, "BUN_DEBUG_TEST_ST
 // Testing hook for `bun build --compile --aot --trim`: the build also writes, under this name, the executable that the
 // same command line makes without `--trim`, so a test that holds the two against each other compiles its program once.
 new!(pub BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: string, "BUN_DEBUG_TEST_UNTRIMMED_OUTFILE", {});
+// Testing hook for `bun test --aot`, which takes no developer flags: words of the compiler, split at commas, as `bun build` takes them.
+// `disable=flow-results` builds tests as a program that is too large to analyze is built.
+new!(pub BUN_DEBUG_TEST_AOT_WORDS: string, "BUN_DEBUG_TEST_AOT_WORDS", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});

@@ -37,12 +37,21 @@ fn is_about_dependency(record: &UserDiagnosticRecord) -> bool {
     record.kind == UserDiagnosticKind::Int32OfDependencyNotProven
 }
 
+fn is_about_load_by_unknown_name(record: &UserDiagnosticRecord) -> bool {
+    matches!(
+        record.kind,
+        UserDiagnosticKind::CodeOutsideImageIsRefused
+            | UserDiagnosticKind::ModuleNamedAtRunTimeIsRefused
+    )
+}
+
 impl Diagnostics {
     pub(crate) fn add_engine_records(
         &mut self,
         result: &EngineResult,
         names: &ProgramNames,
         texts: &SourceTexts,
+        runs_tests: bool,
     ) {
         let mut locator = ModuleLocator::new(texts);
         for path in find_dependencies_with_unproven_int32(result, names) {
@@ -61,6 +70,8 @@ impl Diagnostics {
             .user_diagnostics()
             .iter()
             .filter(|record| !is_about_dependency(record))
+            // A suite has many such loads, and most find a file that was compiled. The test whose load is refused fails with an error that says so.
+            .filter(|record| !(runs_tests && is_about_load_by_unknown_name(record)))
         {
             self.add_user_diagnostic(record, result.text(record.message), names, &mut locator);
         }

@@ -8,7 +8,7 @@ use super::plan::{Member, ModuleRef, View};
 use super::requests::ScannedSite;
 use super::wrapped::InnerModuleKind;
 use crate::builtins::id::BuiltinId;
-use crate::builtins::{BuiltinNames, table};
+use crate::builtins::{BuiltinNames, RuntimeModule, table};
 use crate::known_helpers::{Helper, KnownFunction, KnownReference, Shape as HelperShape};
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, Interner, known};
@@ -155,32 +155,43 @@ impl FileBinder<'_, '_> {
         for of_root in references.chunk_by(|first, second| first.0 == second.0) {
             let root = roots[of_root[0].0];
             let mut is_needed_as_value = false;
+            let mut is_handed_out = false;
             for &(_, reference) in of_root {
-                self.note_replaced_export(reference, root.stands_for);
-                is_needed_as_value |= self.bind_member_path(reference, root.stands_for);
+                let names_export = self.note_replaced_export(reference, root.stands_for);
+                let is_value = self.bind_member_path(reference, root.stands_for);
+                is_needed_as_value |= is_value;
+                is_handed_out |= is_value && !names_export;
             }
             if is_needed_as_value {
                 self.look_at_root(root, holders);
+            }
+            if let (
+                true,
+                StandsFor::ImportedNamespace(module) | StandsFor::RequiredNamespace(module),
+            ) = (is_handed_out, root.stands_for)
+            {
+                self.imports.namespaces_handed_out.push(module);
             }
         }
     }
 
     // `spyOn(ns, "name")` stores a function of the test runner in the variable that the module exports under the name.
-    fn note_replaced_export(&mut self, reference: ExprId, stands_for: StandsFor) {
+    // Returns whether the reference is such a call's object.
+    fn note_replaced_export(&mut self, reference: ExprId, stands_for: StandsFor) -> bool {
         let (StandsFor::ImportedNamespace(_) | StandsFor::RequiredNamespace(_)) = stands_for else {
-            return;
+            return false;
         };
         let (hir, bound) = (self.hir, self.bound);
         let object = find_outermost_type_assertion(hir, bound, reference);
         let Parent::Expr(user) = bound.parent_of_expr(object) else {
-            return;
+            return false;
         };
         let call = match user.is_some().then(|| hir[user].kind) {
             Some(ExprKind::Call(call)) => hir[call],
-            _ => return,
+            _ => return false,
         };
         if call.args.len() < 2 || hir.id_at::<ExprId>(call.args, 0) != object {
-            return;
+            return false;
         }
         let callee = hir.skip_type_assertions(call.callee);
         let builtins = parsed_source(self.context.files, self.file).map(|source| &source.builtins);
@@ -193,13 +204,13 @@ impl FileBinder<'_, '_> {
         let FoldedValue::Constant(Constant::String(name)) =
             self.analysis.decisions.constant(hir, name)
         else {
-            return;
+            return false;
         };
         if !is_spy {
-            return;
+            return false;
         }
         let Some(NamedMember::Binding(binding)) = self.resolve_member(stands_for, name) else {
-            return;
+            return true;
         };
         match binding {
             PendingBinding::Bound(ImportBinding::Variable(variable)) => {
@@ -211,10 +222,64 @@ impl FileBinder<'_, '_> {
             }
             PendingBinding::Bound(_) => {}
         }
+        true
+    }
+
+    pub(super) fn note_what_a_spy_may_reach(&mut self) {
+        let (hir, analysis, scan) = (self.hir, self.analysis, self.scan);
+        let sites = analysis.import_sites.iter().zip(&scan.sites);
+        self.imports.loads_by_unknown_path = sites.clone().any(|(site, answer)| {
+            matches!(answer, ScannedSite::AllModules | ScannedSite::Candidates(_))
+                && matches!(
+                    site.kind,
+                    ImportSiteKind::ImportCall(_)
+                        | ImportSiteKind::Require(_)
+                        | ImportSiteKind::ImportMetaRequire(_)
+                )
+        });
+        let test_runner = ScannedSite::Module(ModuleRef::Runtime(RuntimeModule::BunTest));
+        if !scan.sites.contains(&test_runner) {
+            return;
+        }
+        let Some(builtins) = parsed_source(self.context.files, self.file).map(|it| &it.builtins)
+        else {
+            return;
+        };
+        for index in 0..hir.exprs.len() as u32 {
+            let ExprKind::Call(call) = hir[ExprId(index)].kind else {
+                continue;
+            };
+            let call = hir[call];
+            let callee = builtins.builtin_of_expression(hir.skip_type_assertions(call.callee));
+            let is_spy = matches!(
+                callee,
+                Some(
+                    BuiltinId::BunTestSpyOn
+                        | BuiltinId::BunTestJestSpyOn
+                        | BuiltinId::BunTestViSpyOn
+                )
+            );
+            if !is_spy || call.args.len() == 0 {
+                continue;
+            }
+            let object = hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, 0));
+            let is_namespace = self.bound.is_evaluated_ident(object)
+                && matches!(self.bound.binding(object), Binding::Symbol(symbol)
+                    if self.imports.bindings.iter().any(|&(bound, binding)| bound == symbol
+                        && imported_module(binding).is_some()));
+            if !is_namespace && builtins.builtin_of_expression(object).is_none() {
+                self.imports.spies_on_unknown_objects = true;
+                return;
+            }
+        }
     }
 
     // A mock is stored under the names of the module, as if through its namespace object.
     pub(super) fn collect_mocked_modules(&mut self) {
+        // One file says it for all of them.
+        if self.context.mocks_any_module && self.context.modules.compiled_files[0] == self.file {
+            self.mock_every_module();
+        }
         let (analysis, scan) = (self.analysis, self.scan);
         for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
             let ImportSiteKind::MockModule(call) = site.kind else {
@@ -225,14 +290,16 @@ impl FileBinder<'_, '_> {
             }
             match *answer {
                 ScannedSite::Module(module) => self.mock(module),
-                ScannedSite::AllModules | ScannedSite::Candidates(_) => {
-                    self.imports.mocks_any_module = true;
-                    for &file in &self.context.modules.compiled_files {
-                        self.mock(ModuleRef::File(file));
-                    }
-                }
+                ScannedSite::AllModules | ScannedSite::Candidates(_) => self.mock_every_module(),
                 ScannedSite::Unresolved | ScannedSite::Erased => {}
             }
+        }
+    }
+
+    fn mock_every_module(&mut self) {
+        self.imports.mocks_any_module = true;
+        for &file in &self.context.modules.compiled_files {
+            self.mock(ModuleRef::File(file));
         }
     }
 

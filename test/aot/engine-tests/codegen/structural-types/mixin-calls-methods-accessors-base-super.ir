@@ -373,7 +373,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b7(v26: int|whole):
 # CHECK-NEXT: v27: " label [" = String string=" label ["
 # CHECK-NEXT: v28: anything = PropGet v14 key="label" accessSite=10
-# CHECK-NEXT: v29: undefined|null|string = AssumeType v28 provenType=undefined|null|string
+# CHECK-NEXT: v29: undefined|string = AssumeType v28 provenType=undefined|string
 # CHECK-NEXT: v30: "] kind [" = String string="] kind ["
 # CHECK-NEXT: v31: "twice " = String string="twice "
 # CHECK-NEXT: v32: string = Strcat v31, v26, v27, v29, v30
@@ -451,67 +451,65 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b21(v84)
 # CHECK-NEXT: b21(v85: object ~ L1):
 # CHECK-NEXT: v86: anything = PropGet v85 key="label" accessSite=22
-# CHECK-NEXT: v87: "" = String string=""
-# CHECK-NEXT: v88: string = Add v87, v86
-# CHECK-NEXT: StringBuilderAppend v71, v88
-# CHECK-NEXT: v90: "] [" = String string="] ["
-# CHECK-NEXT: StringBuilderAppend v71, v90
-# CHECK-NEXT: v92: anything = PropGet v47 key="kind" accessSite=23
-# CHECK-NEXT: v93: undefined|f6|f10 = AssumeType v92 provenType=undefined|f6|f10
-# CHECK-NEXT: v94: boolean = TypeTest v93 testedType=f6
-# CHECK-NEXT: Branch v94 -> taken b22(), notTaken b23(| 0)
+# CHECK-NEXT: v87: undefined|string = AssumeType v86 provenType=undefined|string
+# CHECK-NEXT: v88: "] [" = String string="] ["
+# CHECK-NEXT: StringBuilderAppend v71, v87, v88
+# CHECK-NEXT: v90: anything = PropGet v47 key="kind" accessSite=23
+# CHECK-NEXT: v91: undefined|f6|f10 = AssumeType v90 provenType=undefined|f6|f10
+# CHECK-NEXT: v92: boolean = TypeTest v91 testedType=f6
+# CHECK-NEXT: Branch v92 -> taken b22(), notTaken b23(| 0)
 # CHECK-NEXT: b22():
-# CHECK-NEXT: v95: "base kind" = String string="base kind"
-# CHECK-NEXT: Jump -> next b25(v95)
-# CHECK-NEXT: b23(v96: undefined|f10):
-# CHECK-NEXT: v97: boolean = TypeTest v96 testedType=f10
-# CHECK-NEXT: Branch v97 -> taken b24(| 0), notTaken b29()
-# CHECK-NEXT: b24(v98: f10):
-# CHECK-NEXT: v99: f7 = GetCapture v98 function=f10
-# CHECK-NEXT: v100: string = CallDirect v99, v47 function=f10 accessSite=24
-# CHECK-NEXT: Jump -> next b25(v100)
-# CHECK-NEXT: b25(v101: string):
-# CHECK-NEXT: v102: "] " = String string="] "
-# CHECK-NEXT: StringBuilderAppend v71, v101, v102
-# CHECK-NEXT: v104: object = GetConstructPrototype v47 layout=L1
-# CHECK-NEXT: v105: object ~ L1 = NewObject v104 layout=L1 allocationClass=1
-# CHECK-NEXT: v106: L1 = AssumeType v105 provenType=L1
-# CHECK-NEXT: v107: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1 side=Static}]
-# CHECK-NEXT: Branch v107 -> taken b26(), notTaken b27()
+# CHECK-NEXT: v93: "base kind" = String string="base kind"
+# CHECK-NEXT: Jump -> next b25(v93)
+# CHECK-NEXT: b23(v94: undefined|f10):
+# CHECK-NEXT: v95: boolean = TypeTest v94 testedType=f10
+# CHECK-NEXT: Branch v95 -> taken b24(| 0), notTaken b29()
+# CHECK-NEXT: b24(v96: f10):
+# CHECK-NEXT: v97: f7 = GetCapture v96 function=f10
+# CHECK-NEXT: v98: string = CallDirect v97, v47 function=f10 accessSite=24
+# CHECK-NEXT: Jump -> next b25(v98)
+# CHECK-NEXT: b25(v99: string):
+# CHECK-NEXT: v100: "] " = String string="] "
+# CHECK-NEXT: StringBuilderAppend v71, v99, v100
+# CHECK-NEXT: v102: object = GetConstructPrototype v47 layout=L1
+# CHECK-NEXT: v103: object ~ L1 = NewObject v102 layout=L1 allocationClass=1
+# CHECK-NEXT: v104: L1 = AssumeType v103 provenType=L1
+# CHECK-NEXT: v105: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1 side=Static}]
+# CHECK-NEXT: Branch v105 -> taken b26(), notTaken b27()
 # CHECK-NEXT: b26():
-# CHECK-NEXT: v108: 2 = Integer integer=2
-# CHECK-NEXT: PropDefine v106, v108 key="n" accessSite=44
-# CHECK-NEXT: v110: 1 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v106, -, v110 key="extra" receivers=[L1] level=Proven accessSite=45
-# CHECK-NEXT: Jump -> next b28(v105)
+# CHECK-NEXT: v106: 2 = Integer integer=2
+# CHECK-NEXT: PropDefine v104, v106 key="n" accessSite=44
+# CHECK-NEXT: v108: 1 = Integer integer=1
+# CHECK-NEXT: PutSlotOrAdd v104, -, v108 key="extra" receivers=[L1] level=Proven accessSite=45
+# CHECK-NEXT: Jump -> next b28(v103)
 # CHECK-NEXT: b27() frequency=Rare:
-# CHECK-NEXT: v112: Array<undefined> = NewArray contents=undefined
-# CHECK-NEXT: v113: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v112 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]> @430:5 tail
-# CHECK-NEXT: v114: object = CallDirect v47, v47, v113 function=f7 [isConstruction] @430:5 tail
-# CHECK-NEXT: Jump -> next b28(v114)
-# CHECK-NEXT: b28(v115: object ~ L1):
-# CHECK-NEXT: v116: string = CallDirect v115 function=f1 accessSite=26
-# CHECK-NEXT: StringBuilderAppend v71, v116
-# CHECK-NEXT: v118: string = StringBuilderFinish v71
-# CHECK-NEXT: v119: undefined = CallBuiltin -, v118 overload=ConsoleLog/0 accessSite=27
-# CHECK-NEXT: v120: undefined = Undefined
-# CHECK-NEXT: Return v120
+# CHECK-NEXT: v110: Array<undefined> = NewArray contents=undefined
+# CHECK-NEXT: v111: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v110 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]> @430:5 tail
+# CHECK-NEXT: v112: object = CallDirect v47, v47, v111 function=f7 [isConstruction] @430:5 tail
+# CHECK-NEXT: Jump -> next b28(v112)
+# CHECK-NEXT: b28(v113: object ~ L1):
+# CHECK-NEXT: v114: string = CallDirect v113 function=f1 accessSite=26
+# CHECK-NEXT: StringBuilderAppend v71, v114
+# CHECK-NEXT: v116: string = StringBuilderFinish v71
+# CHECK-NEXT: v117: undefined = CallBuiltin -, v116 overload=ConsoleLog/0 accessSite=27
+# CHECK-NEXT: v118: undefined = Undefined
+# CHECK-NEXT: Return v118
 # CHECK-NEXT: b29() frequency=Unlikely:
 # CHECK-NEXT: StringBuilderDiscard v71
-# CHECK-NEXT: v122: undefined = Undefined
-# CHECK-NEXT: v123: never = Call v122, v47 calleeKey="kind" calleeName="Twice.kind" accessSite=24 callees=[f6, f10]
+# CHECK-NEXT: v120: undefined = Undefined
+# CHECK-NEXT: v121: never = Call v120, v47 calleeKey="kind" calleeName="Twice.kind" accessSite=24 callees=[f6, f10]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b30() frequency=Unlikely:
-# CHECK-NEXT: v124: undefined = Undefined
-# CHECK-NEXT: v125: never = Call v124, v59 calleeKey="twice" calleeName="twice" accessSite=20 callees=[f4, f8, ..]
+# CHECK-NEXT: v122: undefined = Undefined
+# CHECK-NEXT: v123: never = Call v122, v59 calleeKey="twice" calleeName="twice" accessSite=20 callees=[f4, f8, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b31() frequency=Unlikely:
-# CHECK-NEXT: v126: undefined = Undefined
-# CHECK-NEXT: v127: never = Call v126, v2 calleeKey="kind" calleeName="Made.kind" accessSite=12 callees=[f6, f10]
+# CHECK-NEXT: v124: undefined = Undefined
+# CHECK-NEXT: v125: never = Call v124, v2 calleeKey="kind" calleeName="Made.kind" accessSite=12 callees=[f6, f10]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b32() frequency=Unlikely:
-# CHECK-NEXT: v128: undefined = Undefined
-# CHECK-NEXT: v129: never = Call v128, v14 calleeKey="twice" calleeName="made.twice" accessSite=9 callees=[f4, f8, ..]
+# CHECK-NEXT: v126: undefined = Undefined
+# CHECK-NEXT: v127: never = Call v126, v14 calleeKey="twice" calleeName="made.twice" accessSite=9 callees=[f4, f8, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"

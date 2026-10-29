@@ -51,6 +51,15 @@ pub struct CompiledPackageName {
     pub hides_other_paths: bool,
 }
 
+/// `package_names::FurtherPackageName`, as the executable holds it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CompiledFurtherPackageName {
+    pub path: &'static [u8],
+    pub required: Option<&'static [u8]>,
+    pub imported: Option<&'static [u8]>,
+    pub hides_other_paths: bool,
+}
+
 /// One target of a key of "paths" in a tsconfig.json, or its "baseUrl".
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CompiledPathAlias {
@@ -79,8 +88,14 @@ pub struct CompiledProgram {
     path_aliases: Box<[CompiledPathAlias]>,
     /// Of an executable that loads code from disk: the root directory of the build, relative to the working directory of the build.
     root_below_working_directory: Option<&'static [u8]>,
+    /// Where the root directory of the build lies, seen from the folder of the executable that the build wrote: `../src`.
+    root_from_executable: Option<&'static [u8]>,
+    /// Ascending by path.
+    further_package_names: Box<[CompiledFurtherPackageName]>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
     pub allows_code_from_disk: bool,
+    /// The last folders of the root directory where the program writes a path that goes up out of them and comes back.
+    root_folders_spelled: &'static [u8],
     /// By entry point: the image of the program that begins there, a part of `image`. Empty: `image` is one image, of one program with all entry points.
     images: Box<[&'static [u8]]>,
     /// An index into `entry_points`, where the process does not start with the first program.
@@ -346,7 +361,10 @@ impl CompiledProgram {
             package_names: Box::new([]),
             path_aliases: Box::new([]),
             root_below_working_directory: None,
+            root_from_executable: None,
+            further_package_names: Box::new([]),
             allows_code_from_disk: false,
+            root_folders_spelled: b"",
             images: Box::new([]),
             start: None,
             module_lookup: OnceLock::new(),
@@ -386,6 +404,35 @@ impl CompiledProgram {
     pub fn with_code_from_disk(mut self, allows_code_from_disk: bool) -> CompiledProgram {
         self.allows_code_from_disk = allows_code_from_disk;
         self
+    }
+
+    pub fn with_root_folders_spelled(mut self, folders: &'static [u8]) -> CompiledProgram {
+        self.root_folders_spelled = folders;
+        self
+    }
+
+    pub fn with_further_package_names(
+        mut self,
+        names: Box<[CompiledFurtherPackageName]>,
+    ) -> CompiledProgram {
+        self.further_package_names = names;
+        self
+    }
+
+    pub fn with_root_from_executable(mut self, root: Option<&'static [u8]>) -> CompiledProgram {
+        self.root_from_executable = root;
+        self
+    }
+
+    /// Where the root directory lies below the folder of this executable, wherever it is installed.
+    pub fn root_beside_executable(&self, executable: &[u8]) -> Option<Vec<u8>> {
+        use bun_paths::resolve_path::{dirname, join_abs_string_buf_checked, platform};
+        let root = self.root_from_executable?;
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let folder = dirname::<platform::Auto>(executable);
+        let joined =
+            join_abs_string_buf_checked::<platform::Auto>(folder, &mut buffer[..], &[root])?;
+        Some(joined.to_vec())
     }
 
     pub fn knows_root_on_disk(&self) -> bool {
@@ -573,6 +620,37 @@ impl CompiledProgram {
         self.find_file_or_directory(&path, how, search, lookup)
     }
 
+    /// The compiled module that `specifier` names by going up out of the root directory and coming back through its folders.
+    pub fn resolve_module_through_root_folders(
+        &self,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        search: &ExtensionSearch<'_>,
+    ) -> Option<&'static [u8]> {
+        if self.root_folders_spelled.is_empty() {
+            return None;
+        }
+        let path = join_public_path(public_root, source_dir, specifier)?;
+        let parts: Vec<&[u8]> = split_path(path.strip_prefix(public_root)?).collect();
+        let above = parts
+            .iter()
+            .take_while(|part| **part == PARENT_OF_ROOT)
+            .count();
+        let folders: Vec<&[u8]> = split_path(self.root_folders_spelled).collect();
+        let spelled = &folders[folders.len().checked_sub(above)?..];
+        if above == 0 || parts.get(above..above * 2)? != spelled {
+            return None;
+        }
+        let path = [public_root, &parts[above * 2..].join(&b"/"[..])].concat();
+        let how = HowNamed {
+            names_directory: Resolver::import_path_names_directory(specifier),
+            is_require,
+        };
+        self.search_image(|lookup| self.find_file_or_directory(&path, how, search, lookup))?
+    }
+
     /// The public path of the compiled module whose source is the file on disk that `specifier` names from `source_dir`. Code from disk gets the module of the executable, not a second one.
     pub fn resolve_module_on_disk(
         &self,
@@ -610,8 +688,17 @@ impl CompiledProgram {
     fn find_package_name(&self, path: &[u8], is_require: bool) -> Option<Option<&'static [u8]>> {
         let position = self
             .package_names
-            .binary_search_by_key(&path, |name| name.path)
-            .ok()?;
+            .binary_search_by_key(&path, |name| name.path);
+        let Ok(position) = position else {
+            let further = &self.further_package_names;
+            let position = further.binary_search_by_key(&path, |name| name.path).ok()?;
+            let name = &further[position];
+            return Some(if is_require {
+                name.required
+            } else {
+                name.imported
+            });
+        };
         let name = &self.package_names[position];
         let entry_point = if is_require {
             name.required
@@ -647,7 +734,11 @@ impl CompiledProgram {
         let position = self
             .package_names
             .binary_search_by_key(&package, |name| name.path);
+        let further = &self.further_package_names;
         position.is_ok_and(|position| self.package_names[position].hides_other_paths)
+            || further
+                .binary_search_by_key(&package, |name| name.path)
+                .is_ok_and(|position| further[position].hides_other_paths)
     }
 
     /// What "paths" and "baseUrl" of the tsconfig.json that applies in `source_dir` map a bare `specifier` to, in the order of `Resolver::match_tsconfig_paths`.

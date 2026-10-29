@@ -146,6 +146,30 @@ const programs: Program[] = [
     ),
   },
   {
+    // An import() that does not run names the file, so the first require() asks whether a loaded module imports it. The later ones have the answer.
+    name: "data-file-required-a-thousand-times-among-200-modules",
+    entry: "main.ts",
+    until: { prints: "1000\n" },
+    write(folder) {
+      const indexes = Array.from({ length: 200 }, (_, index) => index);
+      for (const index of indexes) writeFileSync(join(folder, `m${index}.ts`), `export const v${index} = ${index};\n`);
+      writeFileSync(join(folder, "data.json"), `{ "value": 1 }\n`);
+      writeFileSync(
+        join(folder, "main.ts"),
+        [
+          ...indexes.map(index => `import { v${index} } from "./m${index}.ts";`),
+          `const used = ${indexes.map(index => `v${index}`).join(" + ")};`,
+          `let sum = 0;`,
+          `for (let turn = 0; turn < 1000; turn++) sum += require("./data.json").value;`,
+          `if (process.argv.length > 9) console.log(used, await import("./data.json"));`,
+          `console.log(sum);`,
+          ``,
+        ].join("\n"),
+      );
+      writeFileSync(join(folder, "tsconfig.json"), tsconfig);
+    },
+  },
+  {
     name: "bun-serve",
     entry: "main.ts",
     until: answersHello,

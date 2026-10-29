@@ -394,6 +394,14 @@ pub enum ModuleDetection {
 }
 
 impl Options {
+    /// TS6307, TS6059 and the error about a changed common source directory hold the files of the program against the root
+    /// files.
+    pub fn reports_files_outside_its_roots(&self) -> bool {
+        self.composite
+            || !self.root_dir.is_empty()
+            || (!self.no_emit && !(self.out_dir.is_empty() && self.declaration_dir.is_empty()))
+    }
+
     /// `getParseFileRedirect`: if the file at `path` is a source of a referenced project, returns
     /// the `OutputDts` that's read instead.
     pub fn parse_file_redirect(&self, path: &[u8]) -> Option<&[u8]> {
@@ -769,6 +777,9 @@ pub struct Options {
     /// and the files only they bring in, aren't the project's sources: nothing is emitted for them, so `rootDir` and
     /// `composite` don't apply to them. `None`: all of them belong to it.
     pub own_roots: Option<usize>,
+    /// Root files that nothing outside them can see unless it names them. They keep their numbers and are read when a file
+    /// names them.
+    pub roots_read_when_named: FxHashSet<Vec<u8>>,
     /// A root file, a script, whose global declarations and ambient modules count only where no other file declares the name.
     pub declarations_of_last_resort: Vec<u8>,
     /// Where `/// <reference types>` and an entry of `types` are looked up that are found nowhere else. It is none of `typeRoots`.

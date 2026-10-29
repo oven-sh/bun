@@ -478,8 +478,8 @@ function f8 name="early" module=m0 position=1751 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Double b@18 = ArgumentReg(%xmm0)
 # CHECK-NEXT: Int64 b@22 = Patchpoint(b@18:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v3:BitAnd)
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
-# CHECK-NEXT: Int64 b@88 = Load(b@10, offset = -200, ReadsImmutable, v3:BitAnd)
-# CHECK-NEXT: Int32 b@24 = NotEqual(b@22, b@88, v3:BitAnd)
+# CHECK-NEXT: Int64 b@86 = Load(b@10, offset = -200, ReadsImmutable, v3:BitAnd)
+# CHECK-NEXT: Int32 b@24 = NotEqual(b@22, b@86, v3:BitAnd)
 # CHECK-NEXT: Void b@25 = Branch(b@24, Terminal, v3:BitAnd)
 # CHECK-NEXT: Successors: Then:#2, Else:Rare:#3
 # CHECK-NEXT: BB#2: ; frequency = 0.999023
@@ -497,8 +497,8 @@ function f8 name="early" module=m0 position=1751 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Int32 b@36 = Add(b@34, $1(b@35), v5:Add)
 # CHECK-NEXT: Double b@19 = ArgumentReg(%xmm1)
 # CHECK-NEXT: Int64 b@38 = Patchpoint(b@19:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v7:BitAnd)
-# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = -200, ReadsImmutable, v7:BitAnd)
-# CHECK-NEXT: Int32 b@39 = NotEqual(b@38, b@87, v7:BitAnd)
+# CHECK-NEXT: Int64 b@85 = Load(b@10, offset = -200, ReadsImmutable, v7:BitAnd)
+# CHECK-NEXT: Int32 b@39 = NotEqual(b@38, b@85, v7:BitAnd)
 # CHECK-NEXT: Void b@40 = Branch(b@39, Terminal, v7:BitAnd)
 # CHECK-NEXT: Successors: Then:#5, Else:Rare:#6
 # CHECK-NEXT: BB#5: ; frequency = 0.999023
@@ -519,29 +519,30 @@ function f8 name="early" module=m0 position=1751 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Int64 b@54 = Const64(1, v11:Integer)
 # CHECK-NEXT: Int64 b@55 = Add(b@53, $1(b@54), v12:Add)
 # CHECK-NEXT: Double b@56 = IToD(b@55, v12:Add)
-# CHECK-NEXT: Int64 b@57 = Const64(2, v13:Integer)
-# CHECK-NEXT: Int64 b@58 = Add(b@53, $2(b@57), v14:Add)
-# CHECK-NEXT: Double b@59 = IToD(b@58, v14:Add)
-# CHECK-NEXT: Double b@62 = IToD(b@53, v17:StrictEq)
-# CHECK-NEXT: Int32 b@63 = Equal(b@56, b@62, v17:StrictEq)
-# CHECK-NEXT: Int64 b@64 = Const64(3, v18:Integer)
-# CHECK-NEXT: Int64 b@65 = Add(b@53, $3(b@64), v19:Add)
-# CHECK-NEXT: Double b@66 = IToD(b@65, v19:Add)
-# CHECK-NEXT: Int64 b@68 = Load(b@10, offset = 88, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v20:String)
-# CHECK-NEXT: Int64 b@73 = Load(b@68, offset = 352, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v20:String)
-# CHECK-NEXT: Int64 b@89 = ZExt32(b@63, v24:Strcat)
-# CHECK-NEXT: Int64 b@90 = Const64(6, v24:Strcat)
-# CHECK-NEXT: Int64 b@91 = BitOr(b@89, $6(b@90), v24:Strcat)
-# CHECK-NEXT: Int64 b@92 = Patchpoint(b@53:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v24:Strcat)
-# CHECK-NEXT: Int64 b@93 = Patchpoint(b@56:Register(%xmm0), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState}, v24:Strcat)
-# CHECK-NEXT: Int64 b@94 = Patchpoint(b@59:Register(%xmm0), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState}, v24:Strcat)
-# CHECK-NEXT: Int64 b@95 = Patchpoint(b@91:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v24:Strcat)
-# CHECK-NEXT: Int64 b@96 = Patchpoint(b@66:Register(%xmm0), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState}, v24:Strcat)
-# CHECK-NEXT: Int64 b@97 = Patchpoint(b@92:Register(%rax), b@73:Register(%rdx), b@93:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v24:Strcat)
-# CHECK-NEXT: Int64 b@98 = Patchpoint(b@97:Register(%rax), b@73:Register(%rdx), b@94:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v24:Strcat)
-# CHECK-NEXT: Int64 b@99 = Patchpoint(b@98:Register(%rax), b@73:Register(%rdx), b@95:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v24:Strcat)
-# CHECK-NEXT: Int64 b@100 = Patchpoint(b@99:Register(%rax), b@73:Register(%rdx), b@96:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v24:Strcat)
-# CHECK-NEXT: Void b@101 = Return(b@100, Terminal)
+# CHECK-NEXT: Int64 b@57 = Const64(2, v14:Integer)
+# CHECK-NEXT: Int64 b@58 = Add(b@53, $2(b@57), v15:Add)
+# CHECK-NEXT: Double b@59 = IToD(b@58, v15:Add)
+# CHECK-NEXT: Double b@60 = IToD(b@53, v16:StrictEq)
+# CHECK-NEXT: Int32 b@61 = Equal(b@56, b@60, v16:StrictEq)
+# CHECK-NEXT: Int64 b@62 = Const64(3, v17:Integer)
+# CHECK-NEXT: Int64 b@63 = Add(b@53, $3(b@62), v18:Add)
+# CHECK-NEXT: Double b@64 = IToD(b@63, v18:Add)
+# CHECK-NEXT: Int64 b@66 = Load(b@10, offset = 88, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v19:String)
+# CHECK-NEXT: Int64 b@71 = Load(b@66, offset = 352, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v19:String)
+# CHECK-NEXT: Int64 b@87 = Patchpoint(b@56:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v23:Strcat)
+# CHECK-NEXT: Int64 b@88 = ZExt32(b@61, v23:Strcat)
+# CHECK-NEXT: Int64 b@89 = Const64(6, v23:Strcat)
+# CHECK-NEXT: Int64 b@90 = BitOr(b@88, $6(b@89), v23:Strcat)
+# CHECK-NEXT: Int64 b@91 = Patchpoint(b@53:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v23:Strcat)
+# CHECK-NEXT: Int64 b@92 = Patchpoint(b@87:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v23:Strcat)
+# CHECK-NEXT: Int64 b@93 = Patchpoint(b@59:Register(%xmm0), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState}, v23:Strcat)
+# CHECK-NEXT: Int64 b@94 = Patchpoint(b@90:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v23:Strcat)
+# CHECK-NEXT: Int64 b@95 = Patchpoint(b@64:Register(%xmm0), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState}, v23:Strcat)
+# CHECK-NEXT: Int64 b@96 = Patchpoint(b@91:Register(%rax), b@71:Register(%rdx), b@92:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v23:Strcat)
+# CHECK-NEXT: Int64 b@97 = Patchpoint(b@96:Register(%rax), b@71:Register(%rdx), b@93:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v23:Strcat)
+# CHECK-NEXT: Int64 b@98 = Patchpoint(b@97:Register(%rax), b@71:Register(%rdx), b@94:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v23:Strcat)
+# CHECK-NEXT: Int64 b@99 = Patchpoint(b@98:Register(%rax), b@71:Register(%rdx), b@95:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v23:Strcat)
+# CHECK-NEXT: Void b@100 = Return(b@99, Terminal)
 # CHECK-NEXT: BB#6: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #4
 # CHECK-NEXT: Int64 b@44 = Patchpoint(b@19:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000092(children), ControlDependent, v7:BitAnd)
@@ -558,6 +559,6 @@ function f8 name="early" module=m0 position=1751 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Successors: #4
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@10: dereferenceableBytes = 393216
-# CHECK-NEXT: b@73: dereferenceableBytes = 16
-# CHECK-NEXT: b@100: dereferenceableBytes = 16
+# CHECK-NEXT: b@71: dereferenceableBytes = 16
+# CHECK-NEXT: b@99: dereferenceableBytes = 16
 # CHECK-NEXT: end of function f4

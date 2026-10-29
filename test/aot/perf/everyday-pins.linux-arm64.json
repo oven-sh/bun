@@ -116,8 +116,8 @@
     "untyped": 2654
   },
   "everyday-benchmarks/generator-sum-of-a-thousand": {
-    "typed": 3045.1,
-    "untyped": 3047
+    "typed": 2282,
+    "untyped": 2287
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-values-summed": {
     "typed": 638,
@@ -740,8 +740,8 @@
     "untyped": 61.8
   },
   "everyday-classes/symbol-iterator-that-returns-a-generator": {
-    "typed": 56.8,
-    "untyped": 1217
+    "typed": 49.8,
+    "untyped": 50
   },
   "everyday-classes/to-string-override": {
     "typed": 964.1,
@@ -864,8 +864,8 @@
     "untyped": 49.5
   },
   "everyday-collections/set-spread": {
-    "typed": 383.8,
-    "untyped": 383.7
+    "typed": 268.9,
+    "untyped": 264.9
   },
   "everyday-collections/set-union-method": {
     "typed": 1394,
@@ -1976,8 +1976,8 @@
     "untyped": 35
   },
   "everyday-functions/function-with-members": {
-    "typed": 98,
-    "untyped": 88
+    "typed": 53,
+    "untyped": 53
   },
   "everyday-functions/functions-with-typed-parameters-written-as-arguments-of-methods-of-a-list-out-of-a-text-where-another-was-given-a-display-name": {
     "typed": 216,
@@ -2024,8 +2024,8 @@
     "untyped": 144.5
   },
   "everyday-functions/name-of-a-new-generator-function-where-another-function-was-given-a-display-name": {
-    "typed": 132.3,
-    "untyped": 150.4
+    "typed": 124.4,
+    "untyped": 142.3
   },
   "everyday-functions/new-function-object-bound-to-an-async-resource-where-another-was-given-a-display-name": {
     "typed": 695,
@@ -2063,6 +2063,14 @@
     "typed": 17,
     "untyped": 17
   },
+  "everyday-iteration-and-async/iterator-helpers-for-each": {
+    "typed": 3712.1,
+    "untyped": 3741.5
+  },
+  "everyday-iteration-and-async/array-from-a-set-with-a-mapper": {
+    "typed": 669.4,
+    "untyped": 668.4
+  },
   "everyday-iteration-and-async/array-iterator-by-hand": {
     "typed": 480.8,
     "untyped": 450.9
@@ -2076,8 +2084,8 @@
     "untyped": 1167.8
   },
   "everyday-iteration-and-async/async-generator": {
-    "typed": 2011.2,
-    "untyped": 2013
+    "typed": 2008.7,
+    "untyped": 2011.1
   },
   "everyday-iteration-and-async/async-local-storage": {
     "typed": 1794.7,
@@ -2164,8 +2172,8 @@
     "untyped": 36072.1
   },
   "everyday-iteration-and-async/destructuring-from-a-generator": {
-    "typed": 98,
-    "untyped": 100
+    "typed": 91,
+    "untyped": 93
   },
   "everyday-iteration-and-async/error-told-apart-by-instanceof": {
     "typed": 3054.2,
@@ -2180,32 +2188,32 @@
     "untyped": 84
   },
   "everyday-iteration-and-async/generator-delegation": {
-    "typed": 1582.3,
-    "untyped": 1688
+    "typed": 739.5,
+    "untyped": 740.3
   },
   "everyday-iteration-and-async/generator-given-values": {
-    "typed": 219.4,
-    "untyped": 219.4
+    "typed": 161,
+    "untyped": 161
   },
   "everyday-iteration-and-async/generator-left-early": {
-    "typed": 217,
-    "untyped": 182
+    "typed": 184.5,
+    "untyped": 181
   },
   "everyday-iteration-and-async/generator-over-a-tree": {
-    "typed": 2194.9,
-    "untyped": 2290.5
+    "typed": 1823.6,
+    "untyped": 1820.5
   },
   "everyday-iteration-and-async/generator-range": {
-    "typed": 59.5,
-    "untyped": 64.5
+    "typed": 53.5,
+    "untyped": 58.5
   },
   "everyday-iteration-and-async/generator-stepped-by-hand": {
-    "typed": 57,
-    "untyped": 57
+    "typed": 51,
+    "untyped": 51
   },
   "everyday-iteration-and-async/iterator-helpers": {
-    "typed": 12394,
-    "untyped": 11851.2
+    "typed": 3979.4,
+    "untyped": 3982.5
   },
   "everyday-iteration-and-async/iterator-object-by-hand": {
     "typed": 60.5,
@@ -2316,7 +2324,7 @@
     "untyped": 66
   },
   "everyday-kinds-of-types/enum.name-of-a-member": {
-    "typed": 65,
+    "typed": 27,
     "untyped": 113
   },
   "everyday-kinds-of-types/enum.text": {
@@ -2360,8 +2368,8 @@
     "untyped": 9.5
   },
   "everyday-kinds-of-types/interface.call-signature": {
-    "typed": 100,
-    "untyped": 89
+    "typed": 54,
+    "untyped": 54
   },
   "everyday-kinds-of-types/literal.numbers-added": {
     "typed": 24,
@@ -2564,20 +2572,20 @@
     "untyped": 1031.2
   },
   "everyday-microtasks-and-promises/async-generator-left-early": {
-    "typed": 3343.6,
-    "untyped": 3363.6
+    "typed": 3104.4,
+    "untyped": 3117.2
   },
   "everyday-microtasks-and-promises/async-generator-of-ten": {
-    "typed": 3396.7,
-    "untyped": 3398.9
+    "typed": 3394.6,
+    "untyped": 3397.4
   },
   "everyday-microtasks-and-promises/async-generator-that-awaits": {
     "typed": 2438.2,
-    "untyped": 2445.9
+    "untyped": 2441.6
   },
   "everyday-microtasks-and-promises/async-generator-through-another": {
-    "typed": 3699.8,
-    "untyped": 3704.8
+    "typed": 3699.4,
+    "untyped": 3702.1
   },
   "everyday-microtasks-and-promises/async-iterator-by-hand": {
     "typed": 1028.4,
@@ -2684,8 +2692,8 @@
     "untyped": 4348.6
   },
   "everyday-microtasks-and-promises/store-around-an-async-generator": {
-    "typed": 4217.8,
-    "untyped": 4238
+    "typed": 4144.9,
+    "untyped": 4173.4
   },
   "everyday-microtasks-and-promises/store-around-an-await-of-a-pending-promise": {
     "typed": 3596.7,
@@ -3388,8 +3396,8 @@
     "untyped": 354.4
   },
   "everyday-small-objects-run-by-a-loop/a-generator-driven-to-its-end-by-a-loop-that-unwraps-small-objects": {
-    "typed": 617.9,
-    "untyped": 618
+    "typed": 582.1,
+    "untyped": 582.1
   },
   "everyday-small-objects-run-by-a-loop/a-key-joined-from-constants-asked-by-in": {
     "typed": 30,
@@ -3420,8 +3428,8 @@
     "untyped": 95
   },
   "everyday-small-objects-run-by-a-loop/a-variable-of-the-global-object-under-a-key-set-and-put-back": {
-    "typed": 95,
-    "untyped": 85
+    "typed": 25,
+    "untyped": 25
   },
   "everyday-small-objects-run-by-a-loop/steps-of-four-kinds-run-until-one-is-the-last": {
     "typed": 542.2,
@@ -3476,8 +3484,8 @@
     "untyped": 416
   },
   "everyday-small-programs/prime-factors": {
-    "typed": 674.2,
-    "untyped": 676.2
+    "typed": 352,
+    "untyped": 354
   },
   "everyday-small-programs/random-bytes": {
     "typed": 3408,
@@ -4084,12 +4092,12 @@
     "untyped": 8
   },
   "everyday-spellings/static.function-property": {
-    "typed": 97,
-    "untyped": 90
+    "typed": 51,
+    "untyped": 51
   },
   "everyday-spellings/static.global-this": {
-    "typed": 62,
-    "untyped": 67
+    "typed": 19,
+    "untyped": 21
   },
   "everyday-spellings/static.literal-field": {
     "typed": 11,
@@ -4476,8 +4484,8 @@
     "untyped": 2789
   },
   "everyday-data-and-control/labeled-break": {
-    "typed": 96,
-    "untyped": 96
+    "typed": 84,
+    "untyped": 84
   },
   "everyday-data-and-control/path-basename-and-extname": {
     "typed": 356.5,
@@ -4540,8 +4548,8 @@
     "untyped": 15496
   },
   "everyday-iteration-and-async/generator-pipeline": {
-    "typed": 3529.2,
-    "untyped": 3528.2
+    "typed": 3487.2,
+    "untyped": 3488.3
   },
   "everyday-iteration-and-async/throw-and-catch-an-error": {
     "typed": 1900.3,

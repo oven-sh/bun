@@ -449,7 +449,7 @@ typesite w318 module=m2 position=973 kind=Variable
 typesite w319 module=m2 position=270 kind=Variable
 typesite w320 module=m2 position=309 kind=Variable
 typesite w321 module=m2 position=1007 kind=Variable
-layout L0 kind=Instance name="C" module=m0 position=4850 constructor=f40 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="k" declared={type=number site=w123} flags=[IsRequired]}] ownFieldCount=2
+layout L0 kind=Instance name="C" module=m0 position=4850 constructor=f40 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden, IsBrandOfMethods]}, {key="k" declared={type=number site=w123} flags=[IsRequired]}] ownFieldCount=2
 layout L1 kind=Instance name="W1" module=m0 position=5592 constructor=f49 fields=[{key="next" declared={type=undefined|null|L1|L2 site=w145 flags=[OmitsUndefined]} flags=[IsRequired]}] supertypes=[L7] ownFieldCount=1
 layout L2 kind=Instance name="W2" module=m0 position=5740 constructor=f51 fields=[{key="next" declared={type=undefined|null|L1|L2 site=w150 flags=[OmitsUndefined]} flags=[IsRequired]}] supertypes=[L7] ownFieldCount=1
 layout L3 kind=Instance name="D" module=m0 position=5363 base=L0 constructor=f78 supertypes=[L0] flags=[HasHeritage]
@@ -1801,11 +1801,11 @@ function f40 name="C" module=m0 position=4850 kind=BaseConstructor flags=[HasNew
   b0(v0: anything):
     Jump -> next b1() @4850
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @4844
-    v2 = NewObject v1 layout=L0 @4844
-    v3 = Convert v2 declared={type=L0|L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4844
-    v4 = CallDirect v3 function=f106 @4844
-    Return v3 @4844
+    v1 = GetConstructPrototype v0 layout=L0 @4850
+    v2 = NewObject v1 layout=L0 @4850
+    v3 = Convert v2 declared={type=L0|L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4850
+    v4 = CallDirect v3 function=f106 @4850
+    Return v3 @4850
 }
 function f41 name="walk" module=m0 position=4861 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0|L3 site=w125} parameters=[{type=number site=w124}] results=[{type=number site=w126}] functionTypes=[f140] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0|L3, v1: number):
@@ -1979,9 +1979,9 @@ function f49 name="W1" module=m0 position=5626 kind=BaseConstructor flags=[HasNe
   b0(v0: anything, v1: undefined|null|L1|L2):
     Jump -> next b1() @5626
   b1():
-    v2 = GetConstructPrototype v0 layout=L1 @5586
-    v3 = NewObject v2 layout=L1 @5586
-    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5586
+    v2 = GetConstructPrototype v0 layout=L1 @5626
+    v3 = NewObject v2 layout=L1 @5626
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5626
     v5 = CallDirect v4 function=f107 @5626
     PropSet v4, v1 key="next" @5627
     v7 = Undefined @5627
@@ -2023,9 +2023,9 @@ function f51 name="W2" module=m0 position=5774 kind=BaseConstructor flags=[HasNe
   b0(v0: anything, v1: undefined|null|L1|L2):
     Jump -> next b1() @5774
   b1():
-    v2 = GetConstructPrototype v0 layout=L2 @5734
-    v3 = NewObject v2 layout=L2 @5734
-    v4 = Convert v3 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5734
+    v2 = GetConstructPrototype v0 layout=L2 @5774
+    v3 = NewObject v2 layout=L2 @5774
+    v4 = Convert v3 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @5774
     v5 = CallDirect v4 function=f108 @5774
     PropSet v4, v1 key="next" @5775
     v7 = Undefined @5775
@@ -3087,11 +3087,11 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: ReturnCall v17 casts=[{declared={type=number site=w223 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w67 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nested"
-# CHECK: module=m0 position=2805 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1000000 site=w74}] results=[{type=int|whole site=w75}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=2805 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1000000 site=w74}] results=[{type=int[1, 9007199254740992] site=w75}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: 1000000):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: env L4 = NewObject -, v1 layout=L4 fields=[1] allocationSite=66 storage=Frame
-# CHECK-NEXT: v3: int|whole = CallDirect v2, v0 function=f103 accessSite=69 @2950 tail
+# CHECK-NEXT: v3: int[1, 9007199254740992] ~ int[1, 2147483647] = CallDirect v2, v0 function=f103 accessSite=69 @2950 tail
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="inCatch"
@@ -3146,7 +3146,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-LABEL: function {{*}}name="anyValue"
 # CHECK: module=m0 position=6652 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int|whole}, {type=f30}] results=[{type=0}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="C"
-# CHECK: module=m0 position=4850 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0|L3 flags=[IsFromCompiler]}] functionTypes=[f177] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f106 callPosition=4844 module=m0}] {
+# CHECK: module=m0 position=4850 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0|L3 flags=[IsFromCompiler]}] functionTypes=[f177] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f106 callPosition=4850 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f40|f78 = AssumeType v0 provenType=f40|f78
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
@@ -3336,10 +3336,10 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: ReturnCall v5 casts=[{declared={type=number site=w226 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w73 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}, {declared={type=number site=w279 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w170 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f70 module=
-# CHECK: m0 position=4505 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w171}] functionTypes=[f131] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4505 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[1, 9007199254740992] site=w171}] functionTypes=[f131] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v1: int|whole = CallDirect v0 function=f20 accessSite=147
+# CHECK-NEXT: v1: int[1, 9007199254740992] ~ int[1, 2147483647] = CallDirect v0 function=f20 accessSite=147
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w280} resolution=Nothing}, {declared={type=number site=w171} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f71 module=
@@ -3396,7 +3396,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-LABEL: function {{*}}name="m"
 # CHECK: module=m0 position=5472 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L6} parameters=[{type=int|whole site=w182}] results=[{type=4 site=w183}] functionTypes=[f142] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f81 module=
-# CHECK: m0 position=5902 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[-2147483643, 2147483647] site=w184}] functionTypes=[f146] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=5912 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4844 parent=1 module=m0}] {
+# CHECK: m0 position=5902 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[-2147483643, 2147483647] site=w184}] functionTypes=[f146] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=5912 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: classtoken = GetModuleVariable variable=g50
 # CHECK-NEXT: v1: 1 = Integer integer=1
@@ -3420,27 +3420,27 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w293 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w186 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f84 module=
-# CHECK: m0 position=6061 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w187}] functionTypes=[f149] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=6071 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4844 parent=1 module=m0}, {callee=f294 callPosition=6075 isTailCall=true module=m0}] {
+# CHECK: m0 position=6061 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w187}] functionTypes=[f149] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=6071 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=1 module=m0}, {callee=f294 callPosition=6075 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v1: 0 = CallDirect v0 function=f293 accessSite=113
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w258 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w136 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}, {declared={type=number site=w294 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w187 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f85 module=
-# CHECK: m0 position=6102 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w188}] functionTypes=[f150] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=6112 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4844 parent=1 module=m0}] {
+# CHECK: m0 position=6102 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w188}] functionTypes=[f150] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=6112 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: int|whole = CallDirect function=f46 accessSite=172
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f86 module=
-# CHECK: m0 position=6143 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[1, 2] site=w189}] functionTypes=[f151] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=6153 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4844 parent=1 module=m0}] {
+# CHECK: m0 position=6143 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[1, 2] site=w189}] functionTypes=[f151] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=6153 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
 # CHECK-NEXT: v1: int[1, 2] = CallDirect v0 function=f295 accessSite=175
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w296 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w189 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f87 module=
-# CHECK: m0 position=6184 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[-2147483643, 2147483647] site=w190}] functionTypes=[f152] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f262 callPosition=6194 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f224 callPosition=5363 parent=1 isConstruction=true module=m0}, {callee=f106 callPosition=4844 parent=2 module=m0}] {
+# CHECK: m0 position=6184 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[-2147483643, 2147483647] site=w190}] functionTypes=[f152] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f262 callPosition=6194 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f224 callPosition=5363 parent=1 isConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: classtoken = GetModuleVariable variable=g50
 # CHECK-NEXT: v1: 1 = Integer integer=1

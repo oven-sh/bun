@@ -150,8 +150,16 @@ pub trait StandaloneModuleGraph: Send + Sync {
             let public_root = self.base_public_path_with_default_suffix();
             let module =
                 program.resolve_module(public_root, source_dir, specifier, is_require, search);
-            module.or_else(|| {
-                let root_on_disk = self.root_on_disk()?;
+            let module = module.or_else(|| {
+                program.resolve_module_through_root_folders(
+                    public_root,
+                    source_dir,
+                    specifier,
+                    is_require,
+                    search,
+                )
+            });
+            let resolve_below = |root_on_disk: Vec<u8>| {
                 program.resolve_module_on_disk(
                     public_root,
                     &root_on_disk,
@@ -160,6 +168,15 @@ pub trait StandaloneModuleGraph: Send + Sync {
                     is_require,
                     search,
                 )
+            };
+            let beside_executable =
+                module.or_else(|| resolve_below(self.root_beside_executable()?));
+            beside_executable.or_else(|| {
+                let program = self.compiled_program()?;
+                if !program.knows_root_on_disk() {
+                    return None;
+                }
+                resolve_below(program.root_on_disk(crate::fs::FileSystem::get().top_level_dir())?)
             })
         })
     }
@@ -177,8 +194,17 @@ pub trait StandaloneModuleGraph: Send + Sync {
         let public_root = self.base_public_path_with_default_suffix();
         program.resolve_package(public_root, source_dir, specifier, is_require, search)
     }
-    /// `CompiledProgram::root_on_disk`, below the working directory of the process.
+    /// `CompiledProgram::root_beside_executable`
+    fn root_beside_executable(&self) -> Option<Vec<u8>> {
+        let program = self.compiled_program()?;
+        let executable = bun_core::self_exe_path().ok()?;
+        program.root_beside_executable(executable.as_bytes())
+    }
+    /// The root directory on disk: below the folder of the executable, else below the working directory of the process.
     fn root_on_disk(&self) -> Option<Vec<u8>> {
+        if let Some(root) = self.root_beside_executable() {
+            return Some(root);
+        }
         let program = self.compiled_program()?;
         if !program.knows_root_on_disk() {
             return None;

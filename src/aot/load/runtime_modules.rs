@@ -327,6 +327,7 @@ fn is_module_of_own_tests(specifier: &[u8], aliases: Cfg) -> bool {
 }
 
 fn resolve_alias(manifest: &Manifest, specifier: &[u8], aliases: Cfg) -> Option<RuntimeResolution> {
+    let specifier = Alias::bun_prefixed_builtin(specifier).unwrap_or(specifier);
     let alias = Alias::get(specifier, Target::Bun, aliases)?;
     Some(match manifest.module_by_specifier(alias.path.as_bytes()) {
         Some(id) => RuntimeResolution::Module(HostModuleId(id)),

@@ -44,6 +44,30 @@ const arrayMaker = (name: string, returns: b.TableType, uses: UsesByParameter) =
     implementation: b.compiled("prelude/written-lists", name),
   }) satisfies b.FunctionField;
 
+// What Array.prototype.sort does with a list and a comparator.
+const sortInPlace = (name: string) =>
+  ({
+    args: { array: b.instance("Array"), comparator: b.callable },
+    returns: b.operand("array"),
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    runsUnseenCode: false,
+    uses: {
+      array: [b.returned, b.readsContents(), b.movesElements],
+      comparator: [
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Repeatedly",
+          this: b.undefined,
+          args: [b.slot("array", "element"), b.slot("array", "element")],
+          result: "Escapes",
+        }),
+      ],
+    },
+    implementation: b.compiled("prelude/array-sort", name),
+  }) satisfies b.FunctionField;
+
 // A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
 const kept = [b.retained];
@@ -298,6 +322,8 @@ export default b.declarations(
       // Where the length is no small number the list is filled and mapped as the program wrote it, and the mapper gets that list too.
       mapper: calledForEachIndex(b.operand("value"), b.instance("Array")),
     }),
+    sortByDifference: sortInPlace("sortByDifference"),
+    sortByReversedDifference: sortInPlace("sortByReversedDifference"),
     ...helpersIn("prelude/array-traversal", {
       traverseArray: {
         array: keptWithContents,

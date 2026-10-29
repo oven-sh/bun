@@ -1145,6 +1145,23 @@ impl<'a> Resolver<'a> {
         )
     }
 
+    /// Code from disk that names a package which the disk does not hold gets the one that the executable holds.
+    fn resolve_package_of_program_for_code_from_disk(
+        &self,
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<&'static [u8]> {
+        let graph = self.standalone_module_graph?;
+        if !graph.compiled_program()?.allows_code_from_disk {
+            return None;
+        }
+        let public_root = graph.base_public_path_with_default_suffix();
+        match self.resolve_embedded_package(public_root, specifier, kind) {
+            PackageLookup::Found(file_name) => Some(file_name),
+            PackageLookup::Hidden | PackageLookup::Unknown => None,
+        }
+    }
+
     /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
     pub fn resolve_embedded_package(
         &self,
@@ -1698,7 +1715,19 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::Failure(e) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                ResultUnion::Failure(e)
+                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
+                    Some(file_name) => ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(file_name),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Esm,
+                        flags: ResultFlags::IS_STANDALONE_MODULE,
+                        ..Default::default()
+                    }),
+                    None => ResultUnion::Failure(e),
+                }
             }
             ResultUnion::Pending(pending) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
@@ -1706,7 +1735,19 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::NotFound => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                ResultUnion::NotFound
+                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
+                    Some(file_name) => ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(file_name),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Esm,
+                        flags: ResultFlags::IS_STANDALONE_MODULE,
+                        ..Default::default()
+                    }),
+                    None => ResultUnion::NotFound,
+                }
             }
         };
 

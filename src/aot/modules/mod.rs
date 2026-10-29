@@ -81,6 +81,9 @@ pub struct BindInput<'a, 's> {
     pub external_packages: &'a [Vec<u8>],
     /// What the engine found in an earlier compile of the program: a spy of the test runner may replace them.
     pub replaced_exports: &'a [ReplacedExport],
+    /// `LoadOptions::mocks_any_module`
+    pub mocks_any_module: bool,
+    pub runs_tests: bool,
     pub application: Option<&'a ApplicationGraph<'a>>,
     pub in_parallel: InParallel<'a>,
     pub beside: Beside<'a>,
@@ -193,8 +196,33 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             replace(tables.resolve_in(&modules, module, name).resolution);
         }
     }
+    // In a test run a namespace object that goes somewhere may reach a spy. The engine would find that out behind a whole run of
+    // the flow analysis, and the program would be compiled again.
     let mocked_modules = imports.iter().flat_map(|file| &file.mocked_modules);
-    let mocked_modules: FxHashSet<ModuleRef> = mocked_modules.copied().collect();
+    let mut mocked_modules: FxHashSet<ModuleRef> = mocked_modules.copied().collect();
+    let mut spy_may_reach_any_module = false;
+    if input.runs_tests {
+        let handed_out = imports.iter().flat_map(|file| &file.namespaces_handed_out);
+        let mut handed_out: FxHashSet<ModuleRef> = handed_out.copied().collect();
+        // Such a spy may be handed the object of any module. The engine says so behind a whole run of flow.
+        if imports.iter().any(|file| file.spies_on_unknown_objects)
+            && imports.iter().any(|file| file.loads_by_unknown_path)
+        {
+            spy_may_reach_any_module = true;
+            let files = modules.compiled_files.iter();
+            handed_out.extend(files.map(|&file| ModuleRef::File(file)));
+        }
+        for &module in &handed_out {
+            let Some(file) = modules.table_file(module) else {
+                // The names of a module of the library or a CommonJS file show at run time.
+                mocked_modules.insert(module);
+                continue;
+            };
+            for &(_, resolved) in tables.names(file) {
+                replace(resolved.resolution);
+            }
+        }
+    }
     let mocked_files = mocked_modules.iter();
     for file in mocked_files.filter_map(|&module| modules.table_file(module)) {
         for &(_, resolved) in tables.names(file) {
@@ -205,7 +233,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let replaced = ReplacedNames {
         names: &replaced_names,
         modules: &mocked_modules,
-        is_every_module: mocks_any_module,
+        is_every_module: mocks_any_module || spy_may_reach_any_module,
     };
     let synthetic = number_synthetic_exports(input, &modules, &tables, &imports, &texts, replaced);
     let ((mut pending, requests, is_library), mut commonjs_exports) = run_beside(
@@ -369,6 +397,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         rows,
         record_files: Vec::new(),
         left_out_files: Vec::new(),
+        files_brought_by_calls: Vec::new(),
         placeholder_files: Vec::new(),
         left_out_inner_modules: Vec::new(),
         other_modules: modules.other_modules,

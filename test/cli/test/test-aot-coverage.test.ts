@@ -9,7 +9,8 @@ const files = {
   "sum.ts": `export function sum(a: number, b: number): number {\n  return a + b;\n}\n`,
   "sum.test.ts": `import { expect, test } from "bun:test";\nimport { sum } from "./sum";\ntest("sum", () => {\n  expect(sum(1, 2)).toBe(3);\n});\n`,
 };
-const warning = "warn: --coverage is ignored with --aot";
+const warning =
+  "warn: --coverage is ignored with --aot: compiled code isn't counted. Run bun test --coverage without --aot for the report";
 
 async function ran(flags: string[]) {
   using dir = tempDir("test-aot-coverage", files);

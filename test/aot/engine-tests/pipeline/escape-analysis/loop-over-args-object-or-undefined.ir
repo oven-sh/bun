@@ -471,56 +471,58 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v15: Arguments = RequireObjectCoercible v7 name="length"
 # CHECK-NEXT: v16: anything = PropGet v15 key="length" accessSite=21
-# CHECK-NEXT: v17: anything ~ number = Upcast v16 castType=anything
-# CHECK-NEXT: v18: boolean ~ true = TypeTest v17 testedType=number
-# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b8(| 0)
-# CHECK-NEXT: b6(v19: number):
-# CHECK-NEXT: v20: boolean = Less v13, v19
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b18(v12)
+# CHECK-NEXT: v17: undefined|null|boolean|number|string|symbol|bigint = AssumeType v16 provenType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: v18: undefined|null|boolean|number|string|symbol|bigint ~ number = Upcast v17 castType=anything
+# CHECK-NEXT: v19: boolean ~ true = TypeTest v18 testedType=number
+# CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b8(| 0)
+# CHECK-NEXT: b6(v20: number):
+# CHECK-NEXT: v21: boolean = Less v13, v20
+# CHECK-NEXT: Branch v21 -> taken b7(), notTaken b18(v12)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v21: anything = ElemGet v15, v13 accessSite=22 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b12(v12, v13, v21)
-# CHECK-NEXT: b8(v22: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b9(v12, v13, v22)
-# CHECK-NEXT: b9(v23: int|whole, v24: int|whole ~ int[0, 2147483647], v25: anything ~ number) frequency=Unlikely:
-# CHECK-NEXT: v26: boolean = Less v24, v25
-# CHECK-NEXT: Branch v26 -> taken b10(), notTaken b18(v23)
+# CHECK-NEXT: v22: anything = ElemGet v15, v13 accessSite=22 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b12(v12, v13, v22)
+# CHECK-NEXT: b8(v23: undefined|null|boolean|string|symbol|bigint) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b9(v12, v13, v23)
+# CHECK-NEXT: b9(v24: int|whole, v25: int|whole ~ int[0, 2147483647], v26: undefined|null|boolean|number|string|symbol|bigint ~ number) frequency=Unlikely:
+# CHECK-NEXT: v27: boolean = Less v25, v26
+# CHECK-NEXT: Branch v27 -> taken b10(), notTaken b18(v24)
 # CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v27: anything = ElemGet v15, v24 accessSite=22 [keyIsIntegral]
-# CHECK-NEXT: v28: boolean ~ true = TypeTest v24 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v28 -> taken b11(| 0), notTaken b14(| 0)
-# CHECK-NEXT: b11(v29: int[0, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b12(v23, v29, v27)
-# CHECK-NEXT: b12(v30: int|whole, v31: int[0, 2147483648] ~ int[0, 2147483647], v32: anything):
-# CHECK-NEXT: v33: undefined|int = AssumeType v32 provenType=undefined|int
-# CHECK-NEXT: v34: number = Add v30, v33
-# CHECK-NEXT: v35: int|whole = AssumeType v34 provenType=int|whole
-# CHECK-NEXT: v36: boolean ~ true = TypeTest v31 testedType=i32
-# CHECK-NEXT: Branch v36 -> taken b13(| 0), notTaken b15(v31, v35)
-# CHECK-NEXT: b13(v37: int[0, 2147483647]):
-# CHECK-NEXT: v38: int[1, 2147483648] = Increment v37
-# CHECK-NEXT: v39: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v38 castType=int|whole
-# CHECK-NEXT: Jump -> next b5(v35, v39)
-# CHECK-NEXT: b14(v40: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v41: fact = Specified
-# CHECK-NEXT: v42: undefined|int = AssumeType v27, v41 provenType=undefined|int
-# CHECK-NEXT: v43: number = Add v23, v42
-# CHECK-NEXT: v44: int|whole = AssumeType v43 provenType=int|whole
-# CHECK-NEXT: Jump -> next b15(v40, v44)
-# CHECK-NEXT: b15(v45: int|whole ~ int[0, 2147483647], v46: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v47: int|whole ~ int[1, 2147483648] = Increment v45
-# CHECK-NEXT: v48: int|whole ~ int[1, 2147483647] = Upcast v47 castType=int|whole
-# CHECK-NEXT: v49: boolean ~ true = TypeTest v48 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v49 -> taken b16(| 0), notTaken b17()
-# CHECK-NEXT: b16(v50: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b4(v46, v50)
+# CHECK-NEXT: v28: anything = ElemGet v15, v25 accessSite=22 [keyIsIntegral]
+# CHECK-NEXT: v29: boolean ~ true = TypeTest v25 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v29 -> taken b11(| 0), notTaken b14(| 0)
+# CHECK-NEXT: b11(v30: int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b12(v24, v30, v28)
+# CHECK-NEXT: b12(v31: int|whole, v32: int[0, 2147483648] ~ int[0, 2147483647], v33: anything):
+# CHECK-NEXT: v34: undefined|int = AssumeType v33 provenType=undefined|int
+# CHECK-NEXT: v35: number = Add v31, v34
+# CHECK-NEXT: v36: int|whole = AssumeType v35 provenType=int|whole
+# CHECK-NEXT: v37: boolean ~ true = TypeTest v32 testedType=i32
+# CHECK-NEXT: Branch v37 -> taken b13(| 0), notTaken b15(v32, v36)
+# CHECK-NEXT: b13(v38: int[0, 2147483647]):
+# CHECK-NEXT: v39: int[1, 2147483648] = Increment v38
+# CHECK-NEXT: v40: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v39 castType=int|whole
+# CHECK-NEXT: Jump -> next b5(v36, v40)
+# CHECK-NEXT: b14(v41: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v42: fact = Specified
+# CHECK-NEXT: v43: undefined|int = AssumeType v28, v42 provenType=undefined|int
+# CHECK-NEXT: v44: number = Add v24, v43
+# CHECK-NEXT: v45: int|whole = AssumeType v44 provenType=int|whole
+# CHECK-NEXT: Jump -> next b15(v41, v45)
+# CHECK-NEXT: b15(v46: int|whole ~ int[0, 2147483647], v47: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v48: int|whole ~ int[1, 2147483648] = Increment v46
+# CHECK-NEXT: v49: int|whole ~ int[1, 2147483647] = Upcast v48 castType=int|whole
+# CHECK-NEXT: v50: boolean ~ true = TypeTest v49 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v50 -> taken b16(| 0), notTaken b17()
+# CHECK-NEXT: b16(v51: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b4(v47, v51)
 # CHECK-NEXT: b17() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v52: anything = PropGet v15 key="length" accessSite=21
-# CHECK-NEXT: v53: anything ~ number = Upcast v52 castType=anything
-# CHECK-NEXT: Jump -> next b9(v46, v48, v53)
-# CHECK-NEXT: b18(v54: int|whole):
-# CHECK-NEXT: Return v54
+# CHECK-NEXT: v53: anything = PropGet v15 key="length" accessSite=21
+# CHECK-NEXT: v54: undefined|null|boolean|number|string|symbol|bigint = AssumeType v53 provenType=undefined|null|boolean|number|string|symbol|bigint
+# CHECK-NEXT: v55: undefined|null|boolean|number|string|symbol|bigint ~ number = Upcast v54 castType=anything
+# CHECK-NEXT: Jump -> next b9(v47, v49, v55)
+# CHECK-NEXT: b18(v56: int|whole):
+# CHECK-NEXT: Return v56
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="trySum"
 # CHECK: module=m0 position=816 flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 1]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=850 module=m0}, {callee=f2 callPosition=855 module=m0}, {callee=f4 callPosition=884 module=m0}] {
@@ -559,7 +561,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v31: fact = Specified
-# CHECK-NEXT: v32: int = AssumeType v15, v31 provenType=anything
+# CHECK-NEXT: v32: int = AssumeType v15, v31 provenType=undefined|null|boolean|number|string|symbol|bigint
 # CHECK-NEXT: v33: boolean = Less v23, v32
 # CHECK-NEXT: Branch v33 -> taken b7(| 1), notTaken b30(v22)
 # CHECK-NEXT: b7(v34: int[1, 4611686018427387903]):
@@ -642,7 +644,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: b28() frequency=Unlikely handler=b34():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v91: fact = Specified
-# CHECK-NEXT: v92: int = AssumeType v15, v91 provenType=anything
+# CHECK-NEXT: v92: int = AssumeType v15, v91 provenType=undefined|null|boolean|number|string|symbol|bigint
 # CHECK-NEXT: v93: boolean = Less v86, v92
 # CHECK-NEXT: Branch v93 -> taken b29(), notTaken b30(v84)
 # CHECK-NEXT: b29() frequency=Unlikely:

@@ -1048,111 +1048,109 @@ runtimefunction id=FunctionPrototypeCall function=f30
 # CHECK-NEXT: b9(v35: L1|L4) frequency=Unlikely:
 # CHECK-NEXT: v36: boolean = AreMembersUnchanged conditions=[{layout=L1 key="area"}, {layout=L4 key="area"}, {kind=PrototypeLinkUnchanged layout=L4}, {kind=MemberNotHidden layout=L0 key="area"}, {kind=MemberNotHidden layout=L1 key="area"}]
 # CHECK-NEXT: Branch v36 -> taken b10(), notTaken b18(v27)
-# CHECK-NEXT: b10() frequency=Unlikely handler=b26():
-# CHECK-NEXT: v37: f11 = NewClosure function=f11 [isHeldByClosureTable]
-# CHECK-NEXT: v38: string = TypeOf v37
-# CHECK-NEXT: v39: boolean = TypeTest v35 testedType=L0|L1
-# CHECK-NEXT: Branch v39 -> taken b11(| 0), notTaken b19(v38, v27)
-# CHECK-NEXT: b11(v40: L1) frequency=Unlikely handler=b26():
-# CHECK-NEXT: v41: false = Boolean
-# CHECK-NEXT: v42: string = CallBuiltin -, v41 overload=String/0 accessSite=34
-# CHECK-NEXT: v43: string = Add v38, v42
-# CHECK-NEXT: v44: int[0, 4294967295] = CallBuiltin v2, v43 overload=ArrayPrototypePush/0 accessSite=35
-# CHECK-NEXT: v45: 5 = Integer integer=5
-# CHECK-NEXT: v46: int[0, 4] = Mod v0, v45
-# CHECK-NEXT: v47: 3 = Integer integer=3
-# CHECK-NEXT: v48: boolean = StrictEq v46, v47
-# CHECK-NEXT: Branch v48 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v37: "function" = String string="function"
+# CHECK-NEXT: v38: boolean = TypeTest v35 testedType=L0|L1
+# CHECK-NEXT: Branch v38 -> taken b11(| 0), notTaken b19(v37, v27)
+# CHECK-NEXT: b11(v39: L1) frequency=Unlikely handler=b26():
+# CHECK-NEXT: v40: false = Boolean
+# CHECK-NEXT: v41: string = CallBuiltin -, v40 overload=String/0 accessSite=34
+# CHECK-NEXT: v42: string = Add v37, v41
+# CHECK-NEXT: v43: int[0, 4294967295] = CallBuiltin v2, v42 overload=ArrayPrototypePush/0 accessSite=35
+# CHECK-NEXT: v44: 5 = Integer integer=5
+# CHECK-NEXT: v45: int[0, 4] = Mod v0, v44
+# CHECK-NEXT: v46: 3 = Integer integer=3
+# CHECK-NEXT: v47: boolean = StrictEq v45, v46
+# CHECK-NEXT: Branch v47 -> taken b12(), notTaken b13()
 # CHECK-NEXT: b12() frequency=Unlikely handler=b26():
-# CHECK-NEXT: v49: undefined = Undefined
-# CHECK-NEXT: PropSet v40, v49 key="size" accessSite=36
+# CHECK-NEXT: v48: undefined = Undefined
+# CHECK-NEXT: PropSet v39, v48 key="size" accessSite=36
 # CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: v51: boolean = AreMembersUnchanged conditions=[{layout=L1 key="size"}, {kind=MemberNotHidden layout=L1 key="size"}]
-# CHECK-NEXT: Branch v51 -> taken b14(), notTaken b15()
+# CHECK-NEXT: v50: boolean = AreMembersUnchanged conditions=[{layout=L1 key="size"}, {kind=MemberNotHidden layout=L1 key="size"}]
+# CHECK-NEXT: Branch v50 -> taken b14(), notTaken b15()
 # CHECK-NEXT: b14() frequency=Unlikely:
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b15() frequency=Rare handler=b26():
-# CHECK-NEXT: v52: anything = PropGet v40 key="size" accessSite=38 receivers=[L1]
-# CHECK-NEXT: v53: undefined|int|whole = AssumeType v52 provenType=undefined|int|whole
-# CHECK-NEXT: v54: string = CallBuiltin -, v53 overload=String/0 accessSite=20 @189:1 tail
-# CHECK-NEXT: v55: boolean = AreMembersUnchanged conditions=[{layout=L1 key="area"}, {layout=L4 key="area"}, {kind=PrototypeLinkUnchanged layout=L4}, {kind=MemberNotHidden layout=L0 key="area"}, {kind=MemberNotHidden layout=L0 key="size"}, {kind=MemberNotHidden layout=L1 key="area"}, {kind=MemberNotHidden layout=L1 key="size"}, {kind=MemberNotHidden layout=L4 key="size"}]
-# CHECK-NEXT: Branch v55 -> taken b16(), notTaken b22(v54, v40)
+# CHECK-NEXT: v51: anything = PropGet v39 key="size" accessSite=38 receivers=[L1]
+# CHECK-NEXT: v52: undefined|int|whole = AssumeType v51 provenType=undefined|int|whole
+# CHECK-NEXT: v53: string = CallBuiltin -, v52 overload=String/0 accessSite=20 @189:1 tail
+# CHECK-NEXT: v54: boolean = AreMembersUnchanged conditions=[{layout=L1 key="area"}, {layout=L4 key="area"}, {kind=PrototypeLinkUnchanged layout=L4}, {kind=MemberNotHidden layout=L0 key="area"}, {kind=MemberNotHidden layout=L0 key="size"}, {kind=MemberNotHidden layout=L1 key="area"}, {kind=MemberNotHidden layout=L1 key="size"}, {kind=MemberNotHidden layout=L4 key="size"}]
+# CHECK-NEXT: Branch v54 -> taken b16(), notTaken b22(v53, v39)
 # CHECK-NEXT: b16() frequency=Unlikely handler=b26():
-# CHECK-NEXT: v56: false = Boolean
-# CHECK-NEXT: v57: string = CallBuiltin -, v56 overload=String/0 accessSite=41
-# CHECK-NEXT: v58: string = Add v54, v57
-# CHECK-NEXT: v59: int[0, 4294967295] = CallBuiltin v2, v58 overload=ArrayPrototypePush/0 accessSite=42
-# CHECK-NEXT: v60: 3 = Integer integer=3
-# CHECK-NEXT: v61: int[0, 2] = Mod v0, v60
-# CHECK-NEXT: v62: 1 = Integer integer=1
-# CHECK-NEXT: v63: boolean = StrictEq v61, v62
-# CHECK-NEXT: Branch v63 -> taken b23(v40), notTaken b17()
+# CHECK-NEXT: v55: false = Boolean
+# CHECK-NEXT: v56: string = CallBuiltin -, v55 overload=String/0 accessSite=41
+# CHECK-NEXT: v57: string = Add v53, v56
+# CHECK-NEXT: v58: int[0, 4294967295] = CallBuiltin v2, v57 overload=ArrayPrototypePush/0 accessSite=42
+# CHECK-NEXT: v59: 3 = Integer integer=3
+# CHECK-NEXT: v60: int[0, 2] = Mod v0, v59
+# CHECK-NEXT: v61: 1 = Integer integer=1
+# CHECK-NEXT: v62: boolean = StrictEq v60, v61
+# CHECK-NEXT: Branch v62 -> taken b23(v39), notTaken b17()
 # CHECK-NEXT: b17() handler=b26():
-# CHECK-NEXT: v64: f11 = NewClosure function=f11 [isHeldByClosureTable]
-# CHECK-NEXT: v65: string = TypeOf v64
-# CHECK-NEXT: v66: false = Boolean
-# CHECK-NEXT: v67: string = CallBuiltin -, v66 overload=String/0 accessSite=47
-# CHECK-NEXT: Jump -> next b25(v65, v67)
-# CHECK-NEXT: b18(v68: object ~ L3) frequency=Unlikely handler=b26():
-# CHECK-NEXT: v69: anything ~ undefined = PropGet v68 key="area" accessSite=32 receivers=[L3, ..]
-# CHECK-NEXT: v70: string = TypeOf v69
-# CHECK-NEXT: Jump -> next b19(v70, v68)
-# CHECK-NEXT: b19(v71: string, v72: object ~ L0|L1|L4) frequency=Unlikely handler=b26():
-# CHECK-NEXT: v73: boolean = PropHasOwn v72 key="area" calledBuiltin=ObjectHasOwn accessSite=33
-# CHECK-NEXT: v74: string = CallBuiltin -, v73 overload=String/0 accessSite=34
-# CHECK-NEXT: v75: string = Add v71, v74
-# CHECK-NEXT: v76: int[0, 4294967295] = CallBuiltin v2, v75 overload=ArrayPrototypePush/0 accessSite=35
-# CHECK-NEXT: v77: 5 = Integer integer=5
-# CHECK-NEXT: v78: int[0, 4] = Mod v0, v77
-# CHECK-NEXT: v79: 3 = Integer integer=3
-# CHECK-NEXT: v80: boolean = StrictEq v78, v79
-# CHECK-NEXT: Branch v80 -> taken b20(), notTaken b21(v72)
+# CHECK-NEXT: v63: "function" = String string="function"
+# CHECK-NEXT: v64: false = Boolean
+# CHECK-NEXT: v65: string = CallBuiltin -, v64 overload=String/0 accessSite=47
+# CHECK-NEXT: Jump -> next b25(v63, v65)
+# CHECK-NEXT: b18(v66: object ~ L3) frequency=Unlikely handler=b26():
+# CHECK-NEXT: v67: anything ~ undefined = PropGet v66 key="area" accessSite=32 receivers=[L3, ..]
+# CHECK-NEXT: v68: string = TypeOf v67
+# CHECK-NEXT: Jump -> next b19(v68, v66)
+# CHECK-NEXT: b19(v69: string ~ "function", v70: object ~ L0|L1|L4) frequency=Unlikely handler=b26():
+# CHECK-NEXT: v71: boolean = PropHasOwn v70 key="area" calledBuiltin=ObjectHasOwn accessSite=33
+# CHECK-NEXT: v72: string = CallBuiltin -, v71 overload=String/0 accessSite=34
+# CHECK-NEXT: v73: string = Add v69, v72
+# CHECK-NEXT: v74: int[0, 4294967295] = CallBuiltin v2, v73 overload=ArrayPrototypePush/0 accessSite=35
+# CHECK-NEXT: v75: 5 = Integer integer=5
+# CHECK-NEXT: v76: int[0, 4] = Mod v0, v75
+# CHECK-NEXT: v77: 3 = Integer integer=3
+# CHECK-NEXT: v78: boolean = StrictEq v76, v77
+# CHECK-NEXT: Branch v78 -> taken b20(), notTaken b21(v70)
 # CHECK-NEXT: b20() frequency=Unlikely handler=b26():
-# CHECK-NEXT: v81: undefined = Undefined
-# CHECK-NEXT: PropSet v72, v81 key="size" accessSite=36
-# CHECK-NEXT: Jump -> next b21(v72)
-# CHECK-NEXT: b21(v83: object ~ L0|L1|L4) frequency=Unlikely handler=b26():
-# CHECK-NEXT: v84: anything = PropGet v83 key="size" accessSite=38
-# CHECK-NEXT: v85: undefined|int|whole = AssumeType v84 provenType=undefined|int|whole
-# CHECK-NEXT: v86: string = CallDirect v85 function=f1 accessSite=39
-# CHECK-NEXT: Jump -> next b22(v86, v83)
-# CHECK-NEXT: b22(v87: string, v88: object ~ L0|L1|L4) frequency=Unlikely handler=b26():
-# CHECK-NEXT: v89: boolean = PropHasOwn v88 key="size" calledBuiltin=ObjectHasOwn accessSite=40
-# CHECK-NEXT: v90: string = CallBuiltin -, v89 overload=String/0 accessSite=41
-# CHECK-NEXT: v91: string = Add v87, v90
-# CHECK-NEXT: v92: int[0, 4294967295] = CallBuiltin v2, v91 overload=ArrayPrototypePush/0 accessSite=42
-# CHECK-NEXT: v93: 3 = Integer integer=3
-# CHECK-NEXT: v94: int[0, 2] = Mod v0, v93
-# CHECK-NEXT: v95: 1 = Integer integer=1
-# CHECK-NEXT: v96: boolean = StrictEq v94, v95
-# CHECK-NEXT: Branch v96 -> taken b23(v88), notTaken b24(v88)
-# CHECK-NEXT: b23(v97: object ~ L1) frequency=Unlikely handler=b26():
-# CHECK-NEXT: v98: undefined = Undefined
-# CHECK-NEXT: PropSet v97, v98 key="area" accessSite=43 receivers=[L3, ..]
-# CHECK-NEXT: Jump -> next b24(v97)
-# CHECK-NEXT: b24(v100: object ~ L1) frequency=Unlikely handler=b26():
-# CHECK-NEXT: v101: anything ~ undefined = PropGet v100 key="area" accessSite=45 receivers=[L3, ..]
-# CHECK-NEXT: v102: string = TypeOf v101
-# CHECK-NEXT: v103: boolean = PropHasOwn v100 key="area" calledBuiltin=ObjectHasOwn accessSite=46
-# CHECK-NEXT: v104: string = CallBuiltin -, v103 overload=String/0 accessSite=47
-# CHECK-NEXT: Jump -> next b25(v102, v104)
-# CHECK-NEXT: b25(v105: string, v106: string) handler=b26():
-# CHECK-NEXT: v107: string = Add v105, v106
-# CHECK-NEXT: v108: int[0, 4294967295] = CallBuiltin v2, v107 overload=ArrayPrototypePush/0 accessSite=48
+# CHECK-NEXT: v79: undefined = Undefined
+# CHECK-NEXT: PropSet v70, v79 key="size" accessSite=36
+# CHECK-NEXT: Jump -> next b21(v70)
+# CHECK-NEXT: b21(v81: object ~ L0|L1|L4) frequency=Unlikely handler=b26():
+# CHECK-NEXT: v82: anything = PropGet v81 key="size" accessSite=38
+# CHECK-NEXT: v83: undefined|int|whole = AssumeType v82 provenType=undefined|int|whole
+# CHECK-NEXT: v84: string = CallDirect v83 function=f1 accessSite=39
+# CHECK-NEXT: Jump -> next b22(v84, v81)
+# CHECK-NEXT: b22(v85: string, v86: object ~ L0|L1|L4) frequency=Unlikely handler=b26():
+# CHECK-NEXT: v87: boolean = PropHasOwn v86 key="size" calledBuiltin=ObjectHasOwn accessSite=40
+# CHECK-NEXT: v88: string = CallBuiltin -, v87 overload=String/0 accessSite=41
+# CHECK-NEXT: v89: string = Add v85, v88
+# CHECK-NEXT: v90: int[0, 4294967295] = CallBuiltin v2, v89 overload=ArrayPrototypePush/0 accessSite=42
+# CHECK-NEXT: v91: 3 = Integer integer=3
+# CHECK-NEXT: v92: int[0, 2] = Mod v0, v91
+# CHECK-NEXT: v93: 1 = Integer integer=1
+# CHECK-NEXT: v94: boolean = StrictEq v92, v93
+# CHECK-NEXT: Branch v94 -> taken b23(v86), notTaken b24(v86)
+# CHECK-NEXT: b23(v95: object ~ L1) frequency=Unlikely handler=b26():
+# CHECK-NEXT: v96: undefined = Undefined
+# CHECK-NEXT: PropSet v95, v96 key="area" accessSite=43 receivers=[L3, ..]
+# CHECK-NEXT: Jump -> next b24(v95)
+# CHECK-NEXT: b24(v98: object ~ L1) frequency=Unlikely handler=b26():
+# CHECK-NEXT: v99: anything ~ undefined = PropGet v98 key="area" accessSite=45 receivers=[L3, ..]
+# CHECK-NEXT: v100: string = TypeOf v99
+# CHECK-NEXT: v101: boolean = PropHasOwn v98 key="area" calledBuiltin=ObjectHasOwn accessSite=46
+# CHECK-NEXT: v102: string = CallBuiltin -, v101 overload=String/0 accessSite=47
+# CHECK-NEXT: Jump -> next b25(v100, v102)
+# CHECK-NEXT: b25(v103: string ~ "function", v104: string) handler=b26():
+# CHECK-NEXT: v105: string = Add v103, v104
+# CHECK-NEXT: v106: int[0, 4294967295] = CallBuiltin v2, v105 overload=ArrayPrototypePush/0 accessSite=48
 # CHECK-NEXT: Jump -> next b27()
 # CHECK-NEXT: b26() role=CatchHandler:
-# CHECK-NEXT: v109: anything = CatchValue
-# CHECK-NEXT: v110: "threw " = String string="threw "
-# CHECK-NEXT: v111: anything = PropGet v109 key="constructor" accessSite=50
-# CHECK-NEXT: v112: anything = PropGet v111 key="name" accessSite=51
-# CHECK-NEXT: v113: string = Add v110, v112
-# CHECK-NEXT: v114: int[0, 4294967295] = CallBuiltin v2, v113 overload=ArrayPrototypePush/0 accessSite=52
+# CHECK-NEXT: v107: anything = CatchValue
+# CHECK-NEXT: v108: "threw " = String string="threw "
+# CHECK-NEXT: v109: anything = PropGet v107 key="constructor" accessSite=50
+# CHECK-NEXT: v110: anything = PropGet v109 key="name" accessSite=51
+# CHECK-NEXT: v111: string = Add v108, v110
+# CHECK-NEXT: v112: int[0, 4294967295] = CallBuiltin v2, v111 overload=ArrayPrototypePush/0 accessSite=52
 # CHECK-NEXT: Jump -> next b27()
 # CHECK-NEXT: b27():
-# CHECK-NEXT: v115: " " = String string=" "
-# CHECK-NEXT: v116: string = CallBuiltin v2, v115 overload=ArrayPrototypeJoin/0 accessSite=54 @1515 tail
-# CHECK-NEXT: Return v116
+# CHECK-NEXT: v113: " " = String string=" "
+# CHECK-NEXT: v114: string = CallBuiltin v2, v113 overload=ArrayPrototypeJoin/0 accessSite=54 @1515 tail
+# CHECK-NEXT: Return v114
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Disk"
 # CHECK: module=m0 position=1735 flags=[HasThis, HasExplicitName] length=1 thisType={type=L4 flags=[IsExpected]} parameters=[{type=undefined|int}] results=[{type=undefined}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L1 {

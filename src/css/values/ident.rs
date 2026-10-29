@@ -55,13 +55,6 @@ macro_rules! arena_slice_newtype {
                 // Hash the arena slice bytes.
                 hasher.update(self.v());
             }
-
-            /// Borrow the underlying arena slice.
-            /// SAFETY: caller must ensure the parser arena outlives the borrow.
-            #[inline]
-            pub unsafe fn as_slice(&self) -> &[u8] {
-                self.v()
-            }
         }
     };
 }
@@ -333,9 +326,7 @@ impl IdentOrRef {
         if !self.ref_bit() {
             let ptr = self.ptrbits() as usize as *const u8;
             let len = self.len_bits() as usize;
-            // SAFETY: ptr/len were packed from a valid arena slice in from_ident
-            let slice =
-                std::ptr::from_ref::<[u8]>(unsafe { core::slice::from_raw_parts(ptr, len) });
+            let slice = core::ptr::slice_from_raw_parts(ptr, len);
             return Some(Ident { v: slice });
         }
         None

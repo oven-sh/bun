@@ -15,7 +15,7 @@ pub struct CssModule<'a> {
     pub(crate) sources: &'a Vec<Box<[u8]>>,
     pub(crate) hashes: BumpVec<'a, &'a [u8]>,
     pub(crate) exports_by_source_index: BumpVec<'a, CssModuleExports<'a>>,
-    pub(crate) references: &'a mut CssModuleReferences<'a>,
+    pub(crate) references: CssModuleReferences<'a>,
 }
 
 impl<'a> CssModule<'a> {
@@ -24,7 +24,6 @@ impl<'a> CssModule<'a> {
         config: &'a Config,
         sources: &'a Vec<Box<[u8]>>,
         project_root: Option<&[u8]>,
-        references: &'a mut CssModuleReferences<'a>,
     ) -> CssModule<'a> {
         // TODO: this is BAAAAAAAAAAD we are going to remove it
         let hashes = 'hashes: {
@@ -63,7 +62,7 @@ impl<'a> CssModule<'a> {
         CssModule {
             config,
             sources,
-            references,
+            references: CssModuleReferences::default(),
             hashes,
             exports_by_source_index,
         }

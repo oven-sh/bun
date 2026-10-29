@@ -375,8 +375,8 @@ pub(crate) mod cli {
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
-        // SAFETY: single-threaded process startup
-        unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
+        // SAFETY: single-threaded process startup; nothing else refers to `LOG_` yet.
+        let log = unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
         // Init the process-lifetime CLI arena here (not via `LazyLock` on first
         // use) — see `super::CLI_ARENA`. The write happens before any worker
         // thread is spawned and before `Command::start` (the first
@@ -385,8 +385,6 @@ pub(crate) mod cli {
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
-        // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
-        let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
             // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
@@ -1209,9 +1207,9 @@ pub(crate) mod command {
     ) -> CmdResult {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
-        let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+        let graph: &'static bun_standalone_graph::Graph = unsafe { &*graph };
         #[cfg(bun_hardened)]
-        if bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some() {
+        if bun_resolver::StandaloneModuleGraph::compiled_program(graph).is_some() {
             bun_jsc::compiled_program::deny_write_execute_memory();
             #[cfg(bun_locked_environment)]
             bun_jsc::compiled_program::refuse_variables_that_are_never_read();

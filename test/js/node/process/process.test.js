@@ -644,7 +644,9 @@ it("ICU version does not regress", () => {
   if (!min) {
     throw new Error(`Unknown platform/arch: ${process.platform}-${process.arch}`);
   }
-  expect(Bun.semver.order(process.versions.icu, min)).toBeGreaterThanOrEqual(0);
+  // As many parts as the floor has: macOS may report four, and Bun.semver.order reads a missing part as the highest.
+  const version = process.versions.icu.split(".").slice(0, 2).join(".");
+  expect(Bun.semver.order(version, min)).toBeGreaterThanOrEqual(0);
 });
 
 it("process.versions.icu and process.versions.unicode describe the ICU the process runs with", () => {

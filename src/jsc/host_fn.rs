@@ -43,7 +43,7 @@ pub type JSHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) ->
 ///
 /// ```ignore
 /// bun_jsc::jsc_host_abi! {
-///     unsafe fn thunk(g: *mut JSGlobalObject, cf: *mut CallFrame) -> JSValue { … }
+///     fn thunk(g: *mut JSGlobalObject, cf: *mut CallFrame) -> JSValue { … }
 /// }
 /// ```
 ///
@@ -52,11 +52,11 @@ pub type JSHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) ->
 /// (e.g. inside `macro_rules!` expansions).
 #[macro_export]
 macro_rules! jsc_host_abi {
-    ($(#[$m:meta])* $vis:vis unsafe fn $name:ident($($args:tt)*) -> $ret:ty $body:block) => {
+    ($(#[$m:meta])* $vis:vis fn $name:ident($($args:tt)*) -> $ret:ty $body:block) => {
         #[cfg(all(windows, target_arch = "x86_64"))]
-        $(#[$m])* $vis unsafe extern "sysv64" fn $name($($args)*) -> $ret $body
+        $(#[$m])* $vis extern "sysv64" fn $name($($args)*) -> $ret $body
         #[cfg(not(all(windows, target_arch = "x86_64")))]
-        $(#[$m])* $vis unsafe extern "C" fn $name($($args)*) -> $ret $body
+        $(#[$m])* $vis extern "C" fn $name($($args)*) -> $ret $body
     };
 }
 

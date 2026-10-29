@@ -10,7 +10,7 @@ use super::ids::{FunctionId, Id, LayoutId, StringId, TypeId};
 use super::references::Reference;
 use super::type_union::{normalize_type, normalize_without_table};
 use crate::builtins::id::{BuiltinClass, BuiltinId};
-use crate::builtins::table::class_data;
+use crate::builtins::table::{BuiltinKind, canonical_id, class_data, entry, well_known_symbol};
 
 impl Type {
     pub fn never() -> Type {
@@ -69,10 +69,19 @@ impl Type {
     }
 
     pub fn builtin(builtin: BuiltinId) -> Type {
+        debug_assert_ne!(entry(builtin).kind, BuiltinKind::Constant);
         Type {
-            builtins: vec![builtin],
+            builtins: vec![canonical_id(builtin)],
             ..Type::default()
         }
+    }
+
+    /// A constant is a primitive, and the table says which kind of primitive only for the well-known symbols.
+    pub fn value_of_builtin(builtin: BuiltinId) -> Option<Type> {
+        if entry(builtin).kind != BuiltinKind::Constant {
+            return Some(Type::builtin(builtin));
+        }
+        well_known_symbol(builtin).map(|_| Type::primitives(Primitives::SYMBOL))
     }
 
     pub fn function(function: FunctionId) -> Type {
@@ -154,16 +163,19 @@ impl PreparedType {
     }
 }
 
+#[derive(Clone)]
 pub struct TypeTable {
     types: TypeList,
     type_ids: HashTable<TypeId>,
 }
 
+#[derive(Clone)]
 enum TypeList {
     Own(Vec<Type>),
     Shared(SharedTypeList),
 }
 
+#[derive(Clone)]
 struct SharedTypeList {
     known: Arc<TypesOfAllTables>,
     types: Vec<Arc<Type>>,

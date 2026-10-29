@@ -1,3 +1,0 @@
-{
-  "skipInShell": "uses Bun APIs that the jsc shell does not provide: WebSocket, Request, Response, URL, Blob, streams, Buffer, Bun.file, node:fs"
-}

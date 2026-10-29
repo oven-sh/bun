@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned } from "../run-programs";
+import { built, slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -123,9 +123,17 @@ const publicFlags: Record<string, string[]> = {
 describe.concurrent("bun compile", () => {
   test.each([
     [[]],
-    [["--aot-log-type-mismatches", "--no-compile-function-source"]],
-    [["--aot-huge-heap", "--explain=json"]],
-    [["--define", 'process.env.MODE="x"', "--compile-exec-argv=--smol"]],
+    [
+      [
+        "--aot-log-type-mismatches",
+        "--no-compile-function-source",
+        "--aot-huge-heap",
+        "--explain=json",
+        "--define",
+        'process.env.MODE="x"',
+        "--compile-exec-argv=--smol",
+      ],
+    ],
   ])(
     "writes what bun build --compile --aot writes: %j",
     (flags: string[]) =>
@@ -167,12 +175,12 @@ describe.concurrent("bun compile", () => {
     "without --outfile, the first match of an entry point pattern names the executable",
     () =>
       slot(async () => {
-        const [patterns, , files] = entryPatternsRow("src/**/*.ts");
+        const [patterns, , files] = entryPatternsRow("apps/*/main.ts");
         using dir = tempDir("compile-pattern-default-name", files);
         const folder = String(dir);
         built(await bun(folder, "compile", ...patterns));
         expect(existsSync(executable(folder, "*"))).toBe(false);
-        const app = executable(folder, "app");
+        const app = executable(folder, "main");
         expect(hasCompiledProgram(app)).toBe(true);
         expect(await spawned([app], "/", interpreterForbidden)).toMatchObject({
           stdout: "42\n",

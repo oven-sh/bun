@@ -1,0 +1,6 @@
+# sabotage=NoCallWrites: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=MovedLoads limit=MaxUnrolledLoopsPerFunction:0 sabotage=NoCallWrites
+# CHECK: AOT claim check: LoadMayMove
+# PROGRAM-OF: no-call-writes-left-alone.ir

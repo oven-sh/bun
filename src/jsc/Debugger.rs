@@ -895,7 +895,7 @@ impl TestReporterHandle {
 }
 
 // HOST_EXPORT(Bun__TestReporterAgentEnable, c)
-pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
+pub fn test_reporter_agent_enable(agent: &mut TestReporterHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
@@ -910,8 +910,7 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
             dbg.test_reporter_agent.next_test_id = (hooks.retroactively_report_discovered_tests)(
-                // SAFETY: `handle` is the live C++ agent just stored above.
-                unsafe { &mut *dbg.test_reporter_agent.handle },
+                agent,
                 dbg.test_reporter_agent.next_test_id,
             );
         }

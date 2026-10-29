@@ -41,6 +41,7 @@ impl HuffDecoder {
     }
 
     pub(crate) fn start_pass(&mut self, decoder: &Decoder) -> Result<()> {
+        (self.dc_tables, self.ac_tables) = Default::default();
         for i in 0..decoder.components_in_scan {
             let comp = decoder.scan_component(i)?;
             let dc_table = |spec: &_| DerivedTable::new(spec, TableKind::Dc);

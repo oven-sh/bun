@@ -77,6 +77,7 @@ impl DiffController {
     }
 
     pub(crate) fn start_input_pass(&mut self, decoder: &Decoder) -> Result<()> {
+        self.tables = Tables::default();
         for i in 0..decoder.components_in_scan {
             let selector = decoder.scan_component(i)?.dc_selector;
             let table = |spec: &_| DerivedTable::new(spec, TableKind::Lossless);

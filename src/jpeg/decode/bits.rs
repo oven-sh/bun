@@ -177,7 +177,7 @@ impl<T> Default for Tables<T> {
 }
 
 impl<T> Tables<T> {
-    /// Makes a table with `new` of what `selector` picks among `specs`.
+    /// Makes a table with `new` of what `selector` picks among `specs`, unless another component has had it made.
     pub(crate) fn derive(
         &mut self,
         specs: &[Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
@@ -185,11 +185,12 @@ impl<T> Tables<T> {
         new: impl FnOnce(&HuffSpec) -> Result<Box<T>>,
     ) -> Result<()> {
         let spec = specs.get(usize::from(selector)).and_then(Option::as_deref);
-        let table = new(spec.ok_or(Error::NoHuffTable(selector))?)?;
-        *self
-            .0
-            .get_mut(usize::from(selector))
-            .ok_or(Error::Internal)? = Some(table);
+        let spec = spec.ok_or(Error::NoHuffTable(selector))?;
+        let table = self.0.get_mut(usize::from(selector));
+        let table = table.ok_or(Error::Internal)?;
+        if table.is_none() {
+            *table = Some(new(spec)?);
+        }
         Ok(())
     }
 

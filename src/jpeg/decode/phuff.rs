@@ -93,6 +93,7 @@ impl PHuffDecoder {
 
     pub(crate) fn start_pass(&mut self, decoder: &Decoder) -> Result<()> {
         self.pass = start_progressive_scan(decoder, &mut self.coef_bits)?;
+        self.tables = Tables::default();
         for i in 0..decoder.components_in_scan {
             let comp = decoder.scan_component(i)?;
             let (specs, selector, kind) = match self.pass {

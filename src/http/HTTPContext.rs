@@ -576,7 +576,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             },
             ca_count: u32::try_from(init_opts.ca.len()).expect("int cast"),
             ca_file_name: if !init_opts.abs_ca_file_name.is_empty() {
-                init_opts.abs_ca_file_name.as_ptr().cast()
+                init_opts.abs_ca_file_name.as_ptr()
             } else {
                 core::ptr::null()
             },

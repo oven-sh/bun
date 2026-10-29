@@ -1,6 +1,5 @@
 //! Process information and control APIs (`globalThis.process` / `node:process`)
 
-
 use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_core::{self, Environment, Global};

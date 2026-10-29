@@ -318,15 +318,13 @@ test("an errno of stat and lstat with a signal includes async stack frames", asy
       await level2();
     }
 
-    const pending = level1();
+    const pending = level1().then(
+      () => undefined,
+      e => e,
+    );
     // The call listens on the signal while it runs.
     expect(getEventListeners(signal, "abort")).toHaveLength(1);
-    let caught;
-    try {
-      await pending;
-    } catch (e) {
-      caught = e;
-    }
+    const caught = await pending;
 
     expect(caught).toBeDefined();
     expect(caught.code).toBe("ENOENT");

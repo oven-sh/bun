@@ -977,7 +977,7 @@ mod _async_tasks {
     pub(crate) type UVFSRequest<R, A, const F: NodeFSFunctionEnum> = AsyncFSTask<R, A, F>;
 
     #[cfg(windows)]
-    pub(crate) struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
+    pub(crate) struct UVFSRequest<R: FsReturn, A, const F: NodeFSFunctionEnum> {
         pub(crate) completion: FsCompletion,
         pub args: ThreadIsolated<A>,
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
@@ -1026,9 +1026,9 @@ mod _async_tasks {
                 context: cx.context().id(),
             });
             // Transfer ownership to libuv: the box outlives the async request and is
-            // reclaimed in `destroy()` (from `run_from_js_thread`). `heap::release`
+            // reclaimed by `run_task` or `release_unrun`. `heap::release`
             // names that hand-off — it is `Box::leak` under the hood; the reclaim
-            // happens in `destroy()`, not in this scope.
+            // happens there, not in this scope.
             let task: &mut Self = bun_core::heap::release(task);
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
@@ -1309,27 +1309,21 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`. The body frees it before it calls back, so it is not `&mut self`.
-        pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
-            // SAFETY: fn contract. The borrow ends before `destroy` below.
-            let (result, completion, global_ref, tracker) = unsafe {
-                let task = &mut *this;
-                if let Ok(result) = &task.result {
-                    task.args.write_back(result.bytes_read());
-                }
-                (
-                    core::mem::replace(&mut task.result, Err(sys::Error::default())),
-                    core::mem::replace(
-                        &mut task.completion,
-                        FsCompletion::Promise(JSPromiseStrong::empty()),
-                    ),
-                    task.global_object,
-                    task.tracker,
-                )
-            };
+        pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> JsResult<()> {
+            if let Ok(result) = &self.result {
+                self.args.write_back(result.bytes_read());
+            }
+            let (result, completion, global_ref, tracker) = (
+                core::mem::replace(&mut self.result, Err(sys::Error::default())),
+                core::mem::replace(
+                    &mut self.completion,
+                    FsCompletion::Promise(JSPromiseStrong::empty()),
+                ),
+                self.global_object,
+                self.tracker,
+            );
             // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
-            // SAFETY: fn contract. `this` is not used again.
-            unsafe { Self::destroy(this) };
+            drop(self);
 
             let global_object = global_ref.get();
             let success = matches!(result, Ok(_));
@@ -1343,18 +1337,17 @@ mod _async_tasks {
 
             completion.settle(global_object, converted, success)
         }
+    }
 
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
-        pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
-            // reclaim ownership (paired with the Box::leak in create()).
-            let mut task = unsafe { bun_core::heap::take(this) };
+    #[cfg(windows)]
+    impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Drop for UVFSRequest<R, A, F> {
+        fn drop(&mut self) {
             // A result nobody took (the request's context stopped: released unrun).
-            if let Ok(result) = core::mem::replace(&mut task.result, Err(sys::Error::default())) {
+            if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default())) {
                 result.discard();
             }
             // `bun_sys::Error` frees its path on Drop.
-            task.r#ref.unref(bun_io::js_vm_ctx());
+            self.r#ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1642,10 +1635,10 @@ mod _async_tasks {
     {
         const TAG: bun_event_loop::TaskTag = F.task_tag();
         /// A libuv fs request that completed into the queue after the last
-        /// tick: destroy releases its promise handle and keep-alive.
+        /// tick: the drop releases its promise handle and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
             // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
-            unsafe { Self::destroy(this) }
+            drop(unsafe { bun_core::heap::take(this) })
         }
         /// The context whose script asked.
         unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {

@@ -1,16 +1,4 @@
-//! A JPEG decoder and encoder for `Bun.Image`.
-//!
-//! It does what libjpeg-turbo 3.2.0 does on x86-64 through the TurboJPEG API, bit for bit: the same streams decode, to
-//! the same pixels, and the same pixels encode to the same bytes. Most of it derives from libjpeg-turbo and from the
-//! Independent JPEG Group's library that libjpeg-turbo is based on (LICENSE.md). The file names in the module
-//! descriptions are theirs.
-//!
-//! Only what `Bun.Image` needs is here. Decoding: 8-bit baseline, extended sequential and progressive streams, Huffman or
-//! arithmetic coded, and lossless Huffman streams of up to 8 bits, to RGBA or CMYK, at 1/8 to 8/8 of the size.
-//! Encoding: RGBA to 4:2:0 YCbCr, baseline or progressive.
-//!
-//! Color conversion, downsampling and upsampling have kernels in C++ (`bun_highway::jpeg`). The Rust next to each call
-//! says what the kernel computes, and does the rows that are too short for it.
+//! JPEG, bit for bit like libjpeg-turbo 3.2.0 on x86-64. The modules name the files that they derive from (LICENSE.md).
 
 #![feature(allocator_api)]
 #![forbid(unsafe_code)]

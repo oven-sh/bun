@@ -102,11 +102,11 @@ pub(crate) struct AcEncoder {
     se: u32,
     /// The bit position that the scan stops at.
     al: u32,
-    /// Blocks gone by that had nothing left to code when they ended.
+    /// Blocks since the last symbol, each of which ended in zeros. One symbol will say so for all of them.
     eob_run: u32,
-    /// The correction bits of those of them that have any.
+    /// The correction bits of those blocks, which follow that symbol.
     waiting: Vec<CorrectionBits>,
-    /// How many bits that is.
+    /// The number of bits in `waiting`.
     waiting_bits: usize,
 }
 
@@ -231,6 +231,7 @@ impl AcEncoder {
         if run > 0 || correction.len > 0 {
             self.eob_run += 1;
             if correction.len > 0 {
+                // Within the capacity: each entry has a bit or more, and there are never `MAX_CORR_BITS` bits.
                 self.waiting.push(correction);
                 self.waiting_bits += correction.len as usize;
             }

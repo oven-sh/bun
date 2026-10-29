@@ -30,6 +30,7 @@ impl Output {
         self.bytes.extend_from_slice(bytes);
     }
 
+    /// What is written after this goes into a new buffer, which `finish` drops.
     #[cold]
     fn give_up(&mut self) {
         self.out_of_memory = true;

@@ -1,11 +1,10 @@
-//! From RGBA rows to the samples of one row of MCUs: color conversion, downsampling and padding at the edges (jccolor.c,
-//! jcsample.c, jcprepct.c).
+//! From RGBA rows to the samples of a row of MCUs: converted, downsampled, padded (jccolor.c, jcsample.c, jcprepct.c).
 
 use crate::alloc::try_vec;
 use crate::error::{Error, Result};
 use crate::tables::color::{ONE_HALF, SCALEBITS, fix};
 
-/// Rows of pixels in a row of MCUs.
+/// The width and the height of an MCU in pixels.
 pub(crate) const MCU_SIZE: usize = 16;
 
 /// The samples of one row of MCUs. Every row is a whole number of MCUs wide.

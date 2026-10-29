@@ -1,10 +1,4 @@
-//! How the DCTs get to be vector code without a vector in sight.
-//!
-//! A transform of one dimension is written for one column of a matrix, with the widths, wrapping and saturation of one
-//! lane of libjpeg-turbo's assembly. `from_columns` runs it on every column, and the compiler turns that loop into vector
-//! code with a lane for each column. It only does so if that is all there is to the function. With a transposition in the
-//! same function it goes about it the wrong way and ends up with scalar code several times as slow. So every pass and
-//! every transposition is a function of its own, and `#[inline(never)]`.
+//! For DCTs written as one lane of libjpeg-turbo's assembly, which the compiler turns into vectors, a lane per column.
 
 /// psrad by `shift` of a sum that has the rounding in it already, and packssdw.
 #[inline(always)]
@@ -18,7 +12,7 @@ pub(crate) fn madd(a: i16, ca: i32, b: i16, cb: i32) -> i32 {
     i32::from(a) * ca + i32::from(b) * cb
 }
 
-/// A matrix whose column `lane` is `column(lane)`.
+/// A matrix whose column `lane` is `column(lane)`. Vectorized only alone in a function: callers are `#[inline(never)]`.
 #[inline(always)]
 pub(crate) fn from_columns<T: Copy + Default, const R: usize, const C: usize>(
     column: impl Fn(usize) -> [T; R],
@@ -60,8 +54,7 @@ pub(crate) fn column<T: Copy + Default, const R: usize, const C: usize>(
     out
 }
 
-/// What does not fit in the result is left out, and what is not there is 0. A number of columns that is a multiple of 4
-/// makes for better vector code in what follows.
+/// What does not fit in the result is left out, and what is not there is 0. Columns by fours make better vector code.
 #[inline(never)]
 pub(crate) fn transpose<
     T: Copy + Default,

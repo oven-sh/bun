@@ -1,5 +1,4 @@
-//! The encoder: what `tj3Compress8` does with RGBA pixels, 4:2:0 subsampling and otherwise default parameters
-//! (turbojpeg.c, jcparam.c, jcmaster.c, jccoefct.c).
+//! `tj3Compress8` of RGBA pixels with 4:2:0 and otherwise defaults (turbojpeg.c, jcparam.c, jcmaster.c, jccoefct.c).
 
 mod fdct;
 mod huff;
@@ -25,12 +24,12 @@ const DCTSIZE: usize = 8;
 #[derive(Clone, Copy)]
 struct Block {
     coefs: [[i16; 8]; 8],
-    /// Bit `k` is set if the `k`th coefficient in zigzag order is not zero. Most are, and nothing looks at those.
+    /// Bit `k` is set if the `k`th coefficient in zigzag order is not zero. Most are zero, and nothing looks at those.
     nonzero: u64,
 }
 
 impl Block {
-    /// A block outside of the image.
+    /// A block with nothing but a DC coefficient.
     const fn flat(dc: i16) -> Self {
         let mut coefs = [[0; 8]; 8];
         let [[first, ..], ..] = &mut coefs;
@@ -169,6 +168,7 @@ const PROGRESSIVE_SCANS: [Scan; 10] = [
 pub struct EncodeOptions<'a> {
     /// From 1 to 100.
     pub quality: u8,
+    /// Ten scans from coarse to fine with tables made for them, instead of one with the tables of the standard.
     pub progressive: bool,
     /// Goes into APP2 segments. Must not be empty.
     pub icc_profile: Option<&'a [u8]>,
@@ -253,7 +253,7 @@ fn transform_rows(
                 }
                 *block = fdct::forward(&samples, divisors);
             }
-            // Outside of the image a block is the DC coefficient of the one before it in its MCU, which takes the fewest bits.
+            // A block outside of the image has the DC coefficient of the one before it in its MCU: the fewest bits.
             dummy.fill(Block::flat(image.last().ok_or(Error::Internal)?.dc()));
         } else {
             let above = above.ok_or(Error::Internal)?;
@@ -482,7 +482,7 @@ impl Encoder<'_> {
     }
 }
 
-/// Encodes `width * height` RGBA pixels, ignoring alpha.
+/// Encodes `width * height` RGBA pixels, ignoring alpha, as YCbCr 4:2:0.
 pub fn encode(rgba: &[u8], width: u32, height: u32, options: &EncodeOptions) -> Result<Vec<u8>> {
     if width == 0 || height == 0 || !(1..=100).contains(&options.quality) {
         return Err(Error::InvalidArgument);

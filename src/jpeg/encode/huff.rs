@@ -127,8 +127,7 @@ pub(crate) fn value_bits(value: i32, nbits: u32) -> u32 {
     ((value + (value >> 31)) as u32) & ((1 << nbits) - 1)
 }
 
-/// For a sequential scan, where the low four bits of a symbol say how many bits of a value follow its code: all that it
-/// takes to put the two together, without a shift.
+/// For sequential scans: what it takes to join a code and the value after it, whose size is the symbol's low four bits.
 pub(crate) struct SequentialTable {
     entries: [SequentialEntry; 256],
 }
@@ -206,8 +205,7 @@ pub(crate) fn encode_block(
 /// How often each symbol occurs.
 pub(crate) type Counts = [i64; 256];
 
-/// The table that takes the fewest bits for symbols that occur this often (section K.2 of the standard). Ties are
-/// resolved as libjpeg-turbo does.
+/// The table that takes the fewest bits for these counts (section K.2 of the standard). Ties go as in libjpeg-turbo.
 pub(crate) fn optimal_table(counts: &Counts) -> Result<HuffSpec> {
     const MAX_CODE_LENGTH: usize = 32;
     /// The search below does not see what occurs more often, as in libjpeg.
@@ -279,7 +277,7 @@ pub(crate) fn optimal_table(counts: &Counts) -> Result<HuffSpec> {
         lengthen(nodes, c2)?;
     }
 
-    // `bits[k]` is the number of symbols with codes of length `k`.
+    // `bits[k]` is the number of symbols with codes of length `k`. A byte as in libjpeg: no scan has 256 symbols.
     let mut bits = [0u8; MAX_CODE_LENGTH + 1];
     for node in nodes.iter() {
         let count = bits
@@ -296,8 +294,7 @@ pub(crate) fn optimal_table(counts: &Counts) -> Result<HuffSpec> {
         p += usize::from(count);
     }
 
-    // No code may be longer than 16 bits. Symbols leave a longer length in pairs: one takes over their common prefix, and
-    // the other goes beside a symbol of the longest shorter length, whose code becomes the prefix of the two.
+    // No code may have over 16 bits (figure K.3): of two that do, one takes their prefix and one splits a shorter code.
     for i in (17..=MAX_CODE_LENGTH).rev() {
         while bits.get(i).is_some_and(|&count| count > 0) {
             let mut j = i - 2;

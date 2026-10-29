@@ -27,7 +27,7 @@ bun_opaque::opaque_ffi! {
 unsafe impl Sync for Zone {}
 
 impl Zone {
-    /// `'static`: `malloc_set_zone_name` stores the pointer (does not copy).
+    /// `'static`: `malloc_set_zone_name` may keep the pointer instead of copying.
     #[cfg(target_os = "macos")]
     pub fn init(name: &'static CStr) -> &'static Zone {
         // SAFETY: malloc_create_zone is safe to call with (0, 0); returns a

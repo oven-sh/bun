@@ -328,14 +328,7 @@ impl ShellSubprocess {
             StdioKind::Stderr => &mut self.stderr,
             StdioKind::Stdin => unreachable!("stdin closes through on_stdin_writer_close"),
         };
-        if let Readable::Pipe(pipe) = core::mem::replace(out, Readable::Ignore) {
-            *out = if matches!(pipe.state, PipeReaderState::Done) {
-                Readable::Buffer
-            } else {
-                Readable::Ignore
-            };
-            drop(pipe); // deref
-        }
+        *out = Readable::Ignore;
     }
 
     /// Tear down a subprocess whose stdin writer start() failed. Ends the child, marks pending pipe
@@ -1095,7 +1088,6 @@ pub(crate) enum Readable {
     Inherit,
     Ignore,
     Closed,
-    Buffer,
 }
 
 impl Readable {
@@ -1429,7 +1421,7 @@ pub(crate) struct PipeReader {
     /// from `CmdHandle::interp` at `PipeReader::create` time.
     pub(crate) interp: bun_ptr::ParentRef<Interpreter>,
     // ref_count: handled by Rc<PipeReader>; mutation through shared handles
-    // goes via the `rc_as_mut_ptr` interior-mutability helper below.
+    // goes via the `rc_as_mut_ptr` interior-mutability helper, except for `process` (a `Cell`).
 }
 
 pub(crate) enum BufferedOutput {
@@ -1819,11 +1811,9 @@ impl PipeReader {
         // rather than with `guard`: `y` can settle the shell promise, and its
         // microtask checkpoint must not see a `> ${arraybuffer}` target that
         // is still pinned.
-        // SAFETY: see `rc_as_mut_ptr`; raw accesses, no borrow held.
-        unsafe {
-            if (*me).process.get().is_none() {
-                (*me).buffered_output = BufferedOutput::default();
-            }
+        if guard.process.get().is_none() {
+            // SAFETY: see `rc_as_mut_ptr`; raw access, no borrow held.
+            unsafe { (*me).buffered_output = BufferedOutput::default() };
         }
         Self::run_yield_with(interp, y);
         if let Some(process) = guard.process.get() {
@@ -1843,7 +1833,7 @@ impl PipeReader {
     /// registered via `reader.set_parent`). Takes a raw pointer rather than
     /// `&mut self` because `on_close_io` below drops the `Readable::Pipe`
     /// `Rc` — holding a `&mut self` across that drop would dangle, and the
-    /// `Rc::deref` inside `on_close_io` would alias it.
+    /// `Rc::deref`s in `finish_after_state_set` would alias it.
     pub(crate) unsafe fn on_reader_done(this: *mut Self) {
         // SAFETY: caller contract.
         let guard = unsafe { Self::guard_from_raw(this) };
@@ -1918,13 +1908,8 @@ impl PipeReader {
 
     fn take_captured_error(&mut self) -> Option<SystemError> {
         if let Some(e) = self.captured_writer.err.take() {
-            match core::mem::replace(&mut self.state, PipeReaderState::Pending) {
-                old @ PipeReaderState::Err(_) => {
-                    self.state = old;
-                }
-                PipeReaderState::Done | PipeReaderState::Pending => {
-                    self.state = PipeReaderState::Err(Some(Box::new(e)));
-                }
+            if !matches!(self.state, PipeReaderState::Err(_)) {
+                self.state = PipeReaderState::Err(Some(Box::new(e)));
             }
         }
         // `bun_sys::SystemError` isn't ref-counted nor `Clone`.

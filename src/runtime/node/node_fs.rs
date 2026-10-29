@@ -977,7 +977,7 @@ mod _async_tasks {
     pub(crate) type UVFSRequest<R, A, const F: NodeFSFunctionEnum> = AsyncFSTask<R, A, F>;
 
     #[cfg(windows)]
-    pub(crate) struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
+    pub(crate) struct UVFSRequest<R: FsReturn, A, const F: NodeFSFunctionEnum> {
         pub(crate) completion: FsCompletion,
         pub args: ThreadIsolated<A>,
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
@@ -1323,7 +1323,7 @@ mod _async_tasks {
                 self.tracker,
             );
             // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
-            self.destroy();
+            drop(self);
 
             let global_object = global_ref.get();
             let success = matches!(result, Ok(_));
@@ -1337,9 +1337,11 @@ mod _async_tasks {
 
             completion.settle(global_object, converted, success)
         }
+    }
 
-        #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-        pub(crate) fn destroy(mut self: Box<Self>) {
+    #[cfg(windows)]
+    impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Drop for UVFSRequest<R, A, F> {
+        fn drop(&mut self) {
             // A result nobody took (the request's context stopped: released unrun).
             if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default())) {
                 result.discard();
@@ -1633,10 +1635,10 @@ mod _async_tasks {
     {
         const TAG: bun_event_loop::TaskTag = F.task_tag();
         /// A libuv fs request that completed into the queue after the last
-        /// tick: destroy releases its promise handle and keep-alive.
+        /// tick: the drop releases its promise handle and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
             // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
-            unsafe { bun_core::heap::take(this) }.destroy()
+            drop(unsafe { bun_core::heap::take(this) })
         }
         /// The context whose script asked.
         unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {

@@ -747,16 +747,9 @@ pub fn install_with_manager(
 
     // append scripts to lockfile before generating new metahash
     manager.load_root_lifecycle_scripts(&root);
-    struct ClearRootLifecycleScripts(*mut PackageManager);
-    impl Drop for ClearRootLifecycleScripts {
-        fn drop(&mut self) {
-            // SAFETY: the pointer was derived from the live exclusive `manager`
-            // borrow; this runs once at scope exit (before `manager` is returned
-            // to the caller) and is the sole access to it at that instant.
-            unsafe { (*self.0).root_lifecycle_scripts = None };
-        }
-    }
-    let _clear_root_lifecycle_scripts = ClearRootLifecycleScripts(&raw mut *manager);
+    let mut clear_root_lifecycle_scripts =
+        scopeguard::guard(manager, |manager| manager.root_lifecycle_scripts = None);
+    let manager = &mut **clear_root_lifecycle_scripts;
 
     if let Some(root_scripts) = &manager.root_lifecycle_scripts {
         root_scripts.append_to_lockfile(&mut manager.lockfile);

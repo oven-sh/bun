@@ -949,9 +949,7 @@ impl<'a> Resolver<'a> {
         self.env_loader.map(|p| unsafe { p.as_ref() })
     }
 
-    /// The directories of the `NODE_PATH` that the process started with, for `Module.globalPaths`.
-    /// `load_node_modules` searches them after every `node_modules` directory. It splits the variable
-    /// itself: this iterator there costs each resolve of a package 7 instructions.
+    /// The directories of `NODE_PATH`, for `Module.globalPaths`. `load_node_modules` splits it itself.
     pub fn node_path(&self) -> impl Iterator<Item = &'a [u8]> + use<'a> {
         let node_path: &'a [u8] = self
             .env_loader()
@@ -4397,13 +4395,7 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
-    /// What Node's `Module._findPath` does with one entry of `paths`: `request` is looked up in `dir`
-    /// and nowhere else. The `exports` of the package `<dir>/<name>` come first. Then
-    /// `<dir>/<request>` is a file, a file with an extension added, or a directory. This does not
-    /// resolve a specifier: plugins, builtin names, tsconfig `paths`, the `node_modules` walk and
-    /// auto-install have no part in it. Like `require()`, it reads the directory cache and not the
-    /// disk: see `forget_in_directory`.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L765-L838
+    /// One entry of Node's `Module._findPath`: `request` is looked up in `dir` and nowhere else.
     pub fn find_in_directory(&mut self, dir: &[u8], request: &[u8]) -> FoundInDirectory {
         if Self::is_never_in_directory(dir) || Self::is_never_in_directory(request) {
             return FoundInDirectory::NotFound;
@@ -4414,14 +4406,12 @@ impl<'a> Resolver<'a> {
         found
     }
 
-    /// A path with a null byte cannot exist on the disk. On POSIX a backslash is a character of a
-    /// file name, and the directory cache reads it as a separator.
+    /// No path has a null byte. On POSIX the directory cache reads a backslash as a separator.
     fn is_never_in_directory(path: &[u8]) -> bool {
         strings::index_of_any(path, if cfg!(windows) { b"\0" } else { b"\0\\" }).is_some()
     }
 
-    /// Node's `path.resolve(...parts)`, into `buf`. The separators are those of the host: on POSIX
-    /// `c:` does not start an absolute path.
+    /// Node's `path.resolve(...parts)` with the separators of the host, into `buf`.
     fn join_in_directory<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
         bun_paths::join_abs_string_buf_checked(
             self.fs_ref().top_level_dir(),
@@ -4462,9 +4452,6 @@ impl<'a> Resolver<'a> {
         }
 
         // Node skips an entry that is not a directory, unless the request starts by leaving it.
-        // Whether a directory exists is asked of the listings, from the entry down. So the
-        // directory cache gets no mark for a directory that is missing: `require()` takes such a
-        // mark for the truth after the directory is created.
         let is_inside = !request_leaves_directory(request);
         let mut entry_buf = bun_paths::path_buffer_pool::get();
         let Some(entry) = self.join_in_directory(&[dir], &mut entry_buf[..]) else {
@@ -4571,9 +4558,7 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    /// In an executable compiled ahead of time, which lists its packages by the `node_modules`
-    /// directory that holds them: the package that `request` names in the `node_modules` directory
-    /// `dir`, with its `exports`. The `node_modules` directories above `dir` take no part.
+    /// The package that `request` names in the `node_modules` directory `dir` of an AOT executable.
     fn resolve_embedded_package_in(
         &self,
         dir: &[u8],
@@ -4617,9 +4602,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// For a second look by `find_in_directory`, after no directory had the request: the directory
-    /// cache can be older than the disk. Forgets what the cache holds of `<dir>/<request>`, and the
-    /// listing that lacks a directory on the way down to it.
+    /// Before a second look: forgets what the cache holds on the way from `dir` to `<dir>/<request>`.
     pub fn forget_in_directory(&mut self, dir: &[u8], request: &[u8]) {
         if Self::is_never_in_directory(dir) || Self::is_never_in_directory(request) {
             return;
@@ -4647,10 +4630,7 @@ impl<'a> Resolver<'a> {
         self.bust_dir_cache_and_parent(path);
     }
 
-    /// Whether `path` is a directory. The listing of its parent directory answers, and the disk
-    /// where the listing cannot. This stores nothing about `path`: `dir_info_cached` would mark a
-    /// missing `path` as missing, and `require()` takes that mark for the truth when the directory
-    /// is created later.
+    /// Whether `path` is a directory. Unlike `dir_info_cached`, it marks no missing `path` in the cache.
     fn is_listed_directory(&mut self, path: &[u8]) -> bool {
         let name = bun_paths::basename(path);
         if name.is_empty() {
@@ -4686,11 +4666,9 @@ impl<'a> Resolver<'a> {
             Some(query) if query.entry().base() == name => {
                 query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::Dir
             }
-            // The listing has the name in another case. That is `path` only where the file
-            // system ignores case.
+            // The name is listed in another case. That is `path` only where the file system ignores case.
             Some(_) => Self::is_directory_on_disk(path),
-            // A listing with no entry also stands for a directory that could not be read. And a
-            // file system can know a name outside ASCII, or a short name, by another spelling.
+            // An empty listing tells nothing, and a file system can spell such a name in another way.
             None if strings::first_non_ascii(name).is_some()
                 || strings::contains_char(name, b'~')
                 || listing.has_no_entry() =>
@@ -4716,7 +4694,6 @@ impl<'a> Resolver<'a> {
     }
 
     /// The first directory between `entry` and the last name of `path` that is not a directory.
-    /// The listings are asked top-down, each one of a directory that the one above has.
     fn first_unlisted_directory_below<'p>(
         &mut self,
         entry: &[u8],
@@ -6169,8 +6146,7 @@ impl<'a> Resolver<'a> {
         self.load_as_directory(path, kind, extension_order, out)
     }
 
-    /// The second half of `load_as_file_or_directory`: the "main" of the `package.json` in the
-    /// directory `path`, or its index file.
+    /// The second half of `load_as_file_or_directory`: the main file or the index file of `path`.
     #[inline(always)]
     fn load_as_directory(
         &mut self,
@@ -6390,10 +6366,7 @@ impl<'a> Resolver<'a> {
         self.load_as_file_matching::<false>(path, extension_order)
     }
 
-    /// The listing of a directory finds a name in any case, and a file keeps the path that it was
-    /// first found by. With `MATCH_CASE`, a name in another case is found only if the file system has
-    /// the file under that name too. `find_in_directory` asks for that: it looks for a name that no
-    /// source file wrote.
+    /// With `MATCH_CASE`, a name in another case is found only if the file system has the file under it.
     #[inline(always)]
     fn load_as_file_matching<const MATCH_CASE: bool>(
         &mut self,
@@ -7487,9 +7460,7 @@ fn primary_side_effects(
     }
 }
 
-/// Node's `EXPORTS_PATTERN`: the package name that starts `request` (`name` or `@scope/name`), and the
-/// rest, which is empty or starts with `/`.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L690
+/// Node's `EXPORTS_PATTERN`: the package name that starts `request`, and the rest.
 fn split_package_request(request: &[u8]) -> Option<(&[u8], &[u8])> {
     let name_end = |start: usize| -> Option<usize> {
         let name = request.get(start..)?;
@@ -7508,9 +7479,7 @@ fn split_package_request(request: &[u8]) -> Option<(&[u8], &[u8])> {
     Some(request.split_at(end))
 }
 
-/// Whether `request` is relative and starts by leaving the directory that it is looked up in. Node
-/// then looks it up from an entry of `paths` that is not a directory too.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L755-L761
+/// Node's `insidePath`, negated: `request` is relative and starts by leaving its directory.
 fn request_leaves_directory(request: &[u8]) -> bool {
     if is_package_path(request) {
         return false;
@@ -7527,8 +7496,7 @@ fn request_leaves_directory(request: &[u8]) -> bool {
     false
 }
 
-/// The directories from `top` down to the one that holds the last name of `path`, without `top`
-/// itself. None if `path` is not below `top`.
+/// The directories from `top` down to the one that holds the last name of `path`, without `top`.
 fn directories_below<'p>(top: &[u8], path: &'p [u8]) -> impl Iterator<Item = &'p [u8]> + use<'p> {
     let top_len = top.len();
     let mut searched = path.starts_with(top).then_some(top_len);

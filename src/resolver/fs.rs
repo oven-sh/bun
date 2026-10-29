@@ -186,9 +186,7 @@ impl Entry {
         self.dir
     }
 
-    /// Whether the file system has this entry under `name`. The listing of a directory finds an entry
-    /// by a name in any case. A name in another case is this entry only where the file system ignores
-    /// case too.
+    /// Whether the file system has this entry under `name`. A listing finds it by a name in any case.
     pub(crate) fn is_named(&self, name: &[u8]) -> bool {
         if self.base() == name {
             return true;

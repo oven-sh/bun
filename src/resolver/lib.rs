@@ -786,9 +786,7 @@ pub mod fs {
             }
         }
 
-        /// Whether the listing has no entry. The directory cache keeps such a
-        /// listing for an empty directory, and for a directory above a
-        /// requested one that it was not allowed to read.
+        /// Whether the listing has no entry: an empty directory, or one that could not be read.
         pub(crate) fn has_no_entry(&self) -> bool {
             let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
             match self {

@@ -34,8 +34,7 @@ impl ApiLoader {
     }
 }
 
-// The C++ caller (NodeModuleModule.cpp `jsFunctionFindPath`) checks that the request is a string and
-// passes `paths` as it is.
+// `jsFunctionFindPath` (NodeModuleModule.cpp) checks the request and passes `paths` as it is.
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
@@ -92,8 +91,7 @@ fn find_path(
         }
     }
 
-    // No entry has the request, and the cache can be older than the disk. The second look forgets
-    // what the cache holds for each entry, and reads the disk.
+    // No entry has the request. The cache can be older than the disk, so look again on the disk.
     for cur_path in &entries_without_request {
         match look_in_directory(global, &mut log, cur_path.slice(), request, Look::OnDisk) {
             FoundInDirectory::Found(path) => {
@@ -107,11 +105,12 @@ fn find_path(
     Ok(JSValue::FALSE)
 }
 
-/// Where a look of `find_path` reads a directory from: the resolver's cache, or the disk, after the
-/// cache forgets the directory.
+/// Where a look of `find_path` reads a directory from.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Look {
+    /// The resolver's cache of the directories.
     InCache,
+    /// The disk, after the cache forgets the directory.
     OnDisk,
 }
 
@@ -141,8 +140,7 @@ fn look_in_directory(
     resolver.find_in_directory(dir, request)
 }
 
-/// How many entries Node's loop `for (let i = 0; i < paths.length; i++)` reads. It takes `paths` as it
-/// comes: an array, an object with a `length`, or a string.
+/// How many entries Node's loop `for (let i = 0; i < paths.length; i++)` reads.
 fn paths_length(global: &JSGlobalObject, paths: JSValue) -> JsResult<u32> {
     let length = if paths.is_array() || paths.is_string_literal() {
         paths.get_length(global)? as f64

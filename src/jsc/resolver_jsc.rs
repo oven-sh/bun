@@ -32,8 +32,7 @@ extern "C" fn node_module_paths_js_value(
         .or_pending_exception()
 }
 
-/// Pushes the directories of `NODE_PATH` to `array` and returns it. `Module.globalPaths` is that
-/// list, and the lookup paths of a request that is not relative end with it.
+/// Pushes the directories of `NODE_PATH` to `array` and returns it, for `Module.globalPaths`.
 #[unsafe(no_mangle)]
 extern "C" fn Resolver__appendNodePath(global: &JSGlobalObject, array: JSValue) -> JSValue {
     crate::host_fn::to_js_host_call(global, || {

@@ -485,8 +485,7 @@ impl CompiledProgram {
         )
     }
 
-    /// `resolve_package` for the `node_modules` directory of `source_dir` alone. A package of a directory above is not
-    /// found, and its `exports` hide nothing.
+    /// `resolve_package` for the `node_modules` directory of `source_dir` alone.
     pub fn resolve_package_of_directory(
         &self,
         public_root: &[u8],

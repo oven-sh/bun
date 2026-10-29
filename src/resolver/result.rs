@@ -372,8 +372,7 @@ impl MatchStatus {
 pub enum FoundInDirectory {
     Found(&'static [u8]),
     NotFound,
-    /// The directory has the package that the request names, and the `exports` of that package give
-    /// no file for the request. Node throws here, so it looks in no later directory.
+    /// The `exports` of the package in the directory give no file for the request. Node throws here.
     NotExported,
 }
 

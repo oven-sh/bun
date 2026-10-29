@@ -47,57 +47,48 @@ function ensureCallback(callback: ((...args: any[]) => unknown) | undefined) {
   return wrapFsCallback(callback);
 }
 
-type StatCb = (this: typeof fs, callback: Callback<[unknown]>, target: unknown, options: unknown) => void;
-
 // fs.stat(), fs.lstat() and fs.fstat() only choose between the two functions below, so that each is 71 bytes of
 // bytecode: the DFG inlines a callee of up to 80 (maximumFunctionForCallInlineCandidateBytecodeCostForDFG).
-function statWithCallback(path: unknown, callback: Callback<[unknown]>) {
+function statWithCallback(path, callback) {
   fs.statCb(wrapFsCallback(callback), path, undefined);
 }
-function lstatWithCallback(path: unknown, callback: Callback<[unknown]>) {
+function lstatWithCallback(path, callback) {
   fs.lstatCb(wrapFsCallback(callback), path, undefined);
 }
-function fstatWithCallback(fd: unknown, callback: Callback<[unknown]>) {
+function fstatWithCallback(fd, callback) {
   fs.fstatCb(wrapFsCallback(callback), fd, undefined);
 }
-function statWithOptions(path: unknown, options: unknown, callback: unknown) {
+function statWithOptions(path, options, callback) {
   if ($isObject(options)) {
-    const signal = (options as { signal?: unknown }).signal;
-    if (signal !== undefined) return statWithSignal(fs.statCb, path, options, callback, false, signal as AbortSignal);
+    const signal = options.signal;
+    if (signal !== undefined) return statWithSignal(fs.statCb, path, options, callback, false, signal);
   }
-  fs.statCb(ensureCallback(callback as Callback<[unknown]>), path, options);
+  fs.statCb(ensureCallback(callback), path, options);
 }
-function lstatWithOptions(path: unknown, options: unknown, callback: unknown) {
+function lstatWithOptions(path, options, callback) {
   if ($isObject(options)) {
-    const signal = (options as { signal?: unknown }).signal;
-    if (signal !== undefined) return statWithSignal(fs.lstatCb, path, options, callback, false, signal as AbortSignal);
+    const signal = options.signal;
+    if (signal !== undefined) return statWithSignal(fs.lstatCb, path, options, callback, false, signal);
   }
-  fs.lstatCb(ensureCallback(callback as Callback<[unknown]>), path, options);
+  fs.lstatCb(ensureCallback(callback), path, options);
 }
-function fstatWithOptions(fd: unknown, options: unknown, callback: unknown) {
+function fstatWithOptions(fd, options, callback) {
   if ($isObject(options)) {
-    const signal = (options as { signal?: unknown }).signal;
-    if (signal !== undefined) return statWithSignal(fs.fstatCb, fd, options, callback, true, signal as AbortSignal);
+    const signal = options.signal;
+    if (signal !== undefined) return statWithSignal(fs.fstatCb, fd, options, callback, true, signal);
   }
-  fs.fstatCb(ensureCallback(callback as Callback<[unknown]>), fd, options);
+  fs.fstatCb(ensureCallback(callback), fd, options);
 }
 
 // The `signal` of fs.stat(), fs.lstat() and fs.fstat(): checkAborted() and bindSignalToReq() of Node.js.
 // https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L380-L406
-function statWithSignal(
-  statCb: StatCb,
-  target: unknown,
-  options: object,
-  callback: unknown,
-  isFstat: boolean,
-  signal: AbortSignal,
-) {
+function statWithSignal(statCb, target, options, callback, isFstat: boolean, signal) {
   // Node.js checks the signal of stat and lstat before the callback (in getOptions()), and that of fstat after it.
   if (!isFstat) validateAbortSignal(signal, "options.signal");
   if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
   if (isFstat) validateAbortSignal(signal, "options.signal");
   // An invalid path throws even if the signal is aborted. The file descriptor of fstat is only checked when it is used.
-  else getValidatedFsPath(target as string);
+  else getValidatedFsPath(target);
 
   if (signal.aborted) {
     // Inside the call and not guarded: what the callback throws leaves fs.stat().

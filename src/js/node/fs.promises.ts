@@ -302,14 +302,13 @@ const _appendFile = fs.appendFile.bind(fs);
 
 type TailParameters<F> = F extends (first: any, ...rest: infer Rest) => any ? Rest : never;
 
-type StatPromise = (this: typeof fs, target: any, options?: any) => Promise<unknown>;
-
 // `asyncWrap` for stat() and lstat(), which take a `signal` in Node.js.
-function statWrap(fn: StatPromise, name: string) {
-  const wrapped = async function (path: unknown, options: unknown) {
+function statWrap<F extends (...args: any[]) => Promise<unknown>>(fn: F, name: string): F;
+function statWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
+  const wrapped = async function (path, options) {
     if ($isObject(options)) {
-      const signal = (options as { signal?: unknown }).signal;
-      if (signal !== undefined) return statWithSignal(fn, path, options, signal as AbortSignal);
+      const signal = options.signal;
+      if (signal !== undefined) return statWithSignal(fn, path, options, signal);
     }
     return fn.$call(fs, path, options);
   };
@@ -320,7 +319,7 @@ function statWrap(fn: StatPromise, name: string) {
 
 // The `signal` of fsPromises.stat(), fsPromises.lstat() and FileHandle#stat(): checkAborted() and raceWithSignal() of
 // Node.js. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L1210-L1228
-async function statWithSignal(fn: StatPromise, target: unknown, options: object, signal: AbortSignal) {
+async function statWithSignal(fn: (...args: any[]) => Promise<unknown>, target, options, signal) {
   validateAbortSignal(signal, "options.signal");
   if (signal.aborted) throw $makeAbortError(undefined, { cause: signal.reason });
   // Node.js starts the operation before it listens to the signal.

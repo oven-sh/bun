@@ -1405,7 +1405,7 @@ mod tests {
     fn ls_hpack_an_entry_with_a_static_name_leaves() {
         // One of these names shares its bucket.
         for i in 0..16 {
-            let (mut encoder, name) = (Encoder::new(), format!("x-{i}"));
+            let (mut encoder, name) = (Encoder::with_seed(0), format!("x-{i}"));
             encode(&mut encoder, "content-length", "1", Indexing::Add);
             encode(&mut encoder, &name, "1", Indexing::Add);
             // Room for the second entry only, which then lends its name.

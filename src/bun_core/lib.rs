@@ -2638,27 +2638,19 @@ pub mod ffi {
         unsafe { core::mem::zeroed() }
     }
 
-    /// Pointer to the calling thread's libc `errno`.
+    /// Lends the calling thread's libc `errno` to `f`.
     ///
     /// Single audited cfg-ladder over the per-libc TLS accessor symbol so the
     /// tree has ONE place that knows glibc/musl spell it `__errno_location()`,
     /// bionic spells it `__errno()`, Darwin/BSD spell it `__error()`, and the
-    /// Windows CRT spells it `_errno()`. Every higher-tier crate routes through
-    /// this — `bun_errno::posix::errno`, `bun_sys::last_errno`,
-    /// `bun_sys::c::errno_location`, `bun_platform::linux` — instead of each
-    /// re-deriving the same target_os→symbol mapping.
-    ///
-    /// Obtaining the pointer has no preconditions (the per-libc TLS accessor
-    /// takes no args and never returns null); the deref obligation lives at
-    /// the call site. The returned pointer is valid for the calling thread's
-    /// lifetime — `*mut c_int` is `!Send`, so the cross-thread hazard is
-    /// already type-enforced.
+    /// Windows CRT spells it `_errno()`.
     #[inline(always)]
-    pub fn errno_ptr() -> *mut core::ffi::c_int {
-        // Per-libc TLS errno accessor: no args, never null, no preconditions.
-        // `safe fn` discharges the link-time proof so the body is a plain
-        // call; only the per-platform symbol *name* varies, expressed via
-        // `#[cfg_attr(.., link_name = ..)]` on a single declaration.
+    pub fn with_errno<R>(f: impl FnOnce(&core::cell::Cell<core::ffi::c_int>) -> R) -> R {
+        // SAFETY: each of the four symbols takes no argument and returns the address that its libc's `errno`
+        // macro dereferences: never null, aligned for `int`. libc does not free that `int` until its thread
+        // exits, and the reference ends sooner: `&Cell` is `!Send`, so it stays on that thread, and `f` only
+        // borrows it, so it ends with this call. What libc writes to `errno` meanwhile is interior mutation,
+        // which `Cell` allows.
         unsafe extern "C" {
             #[cfg_attr(
                 any(
@@ -2684,18 +2676,16 @@ pub mod ffi {
                 ),
                 link_name = "__errno_location"
             )]
-            safe fn errno_location() -> *mut core::ffi::c_int;
+            safe fn errno_location() -> &'static core::cell::Cell<core::ffi::c_int>;
         }
-        errno_location()
+        // Lent, not returned: a copy kept in a thread-local could be read by a destructor after libc freed the slot.
+        f(errno_location())
     }
 
     /// Read the calling thread's libc `errno`.
-    /// Safe wrapper over `*errno_ptr()`.
     #[inline(always)]
     pub fn errno() -> core::ffi::c_int {
-        // SAFETY: `errno_ptr()` returns a valid thread-local int* for the
-        // calling thread's lifetime on every supported target.
-        unsafe { *errno_ptr() }
+        with_errno(core::cell::Cell::get)
     }
 }
 

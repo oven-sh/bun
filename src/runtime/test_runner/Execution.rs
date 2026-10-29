@@ -199,6 +199,33 @@ impl ExecutionSequence {
         }
         ScopeMode::Normal
     }
+
+    /// The result of the run that just ended. Until this runs, `result` reads as a pass for a run that broke a check made at its end.
+    fn judge(&mut self) -> Result {
+        match self.expect_assertions {
+            ExpectAssertions::NotSet => {}
+            ExpectAssertions::AtLeastOne => {
+                if self.expect_call_count == 0 && self.result.is_pass(PendingIs::PendingIsPass) {
+                    self.result = Result::FailBecauseExpectedHasAssertions;
+                }
+            }
+            ExpectAssertions::Exact(expected) => {
+                if self.expect_call_count != expected
+                    && self.result.is_pass(PendingIs::PendingIsPass)
+                {
+                    self.result = Result::FailBecauseExpectedAssertionCount;
+                }
+            }
+        }
+        if self.result == Result::Pending {
+            self.result = match self.entry_mode() {
+                ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
+                ScopeMode::Todo => Result::FailBecauseTodoPassed,
+                _ => Result::Pass,
+            };
+        }
+        self.result
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr, strum::FromRepr)]
@@ -509,8 +536,7 @@ impl Execution {
 
         if sequence.active_entry.is_none() {
             // just completed the sequence
-            let test_failed = sequence.result.is_fail();
-            let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
+            let test_failed = sequence.judge().is_fail();
 
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
@@ -521,7 +547,7 @@ impl Execution {
             }
 
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
-            if test_passed && sequence.remaining_repeat_count > 0 {
+            if !test_failed && sequence.remaining_repeat_count > 0 {
                 sequence.remaining_repeat_count -= 1;
                 Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
@@ -610,30 +636,6 @@ impl Execution {
         } else {
             sequence.started_at.since_now_force_real_time()
         };
-        match sequence.expect_assertions {
-            ExpectAssertions::NotSet => {}
-            ExpectAssertions::AtLeastOne => {
-                if sequence.expect_call_count == 0
-                    && sequence.result.is_pass(PendingIs::PendingIsPass)
-                {
-                    sequence.result = Result::FailBecauseExpectedHasAssertions;
-                }
-            }
-            ExpectAssertions::Exact(expected) => {
-                if sequence.expect_call_count != expected
-                    && sequence.result.is_pass(PendingIs::PendingIsPass)
-                {
-                    sequence.result = Result::FailBecauseExpectedAssertionCount;
-                }
-            }
-        }
-        if sequence.result == Result::Pending {
-            sequence.result = match sequence.entry_mode() {
-                ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
-                ScopeMode::Todo => Result::FailBecauseTodoPassed,
-                _ => Result::Pass,
-            };
-        }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases

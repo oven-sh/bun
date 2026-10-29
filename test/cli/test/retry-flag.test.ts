@@ -313,3 +313,62 @@ retry = 3
   expect(stderr).toContain("attempt 3");
   expect(exitCode).toBe(0);
 });
+
+// The result line of each test, without the elapsed time.
+const resultLines = (stderr: string) =>
+  stderr
+    .split(/\r?\n/)
+    .filter(line => /^\((?:pass|fail|todo|skip)\) /.test(line))
+    .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+
+// Bun makes these checks when an attempt ends: expect.assertions(), expect.hasAssertions() and test.failing.
+// An attempt that fails one of them is retried like an attempt that throws.
+test.concurrent.each([
+  ["--retry", ["--retry", "2"], {}],
+  ["bunfig.toml retry", [], { "bunfig.toml": "[test]\nretry = 2\n" }],
+])("%s retries an attempt that fails a check made when the attempt ends", async (_, args, config) => {
+  using dir = tempDir("retry-checks", {
+    ...config,
+    "checks.test.ts": `
+      import { test, expect } from "bun:test";
+      let few = 0, many = 0, none = 0, failing = 0;
+
+      test("too few assertions in attempt 1", () => {
+        expect.assertions(1);
+        if (++few !== 1) expect(1).toBe(1);
+      });
+      test("too many assertions in attempt 1", () => {
+        expect.assertions(1);
+        expect(1).toBe(1);
+        if (++many === 1) expect(2).toBe(2);
+      });
+      test("no assertion in attempt 1", () => {
+        expect.hasAssertions();
+        if (++none !== 1) expect(1).toBe(1);
+      });
+      test.failing("failing test does not throw in attempt 1", () => {
+        if (++failing !== 1) throw new Error("expected");
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...args, "checks.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ results: resultLines(stderr), exitCode }).toEqual({
+    results: [
+      "(pass) too few assertions in attempt 1 (attempt 2)",
+      "(pass) too many assertions in attempt 1 (attempt 2)",
+      "(pass) no assertion in attempt 1 (attempt 2)",
+      "(pass) failing test does not throw in attempt 1 (attempt 2)",
+    ],
+    exitCode: 0,
+  });
+});

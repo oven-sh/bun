@@ -429,7 +429,11 @@ declare module "bun:test" {
      */
     retry?: number;
     /**
-     * Sets the number of times to repeat the test, regardless of whether it passed or failed.
+     * Sets the number of times to repeat the test after a run that passes.
+     *
+     * The first run that fails ends the test. Every run is checked on its own,
+     * which includes `expect.assertions()`, `expect.hasAssertions()` and
+     * `test.failing`.
      *
      * @default 0
      */
@@ -510,7 +514,7 @@ declare module "bun:test" {
        * - If an `object`, sets the options for the test.
        *   - `timeout` sets the timeout for the test in milliseconds.
        *   - `retry` sets the number of times to retry the test if it fails.
-       *   - `repeats` sets the number of times to repeat the test, regardless of whether it passed or failed.
+       *   - `repeats` sets the number of times to repeat the test after a run that passes. The first run that fails ends the test.
        */
       options?: number | TestOptions,
     ): void;

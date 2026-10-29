@@ -389,6 +389,53 @@ describe("junit reporter", () => {
     expect(proc.exitCode).toBe(1);
   });
 
+  it("reports the run that decided a test whose assertion count is wrong in one run", async () => {
+    await using tmpDir = tempDir("junit-retry-repeats-assertions", {
+      "package.json": "{}",
+      "assertions.test.js": `
+        import { test, expect } from "bun:test";
+        let attempts = 0;
+        test("too few assertions in attempt 1", { retry: 2 }, () => {
+          expect.assertions(1);
+          if (++attempts !== 1) expect(1).toBe(1);
+        });
+
+        let runs = 0;
+        test("too few assertions in run 2", { repeats: 2 }, () => {
+          expect.assertions(1);
+          if (++runs !== 2) expect(1).toBe(1);
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    const testcases = Array.from(
+      xmlContent.matchAll(/<testcase name="([^"]*)"[^>]* assertions="(\d+)"\s*(?:\/>|>([\s\S]*?)<\/testcase>)/g),
+      ([, name, assertions, children]) => ({ name, assertions, children: children?.trim() ?? "" }),
+    );
+    expect(testcases).toEqual([
+      // Attempt 2 passed. The attempt that failed leaves no <failure>.
+      { name: "too few assertions in attempt 1", assertions: "1", children: "" },
+      // Run 2 failed, so it is the last run.
+      {
+        name: "too few assertions in run 2",
+        assertions: "0",
+        children: '<failure message="Expected more assertions, but only received 0" type="AssertionError"/>',
+      },
+    ]);
+    expect(xmlContent).toContain('<testsuites name="bun test" tests="2" assertions="1" failures="1" skipped="0"');
+    expect(proc.exitCode).toBe(1);
+  });
+
   it("produces well-formed XML when test names contain control characters", async () => {
     await using tmpDir = tempDir("junit-ctrl", {
       "package.json": "{}",

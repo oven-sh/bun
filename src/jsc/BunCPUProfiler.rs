@@ -227,11 +227,7 @@ pub(crate) fn write_diagnostic_filename(
     prefix: &str,
     extension: &str,
 ) -> std::io::Result<()> {
-    #[cfg(windows)]
-    let pid = bun_sys::windows::GetCurrentProcessId();
-    #[cfg(not(windows))]
-    // SAFETY: getpid() is always safe to call.
-    let pid = unsafe { libc::getpid() };
+    let pid = std::process::id();
 
     let (year, month, day, hour, minute, second) = local_time_now();
 
@@ -277,11 +273,11 @@ pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
         milliseconds: u16,
     }
     unsafe extern "system" {
-        fn GetLocalTime(system_time: *mut SystemTime);
+        // safe: only writes the out-param (kernel32 SYSTEMTIME layout).
+        safe fn GetLocalTime(system_time: &mut SystemTime);
     }
     let mut st = SystemTime::default();
-    // SAFETY: GetLocalTime only writes the out-param (kernel32 SYSTEMTIME layout).
-    unsafe { GetLocalTime(&mut st) };
+    GetLocalTime(&mut st);
     (
         i32::from(st.year),
         u32::from(st.month),

@@ -109,20 +109,17 @@ impl<'s> Folder<'_, 's> {
             return;
         }
         self.has_followed_path_call.set(false);
-        match self.find_specifier(argument) {
-            specifier @ ImportSpecifier::Constant(_) => {
-                self.specifiers.push((argument, specifier));
-                if self.has_followed_path_call.get() {
-                    self.paths_made_by_calls.push(argument);
-                }
+        let specifier = self.find_specifier(argument);
+        match specifier {
+            ImportSpecifier::Constant(_) if self.has_followed_path_call.get() => {
+                self.paths_made_by_calls.push(argument);
             }
-            specifier @ ImportSpecifier::Pattern { .. } => {
-                self.specifiers.push((argument, specifier));
-                if self.starts_at_own_directory(argument) {
-                    self.paths_from_own_directory.push(argument);
-                }
-            }
-            ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => {}
+            ImportSpecifier::Constant(_) | ImportSpecifier::Pattern { .. } => {}
+            ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => return,
+        }
+        self.specifiers.push((argument, specifier));
+        if self.starts_at_own_directory(argument) {
+            self.paths_from_own_directory.push(argument);
         }
     }
 }

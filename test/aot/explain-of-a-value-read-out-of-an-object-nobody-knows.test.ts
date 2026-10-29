@@ -28,15 +28,16 @@ describe.concurrent("a function that only code outside the program calls", () =>
 console.log((globalThis as any).handler({ request: { method: "GET" } }));
 `,
     });
-    // The order of the causes follows how often the compiler expects each line to run, which is not what is asked here.
-    const ofUnknownCode = causes.filter(cause => cause.reason === "called-by-unknown-code");
+    // The store may be a store to `onmessage`, whose handler the host calls. With a written key in line 4 no such cause is left, and without the call in line 5 this one stays.
+    // The order of the causes follows how often the compiler expects each line to run, which is not what is asked here. Nor is a cause that no access hangs on.
+    const ofUnknownCode = causes.filter(cause => cause.reason === "called-by-unknown-code" && cause.accesses > 0);
     expect({
       inHandle: causes.filter(cause => cause.line === 2).map(placeOf),
       ofUnknownCode: ofUnknownCode.map(placeOf),
       exitCode,
     }).toEqual({
       inHandle: [],
-      ofUnknownCode: ["main.ts:5:14 called-by-unknown-code"],
+      ofUnknownCode: ["main.ts:4:2 called-by-unknown-code"],
       exitCode: 0,
     });
     expect(ofUnknownCode[0].accesses).toBeGreaterThanOrEqual(2);

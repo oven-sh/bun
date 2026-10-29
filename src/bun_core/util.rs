@@ -1926,9 +1926,6 @@ pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
 // `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
 // hazard is fully accounted for by this `unsafe impl Sync`.)
 unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
-// SAFETY: `RacyCell<T>` owns a `T` by value via `Cell<T>`; sending the cell to
-// another thread is sound exactly when sending `T` itself is (`T: Send`).
-unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
 
 impl<T> RacyCell<T> {
     #[inline]
@@ -2355,9 +2352,6 @@ pub struct Once<T> {
 // `std::sync::OnceLock` (`T: Send` because init may happen on a different
 // thread than the reader; `T: Sync` because `&T` crosses threads).
 unsafe impl<T: Send + Sync> Sync for Once<T> {}
-// SAFETY: `Once<T>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`); sending the
-// whole struct to another thread is sound exactly when sending `T` is.
-unsafe impl<T: Send> Send for Once<T> {}
 impl<T: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe for Once<T> {}
 
 /// Cold contended path shared by every `Once<T>` instantiation. Taking
@@ -4445,8 +4439,8 @@ pub fn exec_self(exec_path: &ZStr, args: &[&[u8]], keep_open: Option<Fd>) -> i32
     let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
     pointers.push(core::ptr::null());
     on_before_reload_process_posix(false);
-    // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, `environ` is the
-    // process's own, and `fcntl` takes no pointer.
+    // SAFETY: `exec_path` is NUL-terminated, `pointers` is a null-terminated array of NUL-terminated strings that outlive
+    // the call, `environ` is the process's own, and `fcntl` takes no pointer.
     unsafe {
         if let Some(fd) = keep_open {
             let flags = libc::fcntl(fd.native(), libc::F_GETFD);

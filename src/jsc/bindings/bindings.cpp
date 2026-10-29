@@ -3468,7 +3468,7 @@ bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); }
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 
 // JSString::latin1_characters in src/jsc/JSString.rs reads these fields itself.
-static_assert(JSC::JSString::offsetOfValue() == 8 && JSC::JSString::isRopeInPointer == 1 && JSC::JSRopeString::isSubstringInPointer == 2 && JSC::JSRopeString::is8BitInPointer == 4, "JSString::m_fiber is mirrored in src/jsc/JSString.rs");
+static_assert(JSC::JSString::offsetOfValue() == 8 && JSC::JSString::isRopeInPointer == 1 && JSC::JSRopeString::isSubstringInPointer == 2, "JSString::m_fiber is mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSRopeString::offsetOfLength() == 16 && JSC::JSRopeString::offsetOfFiber1Lower() == 20 && JSC::JSRopeString::offsetOfFiber2() == 24 && JSC::JSRopeString::offsetOfFiber2Lower() == 26 && sizeof(JSC::JSRopeString) == 32, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSRopeString::CompactFibers::addressMask <= (1ULL << 48) - 1 && JSC::JSRopeString::CompactFibers::shiftOfFiber2InUpperWord == 16, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSString::MaxLength == std::numeric_limits<int32_t>::max(), "JSString::MaxLength is mirrored in src/jsc/JSString.rs");
@@ -3536,12 +3536,18 @@ extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, 
     return count;
 }
 
-// `length` is at least 2.
-extern "C" JSC::EncodedJSValue JSC__JSString__createUninitializedLatin1(JSC::JSGlobalObject* globalObject, uint32_t length, Latin1Character** characters)
+extern "C" JSC::EncodedJSValue JSC__JSString__singleLatin1Character(JSC::JSGlobalObject* globalObject, uint8_t character)
+{
+    return JSC::JSValue::encode(JSC::jsSingleCharacterString(JSC::getVM(globalObject), Latin1Character { character }));
+}
+
+// `length` is at least 2. Empty when the characters cannot be allocated.
+extern "C" JSC::EncodedJSValue JSC__JSString__tryCreateUninitializedLatin1(JSC::JSGlobalObject* globalObject, uint32_t length, Latin1Character** characters)
 {
     std::span<Latin1Character> buffer;
     auto text = WTF::StringImpl::tryCreateUninitialized(length, buffer);
-    RELEASE_ASSERT(text);
+    if (!text) [[unlikely]]
+        return {};
     *characters = buffer.data();
     return JSC::JSValue::encode(JSC::jsNontrivialString(JSC::getVM(globalObject), WTF::String(text.releaseNonNull())));
 }
@@ -4303,6 +4309,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     snapshotBuilder.buildSnapshot();
 
     WTF::String jsonString = snapshotBuilder.json();
+    heapProfiler.clearSnapshots();
     if (jsonString.isNull()) [[unlikely]] {
         JSC::throwOutOfMemoryError(globalObject, scope);
         return {};

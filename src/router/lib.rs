@@ -804,7 +804,7 @@ impl Route {
                 // lifetime arena), so rebinding here drops the borrow on
                 // `route_file_buf` and avoids needing lifetime transmutes
                 // below.
-                let dirname_store = FileSystem::instance().dirname_store();
+                let dirname_store = FileSystem::get().dirname_store();
                 let public_path: &'static [u8] =
                     dirname_store.append(public_path).expect("unreachable");
                 let name: &'static [u8] = &public_path[name_offset..][0..name_len];
@@ -846,7 +846,7 @@ impl Route {
                     needs_close.set(false);
                 } else {
                     let parts = [entry.dir(), entry.base()];
-                    let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
+                    let abs_len = FileSystem::get().abs_buf(&parts, route_file_buf).len();
                     // Rebind so the later getFdPath error
                     // message prints the computed path instead of `b""`.
                     // SAFETY: lifetime-laundered raw view into route_file_buf
@@ -896,7 +896,7 @@ impl Route {
                 };
 
                 Ok(Interned::from_static(
-                    FileSystem::instance()
+                    FileSystem::get()
                         .dirname_store()
                         .append(_abs)
                         .expect("unreachable"),
@@ -914,7 +914,7 @@ impl Route {
                     abs_path_str,
                     &mut bufs.normalized_abs_path_buf,
                 );
-                let interned: &'static [u8] = FileSystem::instance()
+                let interned: &'static [u8] = FileSystem::get()
                     .dirname_store()
                     .append(normalized)
                     .expect("unreachable");

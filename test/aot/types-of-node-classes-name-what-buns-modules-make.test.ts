@@ -4,8 +4,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
 import { functionsNamed, readBuildReport } from "./harness/build-report";
+import { built, slot, spawned } from "./harness/commands";
 import { compileCommand, withReport } from "./harness/flags";
-import { built, slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
 const program = `import { EventEmitter } from "node:events";

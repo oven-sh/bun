@@ -44,14 +44,21 @@ impl<'s> AcceptedTree<'s, '_> {
     }
 }
 
+/// What the rest of the program says about a file.
+#[derive(Copy, Clone, Default)]
+pub(super) struct LoadInputs<'a> {
+    pub(super) is_called_before_it_runs: bool,
+    pub(super) is_only_imported: bool,
+    pub(super) imported_requires: &'a [ImportedRequire],
+    pub(super) imported_constants: &'a [ImportedConstant],
+}
+
 pub(super) fn load_code_file<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     arena: &'s Arena,
     target: CodeTarget<'r>,
     text: Cow<'static, [u8]>,
-    is_called_before_it_runs: bool,
-    imported_requires: &[ImportedRequire],
-    imported_constants: &[ImportedConstant],
+    inputs: LoadInputs<'_>,
 ) -> ParsedCodeFile<'s, 'r> {
     let &CodeLoadContext {
         resolver,
@@ -59,11 +66,17 @@ pub(super) fn load_code_file<'s, 'r>(
         ref atoms,
         ..
     } = context;
+    let LoadInputs {
+        is_called_before_it_runs,
+        is_only_imported,
+        imported_requires,
+        imported_constants,
+    } = inputs;
     let key = target.key;
     let path = key.path;
     let specifies_esm = Files::specifies_esm(resolver, options, path, false);
     let settings = resolver.transpile_settings(path);
-    let mut tree = accept_tree(context, arena, key, settings, text);
+    let mut tree = accept_tree(context, arena, key, settings, is_only_imported, text);
     debug_assert!(tree.hir.kind != FileKind::Declaration);
     tree.hir.imported_requires = ArenaFew::from_iter_in(imported_requires.iter().copied(), arena);
     tree.hir.imported_constants = ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
@@ -88,8 +101,15 @@ pub(super) fn load_code_file<'s, 'r>(
     if tree.hir.text.is_empty() && tree.hir.source_len as usize == tree.text.len() {
         tree.hir.text = std::mem::take(&mut tree.text);
     }
-    let fold = fold_inputs_of(context, arena, is_called_before_it_runs);
-    let (bound, analyzed) = analyze(context, arena, key, settings, fold, &mut tree);
+    let (bound, analyzed) = analyze(
+        context,
+        arena,
+        key,
+        settings,
+        is_called_before_it_runs,
+        is_only_imported,
+        &mut tree,
+    );
     if !tree.request.options.keeps_comments {
         tree.hir.comments = Default::default();
     }
@@ -195,7 +215,7 @@ pub(super) fn fold_code_file_again<'s, 'r>(
     let previous = &code.analyzed;
     let file = FileInputs {
         declared_module_type: previous.declared_module_type,
-        import_meta_main: import_meta_main(context, key),
+        import_meta_main: previous.import_meta_main,
         is_library: context.host.is_library_file(key.path),
         host_values: previous.host_values,
         jsx: previous.jsx_mode,
@@ -213,6 +233,7 @@ pub(super) fn fold_code_file_again<'s, 'r>(
         arena,
     )?;
     code.analyzed.analysis = analysis;
+    code.analyzed.is_called_before_it_runs = is_called_before_it_runs;
     // The same sites lead where they led. What the host implied comes again when it looks at the file.
     match has_same_import_sites {
         true => code.forget_implied(),
@@ -254,13 +275,11 @@ fn accept_tree<'s, 'r>(
     arena: &'s Arena,
     key: LoadKey<'r>,
     settings: &'r TranspileSettings,
+    is_only_imported: bool,
     text: Cow<'static, [u8]>,
 ) -> AcceptedTree<'s, 'r> {
     let &CodeLoadContext {
-        host,
-        resolver,
-        ref atoms,
-        ..
+        host, ref atoms, ..
     } = context;
     let path = key.path;
     let request = CodeParseRequest {
@@ -269,7 +288,7 @@ fn accept_tree<'s, 'r>(
         options: parse_options_of(context, path, settings),
         reads_jsdoc: is_javascript_file(host, path),
         settings,
-        declared_module_type: resolver.declared_module_type(path),
+        declared_module_type: declared_module_type_of(context, path, is_only_imported),
     };
     let ParsedCode {
         hir,
@@ -282,6 +301,21 @@ fn accept_tree<'s, 'r>(
         host_values,
         payload,
         request,
+    }
+}
+
+/// `bun run` reads the type off the extension where `require` loads the file and where the file is an entry point. Where an `import` loads it, it asks the package alone.
+fn declared_module_type_of(
+    context: &CodeLoadContext<'_, '_, '_>,
+    path: &[u8],
+    is_only_imported: bool,
+) -> DeclaredModuleType {
+    if context.host.is_plugin_source(path) {
+        return DeclaredModuleType::Unknown;
+    }
+    match is_only_imported {
+        true => context.resolver.package_module_type(path),
+        false => context.resolver.declared_module_type(path),
     }
 }
 
@@ -330,7 +364,8 @@ fn analyze<'s, 'r>(
     arena: &'s Arena,
     key: LoadKey<'r>,
     settings: &'r TranspileSettings,
-    fold: &FoldInputs<'s>,
+    is_called_before_it_runs: bool,
+    is_only_imported: bool,
     tree: &mut AcceptedTree<'s, 'r>,
 ) -> (Bound<'s>, Analyzed<'s, 'r>) {
     let &CodeLoadContext {
@@ -352,22 +387,21 @@ fn analyze<'s, 'r>(
         emits_decorator_metadata: settings.emits_decorator_metadata,
         hoists_top_level_variables: host.hoists_top_level_variables(path),
     };
-    let declared_module_type = match host.is_plugin_source(path) {
-        true => DeclaredModuleType::Unknown,
-        false => resolver.declared_module_type(path),
-    };
+    let declared_module_type = tree.request.declared_module_type;
     let jsx_mode = jsx_mode_of(file_jsx, atoms);
     let bind = BindOptions {
         runtime: Some(runtime),
         ..tree.request.options.bind
     };
+    let import_meta_main = import_meta_main(context, key);
     let file = FileInputs {
         declared_module_type,
-        import_meta_main: import_meta_main(context, key),
+        import_meta_main,
         is_library: host.is_library_file(path),
         host_values: tree.host_values,
         jsx: jsx_mode,
     };
+    let fold = fold_inputs_of(context, arena, is_called_before_it_runs);
     let (bound, analysis, host_values) =
         analyze_with_host(context, arena, path, bind, fold, file, tree);
     let analyzed = Analyzed {
@@ -381,6 +415,9 @@ fn analyze<'s, 'r>(
         package: resolver.enclosing_package(path),
         side_effects: resolver.declared_side_effects(path),
         is_aot_source: !is_javascript_file(host, path) && resolver.is_in_aot_package(path),
+        import_meta_main,
+        is_called_before_it_runs,
+        is_only_imported,
     };
     (bound, analyzed)
 }
@@ -453,6 +490,9 @@ fn jsx_mode_of(jsx: &JsxSettings, atoms: &Interner<'_>) -> JsxMode {
 }
 
 fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> Option<bool> {
+    if let Some(known) = context.find_loaded_before(key) {
+        return known.compiled.import_meta_main;
+    }
     let (is_entry_point, count) = (context.is_entry_point(key), context.entry_points.len());
     match (is_entry_point, context.inputs.main_module, count) {
         (false, ..) | (true, MainModule::Elsewhere, _) => Some(false),

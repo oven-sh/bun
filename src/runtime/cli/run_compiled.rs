@@ -734,7 +734,7 @@ pub(crate) extern "C" fn Bun__AOT__recordRefusedChange(
 ) {
     let path = source_url.to_owned_slice();
     let shown = bun_paths::resolve_path::relative(
-        bun_resolver::fs::FileSystem::instance().top_level_dir(),
+        bun_resolver::fs::FileSystem::get().top_level_dir(),
         &path,
     );
     let shown = bun_core::strings::replace_owned(shown, &[bun_paths::SEP], b"/");

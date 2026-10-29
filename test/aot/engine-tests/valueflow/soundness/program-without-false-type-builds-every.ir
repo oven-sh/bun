@@ -1,0 +1,36 @@
+# -- source: program-without-false-type-builds-every.ts
+# // The testing switch that takes every expected type for proven plants no lie in a program whose values all have their types, so it builds and prints what plain Bun prints.
+# // Flags: --aot-testing=prove-everything
+# console.log("hello");
+# -- end of source
+# FORM: AsRead
+# OPTIONS: testing=ProveEverything
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="program-without-false-type-builds-every.ts" displayPath="program-without-false-type-builds-every.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
+    v3 = PropGet v2 key="log"
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v5 = String string="hello"
+    v6 = Call v4, v2, v5 calleeKey="log" calleeName="console.log"
+    v7 = Undefined
+    Return v7
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "hello" = String string="hello"
+# CHECK-NEXT: v1: undefined = CallBuiltin -, v0 overload=ConsoleLog/0 accessSite=2
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

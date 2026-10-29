@@ -70,7 +70,7 @@ describe("Bun.build compile", () => {
     async () => {
       const body = Array.from(
         { length: 24 },
-        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << (j % 20)}) s = s - ${j} | 0; o.p${j} = s;`,
+        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << j % 20}) s = s - ${j} | 0; o.p${j} = s;`,
       ).join(" ");
       const functions = Array.from(
         { length: 4000 },
@@ -2253,6 +2253,33 @@ describe("compiled binary validity", () => {
     },
     60_000,
   );
+
+  test("import.meta.main is true in the entry point and false in what it imports", async () => {
+    using dir = tempDir("build-compile-import-meta-main", {
+      "app.ts": `import { isMain } from "./imported";\nconsole.log(import.meta.main, isMain);`,
+      "imported.ts": `export const isMain = import.meta.main;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "app.ts")],
+      compile: {
+        outfile: join(dir + "", "app-main"),
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
+  });
 });
 
 if (isLinux) {

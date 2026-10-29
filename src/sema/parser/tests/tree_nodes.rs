@@ -862,8 +862,7 @@ fn jsdoc_keeps_early_errors_of_code() {
     }
 }
 
-/// `@import x y` reads `y * @returns` as its module specifier, as TypeScript does. The decorator of the next tag belongs
-/// to the comment: no statement of the file comes from it.
+/// `@import x y` reads `y * @returns` as its module specifier. The decorator stays in the comment.
 #[test]
 fn jsdoc_import_tag_without_a_module_specifier_leaves_no_statement() {
     let texts = [

@@ -3,6 +3,10 @@
 // concatenation, so an echoed source line cannot satisfy an assertion.
 // The file also runs under `node --test`. A comment marks each place where
 // Node v26 reports something else.
+
+// A test file can replace this global. The report must not need it.
+globalThis.AggregateError = class AggregateError extends Error {};
+
 const { test, describe, it, before, after } = require("node:test");
 const assert = require("node:assert");
 

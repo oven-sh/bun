@@ -47,8 +47,7 @@ const kTimeoutMax = 2 ** 31 - 1;
 // Matches bun:test's default per-test timeout.
 const kBunTestDefaultTimeoutMs = 5_000;
 const kJoinSeparator = " > ";
-// Captured at module load, like the timers above: a test can replace them.
-const AggregateError = globalThis.AggregateError;
+// Captured at module load, like the timers above: a test can replace it.
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 
 // -----------------------------------------------------------------------------
@@ -2489,7 +2488,7 @@ function subtestLabel(path: string) {
   return label;
 }
 
-// Appends a label and the failure for each failed subtest below `path`.
+// Appends the failure and then a label for each failed subtest below `path`.
 function collectSubtestFailures(record: SubtestFailures, path: string, members: unknown[]) {
   const { names, failures, records } = record;
   for (let i = 0; i < names.length; i++) {
@@ -2500,15 +2499,15 @@ function collectSubtestFailures(record: SubtestFailures, path: string, members: 
     const failure = failures[i];
     // An inline suite (`undefined`) and a roll-up error add nothing to the subtests listed above them.
     if (failure !== childRecord?.error) {
-      $arrayPush(members, subtestLabel(childPath));
       $arrayPush(members, failure);
+      $arrayPush(members, subtestLabel(childPath));
     }
   }
   // Node reports a suite's own failure after its subtests.
   for (let i = 0; i < names.length; i++) {
     if (records[i] === record) {
-      $arrayPush(members, subtestLabel(path));
       $arrayPush(members, failures[i]);
+      $arrayPush(members, subtestLabel(path));
     }
   }
 }
@@ -2520,7 +2519,7 @@ function failureWithSubtests(node: TestNode, failure: unknown): unknown {
     const members: unknown[] = [];
     collectSubtestFailures(record, node.fullName, members);
     if (failure !== record.error) $arrayPush(members, failure);
-    const aggregate = new AggregateError(members, "subtests failed");
+    const aggregate = new $AggregateError(members, "subtests failed");
     ErrorCaptureStackTrace(aggregate, notOnStack);
     return aggregate;
   } catch {

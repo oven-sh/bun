@@ -108,10 +108,16 @@ pub struct Encoder {
     /// The capacity changed since the last field. Holds the lowest it has been since.
     unannounced_capacity: Option<u32>,
     history: Option<History>,
+    /// Of the hashes. Keeps whoever chooses the fields from choosing their buckets.
+    seed: u64,
 }
 
 impl Encoder {
     pub fn new() -> Self {
+        Self::with_seed(bun_core::fast_random())
+    }
+
+    pub(crate) fn with_seed(seed: u64) -> Self {
         Self {
             entries: VecDeque::new(),
             storage: Storage::default(),
@@ -121,6 +127,7 @@ impl Encoder {
             capacity: DEFAULT_TABLE_CAPACITY,
             unannounced_capacity: None,
             history: None,
+            seed,
         }
     }
 
@@ -144,6 +151,21 @@ impl Encoder {
         self.storage.heap_size()
             + self.entries.capacity() * size_of::<Entry>()
             + self.buckets.capacity() * size_of::<Bucket>()
+    }
+
+    /// By field and by name.
+    #[cfg(test)]
+    pub(crate) fn longest_chains(&self) -> [usize; 2] {
+        type Link = (fn(&Bucket) -> Option<Id>, fn(&Entry) -> Option<Id>);
+        let links: [Link; 2] = [
+            (|bucket| bucket.by_field.first, |entry| entry.next_by_field),
+            (|bucket| bucket.by_name.first, |entry| entry.next_by_name),
+        ];
+        links.map(|(first, next)| {
+            let len =
+                |bucket| core::iter::successors(first(bucket), |&id| next(self.entry(id)?)).count();
+            self.buckets.iter().map(len).max().unwrap_or(0)
+        })
     }
 
     /// Takes the peer's SETTINGS_HEADER_TABLE_SIZE, between blocks. The next field follows what its decoder has to hear.
@@ -199,8 +221,9 @@ impl Encoder {
         let static_indices = static_table::find_name(name);
         let static_name = static_indices.map(|indices| indices.0);
         // Its index tells a name of the static table apart just as well.
-        let name_hash = static_name.unwrap_or_else(|| bun_wyhash::hash(name) as u32);
-        let field_hash = bun_wyhash::hash_with_seed(u64::from(name_hash), value) as u32;
+        let name_hash =
+            static_name.unwrap_or_else(|| bun_wyhash::hash_with_seed(self.seed, name) as u32);
+        let field_hash = bun_wyhash::hash_with_seed(self.seed ^ u64::from(name_hash), value) as u32;
 
         // A reference to an entry with the same value would not say "never indexed".
         let field_index = if indexing == Indexing::Never {

@@ -349,7 +349,7 @@ mod tests {
         let name_hash = u64::from(hash(0, "x-c"));
         assert_eq!(hash(name_hash, "024993"), hash(name_hash, "070489"));
 
-        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        let (mut encoder, mut decoder) = (Encoder::with_seed(0), Decoder::new());
         for (name, value, first_byte) in [
             ("n047767", "a", 0x40),
             ("n055637", "a", 0x40),
@@ -360,6 +360,35 @@ mod tests {
             assert_eq!(block[0], first_byte, "{name}: {value}");
             let field = (name.as_bytes().to_vec(), value.as_bytes().to_vec(), false);
             assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn fields_made_for_one_bucket_share_it_under_one_seed_only() {
+        // A table has up to 256 buckets.
+        let made_for = |seed| {
+            let strings = (0..).map(|i: u32| i.to_string());
+            let made =
+                strings.filter(move |s| bun_wyhash::hash_with_seed(seed, s.as_bytes()) as u8 == 0);
+            made.take(90).collect::<Vec<String>>()
+        };
+        // `cookie` is entry 32 of the static table, which stands for its hash.
+        let (values, names) = (made_for(32), made_for(0));
+        let by_field = values.iter().map(|value| ("cookie", &value[..]));
+        let by_name = names.iter().map(|name| (&name[..], "1"));
+        for (chain, fields) in [by_field.collect::<Vec<_>>(), by_name.collect()]
+            .iter()
+            .enumerate()
+        {
+            let longest_chain = |mut encoder: Encoder| {
+                for (name, value) in fields {
+                    encode(&mut encoder, name, value, Indexing::Add);
+                }
+                encoder.longest_chains()[chain]
+            };
+            assert_eq!(longest_chain(Encoder::with_seed(0)), 90);
+            assert!(longest_chain(Encoder::new()) < 10);
         }
     }
 

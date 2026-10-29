@@ -680,9 +680,7 @@ class ListenConnection {
 }
 
 // COPY. The native query calls `copy(chunk)` when the server enters copy mode, then with each chunk (TO STDOUT) or
-// each time the socket has drained (FROM STDIN). The stream ends as the query does. START_REPLICATION on a
-// replication connection opens both directions at once: the readable carries the server's CopyData, the writable
-// the client's.
+// each time the socket has drained (FROM STDIN). The stream ends as the query does. START_REPLICATION opens both.
 
 type CopyHandle = $Bindgen.PostgresSQLQuery;
 

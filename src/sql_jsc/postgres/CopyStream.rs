@@ -1,6 +1,5 @@
 //! The query's one callback, `copy(chunk)`, is called when the server enters copy mode, then with
-//! each chunk (out) or each time the socket has drained (in). In a CopyBoth session, the one that
-//! START_REPLICATION opens on a replication connection, it is called with both.
+//! each chunk (out) or each time the socket has drained (in). START_REPLICATION opens both.
 
 use super::{MAX_PIPELINE_SIZE, PostgresSQLConnection, Socket};
 use crate::jsc::{AutoFlush as _, JSValue, JsResult, js_error_to_postgres};
@@ -169,8 +168,7 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// The writable is optional: the client's CopyData are its replies, and nothing is lost
-    /// without them until the server's `wal_sender_timeout`.
+    /// The writable is optional: the server waits `wal_sender_timeout` for its replies.
     pub(super) fn on_copy_both_response(
         &self,
         request: &PostgresSQLQuery,
@@ -182,8 +180,7 @@ impl PostgresSQLConnection {
         ) {
             return Ok(());
         }
-        // The server answers with its own CopyDone and ends the command. A walsender ends the
-        // session on a CopyFail.
+        // A walsender ends the session on a CopyFail.
         self.writer().write(&COPY_DONE)?;
         self.flush_data();
         self.reject_copy(request, b"START_REPLICATION needs query.readable()");
@@ -245,8 +242,7 @@ impl PostgresSQLConnection {
         let both = request.flags.get().copy == CopyStream::BothOpen;
         request.update_flags(|f| f.copy = CopyStream::Readable);
         if both {
-            // The reply ends once the client has sent its CopyDone too, and what is left of it
-            // is read however full the readable is.
+            // The client's CopyDone ends the command, and what is left of the reply is bounded.
             self.set_reading(true);
             self.write_copy_end(None);
         }
@@ -352,9 +348,7 @@ impl PostgresSQLQuery {
         }
     }
 
-    /// The client's CopyDone: the server answers with its own and ends the command. A walsender
-    /// ends the session on a CopyFail, so that is what an abort sends too. The server's answer has
-    /// to be read, however full the readable is.
+    /// The client's CopyDone, for an abort too: a walsender ends the session on a CopyFail.
     fn end_copy_both(&self, connection: &PostgresSQLConnection) {
         self.update_flags(|f| f.copy = CopyStream::BothClosing);
         connection.set_reading(true);

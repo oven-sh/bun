@@ -2254,9 +2254,7 @@ fn handle_body_stream_unusable(
 /// A promise for what `body.json()` parses, where compiled code parses it by a type (`bodyBytesForm` of the table of built-ins).
 #[unsafe(no_mangle)]
 #[bun_jsc::host_call]
-fn Body__jsonSource(global_this: *mut JSGlobalObject, body: JSValue) -> JSValue {
-    // SAFETY: compiled code passes its live realm.
-    let global_this = unsafe { &*global_this };
+fn Body__jsonSource(global_this: &JSGlobalObject, body: JSValue) -> JSValue {
     bun_jsc::to_js_host_call(global_this, || {
         let cx = global_this.js_thread_of_caller();
         if let Some(request) = body.as_class_ref::<webcore::Request>() {

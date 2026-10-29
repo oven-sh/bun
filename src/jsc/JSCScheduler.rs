@@ -31,16 +31,6 @@ unsafe extern "C" {
 }
 
 impl JSCDeferredWorkTask {
-    /// Delete the C++ job without running it (its ticket is cancelled with the
-    /// DeferredWorkTimer at VM teardown).
-    ///
-    /// # Safety
-    /// `this` is the job handed over by `onScheduleWorkSoon`, not yet run.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { Bun__deleteDeferredWorkTask(this) };
-    }
-
     /// The C++ side reports what a job throws at its own boundary; what can
     /// still be pending here is the VM's termination.
     pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
@@ -69,7 +59,7 @@ unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
         // down before ~VM), so dropping the job pointer here loses nothing.
         drop(unsafe { bun_core::heap::take(ct.as_ptr()) });
         // SAFETY: `task` is the C++ job handed over for exactly one run/destroy.
-        unsafe { JSCDeferredWorkTask::destroy(task) };
+        unsafe { Bun__deleteDeferredWorkTask(task) };
     }
 }
 

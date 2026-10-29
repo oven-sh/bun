@@ -3409,6 +3409,7 @@ pub mod bv2_impl {
             let tp = ThreadPool::init(&*this, thread_pool)?;
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
             this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
+            this.linker.pool = bun_ptr::BackRef::new(this.graph.pool());
             // Install the watcher only after `ThreadPool::init()` has succeeded —
             // the `?` above is the last early-return in this fn, so the watcher's
             // raw `*mut BundleV2` can't outlive the box it points at (the caller

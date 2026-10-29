@@ -999,10 +999,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
-        // ParsedSourceMap is `Arc`-managed in the Rust port; the embedded
-        // `ref_count` field is layout parity only and FFI ref/deref routes
-        // through `Arc::{increment,decrement}_strong_count` (see
-        // `ParsedSourceMap::ref_`).
+        // `ParsedSourceMap` is `Arc`-managed.
         Some(Arc::new(psm))
     } else {
         None

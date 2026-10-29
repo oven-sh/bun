@@ -25,8 +25,7 @@ extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop) {
         // for the call duration.
         let loop_ref = unsafe { &*loop_ };
         // SAFETY: single JS thread; `timer_all()` returns the live per-thread
-        // `All` (non-null after init). `update_date_header_timer_if_necessary`
-        // takes the VM by raw pointer to avoid aliased-`&mut` (jsc/runtime crate cycle).
-        unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, vm_ptr) };
+        // `All` (non-null after init), and `vm_ptr` is this thread's live VM.
+        unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, &*vm_ptr) };
     }
 }

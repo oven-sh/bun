@@ -64,10 +64,12 @@ A call costs about 15 ns before the first symbol, which pays off from about a do
 - once its calls on this string have yielded under 12 symbols on average, which is what happens in
   text that is dense in such codes, like JSON.
 
-That leaves one call wasted on such text, and never a second one: a call that yields under 12
-symbols is the last one on that string. It costs 10 to 19 ns whatever the length. On Emerald Rapids,
-a string that starts with a short code and goes on with codes of 10 to 13 bits takes 40 ns instead
-of 29 at 5 bytes, 60 instead of 44 at 12 and 127 instead of 108 at 40.
+That leaves one call wasted on a string of such text, which costs 10 to 19 ns whatever the length.
+On Emerald Rapids, a string that starts with a short code and goes on with codes of 10 to 13 bits
+takes 40 ns instead of 29 at 5 bytes, 60 instead of 44 at 12 and 127 instead of 108 at 40. Where
+such text follows plain text in one string, the average takes a few calls to come down: a URL of 72
+characters and then JSON gets calls that yield 65, 3, 1, 1 and 1 symbols. What is wasted stays under
+what the calls before it gained.
 
 ### Which CPUs
 
@@ -89,8 +91,9 @@ depends on the text, so that branch is mispredicted, and so is a loop over the l
 are: 8 bytes, of which as many count as are full. 7 codes of 8 bits, the longest in plain text, and
 the 7 bits that may be left from before are 63 bits. If the lengths add up to more than 64 bits, the
 7 bytes are coded again from what was left before them and written byte by byte. The last bytes go
-out the same way, with the padding. So its branches depend on the length of the text and not on the
-text.
+out the same way, with the padding. So for text with codes of up to 8 bits its branches depend on
+the length of the text and not on the text. One group in five of random printable characters is
+coded again.
 
 What is left is one shift by a variable count per code, which waits for the one before it. From 128
 bytes on, where that wait begins to show, `encode_groups` takes 7 bytes at a time.

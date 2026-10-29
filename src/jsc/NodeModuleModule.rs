@@ -6,6 +6,7 @@ use crate::{
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
+use bun_collections::SmallList;
 use bun_core::{String as BunString, Utf8Bytes, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
@@ -55,7 +56,7 @@ fn find_path(
 
     // Node replaces `paths` with `['']` for an absolute request, and reads it no further.
     let absolute_request = bun_paths::is_absolute(request);
-    let mut len = if absolute_request {
+    let len = if absolute_request {
         1
     } else {
         paths_length(global, paths)?
@@ -63,56 +64,81 @@ fn find_path(
 
     // What the resolver logs for a directory of `paths` is no error of the caller.
     let mut log = bun_ast::Log::default();
+    // The second look reads the entries from here, so it runs no getter of `paths`.
+    let mut entries_without_request: SmallList<Utf8Bytes<'static>, 8> = SmallList::default();
 
-    // The first look is in the resolver's cache of the directories, where `require()` looks. If no
-    // entry has the request, the cache can be older than the disk: it forgets each entry, and the
-    // second look reads the disk.
-    for is_second_look in [false, true] {
-        for i in 0..len {
-            let cur_path_slice = if absolute_request {
-                Utf8Bytes::Borrowed(b"")
-            } else {
-                let cur_path = paths.get_index(global, i)?;
-                if !cur_path.is_string_literal() {
-                    return Err(global.throw_invalid_argument_type_value2(
-                        "paths",
-                        "array of strings",
-                        paths,
-                    ));
-                }
-                cur_path.to_utf8(global)?
-            };
-            let cur_path = cur_path_slice.slice();
+    // The first look is in the resolver's cache of the directories, where `require()` looks.
+    for i in 0..len {
+        let cur_path = if absolute_request {
+            Utf8Bytes::Borrowed(b"")
+        } else {
+            let cur_path = paths.get_index(global, i)?;
+            if !cur_path.is_string_literal() {
+                return Err(global.throw_invalid_argument_type_value2(
+                    "paths",
+                    "array of strings",
+                    paths,
+                ));
+            }
+            cur_path.to_utf8(global)?
+        };
+        match look_in_directory(global, &mut log, cur_path.slice(), request, Look::InCache) {
+            FoundInDirectory::Found(path) => {
+                return bun_string_jsc::create_utf8_for_js(global, path);
+            }
+            FoundInDirectory::NotFound => entries_without_request.append(cur_path),
+            // Node throws here. Like Node, look in no other entry, and do not look again.
+            FoundInDirectory::NotExported => return Ok(JSValue::FALSE),
+        }
+    }
 
-            // `paths[i]` may have run JS that resolves a module. That puts the log of the VM back,
-            // so the log is set for each entry, and the VM is read again.
-            // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
-            // The slot comes from the raw pointer to the VM, so `as_mut()` below leaves it valid.
-            let _restore_log = unsafe {
-                Resolver::scoped_log(
-                    &raw mut (*global.bun_vm_ptr()).transpiler.resolver,
-                    NonNull::from(&mut log),
-                )
-            };
-            let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-            if is_second_look {
-                resolver.forget_in_directory(cur_path, request);
+    // No entry has the request, and the cache can be older than the disk. The second look forgets
+    // what the cache holds for each entry, and reads the disk.
+    for cur_path in &entries_without_request {
+        match look_in_directory(global, &mut log, cur_path.slice(), request, Look::OnDisk) {
+            FoundInDirectory::Found(path) => {
+                return bun_string_jsc::create_utf8_for_js(global, path);
             }
-            match resolver.find_in_directory(cur_path, request) {
-                FoundInDirectory::Found(path) => {
-                    return bun_string_jsc::create_utf8_for_js(global, path);
-                }
-                FoundInDirectory::NotFound => {}
-                // Node throws here. Like Node, look in no later entry.
-                FoundInDirectory::NotExported => {
-                    len = i;
-                    break;
-                }
-            }
+            FoundInDirectory::NotFound => {}
+            FoundInDirectory::NotExported => break,
         }
     }
 
     Ok(JSValue::FALSE)
+}
+
+/// Where a look of `find_path` reads a directory from: the resolver's cache, or the disk, after the
+/// cache forgets the directory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Look {
+    InCache,
+    OnDisk,
+}
+
+/// One look for `request` in the directory `dir`. What the resolver logs goes to `log`.
+fn look_in_directory(
+    global: &JSGlobalObject,
+    log: &mut bun_ast::Log,
+    dir: &[u8],
+    request: &[u8],
+    look: Look,
+) -> FoundInDirectory {
+    // Reading an entry of `paths` may have run JS that resolves a module. That puts the log of the
+    // VM back, so the log is set for each look, and the VM is read again.
+    // SAFETY: the VM and its resolver outlive this call. The caller's `Log` outlives it too, and
+    // nothing else uses `log` before the guard is dropped. The slot comes from the raw pointer
+    // to the VM, so `as_mut()` below leaves it valid.
+    let _restore_log = unsafe {
+        Resolver::scoped_log(
+            &raw mut (*global.bun_vm_ptr()).transpiler.resolver,
+            NonNull::from(log),
+        )
+    };
+    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+    if look == Look::OnDisk {
+        resolver.forget_in_directory(dir, request);
+    }
+    resolver.find_in_directory(dir, request)
 }
 
 /// How many entries Node's loop `for (let i = 0; i < paths.length; i++)` reads. It takes `paths` as it

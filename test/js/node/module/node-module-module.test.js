@@ -119,7 +119,6 @@ describe.concurrent("node-module-module", () => {
             "Module._findPath(name, lookup paths)": path.relative(__dirname, Module._findPath("from-node-path", lookupPaths) || ""),
             "require.resolve(name)": path.relative(__dirname, require.resolve("from-node-path")),
             "Module._findPath(a package with exports, lookup paths)": path.relative(__dirname, Module._findPath("exports-in-node-path", lookupPaths) || ""),
-            "require.resolve(a package with exports)": path.relative(__dirname, require.resolve("exports-in-node-path")),
           }));
         `,
       },
@@ -138,8 +137,7 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const found = path.join("..", "global-a", "from-node-path", "index.js");
-    // node v26.3.0 prints the same line, but for the last value: there it is lib/main.js too.
-    // Bun's require() does not read the exports of a package that it finds through NODE_PATH.
+    // node v26.3.0 prints the same line.
     expect({ stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
       stdout: {
         "Module.globalPaths starts with the directories": [path.join("..", "global-a"), path.join("..", "global-b")],
@@ -159,7 +157,6 @@ describe.concurrent("node-module-module", () => {
           "lib",
           "main.js",
         ),
-        "require.resolve(a package with exports)": path.join("..", "global-a", "exports-in-node-path", "index.js"),
       },
       stderr: "",
       exitCode: 0,

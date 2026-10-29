@@ -1,7 +1,7 @@
 // Module._findPath(request, paths) looks `request` up in each directory of `paths`.
 // `bun test` runs this file, and one of its tests runs it again in Node.js. So it uses no test harness.
 // The expected values are those of Node.js v26.3.0.
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import Module, { _findPath as namedFindPath } from "module";
 import { tmpdir } from "os";
 import { dirname, join, relative, sep } from "path";
@@ -25,8 +25,9 @@ if (isBun) {
   });
 }
 
-// Use realpathSync to resolve symlinks (handles /tmp -> /private/tmp on macOS)
-const root = realpathSync(mkdtempSync(join(tmpdir(), "module-find-path-")));
+// The name that the file system has for the directory: /private/tmp for /tmp on macOS, and C:\Windows\Temp for
+// C:\Windows\TEMP. Bun finds what a link leads to under that name.
+const root = realpathSync.native(mkdtempSync(join(tmpdir(), "module-find-path-")));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 const files = {
@@ -92,6 +93,10 @@ const files = {
   "lib/ünï/çödé.js": "",
   "deep/a/b/c.js": "",
   "top.js": "",
+  // A directory that gets packages after Module._findPath looked for them in it.
+  "created-later/main.js": "",
+  "cases/main.js": "",
+  "cases/lower/index.js": 'module.exports = "lower";',
   // What a specifier reaches from a file in project/src, and a path in project/src does not.
   "project/package.json": JSON.stringify({
     name: "project",
@@ -158,9 +163,10 @@ function find(request, paths, findPath = Module._findPath) {
     found = findPath(request, paths);
   } catch (error) {
     const { code, message, path } = error;
+    // On Windows, Node.js puts \\?\ before the path of a package.json.
     return path === undefined
       ? { code, message: shown(message) }
-      : { code, message: shown(message), path: shown(path) };
+      : { code, message: shown(message), path: shown(path.replace(/^\\\\\?\\/, "")) };
   }
   return typeof found === "string" ? shown(found) : found;
 }
@@ -280,6 +286,26 @@ test("nothing is looked up outside the entries", () => {
     "a path of the tsconfig.json above the entry": false,
     "the baseUrl of the tsconfig.json above the entry": false,
   });
+});
+
+// Node.js asks the file system whether an entry is a directory. Bun reads it from the list of the directory above,
+// and asks the file system where that list cannot be read. The super-user can read every list. On Windows a mode
+// does not stop the listing of a directory.
+(isWindows ? test.skip : test)("an entry is searched where the directory above it cannot be listed", () => {
+  mkdirSync(abs("unlisted", "entry"), { recursive: true });
+  writeFileSync(abs("unlisted", "entry", "file.js"), "");
+  chmodSync(abs("unlisted"), 0o300);
+  try {
+    expect({
+      "the entry": find("file", [abs("unlisted", "entry")]),
+      "a directory of the request": find("entry/file", [abs("unlisted")]),
+    }).toEqual({
+      "the entry": "<root>/unlisted/entry/file.js",
+      "a directory of the request": "<root>/unlisted/entry/file.js",
+    });
+  } finally {
+    chmodSync(abs("unlisted"), 0o700);
+  }
 });
 
 // On Windows a backslash separates two names and `c:` starts an absolute path.
@@ -629,7 +655,6 @@ test("a file or a package that is created after a miss is found", () => {
       return abs("later-nested");
     },
   };
-  const hidden = "withexports/dist/hidden.js";
   const findAll = () => ({
     "a file": find("file", [abs("later")]),
     "a package": find("package", [abs("later")]),
@@ -638,10 +663,6 @@ test("a file or a package that is created after a miss is found", () => {
     "an entry in a directory": find("file", [abs("later", "above", "entry")]),
     "a package in a directory": find("above/package", [abs("later", "far")]),
     "an entry, for a request that goes through it": find("name/../../top", [abs("later-alone", "entry")]),
-    "an entry before a package whose exports do not give the request": find(hidden, [
-      abs("later", "copies"),
-      abs("plugins", "node_modules"),
-    ]),
     "an entry that a getter looks in too": find("file", nested),
   });
   const before = findAll();
@@ -654,7 +675,6 @@ test("a file or a package that is created after a miss is found", () => {
     "far/above/package/index.js",
     "../later-alone/entry/unused.js",
     "../later-nested/file.js",
-    "copies/withexports/dist/hidden.js",
   ]) {
     mkdirSync(dirname(abs("later", file)), { recursive: true });
     writeFileSync(abs("later", file), "");
@@ -668,9 +688,6 @@ test("a file or a package that is created after a miss is found", () => {
       "an entry in a directory": false,
       "a package in a directory": false,
       "an entry, for a request that goes through it": false,
-      "an entry before a package whose exports do not give the request": isBun
-        ? false
-        : notExported("./dist/hidden.js", "withexports"),
       "an entry that a getter looks in too": false,
     },
     after: {
@@ -681,10 +698,40 @@ test("a file or a package that is created after a miss is found", () => {
       "an entry in a directory": "<root>/later/above/entry/file.js",
       "a package in a directory": "<root>/later/far/above/package/index.js",
       "an entry, for a request that goes through it": "<root>/later-alone/top.js",
-      "an entry before a package whose exports do not give the request":
-        "<root>/later/copies/withexports/dist/hidden.js",
       "an entry that a getter looks in too": "<root>/later-nested/file.js",
     },
+  });
+});
+
+// Each lookup leaves the list of a directory in Bun's cache. Two of them are older than the disk at the third lookup.
+test("a file is found after the directories above it were created one after the other", () => {
+  const top = abs("later-deep");
+  mkdirSync(join(top, "a"), { recursive: true });
+  const first = find("a/b/c/d/x", [top]);
+  mkdirSync(join(top, "a", "b", "c"), { recursive: true });
+  const second = find("y", [join(top, "a", "b", "c")]);
+  mkdirSync(join(top, "a", "b", "c", "d"));
+  writeFileSync(join(top, "a", "b", "c", "d", "x.js"), "");
+  expect({ first, second, third: find("a/b/c/d/x", [top]) }).toEqual({
+    first: false,
+    second: false,
+    third: "<root>/later-deep/a/b/c/d/x.js",
+  });
+});
+
+// Bun looks again only where no entry has the request. Node.js reads the disk each time.
+test("where the exports of a package end the search, an entry before it is not searched again", () => {
+  const hidden = "withexports/dist/hidden.js";
+  mkdirSync(abs("later-exports"));
+  // Bun asks the disk about a directory whose list is empty.
+  writeFileSync(abs("later-exports", "other.js"), "");
+  const findHidden = () => find(hidden, [abs("later-exports", "copies"), abs("plugins", "node_modules")]);
+  const before = findHidden();
+  mkdirSync(abs("later-exports", "copies", "withexports", "dist"), { recursive: true });
+  writeFileSync(abs("later-exports", "copies", hidden), "");
+  expect({ before, after: findHidden() }).toEqual({
+    before: isBun ? false : notExported("./dist/hidden.js", "withexports"),
+    after: isBun ? false : "<root>/later-exports/copies/withexports/dist/hidden.js",
   });
 });
 
@@ -706,6 +753,46 @@ test("require() finds a node_modules directory that is created after Module._fin
     before: "<root>/node_modules/rootpkg/index.js",
     "a package": "late package",
     "a file": "late file",
+  });
+});
+
+// Module._findPath keeps nothing about a directory that an entry does not have. require() would take that for the truth.
+test("require() finds a directory that is created after Module._findPath looked for it in an entry", () => {
+  const app = abs("created-later");
+  const nodeModules = abs("plugins", "node_modules");
+  // The first entry has none of these. The second entry has them.
+  const before = {
+    "a package": find("plug", [app, nodeModules]),
+    "a scoped package": find("@scope/pkg", [app, nodeModules]),
+    "a file of a package": find("withmain/lib/other", [app, nodeModules]),
+  };
+  for (const [file, content] of [
+    ["plug/index.js", 'module.exports = "package";'],
+    ["@scope/pkg/index.js", 'module.exports = "scoped package";'],
+    ["withmain/lib/other.js", 'module.exports = "file of a package";'],
+  ]) {
+    mkdirSync(dirname(join(app, file)), { recursive: true });
+    writeFileSync(join(app, file), content);
+  }
+  const requireFromApp = Module.createRequire(join(app, "main.js"));
+  expect({
+    before,
+    required: {
+      "a package": requireFromApp("./plug"),
+      "a scoped package": requireFromApp("./@scope/pkg"),
+      "a file of a package": requireFromApp("./withmain/lib/other"),
+    },
+  }).toEqual({
+    before: {
+      "a package": "<root>/plugins/node_modules/plug/index.js",
+      "a scoped package": "<root>/plugins/node_modules/@scope/pkg/index.js",
+      "a file of a package": "<root>/plugins/node_modules/withmain/lib/other.js",
+    },
+    required: {
+      "a package": "package",
+      "a scoped package": "scoped package",
+      "a file of a package": "file of a package",
+    },
   });
 });
 
@@ -737,6 +824,33 @@ const isCaseSensitive = !existsSync(abs("LIB"));
       "a .ts file for a .js request in another case": false,
     },
     loaded: "Cased",
+  });
+});
+
+// The list of a directory finds a name in any case. A directory in another case is another directory here.
+(isCaseSensitive ? test : test.skip)("a directory is found by the name that the file system has for it", () => {
+  const cases = abs("cases");
+  // A file and a directory whose names differ in case only.
+  mkdirSync(join(cases, "Mixed"));
+  writeFileSync(join(cases, "Mixed", "inside.js"), "");
+  writeFileSync(join(cases, "mixed"), "");
+  const found = {
+    "a directory beside a file in another case": find("Mixed/inside", [cases]),
+    "the file in place of the directory": find("mixed/inside", [cases]),
+    "a directory in another case": find("LOWER", [cases]),
+  };
+  // require() finds the directory that is created under the name that was looked for.
+  mkdirSync(join(cases, "LOWER"));
+  writeFileSync(join(cases, "LOWER", "index.js"), 'module.exports = "LOWER";');
+  const requireFromCases = Module.createRequire(join(cases, "main.js"));
+  expect({ found, required: requireFromCases("./LOWER"), other: requireFromCases("./lower") }).toEqual({
+    found: {
+      "a directory beside a file in another case": "<root>/cases/Mixed/inside.js",
+      "the file in place of the directory": false,
+      "a directory in another case": false,
+    },
+    required: "LOWER",
+    other: "lower",
   });
 });
 
@@ -826,6 +940,32 @@ test("the extensions, the conditions and the exports are those of require()", ()
 // Only in Bun: these tests need the test harness, and when Node.js runs this file it must not start itself again.
 if (isBun) {
   const { bunEnv, bunExe, isDebug, nodeExeAtLeast, tempDir } = await import("harness");
+
+  // Node.js reads the entries once more, for the key of its cache.
+  test("a getter of paths runs once for each entry that is searched", () => {
+    const reads = [];
+    const counted = entries => {
+      const paths = { length: entries.length };
+      entries.forEach((entry, index) =>
+        Object.defineProperty(paths, index, {
+          get() {
+            reads.push(index);
+            return entry;
+          },
+        }),
+      );
+      return paths;
+    };
+    expect({
+      "no entry has it": find("a", counted([abs("nowhere"), abs("deep")])),
+      "the second entry has it": find("a", counted([abs("nowhere"), abs("lib"), abs("deep")])),
+      reads,
+    }).toEqual({
+      "no entry has it": false,
+      "the second entry has it": "<root>/lib/a.js",
+      reads: [0, 1, 0, 1],
+    });
+  });
 
   // On a miss, the resolver asks the registry for a name that no node_modules directory has.
   test("no package is asked of the registry", async () => {
@@ -918,6 +1058,7 @@ if (isBun) {
       await new Promise((resolve, reject) => {
         worker.once("message", resolve);
         worker.once("error", reject);
+        worker.once("exit", code => reject(new Error(`the worker exited with code ${code} before it looked`)));
       });
       const notFound = [];
       for (let i = 0; i < 25; i++) {
@@ -956,11 +1097,16 @@ if (isBun) {
         const self = import.meta.path;
         const root = path.dirname(self);
         const name = path.basename(self);
+        // On Windows the name of a module of the executable has forward slashes, and import.meta.path has backslashes.
+        const found = (request, paths) => {
+          const file = _findPath(request, paths);
+          return typeof file === "string" && path.normalize(file) === path.normalize(self) ? "this module" : file;
+        };
         console.log(JSON.stringify({
-          absolute: _findPath(self) === self,
-          relative: _findPath("./" + name, [root]) === self,
-          bare: _findPath(name, [root]) === self,
-          missing: [_findPath("./nowhere", [root]), _findPath(path.join(root, "nowhere"))],
+          absolute: found(self),
+          relative: found("./" + name, [root]),
+          bare: found(name, [root]),
+          missing: [found("./nowhere", [root]), found(path.join(root, "nowhere"))],
         }));
       `,
       });
@@ -992,7 +1138,12 @@ if (isBun) {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: JSON.stringify({ absolute: true, relative: true, bare: true, missing: [false, false] }),
+        stdout: JSON.stringify({
+          absolute: "this module",
+          relative: "this module",
+          bare: "this module",
+          missing: [false, false],
+        }),
         stderr: "",
         exitCode: 0,
       });

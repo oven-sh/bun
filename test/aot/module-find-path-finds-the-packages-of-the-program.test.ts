@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -14,9 +14,10 @@ const files = {
 const path = require("node:path");
 const nodeModules = path.join(__dirname, "node_modules");
 const driver = path.join(nodeModules, "driver");
+const store = path.join(nodeModules, ".store");
 const found = (request, paths) => {
   const file = Module._findPath(request, paths);
-  return typeof file === "string" ? file.split("node_modules").pop().replaceAll("\\\\", "/") : file;
+  return typeof file === "string" ? path.relative(__dirname, file).replaceAll("\\\\", "/") : file;
 };
 console.log(JSON.stringify({
   "a package with a main": found("driver", [nodeModules]),
@@ -27,7 +28,13 @@ console.log(JSON.stringify({
   "a path that exports do not list": found("closed/lib/feature.js", [nodeModules]),
   "a package without a main export": found("closed", [nodeModules]),
   "a package that is no entry point": found("left-out", [nodeModules]),
+  "an entry with a separator at its end": found("@scope/driver", [nodeModules + path.sep]),
   "a package of the node_modules directory above": found("driver", [path.join(nodeModules, "orm", "node_modules")]),
+  "a link to a package of another node_modules directory": found("linked", [path.join(store, "user@1.0.0", "node_modules")]),
+  "exports of the node_modules directory above, then a directory with the path": found("closed/lib/feature.js", [
+    path.join(nodeModules, "orm", "node_modules"),
+    path.join(__dirname, "vendor"),
+  ]),
   "the lookup paths": found("@scope/driver", Module._resolveLookupPaths("@scope/driver", module)),
   "the directory of the package, then node_modules": found("driver", [driver, nodeModules]),
   "./ and a file, in the directory of the package": found("./lib/entry.js", [driver]),
@@ -47,6 +54,10 @@ console.log(JSON.stringify({
   "app/node_modules/closed/package.json": `{ "name": "closed", "exports": { "./feature": "./lib/feature.js" } }`,
   "app/node_modules/closed/lib/feature.js": `exports.name = "feature";\n`,
   "app/node_modules/left-out/index.js": `exports.name = "left out";\n`,
+  "app/vendor/closed/lib/feature.js": `exports.name = "vendored feature";\n`,
+  // As an isolated install lays packages out: `user` has `linked` as a link beside it.
+  "app/node_modules/.store/linked@1.0.0/node_modules/linked/index.js": `exports.name = "linked";\n`,
+  "app/node_modules/.store/user@1.0.0/node_modules/user/index.js": `exports.name = "user";\n`,
 };
 
 test(
@@ -54,6 +65,12 @@ test(
   async () => {
     using dir = tempDir("find-path-in-program", files);
     const app = join(String(dir), "app");
+    const store = join(app, "node_modules", ".store");
+    symlinkSync(
+      join(store, "linked@1.0.0", "node_modules", "linked"),
+      join(store, "user@1.0.0", "node_modules", "linked"),
+      "junction",
+    );
     const build = await run(
       [
         bunExe(),
@@ -66,6 +83,9 @@ test(
         "node_modules/@scope/driver/main.cjs",
         "node_modules/both/*.{mjs,cjs}",
         "node_modules/closed/lib/*.js",
+        "vendor/closed/lib/*.js",
+        "node_modules/.store/linked@1.0.0/node_modules/linked/index.js",
+        "node_modules/.store/user@1.0.0/node_modules/user/index.js",
         "--outfile",
         "../program",
       ],
@@ -81,19 +101,23 @@ test(
     const alone = await run([join(String(dir), "program")], join(String(dir), "elsewhere"), bunEnv);
     expect({ found: alone.stdout && JSON.parse(alone.stdout), exitCode: alone.exitCode }).toEqual({
       found: {
-        "a package with a main": "/driver/lib/entry.js",
-        "a file of a package": "/driver/lib/extra.js",
-        "a scoped package with exports": "/@scope/driver/main.cjs",
-        "the require condition": "/both/common.cjs",
-        "a name that exports list": "/closed/lib/feature.js",
+        "a package with a main": "node_modules/driver/lib/entry.js",
+        "a file of a package": "node_modules/driver/lib/extra.js",
+        "a scoped package with exports": "node_modules/@scope/driver/main.cjs",
+        "the require condition": "node_modules/both/common.cjs",
+        "a name that exports list": "node_modules/closed/lib/feature.js",
         "a path that exports do not list": false,
         "a package without a main export": false,
         "a package that is no entry point": false,
+        "an entry with a separator at its end": "node_modules/@scope/driver/main.cjs",
         "a package of the node_modules directory above": false,
-        "the lookup paths": "/@scope/driver/main.cjs",
-        "the directory of the package, then node_modules": "/driver/lib/entry.js",
-        "./ and a file, in the directory of the package": "/driver/lib/entry.js",
-        "an absolute request": "/driver/lib/entry.js",
+        "a link to a package of another node_modules directory":
+          "node_modules/.store/linked@1.0.0/node_modules/linked/index.js",
+        "exports of the node_modules directory above, then a directory with the path": "vendor/closed/lib/feature.js",
+        "the lookup paths": "node_modules/@scope/driver/main.cjs",
+        "the directory of the package, then node_modules": "node_modules/driver/lib/entry.js",
+        "./ and a file, in the directory of the package": "node_modules/driver/lib/entry.js",
+        "an absolute request": "node_modules/driver/lib/entry.js",
       },
       exitCode: 0,
     });

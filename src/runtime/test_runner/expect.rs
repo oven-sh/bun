@@ -575,23 +575,18 @@ impl Expect {
     }
 
     /// Called by C++ when matching with asymmetric matchers
-    ///
-    /// # Safety
-    /// `out_flags`, `value`, and `any_constructor_type` must be valid, properly
-    /// aligned pointers for the duration of the call.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn Expect_readFlagsAndProcessPromise(
+    pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
         instance_value: JSValue,
         global_this: &JSGlobalObject,
-        out_flags: *mut FlagsCppType,
-        value: *mut JSValue,
-        any_constructor_type: *mut u8,
+        out_flags: &mut FlagsCppType,
+        value: &mut JSValue,
+        any_constructor_type: &mut u8,
     ) -> bool {
         let flags: Flags = if let Some(instance) = instance_value.as_class_ref::<ExpectCustomAsymmetricMatcher>() {
             instance.flags
         } else if let Some(instance) = instance_value.as_class_ref::<ExpectAny>() {
-            // SAFETY: any_constructor_type is a valid out-ptr provided by C++ caller
-            unsafe { *any_constructor_type = instance.flags.asymmetric_matcher_constructor_type() as u8 };
+            *any_constructor_type = instance.flags.asymmetric_matcher_constructor_type() as u8;
             instance.flags
         } else if let Some(instance) = instance_value.as_class_ref::<ExpectAnything>() {
             instance.flags
@@ -609,16 +604,12 @@ impl Expect {
             Flags::default()
         };
 
-        // SAFETY: out_flags is a valid out-ptr provided by C++ caller
-        unsafe { *out_flags = flags.encode() };
+        *out_flags = flags.encode();
 
         // (note that matcher_name/matcher_args are not used because silent=true)
-        // SAFETY: value is a valid in/out-ptr provided by C++ caller
-        let v = unsafe { *value };
-        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, "", "", true) {
+        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, *value, "", "", true) {
             Ok(new) => {
-                // SAFETY: value is a valid in/out-ptr provided by C++ caller
-                unsafe { *value = new };
+                *value = new;
                 true
             }
             Err(_) => false,
@@ -2286,19 +2277,14 @@ impl ExpectCustomAsymmetricMatcher {
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
-    ///
-    /// # Safety
-    /// `this` must point to a live `Self` and `global_this` must point to a live
-    /// `JSGlobalObject` for the duration of the call.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn ExpectCustomAsymmetricMatcher__execute(
-        this: *mut Self,
+    pub(crate) extern "C" fn ExpectCustomAsymmetricMatcher__execute(
+        this: &Self,
         this_value: JSValue,
-        global_this: *const JSGlobalObject,
+        global_this: &JSGlobalObject,
         received: JSValue,
     ) -> bool {
-        // SAFETY: called from C++ with valid pointers
-        unsafe { (*this).execute_impl(this_value, &*global_this, received) }.unwrap_or(false)
+        this.execute_impl(this_value, global_this, received).unwrap_or(false)
     }
 
     pub(crate) fn asymmetric_match(

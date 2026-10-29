@@ -515,7 +515,11 @@ impl BuildCommand {
 
             let mut opened = bun_sys::open_dir_at(Fd::cwd(), path);
             // The shared directory is derived from names: a package or a plugin can resolve them, and the user may not be allowed to list it.
-            if is_shared_by_entry_points && opened.is_err() {
+            if is_shared_by_entry_points
+                && opened.as_ref().is_err_and(|err| {
+                    matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::EACCES)
+                })
+            {
                 path = b".";
                 opened = bun_sys::open_dir_at(Fd::cwd(), path);
             }

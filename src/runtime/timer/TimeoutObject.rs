@@ -37,6 +37,21 @@ impl TimeoutObject {
         this_value
     }
 
+    pub(crate) fn get_on_timeout(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+        js::callback_get_cached(this_value.to_js())
+            .unwrap()
+            .without_async_context()
+    }
+
+    pub(crate) fn set_on_timeout(
+        _this: &Self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+    ) {
+        js::callback_set_cached(this_value.to_js(), cx.global(), value.to_js());
+    }
+
     pub(crate) fn get_idle_start(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::idle_start_get_cached(this_value.to_js()).unwrap()
     }

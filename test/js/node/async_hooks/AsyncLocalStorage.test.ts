@@ -3,6 +3,10 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import http2 from "http2";
+import { once } from "node:events";
+import http from "node:http";
+import net from "node:net";
+import zlib from "node:zlib";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -1767,6 +1771,56 @@ test("node:http: socket events of a server and of a client request run in the as
     },
     stderr: "",
     exitCode: 0,
+  });
+});
+
+// Native code keeps a handler together with the async context it was set in. Script gets the function back.
+test("a handler set inside a store reads back as the function", async () => {
+  const als = new AsyncLocalStorage();
+  const handler = () => {};
+  const readBack: Record<string, boolean> = {};
+
+  const timeout = als.run("store", () => setTimeout(handler, 1_000_000));
+  readBack["timeout._onTimeout"] = timeout._onTimeout === handler;
+  clearTimeout(timeout);
+  const interval = als.run("store", () => setInterval(handler, 1_000_000));
+  readBack["interval._onTimeout"] = interval._onTimeout === handler;
+  clearInterval(interval);
+
+  const gzip = zlib.createGzip();
+  als.run("store", () => {
+    gzip._handle.onerror = handler;
+  });
+  readBack["zlib _handle.onerror"] = gzip._handle.onerror === handler;
+  gzip.destroy();
+
+  // The handle of a node:http response whose request body has not arrived.
+  const { promise: requested, resolve: didRequest } = Promise.withResolvers<void>();
+  const server = http.createServer((request, response) => {
+    const handle = response[Object.getOwnPropertySymbols(response).find(symbol => symbol.description === "handle")!];
+    for (const name of ["onwritable", "onabort", "ondata"]) {
+      als.run("store", () => {
+        handle[name] = handler;
+      });
+      readBack[`http handle.${name}`] = handle[name] === handler;
+    }
+    didRequest();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  socket.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\n");
+  await requested;
+  socket.destroy();
+  server.closeAllConnections();
+  server.close();
+
+  expect(readBack).toEqual({
+    "timeout._onTimeout": true,
+    "interval._onTimeout": true,
+    "zlib _handle.onerror": true,
+    "http handle.onwritable": true,
+    "http handle.onabort": true,
+    "http handle.ondata": true,
   });
 });
 

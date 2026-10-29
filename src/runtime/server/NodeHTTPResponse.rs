@@ -2342,7 +2342,7 @@ impl NodeHTTPResponse {
         }
         js::on_writable_get_cached(this_value.to_js())
             .filter(|callback| callback.is_cell())
-            .unwrap_or(JSValue::UNDEFINED)
+            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
 
     pub(crate) fn get_onabort(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
@@ -2350,7 +2350,8 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::UNDEFINED;
         }
-        js::on_aborted_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
+        js::on_aborted_get_cached(this_value.to_js())
+            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
 
     pub(crate) fn set_onabort(
@@ -2377,7 +2378,8 @@ impl NodeHTTPResponse {
     }
 
     pub(crate) fn get_ondata(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
-        js::on_data_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
+        js::on_data_get_cached(this_value.to_js())
+            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
 
     pub(crate) fn get_upgraded(&self) -> bool {

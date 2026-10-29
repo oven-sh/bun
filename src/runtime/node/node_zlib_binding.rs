@@ -203,7 +203,8 @@ pub(crate) trait CompressionStreamImpl:
     }
     #[inline]
     fn get_onerror(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
-        Self::error_callback_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
+        Self::error_callback_get_cached(this_value.to_js())
+            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
 
     /// Rejects a call on a handle that cannot accept a new operation: an async

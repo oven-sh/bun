@@ -310,7 +310,7 @@ impl Request {
                 return Ok(None);
             }
 
-            return head.clone_this(global_this);
+            return head.clone_this(global_this).map(Some);
         }
 
         Ok(None)
@@ -1108,13 +1108,10 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers_mut() {
-                            // The flag is set unconditionally once `getInitHeaders()` yielded a
-                            // value, even if `cloneThis` returns null — so a later arg can't
-                            // repopulate headers from a different source.
+                        if let Some(headers) = response.get_init_headers() {
                             match headers.clone_this(cx.global()) {
                                 Ok(h) => {
-                                    req.headers.set(h);
+                                    req.headers.set(Some(h));
                                     fields.insert(Fields::Headers);
                                 }
                                 Err(e) => bail!(Err(e)),

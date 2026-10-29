@@ -278,15 +278,14 @@ impl Response {
         self.init_mut().headers.as_deref_mut()
     }
 
-    /// Deep-copy this response's init headers (if any) into a fresh
-    /// `HeadersRef`.
+    /// Deep-copy this response's init headers (if any) into a fresh `HeadersRef`.
     #[inline]
     pub(crate) fn clone_init_headers(
         &self,
         global: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
         match self.init_mut().headers.as_ref() {
-            Some(headers) => headers.clone_this(global),
+            Some(headers) => headers.clone_this(global).map(Some),
             None => Ok(None),
         }
     }
@@ -1126,10 +1125,7 @@ impl Default for Init {
 impl Init {
     pub(crate) fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
         let headers = match &self.headers {
-            // `clone_this` does a deep copy on the C++ side and may return
-            // null on OOM/throw. Flatten the
-            // `Option<HeadersRef>` so a null clone leaves `headers` empty.
-            Some(head) => head.clone_this(ctx)?,
+            Some(head) => Some(head.clone_this(ctx)?),
             None => None,
         };
         Ok(Init {
@@ -1167,7 +1163,7 @@ impl Init {
             // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS; `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
             let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
             if !orig.is_empty() {
-                self.headers = orig.clone_this(global_this)?;
+                self.headers = Some(orig.clone_this(global_this)?);
             }
         } else {
             self.headers = FetchHeaders::create_from_js(global_this, headers)?;
@@ -1218,7 +1214,7 @@ impl Init {
                 // Everything touched is `&self`.
                 let req = unsafe { &*req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
-                    result.headers = headers.clone_this(global_this)?;
+                    result.headers = Some(headers.clone_this(global_this)?);
                 }
 
                 result.method = req.method;

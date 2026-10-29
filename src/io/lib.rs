@@ -694,8 +694,6 @@ bun_core::define_scoped_log!(log, io_loop); // hand-declared static above (tagna
 // Scalars and one reference that is only read; the kernel validates and reports failure via the
 // return value / errno — never UB. Local `safe fn` decls (vs. routing through
 // the `libc` crate's raw items) move the proof into the type signature.
-// Unused externs do not generate linker references, so per-target `#[cfg]` is
-// unnecessary; every caller is gated.
 #[cfg(unix)]
 mod safe_c {
     use core::ffi::c_int;

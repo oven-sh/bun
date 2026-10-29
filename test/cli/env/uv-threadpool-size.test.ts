@@ -3,7 +3,6 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 
 // The thread count every pool is sized from: the work pool, the bundler, the package manager.
-// The tests run one after another: together they take a debug build past the default timeout.
 describe("UV_THREADPOOL_SIZE and GOMAXPROCS", () => {
   // With neither variable the count is the CPU count. It is pinned here, so a
   // value that does not count reads as 7 on every machine.
@@ -37,12 +36,17 @@ describe("UV_THREADPOOL_SIZE and GOMAXPROCS", () => {
     return jobs === "" ? 2 : Number(jobs);
   }
 
-  test.each([
+  test.concurrent.each([
     // Below 2, or no digits in front: the floor, as libuv gives its floor.
     [{ UV_THREADPOOL_SIZE: "1" }, 2],
     [{ UV_THREADPOOL_SIZE: "0" }, 2],
     [{ UV_THREADPOOL_SIZE: "abc" }, 2],
     [{ UV_THREADPOOL_SIZE: "-3" }, 2],
+    // Both ends of the range, and one past each.
+    [{ UV_THREADPOOL_SIZE: "2" }, 2],
+    [{ UV_THREADPOOL_SIZE: "3" }, 3],
+    [{ UV_THREADPOOL_SIZE: "1024" }, 1024],
+    [{ UV_THREADPOOL_SIZE: "1025" }, 1024],
     // libuv reads the digits in front.
     [{ UV_THREADPOOL_SIZE: "8abc" }, 8],
     [{ UV_THREADPOOL_SIZE: "4.5" }, 4],
@@ -73,6 +77,8 @@ describe("UV_THREADPOOL_SIZE and GOMAXPROCS", () => {
 
   // The work pool itself: its threads after 16 jobs. A job runs long enough
   // for the pool to start every thread it may have before the jobs run out.
+  // Not concurrent: each child starts a JS VM and keeps 2 threads busy. Beside
+  // the rows above, one took 4.4 s of the 5 s default timeout on a debug build.
   const countPoolThreads = /* js */ `
     const { pbkdf2 } = require("node:crypto");
     const { readdirSync, readFileSync } = require("node:fs");
@@ -95,6 +101,7 @@ describe("UV_THREADPOOL_SIZE and GOMAXPROCS", () => {
     .skipIf(!isLinux)
     .each([
       { UV_THREADPOOL_SIZE: "1" },
+      { UV_THREADPOOL_SIZE: "0" },
       { UV_THREADPOOL_SIZE: "abc" },
       { GOMAXPROCS: "1" },
       { WTF_numberOfProcessorCores: "1" },

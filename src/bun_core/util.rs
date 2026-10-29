@@ -2755,7 +2755,7 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
 }
 
 // ── get_thread_count ──────────────────────────────────────────────────────
-// In [2, 1024], from the environment the process started with. An empty value is not set.
+// In [2, 1024], from the process environment. An empty value is not set.
 // UV_THREADPOOL_SIZE: the digits in front count, as in libuv's atoi, and a value with no
 // count gives 2. libuv's floor is 1, but pool work can wait for other pool work.
 // GOMAXPROCS: only a positive integer counts, as in Go.

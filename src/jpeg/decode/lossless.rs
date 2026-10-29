@@ -143,7 +143,8 @@ impl DiffController {
         let input = &mut decoder.input;
         let mut bits = self.bits;
         for _ in 0..mcus_per_row {
-            for (table, row) in cursors.iter_mut().take(self.num_runs).flatten() {
+            for cursor in cursors.iter_mut().take(self.num_runs) {
+                let (table, row) = cursor.as_mut().ok_or(Error::Internal)?;
                 for diff in row.next().ok_or(Error::Internal)? {
                     let s = u32::from(bits.decode(input, table));
                     *diff = match s {
@@ -278,33 +279,34 @@ fn undifference_1d(diffs: &[i32], initial: i32, out: &mut [i32]) {
     }
 }
 
-/// `ra` is the sample to the left, `rb` the one above and `rc` the one above and to the left.
-#[inline(always)]
-fn predict(predictor: u8, ra: i32, rb: i32, rc: i32) -> i32 {
-    match predictor {
-        1 => ra,
-        2 => rb,
-        3 => rc,
-        4 => ra + rb - rc,
-        5 => ra + ((rb - rc) >> 1),
-        6 => rb + ((ra - rc) >> 1),
-        _ => (ra + rb) >> 1,
-    }
-}
-
-/// The first sample of a row is predicted by the one above it. `prev` and `out` may be the same row.
-fn undifference(predictor: u8, diffs: &[i32], prev: &[Cell<i32>], out: &[Cell<i32>]) {
+/// `predict` gets the samples to the left, above, and above to the left. `prev` and `out` may be the same row.
+fn undifference_by(
+    predict: impl Fn(i32, i32, i32) -> i32,
+    diffs: &[i32],
+    prev: &[Cell<i32>],
+    out: &[Cell<i32>],
+) {
     let mut ra = 0;
     let mut rc = 0;
     for (i, ((out, &diff), prev)) in out.iter().zip(diffs).zip(prev).enumerate() {
         let rb = prev.get();
-        let prediction = if i == 0 {
-            rb
-        } else {
-            predict(predictor, ra, rb, rc)
-        };
+        // The first sample of a row is predicted by the one above it.
+        let prediction = if i == 0 { rb } else { predict(ra, rb, rc) };
         ra = diff.wrapping_add(prediction) & 0xffff;
         out.set(ra);
         rc = rb;
+    }
+}
+
+/// A loop for each predictor: one loop that asks for every sample which it is takes twice as long.
+fn undifference(predictor: u8, diffs: &[i32], prev: &[Cell<i32>], out: &[Cell<i32>]) {
+    match predictor {
+        1 => undifference_by(|ra, _, _| ra, diffs, prev, out),
+        2 => undifference_by(|_, rb, _| rb, diffs, prev, out),
+        3 => undifference_by(|_, _, rc| rc, diffs, prev, out),
+        4 => undifference_by(|ra, rb, rc| ra + rb - rc, diffs, prev, out),
+        5 => undifference_by(|ra, rb, rc| ra + ((rb - rc) >> 1), diffs, prev, out),
+        6 => undifference_by(|ra, rb, rc| rb + ((ra - rc) >> 1), diffs, prev, out),
+        _ => undifference_by(|ra, rb, _| (ra + rb) >> 1, diffs, prev, out),
     }
 }

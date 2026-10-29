@@ -43,10 +43,10 @@ bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FIL
 /// Pre-resolved `FilenameStore` appender for the `readdir` hot loop.
 ///
 /// `<FilenameStore as Appender>::append` re-evaluates `filename_store_backing()`
-/// (a `bss_singleton!` accessor: `Once::call_once` + `AtomicPtr::load`) on every
+/// (a `bss_singleton!` accessor: an `AtomicPtr` load and a null test) on every
 /// call. `add_entry` runs once per directory entry, so for the
 /// @material-ui/icons-style 11,000-entry directories that's 11,000+ redundant
-/// `Once` atomic checks per directory. Resolving once up front and carrying the
+/// atomic checks per directory. Resolving once up front and carrying the
 /// raw pointer across the loop drops that to a single check per `readdir`.
 pub struct FilenameStoreAppender {
     backing: *mut FilenameStoreBacking,
@@ -54,7 +54,7 @@ pub struct FilenameStoreAppender {
 impl FilenameStoreAppender {
     #[inline]
     pub(crate) fn new() -> Self {
-        // One `Once` check, hoisted out of the per-entry loop.
+        // One check, hoisted out of the per-entry loop.
         Self {
             backing: filename_store_backing(),
         }

@@ -91,10 +91,12 @@ const CONSOLE_LEVEL_MAP: Record<string, string> = {
   debug: "debug",
 };
 
+// The backend sends each response to every frontend, so the adapters share one range of command ids.
+let nextBackendId = 1;
+
 class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
-  #nextBackendId = 1;
   #nextExceptionId = 1;
   #pending = new Map<
     number,
@@ -185,7 +187,7 @@ class InspectorCDPAdapter {
     clientMethod = method,
     onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
-    const id = this.#nextBackendId++;
+    const id = nextBackendId++;
     this.#pending.$set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }

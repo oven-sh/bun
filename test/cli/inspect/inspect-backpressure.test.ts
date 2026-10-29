@@ -28,6 +28,8 @@ class Program implements AsyncDisposable {
   url = "";
   /** How many lines the program has logged. */
   lines = 0;
+  /** The last mark of `afterDebuggerThread()` that the program printed. */
+  mark = 0;
 
   #proc: Subprocess<"pipe", "ignore", "pipe">;
   #stderr = "";
@@ -57,6 +59,7 @@ class Program implements AsyncDisposable {
       rest = lines.pop()!;
       for (const line of lines) {
         if (line.startsWith("LOGGED ")) this.lines = Number(line.slice(7));
+        else if (line.startsWith("MARK ")) this.mark = Number(line.slice(5));
         else this.url ||= line.match(/ws:\/\/127\.0\.0\.1:\d+\/\S*/)?.[0] ?? "";
       }
       for (const waiter of this.#waiters.splice(0)) waiter();
@@ -81,6 +84,20 @@ class Program implements AsyncDisposable {
       this.#proc.stdin.flush();
       await this.until(() => this.lines === lines, "the batch");
     }
+  }
+
+  /**
+   * Resolves once the debugger thread has done what was queued for it, or `frontend` is gone.
+   * That thread reads this command from the frontend's socket after its earlier tasks, and the
+   * program then prints a mark. The frontend does not have to read.
+   */
+  async afterDebuggerThread(frontend: RawFrontend): Promise<void> {
+    const mark = this.mark + 1;
+    frontend.send("Runtime.evaluate", { expression: `process.stderr.write("MARK ${mark}\\n")` }).catch(() => {});
+    await Promise.race([
+      this.until(() => this.mark === mark, "the mark"),
+      frontend.until(() => false, "").catch(() => {}),
+    ]);
   }
 
   get running(): boolean {
@@ -216,8 +233,12 @@ test.concurrent(
         await stalled.send("Console.enable");
         stalled.pause();
 
-        // Its socket holds about 8 MB. The program drops it 4 MB later.
-        for (let i = 0; i < 64 && !stalled.ended; i++) await program.log(1);
+        // Its socket holds about 8 MB. The program drops it 4 MB later, when the debugger
+        // thread next looks: so that thread gets its turn after each megabyte.
+        for (let megabyte = 0; megabyte < 128 && !stalled.ended; megabyte++) {
+          await program.log(1);
+          await program.afterDebuggerThread(stalled);
+        }
 
         // If nothing dropped it, it now gets every line and stays connected.
         stalled.resume();

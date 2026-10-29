@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import inspector from "node:inspector";
 
 test("inspector.url()", () => {
@@ -1071,6 +1071,9 @@ test("Debugger.scriptParsed reports isModule and scriptLanguage from JSC's scrip
   ]);
 });
 
+// Each of these tests starts a program and attaches clients to it, which takes a debug build seconds.
+const attachTimeout = isASAN || isDebug ? 120_000 : 30_000;
+
 // Runtime.evaluate and a pause go through JSC's InjectedScript. In the prebuilt WebKit it has
 // exception checks missing, which abort the child under validateExceptionChecks.
 const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...inspecteeEnv } = bunEnv;
@@ -1224,7 +1227,40 @@ process.stdin.resume();
     expect(proc.exitCode).toBeNull();
     await staying.close();
   },
-  30_000,
+  attachTimeout,
+);
+
+// The backend sends each response to every client. Two clients that send their commands at the
+// same moment must not take each other's answers.
+test.concurrent(
+  "two DevTools clients each get the answers to their own commands",
+  async () => {
+    using dir = tempDir("inspector-two-clients", {
+      "entry.mjs": `
+import inspector from "node:inspector";
+inspector.open(0, "127.0.0.1");
+process.stdin.resume();
+`,
+    });
+    const { proc, url } = await openInspectee(String(dir));
+    await using _ = proc;
+    const one = await connectDevToolsClient(url);
+    const two = await connectDevToolsClient(url);
+
+    const answers: unknown[] = [];
+    for (let round = 0; round < 20; round++) {
+      const [first, second] = await Promise.all([
+        one.send("Runtime.evaluate", { expression: "'one'" }),
+        two.send("Runtime.evaluate", { expression: "'two'" }),
+      ]);
+      answers.push([first.result?.result?.value, second.result?.result?.value]);
+    }
+    expect(answers).toEqual(Array.from({ length: 20 }, () => ["one", "two"]));
+
+    await one.close();
+    await two.close();
+  },
+  attachTimeout,
 );
 
 // A pause waits for a client that can resume it. The in-process Session cannot: its thread is
@@ -1299,7 +1335,7 @@ process.stdin.on("data", data => {
     expect(done).toEqual(["done 1", "done 2", "done 3", "done 4"]);
     expect(proc.exitCode).toBeNull();
   },
-  30_000,
+  attachTimeout,
 );
 
 test("disconnect does not clobber a console method reassigned by user code", () => {

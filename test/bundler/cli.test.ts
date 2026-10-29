@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync, unprivilegedSpawnOptions } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  unprivilegedSpawnOptions,
+} from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -605,51 +613,54 @@ describe.concurrent("the default root of a multi-entry build", () => {
 });
 
 // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-test.skipIf(isWindows)("the default root is the working directory when the shared directory does not open", async () => {
-  const nine = Array.from({ length: 9 }, (_, i) => `../${i % 2 ? "x" : "y"}/e${i}.ts`);
-  using dir = tempDir("build-root-unlistable", {
-    "shared/app/index.ts": `console.log("index");`,
-    "shared/app/src/x/a.ts": `console.log("a");`,
-    "shared/app/src/y/b.ts": `console.log("b");`,
-    ...Object.fromEntries(
-      nine.map(name => [path.posix.join("shared/app", name), `console.log(${JSON.stringify(name)});`]),
-    ),
-  });
-  const shared = path.join(String(dir), "shared");
-  const cwd = path.join(shared, "app");
-  using unprivileged = unprivilegedSpawnOptions(String(dir));
+test.skipIf(isWindows)(
+  "the default root is the working directory when the shared directory does not open",
+  async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `../${i % 2 ? "x" : "y"}/e${i}.ts`);
+    using dir = tempDir("build-root-unlistable", {
+      "shared/app/index.ts": `console.log("index");`,
+      "shared/app/src/x/a.ts": `console.log("a");`,
+      "shared/app/src/y/b.ts": `console.log("b");`,
+      ...Object.fromEntries(
+        nine.map(name => [path.posix.join("shared/app", name), `console.log(${JSON.stringify(name)});`]),
+      ),
+    });
+    const shared = path.join(String(dir), "shared");
+    const cwd = path.join(shared, "app");
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
 
-  // The user may enter each folder and may not list it.
-  const builds = [
-    { unlistable: shared, outdir: "mixed", entryPoints: ["./index.ts", "../x/e1.ts"] },
-    { unlistable: shared, outdir: "nine", entryPoints: nine },
-    { unlistable: path.join(cwd, "src"), outdir: "inside", entryPoints: ["src/x/a.ts", "./src/y/b.ts"] },
-  ];
-  const built: string[][] = [];
-  for (const { unlistable, outdir, entryPoints } of builds) {
-    fs.chmodSync(unlistable, 0o311);
-    try {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", ...entryPoints, "--outdir", outdir],
-        env: bunEnv,
-        cwd,
-        stdout: "ignore",
-        stderr: "pipe",
-        ...unprivileged,
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    } finally {
-      fs.chmodSync(unlistable, 0o755);
+    // The user may enter each folder and may not list it.
+    const builds = [
+      { unlistable: shared, outdir: "mixed", entryPoints: ["./index.ts", "../x/e1.ts"] },
+      { unlistable: shared, outdir: "nine", entryPoints: nine },
+      { unlistable: path.join(cwd, "src"), outdir: "inside", entryPoints: ["src/x/a.ts", "./src/y/b.ts"] },
+    ];
+    const built: string[][] = [];
+    for (const { unlistable, outdir, entryPoints } of builds) {
+      fs.chmodSync(unlistable, 0o311);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", ...entryPoints, "--outdir", outdir],
+          env: bunEnv,
+          cwd,
+          stdout: "ignore",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      } finally {
+        fs.chmodSync(unlistable, 0o755);
+      }
+      built.push(Array.from(new Bun.Glob("**/*.js").scanSync({ cwd: path.join(cwd, outdir) })).sort());
     }
-    built.push(Array.from(new Bun.Glob("**/*.js").scanSync({ cwd: path.join(cwd, outdir) })).sort());
-  }
-  expect(built).toEqual([
-    ["_.._/x/e1.js", "index.js"],
-    [1, 3, 5, 7].map(i => `_.._/x/e${i}.js`).concat([0, 2, 4, 6, 8].map(i => `_.._/y/e${i}.js`)),
-    ["src/x/a.js", "src/y/b.js"],
-  ]);
-});
+    expect(built).toEqual([
+      ["_.._/x/e1.js", "index.js"],
+      [1, 3, 5, 7].map(i => `_.._/x/e${i}.js`).concat([0, 2, 4, 6, 8].map(i => `_.._/y/e${i}.js`)),
+      ["src/x/a.js", "src/y/b.js"],
+    ]);
+  },
+);
 
 // macOS and Windows read files on the IO pool by default.
 test("exits with the build error when a build fails while the IO pool is still reading entry points", async () => {

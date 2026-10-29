@@ -892,14 +892,16 @@ describe("Bun.build", () => {
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  test.skipIf(isWindows)("the default root is the working directory when the shared directory does not open", async () => {
-    const nine = Array.from({ length: 9 }, (_, i) => `../${i % 2 ? "x" : "y"}/e${i}.ts`);
-    using dir = tempDir("build-root-unlistable", {
-      "shared/app/index.ts": `console.log("index");`,
-      ...Object.fromEntries(
-        nine.map(name => [path.posix.join("shared/app", name), `console.log(${JSON.stringify(name)});`]),
-      ),
-      "build.ts": `
+  test.skipIf(isWindows)(
+    "the default root is the working directory when the shared directory does not open",
+    async () => {
+      const nine = Array.from({ length: 9 }, (_, i) => `../${i % 2 ? "x" : "y"}/e${i}.ts`);
+      using dir = tempDir("build-root-unlistable", {
+        "shared/app/index.ts": `console.log("index");`,
+        ...Object.fromEntries(
+          nine.map(name => [path.posix.join("shared/app", name), `console.log(${JSON.stringify(name)});`]),
+        ),
+        "build.ts": `
         import { relative, resolve } from "node:path";
         const nine = ${JSON.stringify(nine)};
         for (const [outdir, entrypoints] of [["mixed", ["./index.ts", "../x/e1.ts"]], ["nine", nine]]) {
@@ -907,34 +909,37 @@ describe("Bun.build", () => {
           console.log(JSON.stringify(result.outputs.map(output => relative(resolve(outdir), output.path)).sort()));
         }
       `,
-    });
-    const shared = join(String(dir), "shared");
-    using unprivileged = unprivilegedSpawnOptions(String(dir));
+      });
+      const shared = join(String(dir), "shared");
+      using unprivileged = unprivilegedSpawnOptions(String(dir));
 
-    // The user may enter the folder and may not list it.
-    chmodSync(shared, 0o311);
-    try {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(String(dir), "build.ts")],
-        env: bunEnv,
-        cwd: join(shared, "app"),
-        stdout: "pipe",
-        stderr: "pipe",
-        ...unprivileged,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-        stdout: [
-          '["_.._/x/e1.js","index.js"]',
-          JSON.stringify([1, 3, 5, 7].map(i => `_.._/x/e${i}.js`).concat([0, 2, 4, 6, 8].map(i => `_.._/y/e${i}.js`))),
-        ],
-        stderr: "",
-        exitCode: 0,
-      });
-    } finally {
-      chmodSync(shared, 0o755);
-    }
-  });
+      // The user may enter the folder and may not list it.
+      chmodSync(shared, 0o311);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(String(dir), "build.ts")],
+          env: bunEnv,
+          cwd: join(shared, "app"),
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+          stdout: [
+            '["_.._/x/e1.js","index.js"]',
+            JSON.stringify(
+              [1, 3, 5, 7].map(i => `_.._/x/e${i}.js`).concat([0, 2, 4, 6, 8].map(i => `_.._/y/e${i}.js`)),
+            ),
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        chmodSync(shared, 0o755);
+      }
+    },
+  );
 
   test("BuildArtifact properties", async () => {
     Bun.gc(true);

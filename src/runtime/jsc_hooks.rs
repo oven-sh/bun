@@ -2300,14 +2300,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // ── Watcher package_json lookup ─────────────────────────────────
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set during VM init (BACKREF); cast recovers the concrete type.
-                let import_watcher: *mut bun_jsc::ImportWatcher =
-                    unsafe { &*jsc_vm }.bun_watcher.cast();
+                // SAFETY: `bun_watcher` is the `*mut Watcher`
+                // set during VM init (BACKREF).
+                let import_watcher = unsafe { &*jsc_vm }.bun_watcher;
                 if !import_watcher.is_null() {
                     // SAFETY: non-null per check above. Never read through the
                     // watchlist's stored fd; see
-                    // `ImportWatcher::snapshot_package_json`.
+                    // `Watcher::snapshot_package_json`.
                     let iw = unsafe { &*import_watcher };
                     package_json = iw.snapshot_package_json(hash);
                 }
@@ -3322,11 +3321,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     bun_sys::Fd::INVALID
                 };
                 let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set when `is_watcher_enabled()`; cast recovers the concrete
-                // type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+                // SAFETY: `bun_watcher` is the `*mut Watcher`
+                // set when `is_watcher_enabled()`.
+                let watcher = unsafe { &mut *(*jsc_vm).bun_watcher };
                 let added =
                     watcher.add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
                 if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
@@ -3417,9 +3414,9 @@ fn maybe_watch_file(
     {
         return;
     }
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-    // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    // SAFETY: `bun_watcher` is the `*mut Watcher` set when
+    // `is_watcher_enabled()`.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher };
     if matches!(
         watcher.add_file::<true>(
             input_file_fd,

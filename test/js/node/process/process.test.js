@@ -3262,7 +3262,7 @@ it("emitWarning keeps an empty message, and an empty type is 'Warning'", async (
        process.emitWarning("", { type: "" });
        process.emitWarning("", "Custom");`,
     ],
-    env: { ...bunEnv, NODE_NO_WARNINGS: undefined },
+    env: { ...bunEnv, NODE_NO_WARNINGS: undefined, NODE_REDIRECT_WARNINGS: undefined },
     stdout: "pipe",
     stderr: "pipe",
   });

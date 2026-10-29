@@ -723,11 +723,7 @@ fn async_job_run<T: CompressionStreamImpl>(this: *mut T) {
 
 /// VM teardown, JS thread, heap alive: a completion that was queued but
 /// will not run. The cleanup half of `run_from_js_thread`, no callbacks.
-///
-/// # Safety
-/// As [`run_from_js_thread`].
-pub(crate) unsafe fn release_unrun<T: CompressionStreamImpl>(this_ptr: *mut T) {
-    let this = ParentRef::from(NonNull::new(this_ptr).expect("release_unrun: this"));
+pub(crate) fn release_unrun<T: CompressionStreamImpl>(this: RefPtr<T>) {
     let global: &JSGlobalObject = this.global_this();
     let vm = global.bun_vm();
     this.write_in_progress().set(false);
@@ -735,29 +731,15 @@ pub(crate) unsafe fn release_unrun<T: CompressionStreamImpl>(this_ptr: *mut T) {
         this.unpin_pending_buffers(this_value);
     }
     this.poll_ref().with_mut(|p| p.unref(vm));
-    // SAFETY: fn contract — the write's ref.
-    unsafe { T::deref(this_ptr) };
+    drop(this);
 }
 
 /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts
-/// the completion task back to the JS thread.
-///
-/// R-2: takes `*mut T` (full allocation provenance from `Task.ptr`) so the
-/// trailing `T::deref(this_ptr)` may free the box if it hits zero. All
-/// field access goes through `&*this_ptr` and the `&self` accessor surface;
-/// every accessed field is `Cell`/`JsCell`-backed so re-entry via the
-/// onerror / write callbacks is sound (no `noalias` to violate, no
-/// `black_box` launders needed).
-///
-/// SAFETY: `this_ptr` is the live heap payload; the matching
-/// `ref_()` in `write()` keeps it alive until the trailing `deref()`.
-pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut T) {
-    // See the fn-level contract.
-    let this = ParentRef::from(NonNull::new(this_ptr).expect("run_from_js_thread: this"));
+/// the completion task back to the JS thread. `this` is the ref `write()` took.
+pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(this: RefPtr<T>) {
     let global: &JSGlobalObject = this.global_this();
     let vm = global.bun_vm();
-    // `this.deref()` and `this.poll_ref.unref(vm)` must run on every
-    // return path; we call them explicitly.
+    // `this.poll_ref.unref(vm)` must run on every return path, before `this` is dropped.
 
     this.write_in_progress().set(false);
 
@@ -765,9 +747,7 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
     let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
         bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
         this.poll_ref().with_mut(|p| p.unref(vm));
-        // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
-        // payload and is not accessed after this call.
-        unsafe { T::deref(this_ptr) };
+        drop(this);
         return;
     };
 
@@ -779,8 +759,7 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
 
     if !this.check_error(global, this_value) {
         this.poll_ref().with_mut(|p| p.unref(vm));
-        // SAFETY: see above.
-        unsafe { T::deref(this_ptr) };
+        drop(this);
         return;
     }
 
@@ -810,9 +789,7 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
     }
 
     this.poll_ref().with_mut(|p| p.unref(vm));
-    // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap payload
-    // and is not accessed after this call.
-    unsafe { T::deref(this_ptr) };
+    drop(this);
 }
 
 /// Implements [`CompressionContext`] for a `Context` type and
@@ -835,7 +812,8 @@ macro_rules! __impl_compression_stream {
             /// the write's ref — no callbacks.
             unsafe fn release_unrun(this: *mut Self) {
                 // SAFETY: fn contract — the stream the pool posted (write's ref held).
-                unsafe { $crate::node::node_zlib_binding::release_unrun(this) }
+                let this = unsafe { ::bun_ptr::RefPtr::from_raw(this) };
+                $crate::node::node_zlib_binding::release_unrun(this)
             }
             /// The write always completes (its buffers are unpinned); the callbacks it reports to carry
             /// the async context of the script that set them.

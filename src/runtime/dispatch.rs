@@ -213,13 +213,12 @@ pub(crate) fn run_task(
             )
         };
     }
-    /// `run_from_js_thread` takes `*mut T` (full
-    /// allocation provenance) so its trailing `T::deref()` may free the box.
     macro_rules! compression_arm {
         ($feature:ident, $T:ty) => {
             feature_arm!([$feature], |stream: $T| {
-                // SAFETY: §Dispatch — tag identifies pointee; live payload.
-                unsafe { node_zlib_binding::run_from_js_thread(stream) };
+                // SAFETY: §Dispatch — tag identifies pointee; the task holds the ref `write()` took.
+                let stream = unsafe { bun_ptr::RefPtr::from_raw(stream) };
+                node_zlib_binding::run_from_js_thread(stream);
             })
         };
     }

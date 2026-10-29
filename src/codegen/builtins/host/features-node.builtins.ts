@@ -142,7 +142,7 @@ export default b.declarations(
     ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "getBunServerAllClosedPromise"),
   ),
   extendAll(
-    ["NodeHttp", "TlsSockets", "X509"],
+    ["TlsSockets", "NodeHttp", "X509"],
     "%NodeHTTPServerSocketTLS%",
     ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "setTLSServerOptions"),
     ...nativeBindings("Bindgen", "socket_body.bind.ts", "NodeHTTPServerSocketTLS"),

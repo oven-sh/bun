@@ -41,7 +41,7 @@ pub(crate) mod level {
 }
 
 unsafe extern "C" {
-    fn Process__emitMemoryPressureEvent(global: *mut JSGlobalObject, level: i32);
+    safe fn Process__emitMemoryPressureEvent(global: &JSGlobalObject, level: i32);
 }
 
 /// `run_task` target for `task_tag::MemoryPressureTask`. `lvl` is the packed
@@ -53,8 +53,7 @@ pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     } else {
         level::WARNING
     };
-    // SAFETY: FFI; `global` is the live per-thread global.
-    unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
+    Process__emitMemoryPressureEvent(global, lvl);
 }
 
 /// The queued form of a pressure notification: `Task::ptr` packs the level,

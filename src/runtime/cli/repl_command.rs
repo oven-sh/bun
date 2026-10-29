@@ -16,8 +16,8 @@ use crate::dns_jsc::Order as DnsOrder;
 use bun_alloc::Arena;
 use bun_core::EncodedSlice;
 use bun_core::{Global, Output};
+use bun_jsc as jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject};
 
 // `repl.rs` is a sibling file with no other consumers; declare it as a child
 // module here so `Repl` resolves without touching `cli/mod.rs`.
@@ -252,10 +252,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
         // This must be done inside the API lock as it allocates JS objects
-        // SAFETY: vm.global is a valid JSGlobalObject pointer for the duration of the API lock.
-        unsafe {
-            Bun__ExposeNodeModuleGlobals(vm.global);
-        }
+        bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(vm.global());
 
         // Set up require(), module, __filename, __dirname relative to cwd
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
@@ -277,11 +274,6 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 
         Ok(())
     }
-}
-
-// Local extern declarations for C++ exports the bun_jsc wrappers don't expose yet.
-unsafe extern "C" {
-    fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
 }
 
 use bun_bundler::options::EnvBehavior;

@@ -46,7 +46,7 @@ unsafe extern "C" {
     /// Crashes the same way the stubs do. `name` must be static. Never returns.
     fn CrashHandler__unsupportedUVFunction(name: *const c_char);
     /// Returns null while the GC is sweeping. `HandleScopeImpl__close` accepts null.
-    fn HandleScopeImpl__open(global: *const JSGlobalObject) -> *mut c_void;
+    safe fn HandleScopeImpl__open(global: &JSGlobalObject) -> *mut c_void;
     fn HandleScopeImpl__close(global: *const JSGlobalObject, scope: *mut c_void);
 }
 
@@ -69,8 +69,7 @@ impl<'a> CallbackScope<'a> {
     fn open(global: &'a JSGlobalObject) -> CallbackScope<'a> {
         CallbackScope {
             global,
-            // SAFETY: `global` is alive, and this is its JS thread.
-            scope: unsafe { HandleScopeImpl__open(global) },
+            scope: HandleScopeImpl__open(global),
         }
     }
 }

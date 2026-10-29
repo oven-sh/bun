@@ -1427,18 +1427,12 @@ impl Run<'_> {
     /// Wire `--eval`/`--print`
     /// node-module globals and `--expose-gc` into the JSC global object.
     fn add_conditional_globals(vm: &VirtualMachine, ctx: &ContextData) {
-        unsafe extern "C" {
-            fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
-            fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
-        }
         let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
-            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
-            unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
+            bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(vm.global());
         }
         if ro.expose_gc {
-            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
-            unsafe { JSC__JSGlobalObject__addGc(vm.global) };
+            bun_jsc::cpp::JSC__JSGlobalObject__addGc(vm.global());
         }
     }
 

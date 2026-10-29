@@ -235,7 +235,7 @@ impl<'p> Checker<'p, '_> {
         let hir = self.hir(file);
         let class = &hir[c];
         // Otherwise only members with `override` are visited.
-        let visits_all = self.p.files.options.no_implicit_override;
+        let visits_all = self.module_options(file).no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
             // `ModifierFlags()`: the modifiers written before `static { }` are only in its list.
@@ -304,7 +304,7 @@ impl<'p> Checker<'p, '_> {
         let is_js = self.hir(file).is_js;
         let code = |code: u32| if is_js { js_override_code(code) } else { code };
         let has_override = member.flags.contains(Flags::OVERRIDE);
-        let no_implicit_override = self.p.files.options.no_implicit_override;
+        let no_implicit_override = self.module_options(file).no_implicit_override;
         let (constructor, base) = match base {
             ClassBase::Unknown => return,
             ClassBase::Nothing => {
@@ -349,7 +349,7 @@ impl<'p> Checker<'p, '_> {
                 .map(|found| found.0)
         };
         let Some(base_prop) = base_prop else {
-            if has_override {
+            if has_override && !self.stands_below_undeclared_class(sym) {
                 let at = self.span_of_overrider(file, member);
                 match self.suggested_member(base_type, name) {
                     Some(suggestion) => {
@@ -506,7 +506,7 @@ impl<'p> Checker<'p, '_> {
         if class_extends_null {
             self.error(file, first, 17005, &[]);
         }
-        if self.p.files.options.emit_standard_class_fields {
+        if self.module_options(file).emit_standard_class_fields {
             return;
         }
         // `isInstancePropertyWithInitializerOrPrivateIdentifierProperty`, or a parameter property.

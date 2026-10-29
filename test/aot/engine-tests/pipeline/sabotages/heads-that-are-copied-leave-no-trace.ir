@@ -1,0 +1,6 @@
+# sabotage=HeadsThatAreCopiedLeaveNoTrace: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=HeadsThatAreCopiedLeaveNoTrace
+# CHECK-NOT: caught fuse at 1 b0 0 none yet
+# PROGRAM-OF: heads-that-are-copied-leave-no-trace-left-alone.ir

@@ -1,0 +1,46 @@
+# function g() { return [5]; } function under(key) { return [[5][key]]; } const name = "length"; [[g()[name]], [g()[0]], [g()["0"]], under(name), under(0)]
+# A number that is read from a list and stored in another list is one of the numbers that were stored in the first list where the key names an element: a number, or a name that reads as one.
+# Under any other key the read answers a property of the list or of an object above it, and the list that takes the number is held to what the read itself may answer.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = NewArray {{*}} contents=number
+# CHECK: = NewArray {{*}} contents=undefined|5
+# CHECK: = NewArray {{*}} contents=undefined|5
+# CHECK-LABEL: function f2 name="under"
+# CHECK: = NewArray {{*}} contents=5
+# CHECK: = NewArray {{*}} contents=undefined|number
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = String string="length"
+    v3 = ElemGet v1, v2
+    v4 = NewArray v3 contents=anything
+    v5 = Call v0
+    v6 = Integer
+    v7 = ElemGet v5, v6
+    v8 = NewArray v7 contents=anything
+    v9 = Call v0
+    v10 = String string="0"
+    v11 = ElemGet v9, v10
+    v12 = NewArray v11 contents=anything
+    v13 = NewClosure function=f2
+    v14 = Call v13, -, v2
+    v15 = Call v13, -, v6
+    v16 = NewArray v4, v8, v12, v14, v15 contents=anything
+    Return v16
+}
+function f1 name="g" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=5
+    v1 = NewArray v0 contents=anything
+    Return v1
+}
+function f2 name="under" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=5
+    v2 = NewArray v1 contents=anything
+    v3 = ElemGet v2, v0
+    v4 = NewArray v3 contents=anything
+    Return v4
+}

@@ -1,0 +1,1 @@
+const tail = s => String(s).split(/[\\/]/).slice(-2).join("/"); export const u = tail(import.meta.url), d = tail(import.meta.dir), f = import.meta.file, m = import.meta.main, p = tail(import.meta.path), dn = tail(import.meta.dirname), fn = tail(import.meta.filename);

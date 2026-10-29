@@ -1,0 +1,63 @@
+{
+  "bun-serve": {
+    "thousandInstructions": 3086,
+    "pageFaults": 951,
+    "systemCalls": 285,
+    "privateKilobytes": 2008
+  },
+  "command-line-tool-of-50-modules": {
+    "thousandInstructions": 4870,
+    "pageFaults": 1057,
+    "systemCalls": 268
+  },
+  "express": {
+    "thousandInstructions": 41546,
+    "pageFaults": 2272,
+    "systemCalls": 367,
+    "privateKilobytes": 5596
+  },
+  "fastify": {
+    "thousandInstructions": 29652,
+    "pageFaults": 2240,
+    "systemCalls": 320,
+    "privateKilobytes": 5436
+  },
+  "hello-world": {
+    "thousandInstructions": 2671,
+    "pageFaults": 784,
+    "systemCalls": 263
+  },
+  "hono": {
+    "thousandInstructions": 8114,
+    "pageFaults": 1294,
+    "systemCalls": 290,
+    "privateKilobytes": 2840
+  },
+  "koa": {
+    "thousandInstructions": 54197,
+    "pageFaults": 2680,
+    "systemCalls": 362,
+    "privateKilobytes": 7056
+  },
+  "lazy-exports-bound-by-the-entry-and-used-in-a-function-nobody-calls": {
+    "thousandInstructions": 7456,
+    "pageFaults": 1242,
+    "systemCalls": 271
+  },
+  "lazy-exports-imported-by-a-module-that-is-never-loaded": {
+    "thousandInstructions": 4148,
+    "pageFaults": 1089,
+    "systemCalls": 266
+  },
+  "node-http": {
+    "thousandInstructions": 10652,
+    "pageFaults": 1386,
+    "systemCalls": 296,
+    "privateKilobytes": 3036
+  },
+  "streams-of-the-process-imported-by-a-module-that-is-never-loaded": {
+    "thousandInstructions": 3273,
+    "pageFaults": 949,
+    "systemCalls": 265
+  }
+}

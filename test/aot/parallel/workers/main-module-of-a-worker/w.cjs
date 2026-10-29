@@ -1,0 +1,1 @@
+const m = require.main; const same = (a, b) => a === b; postMessage([same(m, module), require.main === module, require.main !== module, module === require.main, import.meta.main, !import.meta.main, module.id, typeof require.main.require])

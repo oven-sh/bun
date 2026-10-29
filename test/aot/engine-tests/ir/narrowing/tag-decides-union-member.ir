@@ -1,0 +1,156 @@
+# A test of a tag says which member of a union an object is, as long as the tag holds what the member was created with. Every way to give an object the tag of another member has to read what plain Bun reads.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="tag-decides-union-member.ts" displayPath="tag-decides-union-member.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Leaf" module=m0 position=4314 constructor=f3 fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Pair" module=m0 position=4367 constructor=f4 fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="right" declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=3
+layout L2 name="Zero" module=m0 position=3847 fields=[{key="kind" declared={type=0} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L3 name="Minus" module=m0 position=3883 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="m" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L2 members=[{key="kind" value=Number{}}, {key="z" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L3 members=[{key="kind" value=Number{value=-0}}, {key="m" value=Number{value=2}}]} module=m0
+data d2 root=Object{layout=L3 members=[{key="kind" value=Number{value=NaN}}, {key="m" value=Number{value=3}}]} module=m0
+variable g0 name="count" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Integer
+    v7 = Convert v6 declared={type=number}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number}
+    v10 = Integer
+    v11 = Convert v10 declared={type=number}
+    v12 = Integer
+    v13 = Convert v12 declared={type=number}
+    v14 = Integer
+    v15 = Convert v14 declared={type=number}
+    v16 = Data data=d0
+    v17 = Convert v16 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v18 = Data data=d1
+    v19 = Convert v18 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}
+    v20 = Data data=d2
+    v21 = Convert v20 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="console" [isFreeName]
+    v24 = Convert v23 declared={type=builtin(Console) flags=[IsExpected]}
+    v25 = PropGet v24 key="log"
+    v26 = Convert v25 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v27 = String string="zero, minus zero and NaN"
+    v28 = Call v1, -, v17 calleeName="zeroes"
+    v29 = Convert v28 declared={type=undefined|number}
+    v30 = Call v1, -, v19 calleeName="zeroes"
+    v31 = Convert v30 declared={type=undefined|number}
+    v32 = Call v1, -, v21 calleeName="zeroes"
+    v33 = Convert v32 declared={type=undefined|number}
+    v34 = Call v26, v24, v27, v29, v31, v33 calleeKey="log" calleeName="console.log"
+    v35 = Construct v5 calleeName="Leaf"
+    v36 = Convert v35 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v37 = Convert v36 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}
+    v38 = Integer
+    v39 = Convert v38 declared={type=number}
+    v40 = GetModuleVariable variable=g0
+    v41 = Call v40, -, v37 calleeName="count"
+    v42 = Undefined
+    Return v42
+}
+function f1 name="count" module=m0 position=4542 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1):
+    v1 = PropGet v0 key="kind"
+    v2 = NarrowByField v0, v1 key="kind"
+    v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=Assertion
+    v4 = PropGet v3 key="text"
+    v5 = PropGet v4 key="length"
+    v6 = Convert v5 declared={type=number} illTypedCause=Assertion
+    v7 = Convert v6 declared={type=number}
+    Return v7
+}
+function f2 name="zeroes" module=m0 position=3920 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L2|L3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L2|L3):
+    v1 = PropGet v0 key="kind"
+    Switch v1 cases=[0] -> case b1(| 0), otherwise b2()
+  b1(v2):
+    v3 = NarrowByField v0, v2 key="kind"
+    v4 = Convert v3 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v5 = PropGet v4 key="z"
+    v6 = Convert v5 declared={type=undefined|number}
+    Return v6
+  b2():
+    v7 = Convert v0 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v8 = PropGet v7 key="m"
+    v9 = Convert v8 declared={type=undefined|number}
+    Return v9
+}
+function f3 name="Leaf" module=m0 position=4314 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f5
+    Return v3
+}
+function f4 name="Pair" module=m0 position=4437 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+function f5 module=m0 position=4314 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=1}
+    PropDefine v1, v3 key="kind"
+    v5 = Undefined
+    Return v5
+}
+# -- generated: Leaf
+# CHECK-LABEL: function {{*}}name="Leaf"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int64 b@20 = Patchpoint(b@18:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:Top, v2:GetConstructPrototype)
+# CHECK-NEXT: Int64 b@2 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@22 = Load(b@2, offset = 104, ReadsImmutable, v2:GetConstructPrototype)
+# CHECK-NEXT: Int64 b@21 = BitAnd(b@20, b@22, v2:GetConstructPrototype)
+# CHECK-NEXT: Void b@23 = Branch(b@21, Terminal, v2:GetConstructPrototype)
+# CHECK-NEXT: Successors: Then:Rare:#5, Else:#1
+# CHECK-NEXT: BB#1: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int32 b@24 = Load8Z(b@20, offset = 5, ControlDependent|ReadsImmutable|Reads:JSCell_typeInfoType, v2:GetConstructPrototype)
+# CHECK-NEXT: Int32 b@25 = Const32(34, v2:GetConstructPrototype)
+# CHECK-NEXT: Int32 b@26 = AboveEqual(b@24, $34(b@25), v2:GetConstructPrototype)
+# CHECK-NEXT: Void b@27 = Branch(b@26, Terminal, v2:GetConstructPrototype)
+# CHECK-NEXT: Successors: Then:#2, Else:Rare:#5
+# CHECK-NEXT: BB#2: ; frequency = 0.998048
+# CHECK-NEXT: Predecessors: #1
+# CHECK-NEXT: Void b@28 = Upsilon(b@20, ^33, WritesLocalState, v2:GetConstructPrototype)
+# CHECK-NEXT: Void b@29 = Jump(Terminal, v2:GetConstructPrototype)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: BB#6: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #5, #2
+# CHECK-NEXT: Int64 b@33 = Phi(ReadsLocalState, v2:GetConstructPrototype)
+# CHECK-NEXT: Int64 b@34 = Const64(1, v3:NewObject)
+# CHECK-NEXT: Int64, Int64 b@35 = Patchpoint($1(b@34):Register(%r10), b@33:Register(%rdx), resultConstraints = [Register(%rax), Register(%r9)], ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, MemberGuards, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v3:NewObject)
+# CHECK-NEXT: Int64 b@36 = Extract(b@35, <<0, v3:NewObject)
+# CHECK-NEXT: Void b@39 = Fence(Fence|Reads:jscRoot, v3:NewObject)
+# CHECK-NEXT: Int32 b@40 = Const32(1, v5:Integer)
+# CHECK-NEXT: Void b@41 = Store8($1(b@40), b@36, offset = 16, ControlDependent|Writes:ObjectFields.0, v6:PutSlot)
+# CHECK-NEXT: Void b@42 = Return(b@36, Terminal)
+# CHECK-NEXT: BB#5: ; frequency = 0.001952
+# CHECK-NEXT: Predecessors: #0, #1
+# CHECK-NEXT: Int64 b@30 = Patchpoint(b@18:ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:Top, v2:GetConstructPrototype)
+# CHECK-NEXT: Void b@31 = Upsilon(b@30, ^33, WritesLocalState, v2:GetConstructPrototype)
+# CHECK-NEXT: Void b@32 = Jump(Terminal, v2:GetConstructPrototype)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@33: dereferenceableBytes = 8
+# CHECK-NEXT: b@36: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f3
+# CHECK-LABEL: function {{*}}name="Leaf"
+# CHECK: role=GenericEntrypoint
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@25 = ArgumentReg(%rdi)
+# CHECK-NEXT: Void b@27 = Patchpoint(b@25:Register(%rdi), runsWithoutFrame, resultConstraints = WarmAny, Terminal|ExitsSideways|ControlDependent|WritesPinned|ReadsPinned|Fence|Writes:Top|Reads:Top, v3:CallDirect)
+# CHECK-NEXT: end of function f8

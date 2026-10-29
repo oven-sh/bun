@@ -1,0 +1,47 @@
+# An iteration over an instance of a class below a typed array reads elements of the kind of that typed array
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 2
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="buffer" parameters=[{type=Buffer<number, pristine[Names]>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="buffer"
+# CHECK: b0(v0: Buffer<number, pristine[Names]>):
+# CHECK-NEXT: RequireAttachedTypedArray v0
+# CHECK: = GetTypedArrayLength v0 typedArrayType=2
+# CHECK: : undefined|int[0, 255] = GetTypedArrayElement v0, {{*}} typedArrayType=2 [keyIsIntegral]
+
+function f1 name="valuesOfBuffer" parameters=[{type=Buffer}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=TypedArrayPrototypeValues/0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+}
+# CHECK-LABEL: function f1 name="valuesOfBuffer"
+# CHECK: b0(v0: Buffer):
+# CHECK-NEXT: = CallBuiltin v0 overload=TypedArrayPrototypeValues/0
+# CHECK: = GetTypedArrayLength v0 typedArrayType=2
+# CHECK: : undefined|int[0, 255] = GetTypedArrayElement v0, {{*}} typedArrayType=2 [keyIsIntegral]
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume

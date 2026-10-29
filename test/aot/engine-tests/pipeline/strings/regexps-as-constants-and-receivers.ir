@@ -1,0 +1,77 @@
+# A RegExp literal is an object wherever it stands: a constant of the module that is made when it is first read, the receiver of a method, an argument. `new RegExp` likewise, or it throws.
+# FORM: AsRead
+# DIAGNOSTIC: RegExpWithoutCode
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="regexps-as-constants-and-receivers.ts" displayPath="regexps-as-constants-and-receivers.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewRegExp pattern="(?<first>\\w)(?<rest>\\w*)"
+    v3 = Convert v2 declared={type=undefined|null|RegExp flags=[OmitsNull, OmitsUndefined]}
+    v4 = String string="a+"
+    v5 = String string="g"
+    v6 = Call v1, -, v4, v5 calleeName="build"
+    v7 = String string="("
+    v8 = Call v1, -, v7 calleeName="build"
+    v9 = PropGet v3 key="exec"
+    v10 = String string="word"
+    v11 = Call v9, v3, v10 calleeKey="exec" calleeName="NAMED.exec"
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v13 = Undefined
+    v14 = Undefined
+    v15 = Undefined
+    v16 = Integer
+    v17 = Convert v16 declared={type=number}
+    v18 = Integer
+    v19 = Convert v18 declared={type=number}
+    v20 = Undefined
+    Return v20
+}
+function f1 name="build" module=m0 position=1268 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string):
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Builtin builtin=String
+    v3 = Builtin builtin=RegExp
+    v4 = Construct v3, -, v0, v1 calleeName="RegExp"
+    v5 = Convert v4 declared={type=undefined|null|RegExp flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v6 = Call v2, -, v5 calleeName="String"
+    v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    Return v7
+  b2() role=CatchHandler:
+    v8 = CatchValue
+    v9 = Convert v8 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v10 = PropGet v9 key="name"
+    v11 = Convert v10 declared={type=undefined|null|string} illTypedCause=Assertion
+    Return v11
+}
+# -- generated: build
+# CHECK-LABEL: function {{*}}name="build"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@19 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int64 b@22 = Patchpoint(b@19:Register(%r9), resultConstraints = Register(%rax), pureFunction = 0x900000000(children), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v2:CallBuiltin)
+# CHECK-NEXT: Int64 b@23 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000001, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v2:CallBuiltin)
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int64 b@25 = Patchpoint(b@23:Register(%r8), b@23:Register(%rax), b@18:Register(%rdi), b@22:Register(%rsi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v2:CallBuiltin)
+# CHECK-NEXT: Successors: #4, Rare:#3
+# CHECK-NEXT: BB#4: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@27 = Patchpoint(b@25:Register(%rsi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v4:ToString)
+# CHECK-NEXT: Successors: #5, Rare:#3
+# CHECK-NEXT: BB#5: ; frequency = 0.998048
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Void b@28 = Return(b@27, Terminal)
+# CHECK-NEXT: BB#3: ; frequency = 0.001952
+# CHECK-NEXT: Predecessors: #0, #4
+# CHECK-NEXT: Int64 b@29 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, RuntimeState}|Reads:{frameSlots, RuntimeState}, v5:CatchValue)
+# CHECK-NEXT: Int64 b@30 = Patchpoint(b@29:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v7:PropGet)
+# CHECK-NEXT: Void b@31 = Return(b@30, Terminal)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@18: dereferenceableBytes = 16
+# CHECK-NEXT: b@27: dereferenceableBytes = 16
+# CHECK-NEXT: end of function f1

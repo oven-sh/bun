@@ -181,6 +181,12 @@ src/jdsample.c
   Copyright (C) 2015, Google, Inc.
   Copyright (C) 2019-2020, Arm Limited.
 
+src/jdsample.h
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1996, Thomas G. Lane.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2022, 2026, D. R. Commander.
+
 src/jdcolor.c
   This file was part of the Independent JPEG Group's software:
   Copyright (C) 1991-1997, Thomas G. Lane.
@@ -241,6 +247,44 @@ src/jerror.h
   Copyright (C) 1999, Ken Murchison.
   libjpeg-turbo Modifications:
   Copyright (C) 2014, 2017, 2021-2023, 2026, D. R. Commander.
+
+src/jpeglib.h
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1998, Thomas G. Lane.
+  Modified 2002-2009 by Guido Vollbeding.
+  Lossless JPEG Modifications:
+  Copyright (C) 1999, Ken Murchison.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2009-2011, 2013-2014, 2016-2017, 2020, 2022-2024,
+            D. R. Commander.
+  Copyright (C) 2015, Google, Inc.
+
+src/jpegint.h
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1997, Thomas G. Lane.
+  Modified 1997-2009 by Guido Vollbeding.
+  Lossless JPEG Modifications:
+  Copyright (C) 1999, Ken Murchison.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2015-2017, 2019, 2021-2022, 2024-2026, D. R. Commander.
+  Copyright (C) 2015, Google, Inc.
+  Copyright (C) 2021, Alex Richardson.
+
+src/jmorecfg.h
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1997, Thomas G. Lane.
+  Modified 1997-2009 by Guido Vollbeding.
+  Lossless JPEG Modifications:
+  Copyright (C) 1999, Ken Murchison.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2009, 2011, 2014-2015, 2018, 2020, 2022, 2026,
+            D. R. Commander.
+
+src/jdct.h
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1994-1996, Thomas G. Lane.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2015, 2022, 2025, D. R. Commander.
 
 src/jcapimin.c
   This file was part of the Independent JPEG Group's software:
@@ -355,6 +399,12 @@ src/jchuff.c
   Copyright (C) 2018, Matthias Räncker.
   Copyright (C) 2020, Arm Limited.
   Copyright (C) 2022, Felix Hanau.
+
+src/jchuff.h
+  This file was part of the Independent JPEG Group's software:
+  Copyright (C) 1991-1997, Thomas G. Lane.
+  libjpeg-turbo Modifications:
+  Copyright (C) 2022, 2025, D. R. Commander.
 
 src/jcphuff.c
   This file was part of the Independent JPEG Group's software:

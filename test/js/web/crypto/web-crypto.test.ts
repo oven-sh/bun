@@ -379,18 +379,19 @@ describe("oversized inputs", () => {
     expect(exitCode).toBe(0);
   });
 
-  // WTF::String::fromUTF8 aborts on 2^30 bytes or more that are not ASCII. An AES-CTR ciphertext of
-  // zeros decrypts to the key stream, so the input is never written. unwrapKey writes two copies of
-  // it (2 GiB), so small machines skip. The child takes 2 seconds in a release build and 65 in a
-  // debug build, so debug builds skip and the test carries its own ceiling.
+  // WTF::String::fromUTF8 aborts on 2^30 bytes or more that are not ASCII. The text is 2^30 + 2 bytes
+  // of U+20AC: it has to be valid UTF-8 to get to the conversion. The child holds 4 GiB and takes 5
+  // seconds in a release build (two AES-CTR passes over 1 GiB) and 110 in a debug build, so small
+  // machines and debug builds skip, and the test carries its own ceiling.
   it.skipIf(isDebug || Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
-    'unwrapKey("jwk") rejects 1 GiB that is not ASCII instead of aborting',
+    'unwrapKey("jwk") rejects 1 GiB of UTF-8 that is not ASCII instead of aborting',
     async () => {
       const script = `
-        const key = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(1), "AES-CTR", false, ["unwrapKey"]);
+        const key = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(1), "AES-CTR", false, ["encrypt", "unwrapKey"]);
         const ctr = { name: "AES-CTR", counter: new Uint8Array(16), length: 64 };
+        const wrapped = await crypto.subtle.encrypt(ctr, key, Buffer.alloc(2 ** 30 + 2, "\\u20ac"));
         const result = await crypto.subtle
-          .unwrapKey("jwk", new Uint8Array(2 ** 30), key, ctr, "AES-GCM", true, ["encrypt"])
+          .unwrapKey("jwk", wrapped, key, ctr, "AES-GCM", true, ["encrypt"])
           .then(() => "resolved", e => e.name);
         console.log(result);
       `;

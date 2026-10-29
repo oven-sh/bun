@@ -350,7 +350,6 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
             .expect("oom");
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: std::ptr::from_mut::<DevServer>(dev),
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::ServerHandler,

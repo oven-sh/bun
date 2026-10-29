@@ -178,6 +178,8 @@ unsafe extern "C" {
         eos: c_int,
     ) -> c_int;
     pub fn lsquic_stream_get_hset(s: *mut lsquic_stream) -> *mut c_void;
+    /// `patches/lsquic/frame-header-credit-waits.patch`. Reads a process-wide atomic.
+    pub safe fn lsquic_stream_frame_header_waits(stream_credit: c_int) -> c_ulong;
 
     fn us_nq_settings_set_idle_timeout(s: *mut lsquic_engine_settings, v: c_uint);
     fn us_nq_settings_set_idle_timeout_ms(s: *mut lsquic_engine_settings, v: c_uint);

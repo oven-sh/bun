@@ -715,10 +715,10 @@ describe("hpackHuffmanDecodeShort", () => {
     let count = 0;
     let bit = skipped.length;
     while (bit < stopped && count < text.length) bit += codes.get(text[count++])!.length;
-    expect(bit, at).toBe(stopped);
-    expect(decoded, at).toBe(count);
-    expect(Buffer.from(out.subarray(0, count)).toString(), at).toBe(text.slice(0, count));
-    expect(out[room], at).toBe(0xaa);
+    compare("stopped", bit, stopped, at);
+    compare("decoded", decoded, count, at);
+    compare("text", Buffer.from(out.subarray(0, count)).toString(), text.slice(0, count), at);
+    compare("after the room", out[room], 0xaa, at);
     return count;
   }
 
@@ -726,9 +726,9 @@ describe("hpackHuffmanDecodeShort", () => {
     for (const symbol of all) {
       for (let skipped = 0; skipped < 24; skipped++) {
         const at = `symbol=${symbol} skipped=${skipped}`;
-        expect(decode(repeat("0", skipped), symbol, "", at), at).toBe(1);
+        compare("count", decode(repeat("0", skipped), symbol, "", at), 1, at);
         // With zeros after it instead of the padding.
-        expect(decode(repeat("0", skipped), symbol + "0", "", at), at).toBe(2);
+        compare("count", decode(repeat("0", skipped), symbol + "0", "", at), 2, at);
       }
     }
   });
@@ -739,7 +739,7 @@ describe("hpackHuffmanDecodeShort", () => {
       for (const rest of ["", "1111111000" + "00000", "111111111111111111111111111100" + "00000"]) {
         const at = `length=${length} rest=${rest}`;
         const off = OFFSETS[length % OFFSETS.length];
-        expect(decode(repeat("1", length % 8), textOf(length, length), rest, at, undefined, off), at).toBe(length);
+        compare("count", decode(repeat("1", length % 8), textOf(length, length), rest, at, undefined, off), length, at);
       }
     }
   });
@@ -749,7 +749,7 @@ describe("hpackHuffmanDecodeShort", () => {
       const text = Array.from({ length }, (_, i) => SYMBOLS[0][(i * 3 + length) % SYMBOLS[0].length]).join("");
       for (let skipped = 0; skipped < 8; skipped++) {
         const at = `length=${length} skipped=${skipped}`;
-        expect(decode(repeat("1", skipped), text, "", at), at).toBe(length);
+        compare("count", decode(repeat("1", skipped), text, "", at), length, at);
       }
     }
   });

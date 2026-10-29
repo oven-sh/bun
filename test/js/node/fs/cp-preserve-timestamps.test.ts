@@ -81,6 +81,8 @@ const variants: [string, fs.CopyOptions][] = [
 const shared = dirname(fs.realpathSync(os.tmpdir()));
 const sharedStat = fs.statSync(shared);
 const sharedIsNotOurs = isPosix && sharedStat.uid !== process.getuid!() && (sharedStat.mode & 0o1002) === 0o1002;
+// What utimes gives for a directory of another user: EPERM on Linux, EACCES on macOS.
+const notTheOwner = process.platform === "darwin" ? "EACCES" : "EPERM";
 
 for (const [name, copy] of copyForms) {
   describe(`fs.${name} with preserveTimestamps`, () => {
@@ -183,7 +185,7 @@ for (const [name, copy] of copyForms) {
           fs.writeFileSync(join(dir, "from", entry), "x");
           try {
             await assert.rejects(copy(join(dir, "from"), shared, { recursive: true, preserveTimestamps: true }), {
-              code: "EPERM",
+              code: notTheOwner,
               syscall: "utime",
               path: shared,
             });

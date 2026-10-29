@@ -5,6 +5,7 @@ import {
   bunExe,
   type DirectoryTree,
   isLinux,
+  isMacOS,
   isPosix,
   isRoot,
   isWindows,
@@ -497,7 +498,7 @@ test.if(isPosix && isRoot)(
         forms.map(form => [
           form,
           {
-            code: "EPERM",
+            code: isMacOS ? "EACCES" : "EPERM",
             syscall: "utime",
             path: join(dir, `to-${form}`, "a"),
             fileCopied: true,

@@ -1897,6 +1897,34 @@ describe("argv0", () => {
       closeSync(fd);
     }
   });
+
+  // The command is not on PATH, so the spawn fails before `cgroup` is checked. The error path reads `cgroup`.
+  it("node:child_process does not convert a cgroup that is not a string or a number", async () => {
+    let conversions = 0;
+    const cgroup = {
+      toString() {
+        conversions++;
+        return "cgroup";
+      },
+    };
+    const missing = "no-such-command-for-the-cgroup-case";
+    const fields = (error: any) => ({ code: error?.code, path: error?.path });
+
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    const child = cpSpawn(missing, [], { cgroup, env: bunEnv } as any);
+    child.on("error", resolve);
+    child.on("spawn", () => reject(new Error("the spawn did not fail")));
+
+    expect({
+      spawnSync: fields(cpSpawnSync(missing, [], { cgroup, env: bunEnv } as any).error),
+      spawn: fields(await promise),
+      conversions,
+    }).toEqual({
+      spawnSync: { code: "ENOENT", path: missing },
+      spawn: { code: "ENOENT", path: missing },
+      conversions: 0,
+    });
+  });
 });
 
 describe("option combinations", () => {

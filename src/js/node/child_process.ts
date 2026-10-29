@@ -689,8 +689,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 // A spawn that could not enter `options.cgroup` names the cgroup, by `path` or by `fd`. It is not about the file.
 function namesCgroup(error: { path?: unknown; fd?: unknown }, cgroup: unknown) {
-  if (cgroup == null) return false;
-  return typeof cgroup === "number" ? error.fd === cgroup : error.path === `${cgroup}`;
+  return typeof cgroup === "number" ? error.fd === cgroup : typeof cgroup === "string" && error.path === cgroup;
 }
 const etimedoutErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");

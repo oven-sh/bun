@@ -892,15 +892,6 @@ pub unsafe trait IntrusiveField<F>: Sized {
     /// `offset_of!(Self, <field>)`.
     const OFFSET: usize;
 
-    /// Project `&mut self` → `&mut self.<field>`.
-    #[inline(always)]
-    fn field_mut(&mut self) -> &mut F {
-        // SAFETY: `OFFSET` is `offset_of!(Self, <field>)` per impl contract;
-        // `&mut self` covers the whole `Self`, so the field reborrow is in-bounds
-        // and uniquely borrowed for the returned lifetime.
-        unsafe { &mut *core::ptr::from_mut(self).byte_add(Self::OFFSET).cast::<F>() }
-    }
-
     /// `*mut Self` → `*mut self.<field>`.
     ///
     /// # Safety

@@ -19,7 +19,9 @@ pub trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     /// the callback without raw byte-offset arithmetic.
     #[inline]
     fn task_mut(&mut self) -> &mut Task {
-        self.field_mut()
+        // SAFETY: `self` is a live `Self`, so `field_of` points at the `Task` field in it. The
+        // pointer derives from `&mut self`, and the result keeps that borrow while it lives.
+        unsafe { &mut *Self::field_of(self) }
     }
 
     /// Back-compat alias for [`bun_core::IntrusiveField::from_field_ptr`].

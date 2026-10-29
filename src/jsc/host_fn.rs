@@ -43,7 +43,7 @@ pub type JSHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) ->
 ///
 /// ```ignore
 /// bun_jsc::jsc_host_abi! {
-///     fn thunk(g: *mut JSGlobalObject, cf: *mut CallFrame) -> JSValue { … }
+///     fn thunk(g: &JSGlobalObject, cf: &CallFrame) -> JSValue { … }
 /// }
 /// ```
 ///

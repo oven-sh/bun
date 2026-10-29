@@ -360,9 +360,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         // (`registerClientReference(...)`), which is not
                         // `can_be_moved()` — generate a temp const binding and
                         // reference it from `export_props`.
-                        // SAFETY: `StmtOrExpr` lives in the arena and has no
-                        // Drop fields, so a bitwise read is a plain value copy.
-                        let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
+                        let value = st.value.to_expr();
                         let temp_id = self.generate_temp_ref(Some(b"default_export"));
                         parts[1].declared_symbols.append(DeclaredSymbol {
                             ref_: temp_id,

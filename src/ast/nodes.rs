@@ -559,6 +559,7 @@ impl Default for LocRef {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ClauseItem {
     /// The local alias used for the imported/exported symbol in the current module.
     /// For imports: `import { foo as bar }` - "bar" is the alias

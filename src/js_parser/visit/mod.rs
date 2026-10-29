@@ -1899,8 +1899,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // `Decl` is field-wise `Copy` but lacks the
-                                    // derive; `swap` compacts in place (idx >= end always).
+                                    // `swap` compacts in place (idx >= end always).
                                     decls.swap(end, idx);
                                     end += 1;
                                 }
@@ -2064,17 +2063,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
-                                // `Vec::append_slice` requires `T: Clone`
-                                // but `G::Decl` lacks the derive (its fields are all
-                                // `Copy`). Per-element bitwise copy instead.
-                                //
-                                // The parse pass allocates `decls` in the bump arena
-                                // (`from_bump_slice` → `Origin::Borrowed`); promote to a
-                                // global-heap buffer before growing it.
-                                for d in local.decls.slice() {
-                                    // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
-                                    prev_local.decls.push(unsafe { core::ptr::read(d) });
-                                }
+                                prev_local.decls.extend_from_slice(local.decls.slice());
                                 continue;
                             }
                         }

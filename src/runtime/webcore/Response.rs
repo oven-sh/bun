@@ -733,9 +733,8 @@ impl Response {
             writer.write_str("\n")?;
 
             formatter.reset_line();
-            // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
-            // `&mut self`; single-JS-thread invariant.
-            unsafe { self.body.get_mut() }
+            self.body
+                .get()
                 .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
         }
         writer.write_str("\n")?;

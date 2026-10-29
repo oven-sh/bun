@@ -244,7 +244,9 @@ impl ArithDecoder {
 
     fn reset_statistics(&mut self) {
         let (uses_dc, uses_ac) = (self.uses_dc(), self.uses_ac());
-        for info in self.blocks.iter().take(self.blocks_in_mcu) {
+        let blocks = self.blocks.get(..self.blocks_in_mcu).unwrap_or(&[]);
+        let components = blocks.chunk_by(|a, b| a.scan_component == b.scan_component);
+        for info in components.filter_map(<[_]>::first) {
             if uses_dc && let Some(stats) = self.dc_stats.get_mut(usize::from(info.dc_selector)) {
                 *stats = [0; DC_STAT_BINS];
             }

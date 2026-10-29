@@ -1122,10 +1122,6 @@ impl FSWatcher {
             // already aborted?
             if s.aborted() {
                 // safely abort next tick
-                ctx_ref.current_task.set(FSWatchTask {
-                    ctx: Some(parent),
-                    ..Default::default()
-                });
                 ctx_ref.current_task.with_mut(|t| t.append_abort());
             } else {
                 // SAFETY: `ctx` is the live boxed FSWatcher; `detach()` disarms the handle.

@@ -10,6 +10,7 @@ use bun_paths::fs::Path;
 // `bun_ast::import_record::{ImportKind, Index, Loader}` keep resolving.
 pub use crate::{ImportKind, Index, Loader};
 
+#[derive(Clone)]
 pub struct ImportRecord<'a> {
     pub range: Range,
     pub path: Path<'a>,

@@ -400,6 +400,7 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
+        // The transpiler holds its address: it is neither moved nor named until the guard below has run.
         let mut temp_log = bun_ast::Log::default();
         // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
         // are scoped to each statement.
@@ -408,13 +409,11 @@ impl WebWorker {
             (*parent).transpiler.set_log(&raw mut temp_log);
             prev
         };
-        // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard(temp_log, move |log| {
+        // RAII: log pointer restored on every return path, before `temp_log` drops.
+        scopeguard::defer! {
             // SAFETY: `parent` outlives the guard (this call's frame).
             unsafe { (*parent).transpiler.set_log(prev_log) };
-            drop(log);
-        });
-        let temp_log = &mut *restore;
+        }
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -432,22 +431,36 @@ impl WebWorker {
             let dot_slash = OnceCell::new();
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
-            if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(
-                    parent,
-                    utf8_slice.slice(),
-                    &dot_slash,
-                    error_message,
-                    temp_log,
-                )
+            let unresolved = match unsafe {
+                resolve_entry_point_specifier(parent, utf8_slice.slice(), &dot_slash)
             } {
-                preloads.push(preload.to_vec().into_boxed_slice());
-            }
-
-            if !error_message.is_empty() {
-                // preloads dropped by RAII.
-                return core::ptr::null_mut();
-            }
+                Ok(preload) => {
+                    preloads.push(preload.to_vec().into_boxed_slice());
+                    continue;
+                }
+                Err(unresolved) => unresolved,
+            };
+            *error_message = match unresolved {
+                Unresolved::Because(text) => BunString::static_(text),
+                Unresolved::Logged => {
+                    // SAFETY: as above; the resolver has written its error to the log and is done with it.
+                    let (global, log) = unsafe { ((*parent).global(), (*parent).transpiler.log()) };
+                    let out: jsc::JsResult<BunString> = (|| {
+                        let out =
+                            log.to_js(global, format_args!("Error resolving Worker entry point"))?;
+                        out.to_bun_string(global)
+                    })();
+                    match out {
+                        Ok(out) => out,
+                        Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+                        Err(JsError::Thrown | JsError::Terminated) => {
+                            BunString::static_("unexpected exception")
+                        }
+                    }
+                }
+            };
+            // preloads dropped by RAII.
+            return core::ptr::null_mut();
         }
 
         // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
@@ -456,36 +469,21 @@ impl WebWorker {
             || specifier.starts_with(b"blob:"))
             && crate::compiled_program::runs_worker_of_text_apart()
             && {
-                let mut ignored_message = BunString::EMPTY;
                 let dot_slash = OnceCell::new();
                 // SAFETY: as for the preloads.
-                let path = unsafe {
-                    resolve_entry_point_specifier(
-                        parent,
-                        specifier,
-                        &dot_slash,
-                        &mut ignored_message,
-                        temp_log,
-                    )
-                };
+                let path =
+                    unsafe { resolve_entry_point_specifier(parent, specifier, &dot_slash) }.ok();
                 // A text that the build knew is compiled.
                 path.is_none_or(|path| {
                     crate::compiled_program::find_entry_point_by_source_path(path).is_none()
                 })
             };
         let image = crate::compiled_program::has_image_for_each_entry_point().then(|| {
-            let mut ignored_message = BunString::EMPTY;
             let dot_slash = OnceCell::new();
             // SAFETY: as for the preloads.
-            let path = unsafe {
-                resolve_entry_point_specifier(
-                    parent,
-                    spec_slice.slice(),
-                    &dot_slash,
-                    &mut ignored_message,
-                    temp_log,
-                )
-            };
+            let path =
+                unsafe { resolve_entry_point_specifier(parent, spec_slice.slice(), &dot_slash) }
+                    .ok();
             crate::compiled_program::image_of_worker(path)
         });
 
@@ -1178,28 +1176,19 @@ impl WebWorker {
         // the raw specifier). The returned slice is BORROWED — every exit from
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
-        let mut resolve_error = BunString::EMPTY;
-        let vm_log = vm.log_mut().unwrap();
         let dot_slash = OnceCell::new();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
-            resolve_entry_point_specifier(
-                vm_ptr,
-                &self.unresolved_specifier,
-                &dot_slash,
-                &mut resolve_error,
-                vm_log,
-            )
+            resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier, &dot_slash)
         } {
-            Some(p) => p,
-            None => {
+            Ok(p) => p,
+            Err(unresolved) => {
                 vm.as_mut().exit_handler.exit_code = 1;
-                if vm_log.errors == 0 && !resolve_error.is_empty() {
-                    let err = resolve_error.to_utf8();
-                    // `Log::add_error` takes `impl IntoText`; pass an owned
-                    // `Vec<u8>` so the `Msg` owns its bytes (no lifetime tie
-                    // to `err`, which is dropped immediately after).
-                    vm_log.add_error(None, bun_ast::Loc::EMPTY, err.slice().to_vec());
+                let vm_log = vm.log_mut().unwrap();
+                if vm_log.errors == 0
+                    && let Unresolved::Because(text) = unresolved
+                {
+                    vm_log.add_error(None, bun_ast::Loc::EMPTY, text);
                 }
                 self.flush_logs(vm);
                 return self.shutdown();
@@ -1615,6 +1604,13 @@ fn on_unhandled_rejection(
     vm.handle_ref().request_termination();
 }
 
+/// Why [`resolve_entry_point_specifier`] has no path.
+enum Unresolved {
+    Because(&'static str),
+    /// The transpiler's log has the resolver's error.
+    Logged,
+}
+
 /// Resolve a worker entry-point specifier to a path the module loader can
 /// consume. The returned slice is BORROWED — it aliases `str`, `dot_slash`, the
 /// standalone module graph, or the resolver's arena; the caller must NOT
@@ -1622,23 +1618,21 @@ fn on_unhandled_rejection(
 ///
 /// # Safety
 /// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
-/// pointer (not `&mut`) because callers hold other borrows into the VM (its
-/// log) across the call; per-use `(*parent)` derefs keep any autoref scoped to
-/// the single expression.
+/// pointer (not `&mut`) because `spin()` holds a `&VirtualMachine` across the
+/// call; per-use `(*parent)` derefs keep any autoref scoped to the single
+/// expression.
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
     dot_slash: &'s OnceCell<Vec<u8>>,
-    error_message: &mut BunString,
-    log: &mut bun_ast::Log,
-) -> Option<&'s [u8]> {
+) -> Result<&'s [u8], Unresolved> {
     // A `data:` URL is the module itself (the loader decodes it); it never names
     // a path, so it must not go through path resolution (long ones would fail
     // with ENAMETOOLONG there).
     if str.starts_with(b"data:") {
         // A URL that the program writes out is an entry point of a program compiled ahead of time.
         let entry = crate::compiled_program::find_entry_point_by_source_path(str);
-        return Some(match entry.filter(|entry| entry.source_path == str) {
+        return Ok(match entry.filter(|entry| entry.source_path == str) {
             Some(entry) => crate::compiled_program::module_key(entry),
             None => str,
         });
@@ -1651,7 +1645,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     if let Some(graph) = unsafe { (*parent).standalone_module_graph }
         && let Some(name) = graph.resolve(graph.base_public_path_with_default_suffix(), str)
     {
-        return Some(name);
+        return Ok(name);
     }
     // The file of the first entry point has the name of the executable, and its module the name of its source.
     // SAFETY: per fn contract; the resolver is only read.
@@ -1659,7 +1653,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     if let Some(module) = resolver.resolve_embedded_entry_point(str)
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {
-        return Some(crate::compiled_program::module_key(entry));
+        return Ok(crate::compiled_program::module_key(entry));
     }
 
     // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`
@@ -1677,59 +1671,30 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 let name = (hooks.name_text_of_blob_url)(&str[b"blob:".len()..], vm)?;
                 program.entry_point_by_source_path(&name)
             });
-            return Some(match entry {
+            return Ok(match entry {
                 Some(entry) => crate::compiled_program::module_key(entry),
                 None => str,
             });
         } else {
-            *error_message = BunString::static_("Blob URL is missing");
-            return None;
+            return Err(Unresolved::Because("Blob URL is missing"));
         }
     }
 
-    // SAFETY: per fn contract; `global` is a read-only field, and the resolver
-    // (`transpiler`) is mutated only on `parent`'s owning thread — both call
-    // sites (`create()` on the parent thread, `spin()` on the worker thread)
-    // satisfy that.
-    let global = unsafe { (*parent).global };
-    // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
-    // owning thread (the caller's thread per fn contract).
-    let resolved_entry_point = match unsafe {
-        (*parent).transpiler.resolve_entry_point(str, dot_slash)
-    } {
-        Ok(r) => r,
-        Err(_) => {
-            // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
-            let global = JSGlobalObject::opaque_ref(global);
-            let out: jsc::JsResult<BunString> = (|| {
-                let out = log.to_js(global, format_args!("Error resolving Worker entry point"))?;
-                out.to_bun_string(global)
-            })();
-            match out {
-                Ok(out) => {
-                    *error_message = out;
-                    return None;
-                }
-                Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown | JsError::Terminated) => {
-                    *error_message = BunString::static_("unexpected exception");
-                    return None;
-                }
-            }
-        }
-    };
+    // SAFETY: per fn contract — `parent`'s `transpiler` is mutated only on its
+    // owning thread: both call sites (`create()` on the parent thread, `spin()`
+    // on the worker thread) satisfy that.
+    let resolved_entry_point = unsafe { (*parent).transpiler.resolve_entry_point(str, dot_slash) }
+        .map_err(|_| Unresolved::Logged)?;
 
     if let Some(entry) = resolved_entry_point
         .path_const()
         .and_then(|path| crate::compiled_program::find_entry_point_by_source_path(path.text))
     {
-        return Some(crate::compiled_program::module_key(entry));
+        return Ok(crate::compiled_program::module_key(entry));
     }
 
-    Some(
-        resolved_entry_point
-            .path_const()
-            .expect("resolve_entry_point rejects disabled results")
-            .text,
-    )
+    Ok(resolved_entry_point
+        .path_const()
+        .expect("resolve_entry_point rejects disabled results")
+        .text)
 }

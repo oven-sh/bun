@@ -690,7 +690,7 @@ describe("Bun.serve http2 with http1: false", () => {
       let buf = Buffer.alloc(0);
       sock.on("data", d => {
         buf = Buffer.concat([buf, d as Buffer]);
-        for (let off = 0; off + 9 <= buf.length;) {
+        for (let off = 0; off + 9 <= buf.length; ) {
           const len = buf.readUIntBE(off, 3);
           if (off + 9 + len > buf.length) break;
           if (buf[off + 3] === T.DATA && (buf.readUInt32BE(off + 5) & 0x7fffffff) === 1)
@@ -835,6 +835,9 @@ describe("Bun.serve http2 streaming responses on an idle server", () => {
   });
   afterAll(async () => {
     await fx[Symbol.asyncDispose]();
+    if (fx.proc.exitCode !== 0) console.error(fx.stderr());
+    expect(fx.proc.signalCode).toBeNull();
+    expect(fx.proc.exitCode).toBe(0);
   });
 
   test("one enqueue on every open stream reaches each one in one batch", async () => {

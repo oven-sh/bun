@@ -5299,9 +5299,7 @@ impl VirtualMachine {
         impl Drop for ArenaReset<'_> {
             fn drop(&mut self) {
                 if self.1 {
-                    let vm = std::ptr::from_mut::<VirtualMachine>(self.0);
-                    // SAFETY: `vm` is the live per-thread VM.
-                    unsafe { ModuleLoader::ModuleLoader::reset_arena(&mut *vm) };
+                    ModuleLoader::ModuleLoader::reset_arena(self.0);
                 }
             }
         }

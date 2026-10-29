@@ -6142,13 +6142,13 @@ impl NodeFS {
     }
 
     pub(crate) fn mkdir_recursive(&mut self, args: &args::Mkdir) -> Maybe<ret::Mkdir> {
-        self.mkdir_recursive_impl::<()>(args, &())
+        self.mkdir_recursive_impl::<()>(args, &mut ())
     }
 
     pub(crate) fn mkdir_recursive_impl<Ctx: MkdirCtx>(
         &mut self,
         args: &args::Mkdir,
-        ctx: &Ctx,
+        ctx: &mut Ctx,
     ) -> Maybe<ret::Mkdir> {
         let mut buf = paths::path_buffer_pool::get();
         let path = match args.path.os_path_kernel32(&mut *buf) {
@@ -6176,15 +6176,15 @@ impl NodeFS {
         return_path: bool,
     ) -> Maybe<ret::Mkdir> {
         if return_path {
-            self.mkdir_recursive_os_path_impl::<(), true>(&(), path, mode)
+            self.mkdir_recursive_os_path_impl::<(), true>(&mut (), path, mode)
         } else {
-            self.mkdir_recursive_os_path_impl::<(), false>(&(), path, mode)
+            self.mkdir_recursive_os_path_impl::<(), false>(&mut (), path, mode)
         }
     }
 
     pub(crate) fn mkdir_recursive_os_path_impl<Ctx: MkdirCtx, const RETURN_PATH: bool>(
         &mut self,
-        ctx: &Ctx,
+        ctx: &mut Ctx,
         path: &OSPathSliceZ,
         mode: Mode,
     ) -> Maybe<ret::Mkdir> {
@@ -9833,7 +9833,7 @@ pub(crate) enum ReadFileStringType {
 
 /// Trait for `mkdirRecursiveImpl` Ctx parameter (`void` does nothing).
 pub(crate) trait MkdirCtx {
-    fn on_create_dir(&self, _path: &OSPathSliceZ) {}
+    fn on_create_dir(&mut self, _path: &OSPathSliceZ) {}
 }
 impl MkdirCtx for () {}
 

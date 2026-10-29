@@ -218,6 +218,7 @@ pub struct SHA256_CTX {
     pub num: c_uint,
     pub md_len: c_uint,
 }
+bun_core::impl_zeroable!(SHA_CTX, SHA256_CTX);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // X509v3 GENERAL_NAME

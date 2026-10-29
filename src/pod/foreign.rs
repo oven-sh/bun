@@ -26,6 +26,7 @@ mod unix {
         libc::sockaddr_in,
         libc::sockaddr_in6,
         libc::sockaddr_storage,
+        libc::sockaddr_un,
     );
     // A `u32` on Darwin, which the primitive impl covers.
     #[cfg(not(target_vendor = "apple"))]
@@ -40,7 +41,7 @@ mod unix {
     ))]
     impl_zeroable!(libc::statfs);
     #[cfg(target_os = "macos")]
-    impl_zeroable!(libc::kevent64_s);
+    impl_zeroable!(libc::kevent64_s, libc::rusage_info_v4);
     #[cfg(target_os = "freebsd")]
     impl_zeroable!(libc::_umtx_time);
 

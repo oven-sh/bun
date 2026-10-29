@@ -1,0 +1,324 @@
+# class Core {
+#   constructor(options) {
+#     this.update = newOptions => {
+#       this.options = { ...this.options, ...newOptions };
+#       if (this.options.tree !== this.tree) { this.tree = this.options.tree; this.build(); }
+#     };
+#     this.build = () => { this.built = (this.built ?? 0) + 1; };
+#     this.update(options);
+#   }
+#   get state() { return this.built; }
+#   load() { return this.tree.length + this.state; }
+# }
+# class Router extends Core { constructor(options) { super(options); } }
+# globalThis[argv.length > 99 ? argv[9] : "hidden"] = { make: options => new Router(options), read: router => router.tree };
+# let sum = 0;
+# const tree = [1, 2, 3];
+# for (let round = 0; round < 4000; round++) {
+#   const router = globalThis.hidden.make({ tree });
+#   sum += router.load() + globalThis.hidden.read(router).length;
+#   if (round % 1000 === 999) collect();
+# }
+# report(sum);
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", ""]; globalThis.collect = () => fullGC(); const counters = () => { const all = {}; const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { const parts = lines[i].split("\t"); if (parts.length > 1) all[parts[1]] = Number(parts[0]); } return all; }; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); const now = counters(); let calls = 0; for (const key in now) if (/^operation:operationAOT(GetBy|GetGeneric|InBy|HasOwn)/.test(key)) calls += now[key]; print(calls < 400 ? "seldom asks the run time" : calls); };
+# The constructor reads `this.tree` while its slot is still empty, and the lookup that files the answer is the one that gives the prototype objects their members. The read stays cached through 4,000 rounds and four collections.
+# CHECK: 28000
+# CHECK-NEXT: seldom asks the run time
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Core" module=m0 constructor=f1 fields=[{key="update" declared={type=undefined|null|function|f7 flags=[IsExpected]} flags=[IsRequired]}, {key="options" declared={type=anything}}, {key="tree" declared={type=anything}}, {key="build" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired]}, {key="built" declared={type=anything}}] ownFieldCount=5
+layout L1 kind=Instance name="Router" module=m0 base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
+layout L2 module=m0 fields=[{key="make" declared={type=undefined|null|function|f5 flags=[IsExpected]} flags=[IsRequired]}, {key="read" declared={type=undefined|null|function|f6 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L3 module=m0 fields=[{key="tree" declared={type=anything}}] ownFieldCount=1
+variable g0 name="Router" module=m0 declared={type=absent|f4 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g1
+    v3 = NewClosure function=f2
+    DefineMethod v1, v3 layout=L0 methodKind=Getter key="state"
+    v5 = NewClosure function=f3
+    DefineMethod v1, v5 layout=L0 index=1 key="load"
+    v7 = FinishClass v1 layout=L0
+    v8 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v9 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = ResolveHeritage v9
+    v11 = NewClosure function=f4
+    v12 = NewClass v11, v9, v10 layout=L1
+    PutModuleVariable v12 variable=g2
+    v14 = FinishClass v12 layout=L1
+    v15 = Convert v14 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = Convert v14 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v16 variable=g0
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="globalThis" [isFreeName]
+    v20 = Convert v19 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="argv" [isFreeName]
+    v23 = PropGet v22 key="length"
+    v24 = Integer integer=99
+    v25 = Greater v23, v24
+    Branch v25 -> taken b2(), notTaken b3()
+  b2():
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="argv" [isFreeName]
+    v28 = Integer integer=9
+    v29 = ElemGet v27, v28
+    Jump -> next b4(v29)
+  b3():
+    v30 = String string="hidden"
+    Jump -> next b4(v30)
+  b4(v31):
+    v32 = NewClosure function=f5
+    v33 = Convert v32 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    v34 = NewObject layout=L2
+    PropDefine v34, v33 key="make"
+    v36 = NewClosure function=f6
+    v37 = Convert v36 declared={type=undefined|null|function|f6 flags=[IsExpected]}
+    PropDefine v34, v37 key="read"
+    v39 = FinishObject v34
+    ElemSet v20, v31, v39
+    v41 = Integer
+    v42 = Convert v41 declared={type=number flags=[IsExpected]}
+    v43 = Data data=d0
+    v44 = Convert v43 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v45 = Integer
+    v46 = Convert v45 declared={type=number flags=[IsExpected]}
+    Jump -> next b5(v42, v46)
+  b5(v47, v48):
+    LoopHint
+    v50 = Integer integer=4000
+    v51 = Less v48, v50
+    Branch v51 -> taken b6(| 0), notTaken b11(| 0)
+  b6(v52):
+    Jump -> next b7()
+  b7():
+    v53 = Builtin builtin=GlobalThis
+    v54 = PropGet v53 key="globalThis" [isFreeName]
+    v55 = Convert v54 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v56 = PropGet v55 key="hidden"
+    v57 = Convert v56 declared={type=undefined|null|object flags=[IsExpected]}
+    v58 = PropGet v57 key="make"
+    v59 = Convert v58 declared={type=undefined|null|function flags=[IsExpected]}
+    v60 = NewObject layout=L3
+    PropDefine v60, v44 key="tree"
+    v62 = FinishObject v60
+    v63 = Call v59, v57, v62 calleeKey="make" calleeName="globalThis.hidden.make"
+    v64 = Convert v63 declared={type=undefined|null|object flags=[IsExpected]}
+    v65 = PropGet v64 key="load"
+    v66 = Convert v65 declared={type=undefined|null|function flags=[IsExpected]}
+    v67 = Call v66, v64 calleeKey="load" calleeName="router.load"
+    v68 = Builtin builtin=GlobalThis
+    v69 = PropGet v68 key="globalThis" [isFreeName]
+    v70 = Convert v69 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v71 = PropGet v70 key="hidden"
+    v72 = Convert v71 declared={type=undefined|null|object flags=[IsExpected]}
+    v73 = PropGet v72 key="read"
+    v74 = Convert v73 declared={type=undefined|null|function flags=[IsExpected]}
+    v75 = Call v74, v72, v64 calleeKey="read" calleeName="globalThis.hidden.read"
+    v76 = PropGet v75 key="length"
+    v77 = Add v67, v76
+    v78 = Add v47, v77
+    v79 = Convert v78 declared={type=number flags=[IsExpected]}
+    v80 = Integer integer=1000
+    v81 = Mod v52, v80
+    v82 = Integer integer=999
+    v83 = StrictEq v81, v82
+    Branch v83 -> taken b8(), notTaken b9()
+  b8():
+    v84 = Builtin builtin=GlobalThis
+    v85 = PropGet v84 key="collect" [isFreeName]
+    v86 = Call v85 calleeName="collect"
+    Jump -> next b9()
+  b9():
+    Jump -> next b10()
+  b10():
+    v87 = Increment v52
+    v88 = Convert v87 declared={type=number flags=[IsExpected]}
+    Jump -> next b5(v79, v88)
+  b11(v89):
+    Jump -> next b12()
+  b12():
+    v90 = Builtin builtin=GlobalThis
+    v91 = PropGet v90 key="report" [isFreeName]
+    v92 = Call v91, -, v47 calleeName="report"
+    v93 = Undefined
+    Return v93
+}
+function f1 name="Core" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: undefined|null|object):
+    Jump -> next b1()
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0|L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = Convert v4 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v6 = NewClosure v4 function=f7
+    v7 = Convert v6 declared={type=undefined|null|function|f7 flags=[IsExpected]}
+    PropSet v5, v7 key="update"
+    v9 = Convert v4 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v10 = NewClosure v4 function=f8
+    v11 = Convert v10 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    PropSet v9, v11 key="build"
+    v13 = Convert v4 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v14 = PropGet v13 key="update"
+    v15 = Convert v14 declared={type=undefined|null|function|f7 flags=[IsExpected]}
+    v16 = Call v15, v13, v1 calleeKey="update" calleeName="this.update"
+    v17 = Undefined
+    v18 = TypeTest v17 testedType=object
+    Branch v18 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v19):
+    Jump -> next b4(v19)
+  b3(v20):
+    Jump -> next b4(v4)
+  b4(v21):
+    Return v21
+}
+function f2 name="state" module=m0 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L0|L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v2 = PropGet v1 key="built"
+    Return v2
+}
+function f3 name="load" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0|L1 flags=[IsExpected]} results=[{type=anything}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v2 = PropGet v1 key="tree"
+    v3 = PropGet v2 key="length"
+    v4 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v5 = PropGet v4 key="state"
+    v6 = Add v3, v5
+    Return v6
+}
+function f4 name="Router" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: undefined|null|object):
+    Jump -> next b1()
+  b1():
+    v3 = Absent
+    v4 = GetSuperBase v0
+    v5 = SuperConstruct v4, v1, v2 layout=L1
+    v6 = Convert v5 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = TypeTest v3 testedType=absent
+    Branch v7 -> taken b2(| 0), notTaken b10(| 0)
+  b2(v8):
+    v9 = Undefined
+    v10 = TypeTest v9 testedType=object
+    Branch v10 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v11):
+    Jump -> next b8(v11)
+  b4(v12):
+    v13 = TypeTest v12 testedType=undefined
+    Branch v13 -> taken b5(| 0), notTaken b9(| 0)
+  b5(v14):
+    v15 = TypeTest v6 testedType=absent
+    Branch v15 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v16) frequency=Unlikely:
+    v17 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v17
+  b7(v18):
+    Jump -> next b8(v18)
+  b8(v19):
+    Return v19
+  b9(v20) frequency=Unlikely:
+    v21 = NewRuntimeError runtimeError=DerivedConstructorResult name="Router"
+    Throw v21
+  b10(v22) frequency=Unlikely:
+    v23 = NewRuntimeError runtimeError=ThisAlreadyBound
+    Throw v23
+}
+function f5 name="make" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|L1 flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Router"
+    v3 = Construct v2, -, v0 calleeName="Router" @558 constructs
+    v4 = Convert v3 declared={type=undefined|null|L1 flags=[IsExpected]}
+    Return v4
+}
+function f6 name="read" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L3):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="tree"
+    Return v1
+}
+function f7 module=m0 kind=Arrow length=1 captures=[{type=L0|L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1, v1: undefined|null|object):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v3 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v4 = PropGet v3 key="options"
+    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
+    v6 = CopyObject v5
+    CopyDataProperties v6, v1
+    PropSet v2, v6 key="options"
+    v9 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v10 = PropGet v9 key="options"
+    v11 = Convert v10 declared={type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected]}
+    v12 = PropGet v11 key="tree"
+    v13 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v14 = PropGet v13 key="tree"
+    v15 = StrictEq v12, v14
+    Branch v15 -> taken b3(), notTaken b2()
+  b2():
+    v16 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v17 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v18 = PropGet v17 key="options"
+    v19 = Convert v18 declared={type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected]}
+    v20 = PropGet v19 key="tree"
+    PropSet v16, v20 key="tree"
+    v22 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v23 = PropGet v22 key="build"
+    v24 = Convert v23 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    v25 = Call v24, v22 calleeKey="build" calleeName="this.build"
+    Jump -> next b3()
+  b3():
+    v26 = Undefined
+    Return v26
+}
+function f8 module=m0 kind=Arrow captures=[{type=L0|L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v2 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v3 = PropGet v2 key="built"
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = TypeTest v4 testedType=undefined|null
+    Branch v5 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v6):
+    Jump -> next b3()
+  b3():
+    v7 = Integer
+    Jump -> next b5(v7)
+  b4(v8):
+    Jump -> next b5(v8)
+  b5(v9):
+    v10 = Integer integer=1
+    v11 = Add v9, v10
+    PropSet v1, v11 key="built"
+    v13 = Undefined
+    Return v13
+}
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0

@@ -1,0 +1,65 @@
+// RUN: lower
+
+// FILE: main.ts
+declare const console: { log(...values: unknown[]): void };
+function f0(x: number) { let acc = 0; if (x > 0) acc = f1(x - 1); return acc + 0; }
+function f1(x: number) { let acc = 0; if (x > 0) acc = f2(x - 1); return acc + 1; }
+function f2(x: number) { let acc = 0; if (x > 0) acc = f3(x - 1); return acc + 2; }
+function f3(x: number) { let acc = 0; if (x > 0) acc = f4(x - 1); return acc + 3; }
+function f4(x: number) { let acc = 0; if (x > 0) acc = f5(x - 1); return acc + 4; }
+function f5(x: number) { let acc = 0; if (x > 0) acc = f6(x - 1); return acc + 5; }
+function f6(x: number) { let acc = 0; if (x > 0) acc = f7(x - 1); return acc + 6; }
+function f7(x: number) { let acc = 0; if (x > 0) acc = f8(x - 1); return acc + 7; }
+function f8(x: number) { let acc = 0; if (x > 0) acc = f9(x - 1); return acc + 8; }
+function f9(x: number) { let acc = 0; if (x > 0) acc = f10(x - 1); return acc + 9; }
+function f10(x: number) { let acc = 0; if (x > 0) acc = f11(x - 1); return acc + 10; }
+function f11(x: number) { let acc = 0; if (x > 0) acc = f12(x - 1); return acc + 11; }
+function f12(x: number) { let acc = 0; if (x > 0) acc = f13(x - 1); return acc + 12; }
+function f13(x: number) { let acc = 0; if (x > 0) acc = f14(x - 1); return acc + 13; }
+function f14(x: number) { let acc = 0; if (x > 0) acc = f15(x - 1); return acc + 14; }
+function f15(x: number) { let acc = 0; if (x > 0) acc = f16(x - 1); return acc + 15; }
+function f16(x: number) { let acc = 0; if (x > 0) acc = f17(x - 1); return acc + 16; }
+function f17(x: number) { let acc = 0; if (x > 0) acc = f18(x - 1); return acc + 17; }
+function f18(x: number) { let acc = 0; if (x > 0) acc = f19(x - 1); return acc + 18; }
+function f19(x: number) { let acc = 0; if (x > 0) acc = f20(x - 1); return acc + 19; }
+function f20(x: number) { let acc = 0; if (x > 0) acc = f21(x - 1); return acc + 20; }
+function f21(x: number) { let acc = 0; if (x > 0) acc = f22(x - 1); return acc + 21; }
+function f22(x: number) { let acc = 0; if (x > 0) acc = f23(x - 1); return acc + 22; }
+function f23(x: number) { let acc = 0; if (x > 0) acc = f24(x - 1); return acc + 23; }
+function f24(x: number) { let acc = 0; if (x > 0) acc = f25(x - 1); return acc + 24; }
+function f25(x: number) { let acc = 0; if (x > 0) acc = f26(x - 1); return acc + 25; }
+function f26(x: number) { let acc = 0; if (x > 0) acc = f27(x - 1); return acc + 26; }
+function f27(x: number) { let acc = 0; if (x > 0) acc = f28(x - 1); return acc + 27; }
+function f28(x: number) { let acc = 0; if (x > 0) acc = f29(x - 1); return acc + 28; }
+function f29(x: number) { let acc = 0; if (x > 0) acc = f30(x - 1); return acc + 29; }
+function f30(x: number) { let acc = 0; if (x > 0) acc = f31(x - 1); return acc + 30; }
+function f31(x: number) { let acc = 0; if (x > 0) acc = f32(x - 1); return acc + 31; }
+function f32(x: number) { let acc = 0; if (x > 0) acc = f33(x - 1); return acc + 32; }
+function f33(x: number) { let acc = 0; if (x > 0) acc = f34(x - 1); return acc + 33; }
+function f34(x: number) { let acc = 0; if (x > 0) acc = f35(x - 1); return acc + 34; }
+function f35(x: number) { let acc = 0; if (x > 0) acc = f36(x - 1); return acc + 35; }
+function f36(x: number) { let acc = 0; if (x > 0) acc = f37(x - 1); return acc + 36; }
+function f37(x: number) { let acc = 0; if (x > 0) acc = f38(x - 1); return acc + 37; }
+function f38(x: number) { let acc = 0; if (x > 0) acc = f39(x - 1); return acc + 38; }
+function f39(x: number) { let acc = 0; if (x > 0) acc = f40(x - 1); return acc + 39; }
+function f40(x: number) { let acc = 0; if (x > 0) acc = f41(x - 1); return acc + 40; }
+function f41(x: number) { let acc = 0; if (x > 0) acc = f42(x - 1); return acc + 41; }
+function f42(x: number) { let acc = 0; if (x > 0) acc = f43(x - 1); return acc + 42; }
+function f43(x: number) { let acc = 0; if (x > 0) acc = f44(x - 1); return acc + 43; }
+function f44(x: number) { let acc = 0; if (x > 0) acc = f45(x - 1); return acc + 44; }
+function f45(x: number) { let acc = 0; if (x > 0) acc = f46(x - 1); return acc + 45; }
+function f46(x: number) { let acc = 0; if (x > 0) acc = f47(x - 1); return acc + 46; }
+function f47(x: number) { let acc = 0; if (x > 0) acc = f48(x - 1); return acc + 47; }
+function f48(x: number) { let acc = 0; if (x > 0) acc = f49(x - 1); return acc + 48; }
+function f49(x: number) { let acc = 0; if (x > 0) acc = f50(x - 1); return acc + 49; }
+function f50(x: number) { let acc = 0; if (x > 0) acc = f51(x - 1); return acc + 50; }
+function f51(x: number) { let acc = 0; if (x > 0) acc = f52(x - 1); return acc + 51; }
+function f52(x: number) { let acc = 0; if (x > 0) acc = f53(x - 1); return acc + 52; }
+function f53(x: number) { let acc = 0; if (x > 0) acc = f54(x - 1); return acc + 53; }
+function f54(x: number) { let acc = 0; if (x > 0) acc = f55(x - 1); return acc + 54; }
+function f55(x: number) { let acc = 0; if (x > 0) acc = f56(x - 1); return acc + 55; }
+function f56(x: number) { let acc = 0; if (x > 0) acc = f57(x - 1); return acc + 56; }
+function f57(x: number) { let acc = 0; if (x > 0) acc = f58(x - 1); return acc + 57; }
+function f58(x: number) { let acc = 0; if (x > 0) acc = f59(x - 1); return acc + 58; }
+function f59(x: number) { let acc = 0; if (x > 0) acc = f0(x - 1); return acc + 59; }
+console.log(f0(3));

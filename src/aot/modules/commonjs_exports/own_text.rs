@@ -97,6 +97,8 @@ pub(super) struct OwnText {
     pub is_marker_ignored_by_imports: bool,
     pub needs_wrapped_body: bool,
     pub uses_module_object: bool,
+    /// Something may store to `module.exports` once the body has ended.
+    pub is_replaced_late: bool,
 }
 
 impl OwnText {
@@ -995,6 +997,10 @@ impl Scan<'_, '_, '_> {
             false => self.apply_replacement(),
         };
         self.find_stores_that_fill();
+        let (text, body) = (self.text, self.body);
+        let mut replacements = self.replacements.iter();
+        self.found.is_replaced_late = self.found.uses_module_object
+            || replacements.any(|it| !text.is_run_by_body_alone(it.statement, body));
         self.found.is_half = self.found.is_half && !self.runs_nothing_else();
         self.check_definitions();
         self.find_marker();
@@ -1038,7 +1044,7 @@ fn needs_wrapped_body(text: &Text<'_, '_>) -> bool {
 /// What the text of a file says of the exports of the file and of the modules that are written in it.
 pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
     let text = input.text;
-    let may_replace_require = text.places.may_replace(CommonJsVariable::Require);
+    let may_replace_require = text.places.may_replace_require();
     let create_scan = |module: ModuleRef, body: CodeUnit| Scan {
         input,
         text,
@@ -1059,6 +1065,7 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
             is_marker_ignored_by_imports: false,
             needs_wrapped_body: false,
             uses_module_object: false,
+            is_replaced_late: false,
         },
         mentions: Vec::new(),
         replacements: Vec::new(),

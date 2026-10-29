@@ -1,0 +1,370 @@
+# The `source` property of very long regular expressions, with slashes and escapes (the same program without type annotations).
+# FORM: AsRead
+# DIAGNOSTIC: RegExpWithoutCode
+# RUN: pipeline RemoveRedundantBarriers
+
+module m0 path="long-regexp-source-untyped.js" displayPath="long-regexp-source-untyped.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=undefined|null|string elements=[String{value="plain"}, String{value="xy+z"}]} module=m0
+data d1 root=Array{contents=undefined|null|string elements=[String{value="escaped slash"}, String{value="x\\/y"}]} module=m0
+data d2 root=Array{contents=undefined|null|string elements=[String{value="slash in brackets"}, String{value="x[/]y"}]} module=m0
+data d3 root=Array{contents=undefined|null|string elements=[String{value="bare slash"}, String{value="x/y"}]} module=m0
+data d4 root=Array{contents=undefined|null|string elements=[String{value="bare slash behind an escaped one"}, String{value="x\\/y/z"}]} module=m0
+data d5 root=Array{contents=undefined|null|string elements=[String{value="bracket closed, then a slash"}, String{value="[a]/b"}]} module=m0
+data d6 root=Array{contents=undefined|null|string elements=[String{value="escaped bracket, then a slash"}, String{value="\\[/\\]"}]} module=m0
+data d7 root=Array{contents=undefined|null|string elements=[String{value="line feed"}, String{value="x\ny"}]} module=m0
+data d8 root=Array{contents=undefined|null|string elements=[String{value="carriage return"}, String{value="x\u{d}y"}]} module=m0
+data d9 root=Array{contents=undefined|null|string elements=[String{value="escaped line feed"}, String{value="x\\\ny"}]} module=m0
+data d10 root=Array{contents=undefined|null|string elements=[String{value="backslash at the end of the head"}, String{value="x\\\\"}]} module=m0
+data d11 root=Array{contents=number elements=[Number{value=64}, Number{value=4095}, Number{value=4096}, Number{value=4097}, Number{value=5000}, Number{value=16384}, Number{value=16385}, Number{value=65535}, Number{value=65536}, Number{value=65537}, Number{value=70000}]} module=m0
+data d12 root=Array{contents=undefined|null|string elements=[String{value=""}, String{value="giu"}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Data data=d0
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v6 = Data data=d1
+    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v8 = Data data=d2
+    v9 = Convert v8 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v10 = Data data=d3
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v12 = Data data=d4
+    v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v14 = Data data=d5
+    v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v16 = Data data=d6
+    v17 = Convert v16 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v18 = Data data=d7
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v20 = Data data=d8
+    v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v22 = Data data=d9
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v24 = String string="u2028"
+    v25 = String string="x"
+    v26 = Builtin builtin=String
+    v27 = Builtin builtin=StringFromCharCode
+    v28 = Integer integer=8232
+    v29 = Call v27, v26, v28 calleeName="String.fromCharCode"
+    v30 = Convert v29 declared={type=undefined|null|string flags=[IsExpected]}
+    v31 = Add v25, v30
+    v32 = String string="y"
+    v33 = Add v31, v32
+    v34 = NewArray v24, v33 contents=undefined|null|string
+    v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v36 = String string="16 bits"
+    v37 = String string="x"
+    v38 = Builtin builtin=String
+    v39 = Builtin builtin=StringFromCharCode
+    v40 = Integer integer=19968
+    v41 = Call v39, v38, v40 calleeName="String.fromCharCode"
+    v42 = Convert v41 declared={type=undefined|null|string flags=[IsExpected]}
+    v43 = Add v37, v42
+    v44 = String string="y"
+    v45 = Add v43, v44
+    v46 = NewArray v36, v45 contents=undefined|null|string
+    v47 = Convert v46 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v48 = String string="16 bits and a slash"
+    v49 = String string="x"
+    v50 = Builtin builtin=String
+    v51 = Builtin builtin=StringFromCharCode
+    v52 = Integer integer=19968
+    v53 = Call v51, v50, v52 calleeName="String.fromCharCode"
+    v54 = Convert v53 declared={type=undefined|null|string flags=[IsExpected]}
+    v55 = Add v49, v54
+    v56 = String string="/y"
+    v57 = Add v55, v56
+    v58 = NewArray v48, v57 contents=undefined|null|string
+    v59 = Convert v58 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v60 = Data data=d10
+    v61 = Convert v60 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v62 = NewArray v5, v7, v9, v11, v13, v15, v17, v19, v21, v23, v35, v47, v59, v61 contents=undefined|null|Array<undefined|null|string>
+    v63 = Convert v62 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string>> flags=[IsExpected]}
+    v64 = Data data=d11
+    v65 = Convert v64 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v66 = Integer
+    v67 = Convert v66 declared={type=number flags=[IsExpected]}
+    v68 = IteratorOpen v63
+    Jump -> next b1(v67)
+  b1(v69):
+    v70 = IteratorResume v68
+    v71 = ResultAt v70 index=1
+    Jump -> next b2()
+  b2() handler=b20():
+    v72 = IteratorOpen v71 elementCount=2 [isDestructuring]
+    Jump -> next b3()
+  b3() handler=b19():
+    v73 = IteratorResume v72 stepIndex=0
+    v74 = ResultAt v73 index=1
+    v75 = Convert v74 declared={type=undefined|null|string flags=[IsExpected]}
+    v76 = IteratorResume v72 stepIndex=1
+    v77 = ResultAt v76 index=1
+    v78 = Convert v77 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b4()
+  b4() handler=b20():
+    v79 = String string=":"
+    v80 = Add v75, v79
+    v81 = Convert v80 declared={type=undefined|null|string flags=[IsExpected]}
+    v82 = IteratorOpen v65
+    Jump -> next b5(v69, v81)
+  b5(v83, v84) handler=b20():
+    LoopHint
+    v86 = IteratorResume v82
+    v87 = ResultAt v86
+    v88 = ResultAt v86 index=1
+    Branch v87 -> taken b6(), notTaken b7()
+  b6() handler=b20():
+    Jump -> next b1(v83)
+  b7() handler=b20():
+    Jump -> next b8()
+  b8() handler=b18():
+    v89 = Convert v88 declared={type=number flags=[IsExpected]}
+    v90 = Data data=d12
+    v91 = Convert v90 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v92 = IteratorOpen v91
+    Jump -> next b9(v83, v84)
+  b9(v93, v94) handler=b18():
+    LoopHint
+    v96 = IteratorResume v92
+    v97 = ResultAt v96
+    v98 = ResultAt v96 index=1
+    Branch v97 -> taken b10(), notTaken b11()
+  b10() handler=b18():
+    Jump -> next b5(v93, v94)
+  b11() handler=b18():
+    Jump -> next b12()
+  b12() handler=b17():
+    v99 = Convert v98 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b13()
+  b13() handler=b15():
+    v100 = Builtin builtin=RegExp
+    v101 = Call v3, -, v89, v78 calleeName="fill"
+    v102 = Convert v101 declared={type=undefined|null|string flags=[IsExpected]}
+    v103 = Construct v100, -, v102, v99 calleeName="RegExp"
+    v104 = Convert v103 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    Jump -> next b14()
+  b14() handler=b17():
+    v105 = PropGet v104 key="source"
+    v106 = Convert v105 declared={type=undefined|null|string flags=[IsExpected]}
+    v107 = PropGet v104 key="source"
+    v108 = Convert v107 declared={type=undefined|null|string flags=[IsExpected]}
+    v109 = PropGet v104 key="toString"
+    v110 = Convert v109 declared={type=undefined|null|function flags=[IsExpected]}
+    v111 = Call v110, v104 calleeKey="toString" calleeName="r.toString"
+    v112 = Convert v111 declared={type=undefined|null|string flags=[IsExpected]}
+    v113 = Builtin builtin=RegExp
+    v114 = Construct v113, -, v104 calleeName="RegExp"
+    v115 = Convert v114 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v116 = Builtin builtin=String
+    v117 = Call v116, -, v104 calleeName="String"
+    v118 = Convert v117 declared={type=undefined|null|string flags=[IsExpected]}
+    v119 = String string=" "
+    v120 = Add v119, v89
+    v121 = Add v120, v99
+    v122 = String string=":"
+    v123 = Add v121, v122
+    v124 = PropGet v106 key="length"
+    v125 = Convert v124 declared={type=number flags=[IsExpected]}
+    v126 = Add v123, v125
+    v127 = String string=","
+    v128 = Add v126, v127
+    v129 = Call v1, -, v106 calleeName="sum"
+    v130 = Convert v129 declared={type=number flags=[IsExpected]}
+    v131 = Add v128, v130
+    v132 = String string=","
+    v133 = Add v131, v132
+    v134 = StrictEq v106, v108
+    v135 = Add v133, v134
+    v136 = String string=","
+    v137 = Add v135, v136
+    v138 = PropGet v112 key="length"
+    v139 = Convert v138 declared={type=number flags=[IsExpected]}
+    v140 = Add v137, v139
+    v141 = String string=","
+    v142 = Add v140, v141
+    v143 = Call v1, -, v112 calleeName="sum"
+    v144 = Convert v143 declared={type=number flags=[IsExpected]}
+    v145 = Add v142, v144
+    v146 = String string=","
+    v147 = Add v145, v146
+    v148 = PropGet v115 key="source"
+    v149 = Convert v148 declared={type=undefined|null|string flags=[IsExpected]}
+    v150 = StrictEq v149, v106
+    v151 = Add v147, v150
+    v152 = String string=","
+    v153 = Add v151, v152
+    v154 = StrictEq v118, v112
+    v155 = Add v153, v154
+    v156 = String string=","
+    v157 = Add v155, v156
+    v158 = Builtin builtin=JSON
+    v159 = PropGet v158 key="stringify"
+    v160 = Convert v159 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v161 = PropGet v106 key="slice"
+    v162 = Convert v161 declared={type=undefined|null|function flags=[IsExpected]}
+    v163 = Integer
+    v164 = Integer integer=12
+    v165 = Call v162, v106, v163, v164 calleeKey="slice" calleeName="s.slice"
+    v166 = Convert v165 declared={type=undefined|null|string flags=[IsExpected]}
+    v167 = Call v160, v158, v166 calleeKey="stringify" calleeName="JSON.stringify"
+    v168 = Convert v167 declared={type=undefined|null|string flags=[IsExpected]}
+    v169 = Add v157, v168
+    v170 = String string=","
+    v171 = Add v169, v170
+    v172 = PropGet v104 key="test"
+    v173 = Convert v172 declared={type=undefined|null|function flags=[IsExpected]}
+    v174 = String string="xy"
+    v175 = Call v173, v104, v174 calleeKey="test" calleeName="r.test"
+    v176 = Convert v175 declared={type=boolean flags=[IsExpected]}
+    v177 = Add v171, v176
+    v178 = PropGet v104 key="test"
+    v179 = Convert v178 declared={type=undefined|null|function flags=[IsExpected]}
+    v180 = String string="aaaaaaaaa~"
+    v181 = Call v179, v104, v180 calleeKey="test" calleeName="r.test"
+    v182 = Convert v181 declared={type=boolean flags=[IsExpected]}
+    v183 = Add v177, v182
+    v184 = Add v94, v183
+    v185 = Convert v184 declared={type=undefined|null|string flags=[IsExpected]}
+    v186 = Increment v93
+    v187 = Convert v186 declared={type=number flags=[IsExpected]}
+    Jump -> next b9(v187, v185)
+  b15() role=CatchHandler handler=b17():
+    v188 = CatchValue
+    v189 = String string=" "
+    v190 = Add v189, v89
+    v191 = Add v190, v99
+    v192 = String string=":"
+    v193 = Add v191, v192
+    v194 = PropGet v188 key="name"
+    v195 = Add v193, v194
+    v196 = Add v94, v195
+    v197 = Convert v196 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b16()
+  b16() handler=b17():
+    v198 = Increment v93
+    v199 = Convert v198 declared={type=number flags=[IsExpected]}
+    Jump -> next b9(v199, v197)
+  b17() role=IterationCleanup subject=v92 handler=b18():
+    v200 = CatchException
+    Rethrow v200
+  b18() role=IterationCleanup subject=v82 handler=b20():
+    v201 = CatchException
+    Rethrow v201
+  b19() role=IterationCleanup subject=v72 handler=b20():
+    v202 = CatchException
+    Rethrow v202
+  b20() role=IterationCleanup subject=v68:
+    v203 = CatchException
+    Rethrow v203
+}
+function f1 name="sum" module=m0 position=129 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Integer integer=31
+    v9 = Mul v5, v8
+    v10 = PropGet v0 key="charCodeAt"
+    v11 = Convert v10 declared={type=undefined|null|function flags=[IsExpected]}
+    v12 = Call v11, v0, v6 calleeKey="charCodeAt" calleeName="s.charCodeAt"
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Add v9, v13
+    v15 = Integer
+    v16 = BitOr v14, v15
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Increment v6
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v17, v19)
+}
+function f2 name="fill" module=m0 position=248 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = String string="|["
+    v3 = Add v1, v2
+    v4 = String string="a"
+    v5 = PropGet v4 key="repeat"
+    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]}
+    v7 = Convert v0 declared={type=number flags=[IsExpected]}
+    v8 = PropGet v1 key="length"
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Sub v7, v9
+    v11 = Integer integer=7
+    v12 = Sub v10, v11
+    v13 = Call v6, v4, v12 calleeKey="repeat" calleeName="repeat"
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]}
+    v15 = Add v3, v14
+    v16 = String string="]{9}~"
+    v17 = Add v15, v16
+    v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v18
+}
+# -- generated: sum fill
+# CHECK-LABEL: function {{*}}name="sum"
+# CHECK: module=m0 position=129 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string @Cell):
+# CHECK-NEXT: v1: 0 @Double = Integer
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v2: int|whole @Double):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v4: boolean @Boolean = TypeTest v2 testedType=i32
+# CHECK-NEXT: TestAndBranch v4 -> taken b2(| 0), notTaken b5()
+# CHECK-NEXT: b2(v5: i32 @Int32):
+# CHECK-NEXT: v6: 0 @Int32 = Integer
+# CHECK-NEXT: v7: int[0, 4294967295] @Int64 = URShift v5, v6 form=Integers
+# CHECK-NEXT: v8: int[0, 2147483647] @Int32 = GetStringLength v0
+# CHECK-NEXT: v9: boolean @Boolean = Less v7, v8 form=Integers
+# CHECK-NEXT: TestAndBranch v9 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v10: int|whole @Double = Increment v2 form=Numbers
+# CHECK-NEXT: Jump -> next b1(v10)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="fill"
+# CHECK: module=m0 position=248 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|int}, {type=undefined|string}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|int @OptionalInt64, v1: undefined|string @JSValue):
+# CHECK-NEXT: v2: "|[" @Cell = String string="|["
+# CHECK-NEXT: v3: string @Cell = Add v1, v2 form=StringAndPrimitive
+# CHECK-NEXT: v4: "a" @Cell = String string="a"
+# CHECK-NEXT: v5: undefined|int @OptionalInt64 = Upcast v0 castType=anything
+# CHECK-NEXT: v6: string @JSValue = RequireObjectCoercible v1 name="length"
+# CHECK-NEXT: v7: int[0, 2147483647] @Int32 = GetStringLength v6
+# CHECK-NEXT: v8: boolean @Boolean = TypeTest v5 testedType=number
+# CHECK-NEXT: TestAndBranch v8 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v9: int @Int64):
+# CHECK-NEXT: v10: int|whole @Double = Sub v9, v7 form=CheckedIntegers
+# CHECK-NEXT: v11: 7 @Double = Integer integer=7
+# CHECK-NEXT: v12: int|whole @Double = Sub v10, v11 form=Numbers
+# CHECK-NEXT: TryCallInline v4, v12 inlineBuiltin=StringRepeat overload=StringPrototypeRepeat/0 accessSite=29 -> done b6(), miss b7()
+# CHECK-NEXT: b2(v14: string @Cell):
+# CHECK-NEXT: v15: "]{9}~" @Cell = String string="]{9}~"
+# CHECK-NEXT: v16: string @Cell = Strcat v3, v14, v15
+# CHECK-NEXT: Return v16
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v17: undefined @OptionalDouble = Undefined
+# CHECK-NEXT: v18: number @DoubleWithPayload = Sub v17, v7 form=Numbers
+# CHECK-NEXT: v19: 7 @Double = Integer integer=7
+# CHECK-NEXT: v20: number @DoubleWithPayload = Sub v18, v19 form=Numbers
+# CHECK-NEXT: TryCallInline v4, v20 inlineBuiltin=StringRepeat overload=StringPrototypeRepeat/0 accessSite=29 -> done b4(), miss b5()
+# CHECK-NEXT: b4(v21: string @Cell) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b2(v21)
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v22: string @JSValue = CallBuiltin v4, v20 overload=StringPrototypeRepeat/0 accessSite=29
+# CHECK-NEXT: Jump -> next b4(v22)
+# CHECK-NEXT: b6(v13: string @Cell):
+# CHECK-NEXT: Jump -> next b2(v13)
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v23: string @JSValue = CallBuiltin v4, v12 overload=StringPrototypeRepeat/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v23)
+# CHECK-NEXT: }

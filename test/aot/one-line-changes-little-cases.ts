@@ -6,12 +6,13 @@
 // and the report of that build is held against the report of the base alone.
 //
 //   library lines    beside `console.log("hello")`: the functions in the image and the bytes of code that the line adds
-//   program lines    in the entry point of ./one-line-changes-little/program.js, whose objects they name: the accesses and the
+//   program lines    in the entry point of ./one-line-changes-little/program.ts, whose objects they name: the accesses and the
 //                    calls of the program's own code that the line makes worse, and the bytes of code that the program's
 //                    functions and module bodies grow by, the line's own code among them
-//   the same lines   in the entry point of ./one-line-changes-little/program.ts, the same program in strict TypeScript
-//   the same lines   in program.js beside a line that brings in much of the library, as every real program has one: a line that
-//                    costs nothing alone may cost a class once the library's own code is there to meet what it hands out
+//   the same lines   in program.js, the same program without types, beside a line that brings in a module of the library, as every
+//                    real program has one: a line that costs nothing alone may cost a class once the library's own code is there
+//                    to meet what it hands out. What a line takes from program.js alone it also takes there
+//   ten of them      beside a line that brings in much of the library, where they cost something else than beside one module
 //
 // And types help: the typed program is compiled no worse than the untyped one.
 //
@@ -19,25 +20,29 @@
 //
 //   AOT_ONE_LINE=<text>    only the lines whose name contains the text
 //
-// The first three groups have a file each, one-line-changes-little-<part>.test.ts, and the fourth, whose builds hold the library, has five: a line is a build.
+// A line is a build, so each group is dealt out over several files, one-line-changes-little-<part>.test.ts.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { built, slot, spawned } from "./harness/commands";
+import { wanted } from "./harness/shares";
 import {
   knownBesideLibrary,
+  knownBesideMuchOfTheLibrary,
   knownInLibrary,
-  knownInProgram,
   knownInTypedProgram,
   typedAgainstUntyped,
 } from "./one-line-changes-little/known-today";
 import { libraryLines, programLines, type Line } from "./one-line-changes-little/lines";
-import { built, slot, spawned, wanted } from "./run-programs";
 import { describe, test } from "./supported";
 
 const mostFunctionsAdded = 120;
-// The code of an image ends at a whole page of 16 KiB, with its constants behind it, so what a line adds is counted up to a page too high.
-const mostCodeBytesAdded = 65536 + 16384;
+// The code of an image ends at a whole page of 16 KiB, so what a line adds is counted up to a page too high.
+const page = 16384;
+const mostCodeBytesAdded = 65536 + page;
+// The constants lie behind the last page of the code and are counted with it.
+const withoutConstants = (codeBytes: number) => codeBytes - (codeBytes % page);
 const mostFreeAccessesLost = 3;
 const mostAccessesByNameGained = 3;
 const mostDirectCallsLost = 2;
@@ -55,7 +60,8 @@ const program = readFileSync(join(import.meta.dir, "one-line-changes-little", "p
 const typedProgram = readFileSync(join(import.meta.dir, "one-line-changes-little", "program.ts"), "utf8");
 const namesOfProgram = [...program.matchAll(/^export (?:class|const|function) (\w+)/gm)].map(match => match[1]);
 
-const neverRuns = (code: string) => `const K = process.argv[2];\nif (process.argv.length > 99) {\n  ${code}\n}\n`;
+// The compiler knows the answer of neither call, and neither brings in anything of the library.
+const neverRuns = (code: string) => `const K = prompt();\nif (Date.now() < 0) {\n  ${code}\n}\n`;
 
 const besideHello = (code: string) => ({
   "entry.js": `import "./line.js";\nconsole.log("hello");\n`,
@@ -67,13 +73,21 @@ const insideProgram = (code: string) => ({
   "program.js": program,
 });
 
-const besideLibrary = (code: string) => insideProgram(`process.stdout.write(K);\n  ${code}`);
+const besideLibrary = (code: string) =>
+  insideProgram(`globalThis.kept = [process.argv, require("node:querystring").parse(K)];\n  ${code}`);
+const besideMuchOfTheLibrary = (code: string) => insideProgram(`process.stdout.write(K);\n  ${code}`);
+// Beside one module these pass and are known to fail beside much of the library, or the other way around.
+const differBesideMuchOfTheLibrary = new Set([
+  ...Object.keys(knownBesideMuchOfTheLibrary),
+  "method-to-unknown",
+  "new-function",
+]);
 
 // The checker is told nothing about the line: most of the lines are what it exists to refuse.
 const insideTypedProgram = (code: string) => ({
-  "entry.ts": `import { ${namesOfProgram.join(", ")} } from "./program.ts";\nconst K: any = process.argv[2];\n// @ts-ignore\nif (process.argv.length > 99) { ${code} }\nconsole.log(summary(run(world, options)));\n`,
+  "entry.ts": `import { ${namesOfProgram.join(", ")} } from "./program.ts";\nconst K: any = prompt();\n// @ts-ignore\nif (Date.now() < 0) { ${code} }\nconsole.log(summary(run(world, options)));\n`,
   "program.ts": typedProgram,
-  "globals.d.ts": `declare const console: { log(...values: unknown[]): void };\ndeclare const process: { argv: string[] };\n`,
+  "globals.d.ts": `declare const console: { log(...values: unknown[]): void };\ndeclare function prompt(): string | null;\n`,
   "tsconfig.json": JSON.stringify({
     compilerOptions: {
       lib: ["ESNext"],
@@ -93,12 +107,10 @@ async function measure(files: Record<string, string>) {
   using dir = tempDir("aot-one-line", files);
   const folder = String(dir);
   const report = join(folder, "report.json");
-  const executable = join(folder, isWindows ? "program.exe" : "program");
   const flags = ["--aot-report=" + report, "--aot-report-detail=functions"];
   const entry = "entry.ts" in files ? "./entry.ts" : "./entry.js";
-  built(
-    await spawned([bunExe(), "build", "--compile", "--aot", ...flags, entry, "--outfile", executable], folder, bunEnv),
-  );
+  // The same compilation as a build's, and the same report. No executable is written, and none of these programs runs.
+  built(await spawned([bunExe(), "check", "--aot", ...flags, entry], folder, bunEnv));
   const { statistics, summary, functions } = JSON.parse(readFileSync(report, "utf8"));
   // The report names no file for the body of a module, nor for the code that it shares between functions.
   const bodyRoles = ["Source", "CoroutineRamp", "CoroutineBody", "AsyncWorker"];
@@ -108,6 +120,10 @@ async function measure(files: Record<string, string>) {
   return {
     functions: statistics.ImageFunctionsEmitted as number,
     codeBytes: statistics.CodeBytesEmitted as number,
+    // Without the rest of the last page and without the constants. It is printed and judges nothing.
+    exactCodeBytes:
+      (statistics.SharedCodeBytesEmitted as number) +
+      (functions as { codeBytes: number }[]).reduce((sum, { codeBytes }) => sum + codeBytes, 0),
     free: summary.accesses.free as number,
     byName: summary.accesses.byName as number,
     direct: summary.calls.proven as number,
@@ -130,8 +146,12 @@ function addedToLibrary(alone: Measured, withLine: Measured) {
   if (withLine.functions > alone.functions + mostFunctionsAdded)
     found.push(moved("functions", alone.functions, withLine.functions));
   // An ASAN build emits four times the bytes for the same functions.
-  if (!isASAN && withLine.codeBytes > alone.codeBytes + mostCodeBytesAdded)
-    found.push(moved("bytes of code", alone.codeBytes, withLine.codeBytes));
+  if (!isASAN && withoutConstants(withLine.codeBytes) > withoutConstants(alone.codeBytes) + mostCodeBytesAdded)
+    found.push(
+      moved("bytes of code", alone.codeBytes, withLine.codeBytes) +
+        ", " +
+        moved("of functions and shared code alone", alone.exactCodeBytes, withLine.exactCodeBytes),
+    );
   return found;
 }
 
@@ -179,11 +199,49 @@ function lines(
 
 /** `part`: 1 to 8. */
 export function oneLineChangesLittle(part: number) {
-  if (part === 1) lines(0, 1, "compile/aot/one line brings in little of the library", libraryLines, knownInLibrary, besideHello, addedToLibrary);
-  else if (part === 2) lines(0, 1, "compile/aot/one line takes little from the program", programLines, knownInProgram, insideProgram, lostInProgram);
-  else if (part === 3) lines(0, 1, "compile/aot/one line takes little from the typed program", programLines, knownInTypedProgram, insideTypedProgram, lostInProgram);
-  else lines(part - 4, 5, "compile/aot/one line takes little from the program beside the library", programLines, knownBesideLibrary, besideLibrary, lostInProgram);
-  if (part === 1) typedAgainstUntypedProgram();
+  const besideOneModule = programLines.filter(([name]) => !differBesideMuchOfTheLibrary.has(name));
+  const besideMuch = programLines.filter(([name]) => differBesideMuchOfTheLibrary.has(name));
+  if (part <= 2)
+    lines(
+      part - 1,
+      2,
+      "compile/aot/one line brings in little of the library",
+      libraryLines,
+      knownInLibrary,
+      besideHello,
+      addedToLibrary,
+    );
+  else if (part <= 4)
+    lines(
+      part - 3,
+      2,
+      "compile/aot/one line takes little from the typed program",
+      programLines,
+      knownInTypedProgram,
+      insideTypedProgram,
+      lostInProgram,
+    );
+  else if (part <= 7)
+    lines(
+      part - 5,
+      3,
+      "compile/aot/one line takes little from the program beside the library",
+      besideOneModule,
+      knownBesideLibrary,
+      besideLibrary,
+      lostInProgram,
+    );
+  else
+    lines(
+      0,
+      1,
+      "compile/aot/one line takes little from the program beside much of the library",
+      besideMuch,
+      knownBesideMuchOfTheLibrary,
+      besideMuchOfTheLibrary,
+      lostInProgram,
+    );
+  if (part === 8) typedAgainstUntypedProgram();
 }
 
 function typedAgainstUntypedProgram() {
@@ -222,8 +280,8 @@ function typedAgainstUntypedProgram() {
   test("every known line is a line", () => {
     const names = (all: readonly Line[]) => new Set(all.map(([name]) => name));
     expect(Object.keys(knownInLibrary).filter(name => !names(libraryLines).has(name))).toEqual([]);
-    expect(Object.keys(knownInProgram).filter(name => !names(programLines).has(name))).toEqual([]);
     expect(Object.keys(knownInTypedProgram).filter(name => !names(programLines).has(name))).toEqual([]);
     expect(Object.keys(knownBesideLibrary).filter(name => !names(programLines).has(name))).toEqual([]);
+    expect(Object.keys(knownBesideMuchOfTheLibrary).filter(name => !names(programLines).has(name))).toEqual([]);
   });
 }

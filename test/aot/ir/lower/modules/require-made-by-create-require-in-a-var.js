@@ -5,7 +5,7 @@
 // MEMBER: [[empty]] = StrictEq [[callee]], [[undefined]]
 // MEMBER-NEXT: Branch [[empty]] -> taken [[notFilled]](), notTaken [[filled]]()
 // MEMBER: [[notFilled]]():
-// MEMBER-NEXT: = Call [[callee]], -, {{*}}calleeName="load"
+// MEMBER-NEXT: = Call [[undefined]], -, {{*}}calleeName="load"
 // MEMBER: [[filled]]():
 // MEMBER-NEXT: EvaluateModule module=m
 // MEMBER-NEXT: = Boolean boolean=true

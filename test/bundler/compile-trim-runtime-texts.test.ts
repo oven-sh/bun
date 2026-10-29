@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { unsupported } from "../aot/run-programs";
+import { unsupported } from "../aot/harness/commands";
 import { canTrim, getMappedSegments } from "./compile-trim-features";
 
 const keyWidth = 8;
@@ -175,6 +175,7 @@ describe.skipIf(!canTrim)("an executable without the Bun command line holds none
   const whole = readFileSync(bunExe());
   const everythingIn = (bytes: Buffer) => [bytes, ...whatIsCompressedIn(bytes)];
   const trimmed = getMappedSegments(file).flatMap(everythingIn);
+  const everythingInWholeBun = getMappedSegments(whole).flatMap(everythingIn);
 
   interface Rule {
     id: string;
@@ -188,10 +189,9 @@ describe.skipIf(!canTrim)("an executable without the Bun command line holds none
   test("the search finds them in the whole Bun", () => {
     const names = rules.map(rule => rule.value).filter(name => name.length >= 16);
     expect(names.length).toBeGreaterThan(100);
-    const everything = everythingIn(whole);
-    expect(textsFoundIn(everything, names).length).toBe(new Set(names).size);
     const descriptions = rules.map(rule => rule.description).filter(Boolean);
-    expect(textsFoundIn(everything, descriptions).length).toBe(new Set(descriptions).size);
+    const found = new Set(textsFoundIn(everythingInWholeBun, [...names, ...descriptions]));
+    expect([...names, ...descriptions].filter(text => !found.has(text))).toEqual([]);
   });
 
   test("no name of a lint rule, and no sixteen bytes of one", () => {
@@ -226,16 +226,17 @@ describe.skipIf(!canTrim)("an executable without the Bun command line holds none
       ),
     ].filter(message => message.length >= 40);
     expect(messages.length).toBeGreaterThan(1000);
-    const piecesAtWords = (message: string) =>
-      piecesOf(message, 24).filter((_, at) => at === 0 || message[at - 1] === " ");
+    const piecesAtWords = messages.map(message =>
+      piecesOf(message, 24).filter((_, at) => at === 0 || message[at - 1] === " "),
+    );
     const mostlyIn = (haystacks: Uint8Array[]) => {
-      const found = new Set(textsFoundIn(haystacks, messages.flatMap(piecesAtWords)));
+      const found = new Set(textsFoundIn(haystacks, piecesAtWords.flat()));
       return messages.filter(
-        message =>
-          piecesAtWords(message).filter(piece => found.has(piece)).length >= piecesAtWords(message).length * 0.8,
+        (_, index) =>
+          piecesAtWords[index].filter(piece => found.has(piece)).length >= piecesAtWords[index].length * 0.8,
       );
     };
-    expect(mostlyIn(everythingIn(whole)).length).toBeGreaterThan(messages.length / 3);
+    expect(mostlyIn(everythingInWholeBun).length).toBeGreaterThan(messages.length / 3);
     expect(notAccountedFor(mostlyIn(trimmed))).toEqual([]);
   });
 
@@ -253,19 +254,11 @@ describe.skipIf(!canTrim)("an executable without the Bun command line holds none
     () => {
       const sources = readBuiltinSourceTexts(whole);
       expect(sources.length).toBeGreaterThan(100);
+      const pieces = sources.map(source => samplePieces(source.text));
       const mostlyIn = (haystacks: Uint8Array[]) => {
-        const found = new Set(
-          textsFoundIn(
-            haystacks,
-            sources.flatMap(source => samplePieces(source.text)),
-          ),
-        );
+        const found = new Set(textsFoundIn(haystacks, pieces.flat()));
         return sources
-          .filter(
-            source =>
-              samplePieces(source.text).filter(piece => found.has(piece)).length * 2 >=
-              samplePieces(source.text).length,
-          )
+          .filter((_, index) => pieces[index].filter(piece => found.has(piece)).length * 2 >= pieces[index].length)
           .map(source => source.name);
       };
       expect(mostlyIn(trimmed)).toEqual(sources.map(source => source.name));

@@ -1,0 +1,396 @@
+# Methods of the members of a union of classes are also taken as values and called on other objects: `this` of a method is only predicted, so each of those calls answers as in plain Bun.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="method-union-member-called-another.ts" displayPath="method-union-member-called-another.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Circle" module=m0 position=194 constructor=f3 fields=[{key="radius" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Square" module=m0 position=317 constructor=f5 fields=[{key="side" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L2 kind=Instance name="Wheel" module=m0 position=430 base=L0 constructor=f7 supertypes=[L0] flags=[HasHeritage]
+variable g0 name="total" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Circle" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="Square" module=m0 declared={type=absent|f5 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 name="Wheel" module=m0 declared={type=absent|f7 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f4
+    DefineMethod v3, v4 layout=L0 key="area"
+    v6 = FinishClass v3 layout=L0
+    v7 = Convert v6 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v7 variable=g1
+    v9 = NewClosure function=f5
+    v10 = NewClass v9 layout=L1
+    v11 = NewClosure function=f6
+    DefineMethod v10, v11 layout=L1 key="area"
+    v13 = FinishClass v10 layout=L1
+    v14 = Convert v13 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v14 variable=g2
+    v16 = ResolveHeritage v7
+    v17 = NewClosure function=f7
+    v18 = NewClass v17, v7, v16 layout=L2
+    v19 = NewClosure function=f8
+    DefineMethod v18, v19 layout=L2 key="area"
+    v21 = FinishClass v18 layout=L2
+    v22 = Convert v21 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v22 variable=g3
+    v24 = String string="the union"
+    v25 = NewClosure function=f9
+    v26 = Call v1, -, v24, v25 calleeName="attempt"
+    v27 = String string="the union afterwards"
+    v28 = NewClosure function=f15
+    v29 = Call v1, -, v27, v28 calleeName="attempt"
+    v30 = Undefined
+    Return v30
+}
+function f1 name="total" module=m0 position=508 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0|L1|L2> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0|L1|L2>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v12):
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Convert v14 declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v16 = PropGet v15 key="area"
+    v17 = Call v16, v15 calleeKey="area" calleeName="shapes[i].area"
+    v18 = Convert v17 declared={type=number} illTypedCause=UnprovenCallee
+    v19 = Add v5, v18
+    v20 = Convert v19 declared={type=number}
+    v21 = Increment v13
+    v22 = Convert v21 declared={type=number}
+    Jump -> next b1(v20, v22)
+  b3(v23):
+    v24 = Convert v5 declared={type=number}
+    Return v24
+}
+function f2 name="attempt" module=m0 position=661 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f9|f10|f11|f12|f13|f14|f15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function|f9|f10|f11|f12|f13|f14|f15):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v1 calleeName="run"
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v3 = Undefined
+    Return v3
+}
+function f3 name="Circle" module=m0 position=216 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PropSet v4, v1 key="radius"
+    v6 = Undefined
+    Return v4
+}
+function f4 name="area" module=m0 position=245 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L2} results=[{type=number}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L2):
+    v1 = Integer integer=3
+    v2 = PropGet v0 key="radius"
+    v3 = Mul v1, v2
+    v4 = PropGet v0 key="radius"
+    v5 = Mul v3, v4
+    v6 = Convert v5 declared={type=number}
+    Return v6
+}
+function f5 name="Square" module=m0 position=339 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PropSet v4, v1 key="side"
+    v6 = Undefined
+    Return v4
+}
+function f6 name="area" module=m0 position=366 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="side"
+    v2 = PropGet v0 key="side"
+    v3 = Mul v1, v2
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}
+function f7 name="Wheel" module=m0 position=430 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L2
+    v5 = Convert v4 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f8 name="area" module=m0 position=455 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2} results=[{type=number}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=1015 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="Circle"
+    v3 = Integer integer=1
+    v4 = Construct v2, -, v3 calleeName="Circle"
+    v5 = Convert v4 declared={type=undefined|null|L0|L2 flags=[OmitsNull, OmitsUndefined]}
+    v6 = GetModuleVariable variable=g2
+    v7 = CheckInitialized v6 name="Square"
+    v8 = Integer integer=2
+    v9 = Construct v7, -, v8 calleeName="Square"
+    v10 = Convert v9 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v11 = GetModuleVariable variable=g3
+    v12 = CheckInitialized v11 name="Wheel"
+    v13 = Integer integer=3
+    v14 = Construct v12, -, v13 calleeName="Wheel"
+    v15 = Convert v14 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v16 = NewArray v5, v10, v15 contents=undefined|null|L0|L1|L2
+    v17 = Call v0, -, v16 calleeName="total"
+    ReturnCall v17 casts=[{declared={type=number}}, {declared={type=number}}]
+}
+function f10 module=m0 position=1104 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=1179 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=1259 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=1334 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 position=1402 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 module=m0 position=1464 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="Square"
+    v3 = Integer integer=3
+    v4 = Construct v2, -, v3 calleeName="Square"
+    v5 = Convert v4 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v6 = GetModuleVariable variable=g3
+    v7 = CheckInitialized v6 name="Wheel"
+    v8 = Integer integer=2
+    v9 = Construct v7, -, v8 calleeName="Wheel"
+    v10 = Convert v9 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v11 = GetModuleVariable variable=g1
+    v12 = CheckInitialized v11 name="Circle"
+    v13 = Integer integer=2
+    v14 = Construct v12, -, v13 calleeName="Circle"
+    v15 = Convert v14 declared={type=undefined|null|L0|L2 flags=[OmitsNull, OmitsUndefined]}
+    v16 = NewArray v5, v10, v15 contents=undefined|null|L0|L1|L2
+    v17 = Call v0, -, v16 calleeName="total"
+    ReturnCall v17 casts=[{declared={type=number}}, {declared={type=number}}]
+}
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f17]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f16]
+# -- generated: total
+# CHECK-LABEL: function {{*}}name="total"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int64 b@44 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v9:CallInline)
+# CHECK-NEXT: Int32 b@45 = Load(b@44, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v9:CallInline)
+# CHECK-NEXT: Int64 b@46 = ZExt32(b@45, v9:CallInline)
+# CHECK-NEXT: Double b@35 = ConstDouble(0.000000e+00(0), v1:Integer)
+# CHECK-NEXT: Void b@50 = Branch(b@46, Terminal, v10:Less)
+# CHECK-NEXT: Successors: Then:#25, Else:#5
+# CHECK-NEXT: BB#25: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@232 = Upsilon($0.000000(b@35), ^235, WritesLocalState, v14:GetArrayElement)
+# CHECK-NEXT: Int64 b@2 = Const64(0)
+# CHECK-NEXT: Void b@231 = Upsilon($0(b@2), ^234, WritesLocalState, v14:GetArrayElement)
+# CHECK-NEXT: Void b@230 = Upsilon(b@44, ^233, WritesLocalState, v14:GetArrayElement)
+# CHECK-NEXT: Int64 b@70 = Const64(3, v17:Integer)
+# CHECK-NEXT: Int64 b@128 = Const64(2147483686, v35:NewClosure)
+# CHECK-NEXT: Int64 b@202 = ArgumentReg(%r13)
+# CHECK-NEXT: Void b@240 = Jump(Terminal, v14:GetArrayElement)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#9: ; frequency = 5.000000
+# CHECK-NEXT: Predecessors: #25, #8
+# CHECK-NEXT: Double b@235 = Phi(ReadsLocalState, v5:Parameter)
+# CHECK-NEXT: Int64 b@234 = Phi(ReadsLocalState, v6:Parameter)
+# CHECK-NEXT: Int64 b@233 = Phi(ReadsLocalState, v9:CallInline)
+# CHECK-NEXT: Int32 b@19 = Const32(3, v14:GetArrayElement)
+# CHECK-NEXT: Int64 b@201 = Shl(b@234, $3(b@19), v14:GetArrayElement)
+# CHECK-NEXT: Int64 b@59 = Add(b@201, b@233, v14:GetArrayElement)
+# CHECK-NEXT: Int64 b@60 = Load(b@59, ControlDependent|Reads:indexedContiguousProperties, v14:GetArrayElement)
+# CHECK-NEXT: Void b@61 = Patchpoint(b@18:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v14:GetArrayElement)
+# CHECK-NEXT: Int32 b@66 = Load(b@60, offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord, v15:TypeTest)
+# CHECK-NEXT: Int32 b@42 = Const32(-2, v15:TypeTest)
+# CHECK-NEXT: Int32 b@52 = Equal(b@66, $-2(b@42), v15:TypeTest)
+# CHECK-NEXT: Void b@41 = Branch(b@52, Terminal, v15:TypeTest)
+# CHECK-NEXT: Successors: Then:#19, Else:#10
+# CHECK-NEXT: BB#19: ; frequency = 2.500000
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Int32 b@122 = Load(b@60, offset = 16, ControlDependent|Reads:ObjectFields.37, v32:GetSlot)
+# CHECK-NEXT: Double b@123 = IToD(b@122, v33:Mul)
+# CHECK-NEXT: Double b@125 = Mul(b@123, b@123, v33:Mul)
+# CHECK-NEXT: Void b@126 = Upsilon(b@125, ^33, WritesLocalState)
+# CHECK-NEXT: Void b@127 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#4: ; frequency = 5.000000
+# CHECK-NEXT: Predecessors: #23, #18, #2, #19
+# CHECK-NEXT: Double b@33 = Phi(ReadsLocalState, v53:Parameter)
+# CHECK-NEXT: Double b@221 = Add(b@33, b@235, v54:Add)
+# CHECK-NEXT: Void b@38 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v7:LoopHint)
+# CHECK-NEXT: Int64 b@37 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v9:CallInline)
+# CHECK-NEXT: Int32 b@57 = Load(b@37, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v9:CallInline)
+# CHECK-NEXT: Int64 b@36 = ZExt32(b@57, v9:CallInline)
+# CHECK-NEXT: Int64 b@219 = Const64(1, v55:Increment)
+# CHECK-NEXT: Int64 b@220 = Add(b@234, $1(b@219), v55:Increment)
+# CHECK-NEXT: Int32 b@67 = Above(b@36, b@220, v10:Less)
+# CHECK-NEXT: Void b@39 = Branch(b@67, Terminal, v10:Less)
+# CHECK-NEXT: Successors: Then:#8, Else:#6
+# CHECK-NEXT: BB#8: ; frequency = 4.500000
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Void b@229 = Upsilon(b@221, ^235, WritesLocalState, v14:GetArrayElement)
+# CHECK-NEXT: Void b@228 = Upsilon(b@220, ^234, WritesLocalState, v14:GetArrayElement)
+# CHECK-NEXT: Void b@227 = Upsilon(b@37, ^233, WritesLocalState, v14:GetArrayElement)
+# CHECK-NEXT: Void b@238 = Jump(Terminal, v14:GetArrayElement)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#6: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Void b@214 = Upsilon(b@221, ^236, WritesLocalState)
+# CHECK-NEXT: Void b@237 = Jump(Terminal)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: BB#7: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #5, #6
+# CHECK-NEXT: Double b@236 = Phi(ReadsLocalState, v5:Parameter)
+# CHECK-NEXT: Void b@241 = Return(b@236, Terminal)
+# CHECK-NEXT: BB#10: ; frequency = 2.500000
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Int32 b@116 = Const32(-1, v15:TypeTest)
+# CHECK-NEXT: Int32 b@21 = Equal(b@66, $-1(b@116), v15:TypeTest)
+# CHECK-NEXT: Void b@20 = Branch(b@21, Terminal, v15:TypeTest)
+# CHECK-NEXT: Successors: Then:#12, Else:#20
+# CHECK-NEXT: BB#12: ; frequency = 1.250000
+# CHECK-NEXT: Predecessors: #10
+# CHECK-NEXT: Int32 b@71 = Load(b@60, offset = 16, ControlDependent|Reads:ObjectFields.0, v18:IsSlotFilled)
+# CHECK-NEXT: Int32 b@72 = Const32(-2147483643, v18:IsSlotFilled)
+# CHECK-NEXT: Int32 b@73 = GreaterEqual(b@71, $-2147483643(b@72), v18:IsSlotFilled)
+# CHECK-NEXT: Void b@74 = Branch(b@73, Terminal, v18:IsSlotFilled)
+# CHECK-NEXT: Successors: Then:#2, Else:Rare:#3
+# CHECK-NEXT: BB#2: ; frequency = 1.248779
+# CHECK-NEXT: Predecessors: #12
+# CHECK-NEXT: Int64 b@76 = SExt32(b@71, v21:Mul)
+# CHECK-NEXT: Int64 b@77 = Mul(b@76, $3(b@70), v21:Mul)
+# CHECK-NEXT: Double b@78 = IToD(b@77, v22:Mul)
+# CHECK-NEXT: Double b@79 = IToD(b@76, v22:Mul)
+# CHECK-NEXT: Double b@80 = Mul(b@78, b@79, v22:Mul)
+# CHECK-NEXT: Void b@81 = Upsilon(b@80, ^33, WritesLocalState)
+# CHECK-NEXT: Void b@82 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#3: ; frequency = 0.001221
+# CHECK-NEXT: Predecessors: #12
+# CHECK-NEXT: Int64 b@83 = Patchpoint(b@60:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v23:PropGet)
+# CHECK-NEXT: Int64 b@17 = Load(b@202, offset = 96, ReadsImmutable, v25:Mul)
+# CHECK-NEXT: Int32 b@84 = AboveEqual(b@83, b@17, v25:Mul)
+# CHECK-NEXT: Void b@85 = Branch(b@84, Terminal, v25:Mul)
+# CHECK-NEXT: Successors: Then:#13, Else:Rare:#14
+# CHECK-NEXT: BB#13: ; frequency = 0.001220
+# CHECK-NEXT: Predecessors: #3
+# CHECK-NEXT: Int32 b@86 = Trunc(b@83, v25:Mul)
+# CHECK-NEXT: Int64 b@87 = SExt32(b@86, v25:Mul)
+# CHECK-NEXT: Void b@88 = Upsilon(b@87, ^95, WritesLocalState, v25:Mul)
+# CHECK-NEXT: Void b@89 = Jump(Terminal, v25:Mul)
+# CHECK-NEXT: Successors: #15
+# CHECK-NEXT: BB#15: ; frequency = 0.001221
+# CHECK-NEXT: Predecessors: #14, #13
+# CHECK-NEXT: Int64 b@95 = Phi(ReadsLocalState, v25:Mul)
+# CHECK-NEXT: Double b@97 = IToD(b@95, v25:Mul)
+# CHECK-NEXT: Int64 b@62 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v17:Integer)
+# CHECK-NEXT: Double b@118 = Load(b@62, ControlDependent|Reads:Top, v17:Integer)
+# CHECK-NEXT: Double b@98 = Mul(b@97, b@118, v25:Mul)
+# CHECK-NEXT: Int64 b@99 = Patchpoint(b@60:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v26:PropGet)
+# CHECK-NEXT: Int64 b@47 = Load(b@202, offset = 96, ReadsImmutable, v28:Mul)
+# CHECK-NEXT: Int32 b@100 = AboveEqual(b@99, b@47, v28:Mul)
+# CHECK-NEXT: Void b@101 = Branch(b@100, Terminal, v28:Mul)
+# CHECK-NEXT: Successors: Then:#16, Else:#17
+# CHECK-NEXT: BB#16: ; frequency = 0.000610
+# CHECK-NEXT: Predecessors: #15
+# CHECK-NEXT: Int32 b@102 = Trunc(b@99, v28:Mul)
+# CHECK-NEXT: Double b@103 = IToD(b@102, v28:Mul)
+# CHECK-NEXT: Void b@104 = Upsilon(b@103, ^110, WritesLocalState, v28:Mul)
+# CHECK-NEXT: Void b@105 = Jump(Terminal, v28:Mul)
+# CHECK-NEXT: Successors: #18
+# CHECK-NEXT: BB#18: ; frequency = 0.001221
+# CHECK-NEXT: Predecessors: #17, #16
+# CHECK-NEXT: Double b@110 = Phi(ReadsLocalState, v28:Mul)
+# CHECK-NEXT: Double b@111 = Mul(b@98, b@110, v28:Mul)
+# CHECK-NEXT: Void b@112 = Upsilon(b@111, ^33, WritesLocalState)
+# CHECK-NEXT: Void b@113 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#17: ; frequency = 0.000610
+# CHECK-NEXT: Predecessors: #15
+# CHECK-NEXT: Int64 b@55 = Load(b@202, offset = 96, ReadsImmutable, v28:Mul)
+# CHECK-NEXT: Int64 b@106 = Add(b@99, b@55, v28:Mul)
+# CHECK-NEXT: Double b@107 = BitwiseCast(b@106, v28:Mul)
+# CHECK-NEXT: Void b@108 = Upsilon(b@107, ^110, WritesLocalState, v28:Mul)
+# CHECK-NEXT: Void b@109 = Jump(Terminal, v28:Mul)
+# CHECK-NEXT: Successors: #18
+# CHECK-NEXT: BB#14: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #3
+# CHECK-NEXT: Int64 b@22 = Load(b@202, offset = 96, ReadsImmutable, v25:Mul)
+# CHECK-NEXT: Int64 b@90 = Add(b@83, b@22, v25:Mul)
+# CHECK-NEXT: Double b@91 = BitwiseCast(b@90, v25:Mul)
+# CHECK-NEXT: Int64 b@92 = Patchpoint(b@91:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v25:Mul)
+# CHECK-NEXT: Void b@93 = Upsilon(b@92, ^95, WritesLocalState, v25:Mul)
+# CHECK-NEXT: Void b@94 = Jump(Terminal, v25:Mul)
+# CHECK-NEXT: Successors: #15
+# CHECK-NEXT: BB#20: ; frequency = 1.250000
+# CHECK-NEXT: Predecessors: #10
+# CHECK-NEXT: Int64 b@129 = SlotBase(stack0, v35:NewClosure)
+# CHECK-NEXT: Int64 b@131 = Patchpoint($2147483686(b@128):Register(%r10), b@129:Register(%rax), runsWithoutFrame, resultConstraints = Register(%rax), ControlDependent|Reads:argumentBuffer, v35:NewClosure)
+# CHECK-NEXT: Int64 b@132 = Patchpoint(b@131:Register(%r8), b@60:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v36:Call)
+# CHECK-NEXT: Int64 b@49 = Load(b@202, offset = 96, ReadsImmutable, v37:AssumeType)
+# CHECK-NEXT: Int32 b@133 = AboveEqual(b@132, b@49, v37:AssumeType)
+# CHECK-NEXT: Void b@134 = Branch(b@133, Terminal, v37:AssumeType)
+# CHECK-NEXT: Successors: Then:#21, Else:#22
+# CHECK-NEXT: BB#21: ; frequency = 0.625000
+# CHECK-NEXT: Predecessors: #20
+# CHECK-NEXT: Int32 b@135 = Trunc(b@132, v37:AssumeType)
+# CHECK-NEXT: Double b@136 = IToD(b@135, v37:AssumeType)
+# CHECK-NEXT: Void b@137 = Upsilon(b@136, ^143, WritesLocalState, v37:AssumeType)
+# CHECK-NEXT: Void b@138 = Jump(Terminal, v37:AssumeType)
+# CHECK-NEXT: Successors: #23
+# CHECK-NEXT: BB#23: ; frequency = 1.250000
+# CHECK-NEXT: Predecessors: #22, #21
+# CHECK-NEXT: Double b@143 = Phi(ReadsLocalState, v37:AssumeType)
+# CHECK-NEXT: Void b@144 = Upsilon(b@143, ^33, WritesLocalState)
+# CHECK-NEXT: Void b@145 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#22: ; frequency = 0.625000
+# CHECK-NEXT: Predecessors: #20
+# CHECK-NEXT: Int64 b@224 = Load(b@202, offset = 96, ReadsImmutable, v37:AssumeType)
+# CHECK-NEXT: Int64 b@139 = Add(b@132, b@224, v37:AssumeType)
+# CHECK-NEXT: Double b@140 = BitwiseCast(b@139, v37:AssumeType)
+# CHECK-NEXT: Void b@141 = Upsilon(b@140, ^143, WritesLocalState, v37:AssumeType)
+# CHECK-NEXT: Void b@142 = Jump(Terminal, v37:AssumeType)
+# CHECK-NEXT: Successors: #23
+# CHECK-NEXT: BB#5: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@58 = Upsilon($0.000000(b@35), ^236, WritesLocalState)
+# CHECK-NEXT: Void b@239 = Jump(Terminal)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: Stack slots:
+# CHECK-NEXT: stack0: byteSize = 16, offsetFromFP = 0, kind = Locked, dead at suspensions
+# CHECK-NEXT: stack1: byteSize = 16, offsetFromFP = 0, kind = Locked, dead at suspensions
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@18: dereferenceableBytes = 8
+# CHECK-NEXT: b@131: dereferenceableBytes = 8
+# CHECK-NEXT: b@234: range = [0,4294967295]
+# CHECK-NEXT: b@234: induction, next = b@220, step = 1, test = b@67, doesNotWrap
+# CHECK-NEXT: end of function f1

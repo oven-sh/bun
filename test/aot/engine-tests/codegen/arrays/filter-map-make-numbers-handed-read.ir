@@ -1,0 +1,87 @@
+# What filter() and map() make of a list of numbers that is handed in is read again as a list of numbers: whole numbers, fractions, NaN, -0, Infinity and holes.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="filter-map-make-numbers-handed-read.ts" displayPath="filter-map-make-numbers-handed-read.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=NaN}, Number{value=3}, Number{value=NaN}, Number{value=5}, Number{value=-0}, Number{value=Infinity}, Number{value=8.25}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=JSON
+    v3 = PropGet v2 key="parse"
+    v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v5 = String string="[1,2,3,4,5,6,7,8]"
+    v6 = Call v4, v2, v5 calleeKey="parse" calleeName="JSON.parse"
+    v7 = Convert v6 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v8 = Convert v7 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v9 = Builtin builtin=JSON
+    v10 = PropGet v9 key="parse"
+    v11 = Convert v10 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v12 = String string="[0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5]"
+    v13 = Call v11, v9, v12 calleeKey="parse" calleeName="JSON.parse"
+    v14 = Convert v13 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v15 = Convert v14 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v16 = Data data=d0
+    v17 = Convert v16 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v18 = Data data=d1
+    v19 = Convert v18 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v20 = NewArray v8, v15, v17, v19 contents=undefined|null|Array<number>
+    v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}
+    v22 = Integer
+    v23 = Convert v22 declared={type=number}
+    v24 = IteratorOpen v21
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v26 = IteratorResume v24
+    v27 = ResultAt v26 index=1
+    Jump -> next b2()
+  b2() handler=b3():
+    v28 = Convert v27 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v29 = Call v1, -, v28 calleeName="largeDoubled"
+    Jump -> next b1()
+  b3() role=IterationCleanup subject=v24:
+    v30 = CatchException
+    Rethrow v30
+}
+function f1 name="largeDoubled" module=m0 position=663 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = PropGet v0 key="filter"
+    v2 = NewClosure function=f2
+    v3 = Call v1, v0, v2 calleeKey="filter" calleeName="list.filter"
+    v4 = Convert v3 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v5 = PropGet v4 key="map"
+    v6 = NewClosure function=f3
+    v7 = Call v5, v4, v6 calleeKey="map" calleeName="map"
+    ReturnCall v7 casts=[{declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f2 module=m0 position=734 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=boolean}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=2
+    v2 = LessEq v0, v1
+    v3 = ToBoolean v2
+    v4 = LogicalNot v3
+    v5 = Convert v4 declared={type=boolean}
+    Return v5
+}
+function f3 module=m0 position=762 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f2
+# CHECK-LABEL: function f2 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@21 = ArgumentReg(%r13)
+# CHECK-NEXT: Double b@20 = Load(b@21, offset = -104, ReadsImmutable, v2:LessEq)
+# CHECK-NEXT: Double b@18 = ArgumentReg(%xmm0)
+# CHECK-NEXT: Int32 b@22 = LessEqual(b@18, b@20, v2:LessEq)
+# CHECK-NEXT: Int32 b@23 = Const32(1, v3:LogicalNot)
+# CHECK-NEXT: Int32 b@24 = BitXor(b@22, $1(b@23), v3:LogicalNot)
+# CHECK-NEXT: Void b@25 = Return(b@24, Terminal)
+# CHECK-NEXT: end of function f2

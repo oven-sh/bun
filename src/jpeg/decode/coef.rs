@@ -7,7 +7,7 @@ use super::idct::{self, DctTable};
 use super::input::Input;
 use super::phuff::PHuffDecoder;
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS, coef_at};
-use crate::alloc::{try_box, try_vec, try_vec_with_capacity};
+use crate::alloc::{try_box, try_collect, try_vec, try_vec_with_capacity};
 use crate::error::{Error, Result};
 use crate::zigzag::natural_order;
 
@@ -116,39 +116,29 @@ impl Plane {
     }
 }
 
-/// The inverse DCT of one component.
-pub(crate) struct Idct {
-    /// The side of the result.
-    size: u32,
-    table: DctTable,
-}
-
-impl Idct {
-    /// A component that no scan has mentioned has no table, and comes out gray.
-    pub(crate) fn new(size: u32, quant: Option<&[u16; 64]>) -> Self {
-        Idct {
-            size,
-            table: quant.map_or([0; 64], idct::dct_table),
-        }
-    }
-
-    #[inline(always)]
-    fn run(&self, coefs: &Block, plane: &mut Plane, y: usize, x: usize) -> Result<()> {
-        let table = &self.table;
-        match self.size {
-            8 => plane.put(y, x, &idct::idct8x8(coefs, table)),
-            1 => plane.put(y, x, &idct::idct1x1(coefs, table)),
-            2 => plane.put(y, x, &idct::idct2x2(coefs, table)),
-            3 => plane.put(y, x, &idct::idct3x3(coefs, table)),
-            4 => plane.put(y, x, &idct::idct4x4(coefs, table)),
-            5 => plane.put(y, x, &idct::idct5x5(coefs, table)),
-            6 => plane.put(y, x, &idct::idct6x6(coefs, table)),
-            7 => plane.put(y, x, &idct::idct7x7(coefs, table)),
-            10 => plane.put(y, x, &idct::idct10x10(coefs, table)),
-            12 => plane.put(y, x, &idct::idct12x12(coefs, table)),
-            14 => plane.put(y, x, &idct::idct14x14(coefs, table)),
-            _ => Err(Error::Internal),
-        }
+/// Puts the `size` by `size` samples that `coefs` make at column `x` of row `y` of `plane`.
+#[inline(always)]
+fn inverse_dct(
+    coefs: &Block,
+    table: &DctTable,
+    size: usize,
+    plane: &mut Plane,
+    y: usize,
+    x: usize,
+) -> Result<()> {
+    match size {
+        8 => plane.put(y, x, &idct::idct8x8(coefs, table)),
+        1 => plane.put(y, x, &idct::idct1x1(coefs, table)),
+        2 => plane.put(y, x, &idct::idct2x2(coefs, table)),
+        3 => plane.put(y, x, &idct::idct3x3(coefs, table)),
+        4 => plane.put(y, x, &idct::idct4x4(coefs, table)),
+        5 => plane.put(y, x, &idct::idct5x5(coefs, table)),
+        6 => plane.put(y, x, &idct::idct6x6(coefs, table)),
+        7 => plane.put(y, x, &idct::idct7x7(coefs, table)),
+        10 => plane.put(y, x, &idct::idct10x10(coefs, table)),
+        12 => plane.put(y, x, &idct::idct12x12(coefs, table)),
+        14 => plane.put(y, x, &idct::idct14x14(coefs, table)),
+        _ => Err(Error::Internal),
     }
 }
 
@@ -205,6 +195,8 @@ pub(crate) struct CoefController {
     pub(crate) entropy: Entropy,
     input_imcu_row: u32,
     mcu_buffer: Box<[Block; MAX_BLOCKS_IN_MCU]>,
+    /// Per component, from `start_output_pass` on.
+    dct_tables: Vec<DctTable>,
     /// Empty if the stream has a single scan.
     whole_image: Vec<CoefArray>,
     /// The last iMCU row of the current scan that began with data left to decode.
@@ -219,6 +211,7 @@ impl CoefController {
             entropy,
             input_imcu_row: 0,
             mcu_buffer: try_box([[0; 64]; MAX_BLOCKS_IN_MCU])?,
+            dct_tables: Vec::new(),
             whole_image: Vec::new(),
             last_good_imcu_row: 0,
             smoothing: None,
@@ -233,7 +226,6 @@ impl CoefController {
     pub(crate) fn decompress_onepass(
         &mut self,
         decoder: &mut Decoder,
-        idcts: &[Idct],
         planes: &mut [Plane],
     ) -> Result<()> {
         let last_mcu_col = decoder.mcus_per_row - 1;
@@ -251,9 +243,8 @@ impl CoefController {
                 for i in 0..decoder.components_in_scan {
                     let ci = decoder.scan_component_index(i)?;
                     let comp = decoder.component(ci)?;
-                    let (Some(idct), Some(plane)) = (idcts.get(ci), planes.get_mut(ci)) else {
-                        return Err(Error::Internal);
-                    };
+                    let table = self.dct_tables.get(ci).ok_or(Error::Internal)?;
+                    let plane = planes.get_mut(ci).ok_or(Error::Internal)?;
                     let size = comp.dct_scaled_size as usize;
                     let useful_width = if mcu_col_num < last_mcu_col {
                         comp.mcu_width
@@ -270,7 +261,8 @@ impl CoefController {
                                 .skip(index)
                                 .take(useful_width as usize);
                             for (xindex, block) in blocks.enumerate() {
-                                idct.run(block, plane, y, start_col + xindex * size)?;
+                                let x = start_col + xindex * size;
+                                inverse_dct(block, table, size, plane, y, x)?;
                             }
                         }
                         index += comp.mcu_width as usize;
@@ -340,6 +332,12 @@ impl CoefController {
     /// Smoothing estimates the low AC coefficients that a progressive stream has not delivered in full, which only
     /// happens if it breaks off early.
     pub(crate) fn start_output_pass(&mut self, decoder: &Decoder) -> Result<()> {
+        // A component that no scan has mentioned has no table, and comes out gray.
+        let tables = decoder
+            .components
+            .iter()
+            .map(|comp| comp.quant_table.as_ref());
+        self.dct_tables = try_collect(tables.map(|quant| quant.map_or([0; 64], idct::dct_table)))?;
         self.whole_image.iter_mut().for_each(CoefArray::zero);
         self.smoothing = self.smoothing_latch(decoder).map(try_box).transpose()?;
         Ok(())
@@ -380,16 +378,15 @@ impl CoefController {
         &self,
         decoder: &Decoder,
         output_imcu_row: u32,
-        idcts: &[Idct],
         planes: &mut [Plane],
     ) -> Result<()> {
         let components = decoder
             .components
             .iter()
             .zip(&self.whole_image)
-            .zip(idcts)
+            .zip(&self.dct_tables)
             .zip(planes.iter_mut());
-        for (ci, (((comp, array), idct), plane)) in components.enumerate() {
+        for (ci, (((comp, array), table), plane)) in components.enumerate() {
             let block_rows = decoder.rows_in_imcu_row(comp, output_imcu_row);
             let size = comp.dct_scaled_size as usize;
             let first_row = (output_imcu_row * comp.v_samp) as usize;
@@ -403,7 +400,8 @@ impl CoefController {
                         .take(width)
                         .enumerate()
                     {
-                        idct.run(block, plane, block_row * size, block_num * size)?;
+                        let (y, x) = (block_row * size, block_num * size);
+                        inverse_dct(block, table, size, plane, y, x)?;
                     }
                 }
                 continue;
@@ -469,12 +467,8 @@ impl CoefController {
                     }
                     let mut workspace = *block;
                     smoother.smooth(&window, &mut workspace)?;
-                    idct.run(
-                        &workspace,
-                        plane,
-                        block_row as usize * size,
-                        block_num * size,
-                    )?;
+                    let (y, x) = (block_row as usize * size, block_num * size);
+                    inverse_dct(&workspace, table, size, plane, y, x)?;
                     let [_, c1, c2, c3, c4] = window;
                     window = [c1, c2, c3, c4, c4];
                 }

@@ -2,7 +2,7 @@
 //! and taking the samples through upsampling and color conversion row by row (jdmainct.c, jdsample.c).
 
 use super::arith::ArithDecoder;
-use super::coef::{CoefController, Entropy, Idct, Plane};
+use super::coef::{CoefController, Entropy, Plane};
 use super::color::{self, Conversion};
 use super::huff::HuffDecoder;
 use super::lossless::DiffController;
@@ -10,7 +10,7 @@ use super::marker::Reached;
 use super::phuff::PHuffDecoder;
 use super::upsample::{self, Method};
 use super::{ColorSpace, DCTSIZE, Decoder, last_group};
-use crate::alloc::{try_box, try_collect, try_vec_with_capacity};
+use crate::alloc::{try_box, try_vec_with_capacity};
 use crate::error::{Error, Result};
 
 enum Source {
@@ -126,10 +126,6 @@ impl Decoder<'_> {
             }
         }
 
-        let components = self.components.iter();
-        let idcts = try_collect(
-            components.map(|comp| Idct::new(comp.dct_scaled_size, comp.quant_table.as_ref())),
-        )?;
         if let Source::Lossy(coef) = &mut source {
             coef.start_output_pass(&self)?;
         }
@@ -151,12 +147,8 @@ impl Decoder<'_> {
                 &mut current
             };
             match (&mut source, self.has_multiple_scans) {
-                (Source::Lossy(coef), false) => {
-                    coef.decompress_onepass(&mut self, &idcts, planes)?
-                }
-                (Source::Lossy(coef), true) => {
-                    coef.decompress_data(&self, imcu_row, &idcts, planes)?
-                }
+                (Source::Lossy(coef), false) => coef.decompress_onepass(&mut self, planes)?,
+                (Source::Lossy(coef), true) => coef.decompress_data(&self, imcu_row, planes)?,
                 (Source::Lossless(diff), false) => diff.decompress_onepass(&mut self, planes)?,
                 (Source::Lossless(diff), true) => diff.output_data(&self, imcu_row, planes)?,
             }

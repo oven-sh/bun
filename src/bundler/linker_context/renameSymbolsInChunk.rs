@@ -566,7 +566,8 @@ pub(crate) fn run_nested_rename_task(
     let mut nested = NestedRenamer::new(root, &uses, source_index, &worker.arena);
     let mut sorted: Vec<u32> = Vec::new();
     for &(_, scope) in scopes {
-        // SAFETY: live arena-allocated scope (see `rename_symbols_in_chunk`).
+        // SAFETY: `rename_symbols_in_chunk` took it from `Part.scopes` or from the file's row of
+        // the `module_scope` column; nothing writes a scope while these tasks run.
         nested.assign_names_recursive(unsafe { &*scope }, &mut sorted);
     }
     let names = nested.into_names();

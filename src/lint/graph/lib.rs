@@ -1301,9 +1301,17 @@ impl Modules for Graph<'_> {
             Lookup::Oxlint => {
                 let flavor = Flavor::Oxlint;
                 let config = self.config_of(flavor, &from);
-                self.resolve_any_path(flavor, config, &from, specifier, is_require)?
-                    .0
-                    .into_owned()
+                let resolve = |specifier: &[u8]| {
+                    self.resolve_any_path(flavor, config, &from, specifier, is_require)
+                };
+                // oxlint's resolver doesn't add these to a name. The other resolvers do, and Bun runs `./data`.
+                let others = [&b".json"[..], b".node"];
+                let added = || {
+                    others
+                        .iter()
+                        .find_map(|it| resolve(&[specifier, it].concat()))
+                };
+                resolve(specifier).or_else(added)?.0.into_owned()
             }
             Lookup::TypeScript(projects) => {
                 // `removeQuerystring`

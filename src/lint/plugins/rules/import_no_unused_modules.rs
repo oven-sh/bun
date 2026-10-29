@@ -60,6 +60,8 @@ struct Context {
     jsx: bool,
     experimental_decorators: bool,
     is_eslint_8: bool,
+    /// Decides the defaults of `settings`.
+    is_oxlint: bool,
 }
 
 /// The state upstream keeps across files. Upstream updates it with every file it lints, for editors. This doesn't.
@@ -94,6 +96,7 @@ impl Context {
             jsx: language.jsx,
             experimental_decorators: language.experimental_decorators,
             is_eslint_8: language.eslint_8.is_some(),
+            is_oxlint: language.is_oxlint,
         }
     }
 
@@ -104,6 +107,7 @@ impl Context {
             && self.jsx == language.jsx
             && self.experimental_decorators == language.experimental_decorators
             && self.is_eslint_8 == language.eslint_8.is_some()
+            && self.is_oxlint == language.is_oxlint
             && self.settings == language.settings
             && self.parser_options == language.parser_options
     }

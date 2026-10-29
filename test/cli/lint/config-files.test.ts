@@ -1090,6 +1090,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
         "./conditional": { types: "./cond.d.ts", default: "./cond.js" },
         "./star/*": "./dist/*.js",
         "./hidden": null,
+        "./esm-only": { module: "./esm.js" },
       },
     }),
     "node_modules/lib/dist/main.js": "export const v = 1;\n",
@@ -1099,6 +1100,8 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "node_modules/lib/cond.d.ts": "export declare const v: number;\n",
     "node_modules/lib/dist/x.js": "export const v = 1;\n",
     "node_modules/lib/hidden.js": "export const v = 1;\n",
+    "node_modules/lib/esm.js": "export const v = 1;\n",
+    "addon.node": "",
   };
   const found = [
     "./f_ts",
@@ -1111,6 +1114,8 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "./f_ts.js",
     "./dir",
     "./data.json",
+    "./data",
+    "./addon",
     "./f_ts?raw",
     "./f_ts#x",
     "lib",
@@ -1118,19 +1123,19 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "lib/renamed",
     "lib/conditional",
     "lib/star/x",
+    "lib/esm-only",
     "bun",
     "bun:test",
     "node:fs",
   ];
-  // Like oxlint, `./a.js` finds `./a.ts` but not `./a.tsx` or `./a.mts`, and `.json` isn't added to a name. `exports`
-  // hides every other file of a package.
+  // Like oxlint, `./a.js` finds `./a.ts` but not `./a.tsx` or `./a.mts`, and `exports` hides every other file of a
+  // package.
   const missing = [
     "./missing",
     "./f_ts.d.ts",
     "./f_tsx.js",
     "./f_tsx.jsx",
     "./f_mts.js",
-    "./data",
     "lib/dist/x",
     "lib/hidden",
     "bun:missing",
@@ -1152,10 +1157,11 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     const rules = { "import/no-unresolved": "error", "import/no-cycle": "error" };
     const files = { ...project, ".oxlintrc.json": oxlintrc(rules, settings), "index.ts": imports };
     const { problems } = await lint(files, ["index.ts"]);
-    // eslint-import-resolver-typescript doesn't add `.mts` or `.mjs` to a name, or take off a `#`. It adds `.json`,
-    // maps `.js` to `.ts` and `.tsx`, and finds `./f_ts.ts` for `./f_ts.d.ts`.
-    const theirs = ["./f_ts.d.ts", "./f_tsx.js", "./f_tsx.jsx", "./data"].map(at);
-    const ours = ["./f_mts", "./f_mjs", "./f_ts#x"].map(at);
+    // eslint-import-resolver-typescript doesn't add `.mts` or `.mjs` to a name, take off a `#`, or match the `module`
+    // condition. It maps `.js` to `.ts` and `.tsx`, and finds `./f_ts.ts` for `./f_ts.d.ts`. With `import/no-cycle`
+    // on, the graph resolves the same names as oxlint, and its answers must not be reused.
+    const theirs = ["./f_ts.d.ts", "./f_tsx.js", "./f_tsx.jsx"].map(at);
+    const ours = ["./f_mts", "./f_mjs", "./f_ts#x", "lib/esm-only"].map(at);
     const expected = [...reported.filter(it => !theirs.includes(it)), ...ours];
     expect(problems).toEqual(expected.sort());
   });
@@ -1178,6 +1184,17 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     }
   });
 
+  test("a setting that is set replaces the default", async () => {
+    const settings = { "import/core-modules": ["electron"], "import/resolve": null };
+    const files = {
+      ...project,
+      ".oxlintrc.json": oxlintrc({ "import/no-unresolved": "error" }, settings),
+      "index.ts": `import "bun";\nimport "electron";\nimport "./f_ts";\n`,
+    };
+    const { problems } = await lint(files, ["index.ts"]);
+    expect(problems).toEqual(["index.ts:1:8 import/no-unresolved"]);
+  });
+
   test("--tsconfig sets the tsconfig.json whose `paths` apply, as for oxlint's rules", async () => {
     const paths = (to: string) => JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`${to}/*`] } } });
     const files = {
@@ -1191,8 +1208,9 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     };
     const byDefault = await lint(files, ["src"]);
     const withFlag = await lint(files, ["--tsconfig", "aliases.json", "src"]);
-    expect([byDefault.problems, withFlag.problems]).toEqual([
+    expect([byDefault.problems, byDefault.exitCode, withFlag.problems]).toEqual([
       [],
+      0,
       ["src/a.ts:1:8 import/no-unresolved", "src/a.ts:2:8 import/no-cycle"],
     ]);
   });

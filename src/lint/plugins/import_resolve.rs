@@ -21,7 +21,8 @@ pub(crate) struct Resolvers<'s> {
     map: SmallVec<[(&'s [u8], Lookup<'s>); 2]>,
     /// `settings["import/core-modules"]`: an array or a string.
     core_modules: Option<&'s Json>,
-    /// True if the file is linted with an oxlint config: then Bun's own modules are core modules.
+    /// True if the file is linted with an oxlint config: then Bun's own modules are core modules unless
+    /// `import/core-modules` says otherwise.
     is_oxlint: bool,
 }
 
@@ -170,11 +171,10 @@ impl<'s> Resolvers<'s> {
             is_oxlint,
         };
         let legacy = settings.get(b"import/resolve");
+        let has_legacy = legacy.is_some_and(|it| it.is_truthy());
         match (settings.get(b"import/resolver")).filter(|it| it.is_truthy()) {
             Some(configured) => resolvers.resolver_reducer(configured)?,
-            None if is_oxlint && legacy.is_none() => {
-                resolvers.map.push((b"oxlint", Lookup::Oxlint))
-            }
+            None if is_oxlint && !has_legacy => resolvers.map.push((b"oxlint", Lookup::Oxlint)),
             // "backward compatibility"
             None => resolvers.set(b"node", legacy)?,
         }
@@ -183,10 +183,8 @@ impl<'s> Resolvers<'s> {
 
     /// `coreSet.has(specifier)`
     fn is_core_module(&self, specifier: &[u8]) -> bool {
-        if self.is_oxlint && is_bun_module(specifier) {
-            return true;
-        }
         match self.core_modules {
+            None if self.is_oxlint => is_bun_module(specifier),
             Some(Json::Array(items)) => items.iter().any(|it| it.as_str() == Some(specifier)),
             // `new Set(string)` holds the string's code points.
             Some(Json::String(points)) => {

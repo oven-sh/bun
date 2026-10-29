@@ -201,7 +201,8 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     /// Removes the handlers that were attached with `user_data`. See `HttpResponse::clearHandlersOf`.
-    pub(crate) fn clear_handlers_of(&mut self, user_data: *mut c_void) {
+    /// False: the socket is closed, and nothing was removed.
+    pub(crate) fn clear_handlers_of(&mut self, user_data: *mut c_void) -> bool {
         c::uws_res_clear_handlers_of(Self::ssl_flag(), self.as_raw(), user_data)
     }
 
@@ -839,7 +840,7 @@ impl AnyResponse {
     /// HTTP/2: widen the stream receive window once the body is wanted.
     pub fn grow_request_window(self) {
         if let AnyResponse::H2(r) = self {
-            bun_opaque::opaque_deref_mut(r).grow_request_window();
+            opaque_deref_mut(r).grow_request_window();
         }
     }
     pub fn pause(self) {
@@ -859,11 +860,11 @@ impl AnyResponse {
     }
 
     /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
-    pub fn clear_handlers_of<U>(self, user_data: *mut U) {
+    pub fn clear_handlers_of<U>(self, user_data: *mut U) -> bool {
         match self {
             AnyResponse::SSL(ptr) => opaque_deref_mut(ptr).clear_handlers_of(user_data.cast()),
             AnyResponse::TCP(ptr) => opaque_deref_mut(ptr).clear_handlers_of(user_data.cast()),
-            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
         }
     }
 
@@ -1194,7 +1195,7 @@ pub mod c {
             ssl: i32,
             res: &mut uws_res,
             user_data: *mut c_void,
-        );
+        ) -> bool;
         pub(crate) fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,

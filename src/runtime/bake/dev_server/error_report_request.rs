@@ -28,7 +28,8 @@ use bun_jsc::{
 };
 use bun_paths::path_buffer_pool;
 use bun_uws::{self as uws, AnyResponse, Request};
-use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
+use bun_uws_sys::body_reader_mixin::BodyReaderHandler;
+use bun_uws_sys::response::Response;
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};
@@ -40,16 +41,9 @@ pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
     dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
-    // BodyReaderMixin is a generic helper that stores the buffered body and
-    // dispatches to `on_body` below.
-    body: uws::BodyReaderMixin<ErrorReportRequest>,
 }
 
 impl BodyReaderHandler for ErrorReportRequest {
-    fn mixin(&mut self) -> &mut uws::BodyReaderMixin<Self> {
-        &mut self.body
-    }
-
     fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
         self.run_with_body(body, resp).map_err(Into::into)
     }
@@ -57,17 +51,16 @@ impl BodyReaderHandler for ErrorReportRequest {
 
 impl Drop for ErrorReportRequest {
     fn drop(&mut self) {
-        self.dev
-            .get()
-            .server
-            .as_ref()
-            .unwrap()
-            .on_static_request_complete();
+        self.dev.server.unwrap().on_static_request_complete();
     }
 }
 
 impl ErrorReportRequest {
-    pub(crate) fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
+    pub(crate) fn run<const SSL: bool>(
+        dev: &mut DevServer,
+        _req: &mut Request,
+        resp: &mut Response<SSL>,
+    ) {
         // Use the caller's `&mut DevServer` directly (matches
         // `UnrefSourceMapRequest::run`) — no need to re-derive it through the
         // freshly-allocated ctx's `BackRef` under `unsafe`.
@@ -75,11 +68,10 @@ impl ErrorReportRequest {
             .as_mut()
             .expect("server bound")
             .on_pending_request();
-        let ctx = Box::new(ErrorReportRequest {
+        let ctx = ErrorReportRequest {
             dev: bun_ptr::BackRef::new_mut(dev),
-            body: uws::BodyReaderMixin::init(),
-        });
-        uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, resp);
+        };
+        uws::BodyReaderMixin::read_body(ctx, resp);
     }
 
     fn run_with_body(&self, body: &[u8], r: AnyResponse) -> crate::Result<()> {

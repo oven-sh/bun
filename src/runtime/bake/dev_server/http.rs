@@ -387,13 +387,9 @@ struct UnrefSourceMapRequest {
     // BACKREF: DevServer outlives the request; raw ptr avoids the `'static`
     // bound on `BodyReaderHandler` that a borrowed `&mut DevServer` would violate.
     dev: *mut DevServer,
-    body: uws::BodyReaderMixin<Self>,
 }
 
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
-    fn mixin(&mut self) -> &mut uws::BodyReaderMixin<Self> {
-        &mut self.body
-    }
     fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
         self.run_with_body(body, resp).map_err(Into::into)
     }
@@ -402,30 +398,26 @@ impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest
 impl Drop for UnrefSourceMapRequest {
     fn drop(&mut self) {
         // SAFETY: dev outlives the request
-        unsafe {
-            (*self.dev)
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete()
-        };
+        unsafe { (*self.dev).server }
+            .unwrap()
+            .on_static_request_complete();
     }
 }
 
 impl UnrefSourceMapRequest {
-    fn run<R>(dev: &mut DevServer, _: &mut Request, resp: &mut R)
-    where
-        R: bun_uws_sys::body_reader_mixin::BodyResponse,
-    {
+    fn run<const SSL: bool>(
+        dev: &mut DevServer,
+        _: &mut Request,
+        resp: &mut bun_uws_sys::response::Response<SSL>,
+    ) {
         dev.server
             .as_mut()
             .expect("server bound")
             .on_pending_request();
-        let ctx = Box::new(UnrefSourceMapRequest {
+        let ctx = UnrefSourceMapRequest {
             dev: std::ptr::from_mut::<DevServer>(dev),
-            body: uws::BodyReaderMixin::init(),
-        });
-        uws::BodyReaderMixin::<Self>::read_body(ctx, resp);
+        };
+        uws::BodyReaderMixin::read_body(ctx, resp);
     }
 
     fn run_with_body(&self, body: &[u8], r: AnyResponse) -> crate::Result<()> {

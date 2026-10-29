@@ -14,7 +14,7 @@
 //!   monomorphised zero-sized types, so no runtime data is needed).
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
 //!
-//! All functions are `unsafe fn` (callers uphold the uWS callback contract)
+//! `c_slice` is an `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
 
 use core::ptr::NonNull;
@@ -50,7 +50,7 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────
 //
-// S005: the primitives above are `unsafe fn` because each call site must
+// S005: `c_slice` above is an `unsafe fn` because each call site must
 // re-assert the uWS callback contract. For the common, *non-re-entrant*
 // dispatch path (single-threaded event loop, handler does not call back into
 // uWS on the same socket while holding `&mut Owner`) that contract is uniform

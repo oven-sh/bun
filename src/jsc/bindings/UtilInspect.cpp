@@ -140,35 +140,45 @@ static ALWAYS_INLINE bool nextEntry(VM& vm, JSSetIterator* iterator, JSValue& ke
     return !!key;
 }
 
-// Steps a private copy of `iterator` with the engine's own next(), so the caller's iterator does not move. Returns how many entries are left.
+// A private iterator at the position of `iterator`. Stepping it does not move `iterator`.
 template<typename Iterator>
-static uint32_t remainingEntries(VM& vm, Structure* structure, Iterator* iterator, uint32_t limit, MarkedArgumentBuffer& entries)
+static Iterator* copyOf(VM& vm, Structure* structure, Iterator* iterator)
 {
+    static_assert(Iterator::numberOfInternalFields == 4, "copyOf copies a Map or Set iterator field by field");
     Iterator* copy = Iterator::createWithInitialValues(vm, structure);
     for (auto field : { Iterator::Field::Entry, Iterator::Field::IteratedObject, Iterator::Field::Storage, Iterator::Field::Kind }) {
         // Storage is empty until the collection has one.
         if (JSValue value = iterator->internalField(field).get())
             copy->internalField(field).set(vm, copy, value);
     }
+    return copy;
+}
 
+// Steps private copies of `iterator` with the engine's own next(), so the caller's iterator does not move. Returns how many entries are left.
+template<typename Iterator>
+static uint32_t remainingEntries(VM& vm, Structure* structure, Iterator* iterator, uint32_t limit, MarkedArgumentBuffer& entries)
+{
     JSValue key;
     JSValue value;
-    if (!nextEntry(vm, copy, key, value))
-        return 0;
-
-    // The collection holds at least what the iterator has left, so one allocation is enough.
-    IterationKind kind = iterator->kind();
-    size_t copied = std::min<size_t>(limit, iterator->iteratedObject()->size());
-    entries.ensureCapacity(kind == IterationKind::Entries ? copied * 2 : copied);
     uint32_t remaining = 0;
-    do {
-        if (remaining++ >= limit)
-            continue;
+    for (Iterator* counted = copyOf(vm, structure, iterator); nextEntry(vm, counted, key, value);)
+        remaining++;
+
+    // The first walk counted what is left, so the second fills one allocation of that size.
+    uint32_t copied = std::min(limit, remaining);
+    if (!copied)
+        return remaining;
+    IterationKind kind = iterator->kind();
+    entries.ensureCapacity(kind == IterationKind::Entries ? static_cast<size_t>(copied) * 2 : copied);
+    if (entries.hasOverflowed()) [[unlikely]]
+        return remaining;
+    Iterator* copy = copyOf(vm, structure, iterator);
+    for (uint32_t index = 0; index < copied && nextEntry(vm, copy, key, value); index++) {
         if (kind != IterationKind::Values)
             entries.append(key);
         if (kind != IterationKind::Keys)
             entries.append(value);
-    } while (nextEntry(vm, copy, key, value));
+    }
     return remaining;
 }
 

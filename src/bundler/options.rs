@@ -70,17 +70,8 @@ pub(crate) fn validate_path(
     Box::from(out)
 }
 
-/// The default `root` of a build: the directory that holds every entry point, never above the
-/// working directory.
-///
-/// Each entry point is made absolute against `working_directory` first, so the answer is the same
-/// for `src/a.ts src/w/b.ts`, `./src/a.ts ./src/w/b.ts` and `src/a.ts ./src/w/b.ts`. `bun build`,
-/// `Bun.build()` and the ahead-of-time compiler all take their default root from here, so one
-/// build command names the same files under `/$bunfs/root/` whichever of them runs it.
-///
-/// When the directory that holds them all is above the working directory, or elsewhere, the root
-/// is the working directory and an entry point above it is named `../<file>`: the output never
-/// names the folders of the machine that built it.
+/// The default `root` of `bun build`, `Bun.build()` and the ahead-of-time compiler: the directory
+/// that holds every entry point, taken from their absolute paths, and never above the working directory.
 pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) -> Vec<u8> {
     let paths: Vec<Vec<u8>> = entry_points
         .iter()

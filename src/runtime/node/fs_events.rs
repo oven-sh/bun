@@ -1,11 +1,10 @@
-use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::VecExt;
 use bun_core::zstr;
-use bun_threading::{Guarded, Mutex, Semaphore, UnboundedQueue};
+use bun_threading::{Guarded, Semaphore, UnboundedQueue};
 
 // Both siblings are wired into `crate::node`, and intra-crate module cycles
 // are fine in Rust, so import the real shapes instead of mirroring them.
@@ -92,7 +91,9 @@ const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED;
 
-static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
+/// Serializes `FSEventsLoop::init()`/`shutdown()` and holds the CF thread's handle in between.
+static FSEVENTS_DEFAULT_LOOP_MUTEX: Guarded<Option<std::thread::JoinHandle<()>>> =
+    Guarded::new(None);
 static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
     std::sync::OnceLock::new();
 
@@ -271,7 +272,6 @@ pub(crate) struct FSEventsLoop {
     mutex: Guarded<FSEventsLoopState>,
     sem: Semaphore,
     tasks: UnboundedQueue<ConcurrentTask>,
-    thread: UnsafeCell<Option<std::thread::JoinHandle<()>>>,
 }
 
 struct FSEventsLoopState {
@@ -283,7 +283,7 @@ struct FSEventsLoopState {
     cf_paths: CFArrayRef,
 }
 
-// SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
+// SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used under `mutex`.
 unsafe impl Sync for FSEventsLoop {}
 
 pub(crate) struct Task {
@@ -356,7 +356,7 @@ impl FSEventsLoop {
         }
     }
 
-    pub(crate) fn init() -> crate::Result<&'static FSEventsLoop> {
+    pub(crate) fn init() -> crate::Result<(&'static FSEventsLoop, std::thread::JoinHandle<()>)> {
         // Owning raw pointer first, shared view second: the error paths below reclaim
         // through `this_ptr`, which must not be derived from a shared reference.
         let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
@@ -364,7 +364,6 @@ impl FSEventsLoop {
             loop_: AtomicPtr::new(ptr::null_mut()),
             sem: Semaphore::default(),
             tasks: UnboundedQueue::default(),
-            thread: UnsafeCell::new(None),
             mutex: Guarded::new(FSEventsLoopState {
                 watchers: Vec::new(),
                 watcher_count: 0,
@@ -418,14 +417,10 @@ impl FSEventsLoop {
                 return Err(crate::Error::FailedToSpawnFSEventsThread);
             }
         };
-        // SAFETY: `thread` is only touched by `init()`/`shutdown()` on the JS thread; the CF thread never accesses it.
-        unsafe {
-            *this.thread.get() = Some(handle);
-        }
 
         // sync threads
         this.sem.wait();
-        Ok(this)
+        Ok((this, handle))
     }
 
     fn enqueue_task_concurrent(&self, task: Task) {
@@ -736,9 +731,8 @@ impl FSEventsLoop {
         unsafe { (cf.run_loop_stop)(self.loop_.load(Ordering::Relaxed)) };
     }
 
-    fn shutdown(&'static self) {
-        // SAFETY: `thread` is only touched here and in `init()`, always on the JS thread under `FSEVENTS_DEFAULT_LOOP_MUTEX`.
-        let Some(thread) = (unsafe { (*self.thread.get()).take() }) else {
+    fn shutdown(&'static self, thread: Option<std::thread::JoinHandle<()>>) {
+        let Some(thread) = thread else {
             return; // already shut down
         };
         // signal close and wait
@@ -839,11 +833,12 @@ pub(crate) fn watch(
             loop_, path, recursive, callback, update_end, ctx,
         ));
     }
-    let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
+    let mut thread = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
     let loop_: &'static FSEventsLoop = match FSEVENTS_DEFAULT_LOOP.get() {
         Some(&l) => l,
         None => {
-            let l = FSEventsLoop::init()?;
+            let (l, handle) = FSEventsLoop::init()?;
+            *thread = Some(handle);
             let _ = FSEVENTS_DEFAULT_LOOP.set(l);
             bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
             l
@@ -860,7 +855,7 @@ extern "C" fn close_and_wait_on_exit() {
 
 fn close_and_wait() {
     if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
-        let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
-        loop_.shutdown();
+        let mut thread = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
+        loop_.shutdown(thread.take());
     }
 }

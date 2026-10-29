@@ -224,7 +224,7 @@ impl YesTask {
                 EventLoopHandle::Js { owner } => {
                     owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
-                EventLoopHandle::Mini(mut mini) => {
+                EventLoopHandle::Mini(mini) => {
                     (*mini.loop_).tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
@@ -233,7 +233,7 @@ impl YesTask {
                             }
                             EventLoopTask::Js(_) => unreachable!(),
                         });
-                    mini.get_mut().enqueue_task_concurrent(at);
+                    mini.enqueue_task_concurrent(at);
                 }
             }
         }

@@ -3,7 +3,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::{FileSystem, FilenameStore};
-use bun_collections::HashMap;
+use bun_collections::{HashMap, HiveSlot};
 use bun_core::fmt::{quote, redacted_npm_url};
 use bun_core::{self, MutableString, strings};
 use bun_http::{
@@ -65,7 +65,7 @@ pub struct NetworkTask {
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
-    // ParentRef constructed via `from_raw_mut` so `as_mut_ptr` retains write
+    // ParentRef constructed via `from_ref_mut` so `as_mut_ptr` retains write
     // provenance for `notify` (`wake_raw`) and `reset_streaming_for_retry`
     // (`TarballStream::init`).
     pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
@@ -1034,27 +1034,19 @@ impl NetworkTask {
     /// stays bitwise-untouched (it is `MaybeUninit`, so leaving it uninit is
     /// sound under the `&mut NetworkTask` the caller forms next; it is
     /// overwritten without drop by `for_manifest`/`for_tarball`).
-    ///
-    /// # Safety
-    /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
-    /// slot returned by `claim()`; its prior contents are treated as garbage
-    /// (no destructors run).
-    pub(crate) unsafe fn write_init(
-        slot: *mut NetworkTask,
+    pub(crate) fn write_init(
+        claim: HiveSlot<'_, NetworkTask, 128>,
         task_id: crate::package_manager_task::Id,
-        package_manager: *mut PackageManager,
-    ) {
+        package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
+    ) -> NonNull<NetworkTask> {
         use core::ptr::addr_of_mut;
-        // SAFETY: caller contract (see fn `# Safety`) — `slot` is the unique
-        // handle to a freshly-vended `HiveArrayFallback` slot whose prior
-        // contents are garbage; every field is written without dropping.
+        let slot = claim.addr().as_ptr();
+        // SAFETY: `claim` is the unique handle to a slot whose prior contents are
+        // garbage, so every field is written without dropping. `assume_init`
+        // comes after all of them but `unsafe_http_client`, a `MaybeUninit`.
         unsafe {
             addr_of_mut!((*slot).task_id).write(task_id);
-            // SAFETY: `package_manager` is the live owner of this task; write
-            // provenance is required for the `as_mut_ptr()` in `notify` and
-            // `reset_streaming_for_retry`, so callers pass `*mut` (not `*const`).
-            addr_of_mut!((*slot).package_manager)
-                .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
+            addr_of_mut!((*slot).package_manager).write(package_manager);
             // Struct-default fields.
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
@@ -1070,6 +1062,7 @@ impl NetworkTask {
             // (`unsafe_http_client` is `MaybeUninit` — left uninitialized.)
             addr_of_mut!((*slot).response_buffer).write(MutableString::init_empty());
             addr_of_mut!((*slot).callback).write(Callback::LocalTarball);
+            claim.assume_init()
         }
     }
 }

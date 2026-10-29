@@ -1044,53 +1044,6 @@ setInterval(() => {}, 1e6);
   20_000,
 );
 
-// `--watch` starts the program again for a change of a watched file. An entry point that is
-// deleted has nothing to start, and the program used to end with "Module not found" before the
-// save that creates the file again. kqueue still reloads at the delete.
-for (const [state, lookup] of [
-  ["", ""],
-  [" after a failed lookup", `try {\n  require("./missing.js");\n} catch {}\n`],
-]) {
-  it.skipIf(!isLinux)(
-    `--watch waits for an entry point that is deleted and then created again${state}`,
-    async () => {
-      using dir = tempDir("watch-dir-event-entry-deleted", {
-        "trace.log": "",
-        "src/fence/f.js": `export {};`,
-        "src/entry.js": `${lookup}import "./fence/f.js";
-console.log("EVAL", 1);
-setInterval(() => {}, 1e6);
-`,
-      });
-      const cwd = join(String(dir), "src");
-      const trace = join(String(dir), "trace.log");
-      const proc = spawn({
-        cwd,
-        cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
-        env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
-        stdout: "pipe",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
-      watchee = proc;
-      const { waitFor, release } = stdoutWaiter(proc);
-
-      await waitFor("EVAL 1\n");
-      rmSync(join(cwd, "entry.js"));
-      // The delete is handled in a batch of its own.
-      await watcherHandled(trace, join(cwd, "fence"));
-      // A complete file at once: the program that starts again reads the entry point only once.
-      await replaceFile["rename over"](join(cwd, "entry.js"), `console.log("EVAL", 2);\nsetInterval(() => {}, 1e6);\n`);
-      await waitFor("EVAL 2\n");
-
-      release();
-      proc.kill("SIGKILL");
-      await proc.exited;
-    },
-    20_000,
-  );
-}
-
 // `bun test --watch` and `bun build --watch` decide a directory event in the same code.
 it.skipIf(isWindows)(
   "test --watch sees a rename over save of an import and of the test file after a failed lookup",

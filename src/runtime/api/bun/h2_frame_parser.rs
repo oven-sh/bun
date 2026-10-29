@@ -7413,15 +7413,13 @@ impl H2FrameParser {
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
                 let pool = pool.get_or_insert_with(|| {
-                    // SAFETY: `new_boxed` returns a `Box::leak`ed, fully
-                    // initialized allocation; `from_raw` reclaims that exact
-                    // pointer back into an owning `Box`. `ManuallyDrop<T>` is
+                    // SAFETY: `from_raw` reclaims the pointer `into_raw` gave
+                    // up back into an owning `Box`. `ManuallyDrop<T>` is
                     // `repr(transparent)` over `T`, so the pointer cast is a
                     // layout no-op.
                     unsafe {
                         Box::from_raw(
-                            H2FrameParserHiveAllocator::new_boxed()
-                                .as_ptr()
+                            Box::into_raw(H2FrameParserHiveAllocator::new_boxed())
                                 .cast::<ManuallyDrop<H2FrameParserHiveAllocator>>(),
                         )
                     }

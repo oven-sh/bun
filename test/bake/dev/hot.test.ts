@@ -454,7 +454,8 @@ devTest("import.meta.hot with optional chaining", {
         console.log("Name updated: " + newModule.name);
       });
       import.meta.hot?.accept();
-      console.log("Initial count: " + data.count++ + " " + name);
+      console.log("Initial count: " + import.meta.hot?.data.count.toFixed(0) + " " + name);
+      data.count++;
     `,
     "name.ts": `
       export const name = "Alice";

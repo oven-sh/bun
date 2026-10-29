@@ -67,8 +67,7 @@ CryptoKeyHMAC::CryptoKeyHMAC(Vector<uint8_t>&& key, size_t lengthBits, CryptoAlg
     , m_lengthBits(lengthBits)
 {
     ASSERT(lengthIsValidForKeyData(m_lengthBits, m_key.size()));
-    // The key is "the first length bits of data" (https://w3c.github.io/webcrypto/#hmac-operations-import-key),
-    // so clear the bits of the last byte that are past the length, as Node.js does.
+    // https://w3c.github.io/webcrypto/#hmac-operations-import-key: the key is the first m_lengthBits bits of the data.
     if (size_t trailingBits = m_key.size() * 8 - m_lengthBits)
         m_key.last() &= static_cast<uint8_t>(0xFF << trailingBits);
 }

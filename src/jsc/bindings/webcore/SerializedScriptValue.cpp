@@ -326,12 +326,8 @@ static String agentClusterIDFromGlobalObject(JSGlobalObject& globalObject)
 
 // Version 2 added the AKP key class (ML-DSA/ML-KEM), the KEM usage tags, and
 // the ChaCha20-Poly1305/ML-* algorithm identifier tags.
-// Version 3 ends a CryptoKeyHMAC record with <unusedBits>. A reader that stops at
-// version 2 would skip that byte and report a longer key, so the record of an HMAC
-// key whose length is not a whole number of bytes is written as version 3. Every
-// other key is still written as version 2, so the bytes of its record do not change.
-// currentKeyFormatVersion is the newest version the reader accepts.
-const uint32_t currentKeyFormatVersion = 3;
+// Version 3 added <unusedBits> to the record of an HMAC key with a partial last byte.
+const uint32_t newestKeyFormatVersion = 3;
 const uint32_t baseKeyFormatVersion = 2;
 const uint32_t firstKeyFormatVersionWithHMACUnusedBits = 3;
 
@@ -1883,6 +1879,7 @@ private:
         auto* hmacKey = keyClass == CryptoKeyClass::HMAC ? &downcast<CryptoKeyHMAC>(*key) : nullptr;
         // The bits of the last key byte past the length of an HMAC key: 0 to 7.
         size_t hmacUnusedBits = hmacKey ? hmacKey->key().size() * 8 - hmacKey->lengthBits() : 0;
+        // The lowest version that can represent the key, so that every other record keeps its bytes.
         uint32_t keyFormatVersion = hmacUnusedBits ? firstKeyFormatVersionWithHMACUnusedBits : baseKeyFormatVersion;
         write(keyFormatVersion);
 
@@ -3386,7 +3383,7 @@ private:
         ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
         uint32_t keyFormatVersion;
-        if (!read(keyFormatVersion) || keyFormatVersion > currentKeyFormatVersion)
+        if (!read(keyFormatVersion) || keyFormatVersion > newestKeyFormatVersion)
             return false;
 
         int32_t extractable;

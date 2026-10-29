@@ -1,6 +1,7 @@
 //! Bun's cross-platform filesystem watcher. Runs on its own thread.
 
 use core::fmt;
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::borrow::Cow;
 
 use bun_collections::MultiArrayList;
@@ -116,15 +117,15 @@ pub struct Watcher {
     /// Whether `thread_main` is running. Written by the watcher thread, read
     /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
     /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
-    pub(crate) watchloop_handle: bun_core::AtomicCell<bool>,
+    pub(crate) watchloop_handle: AtomicBool,
     pub(crate) cwd: &'static [u8],
     pub(crate) thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
     /// `watch_loop` and the platform `watch_loop_cycle`.
-    pub(crate) running: bun_core::AtomicCell<bool>,
+    pub(crate) running: AtomicBool,
     /// Set by `shutdown` (main thread), read by `thread_main` (watcher
     /// thread) after the loop exits.
-    pub(crate) close_descriptors: bun_core::AtomicCell<bool>,
+    pub(crate) close_descriptors: AtomicBool,
 
     pub(crate) evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
     pub(crate) evict_list_i: WatchItemIndex,
@@ -202,10 +203,10 @@ impl Watcher {
             platform: Platform::new(top_level_dir)?,
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
-            watchloop_handle: bun_core::AtomicCell::new(false),
+            watchloop_handle: AtomicBool::new(false),
             thread: None,
-            running: bun_core::AtomicCell::new(true),
-            close_descriptors: bun_core::AtomicCell::new(false),
+            running: AtomicBool::new(true),
+            close_descriptors: AtomicBool::new(false),
             evict_list: [0; MAX_EVICTION_COUNT],
             evict_list_i: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -227,7 +228,7 @@ impl Watcher {
     /// open-coding the lock/trace/callback sequence.
     pub(crate) fn dispatch_file_updates(&mut self, event_count: usize, changed_count: usize) {
         let _guard = self.mutex.lock_guard();
-        if !self.running.load() {
+        if !self.running.load(Ordering::Acquire) {
             return;
         }
         let events = &mut self.watch_events[..event_count];
@@ -237,8 +238,8 @@ impl Watcher {
     }
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
-        debug_assert!(!self.watchloop_handle.load());
-        self.watchloop_handle.store(true);
+        debug_assert!(!self.watchloop_handle.load(Ordering::Acquire));
+        self.watchloop_handle.store(true, Ordering::Release);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
@@ -260,7 +261,7 @@ impl Watcher {
             spawn().map_err(|_| first)
         });
         self.thread = Some(handle.map_err(|e| {
-            self.watchloop_handle.store(false);
+            self.watchloop_handle.store(false, Ordering::Release);
             // Windows: raw_os_error() is a Win32 GetLastError() code, so
             // route it through the u32 (Win32Error) mapper rather than
             // from_errno's i64 discriminant-cast path.
@@ -296,14 +297,15 @@ impl Watcher {
             let me = unsafe { &*this };
             // `thread_body` clears `watchloop_handle` under this mutex when it returns ownership.
             me.mutex.lock();
-            if me.watchloop_handle.load() {
-                me.close_descriptors.store(close_descriptors);
-                me.running.store(false);
+            if me.watchloop_handle.load(Ordering::Acquire) {
+                me.close_descriptors
+                    .store(close_descriptors, Ordering::Release);
+                me.running.store(false, Ordering::Release);
                 me.mutex.unlock();
                 false
             } else {
                 me.mutex.unlock();
-                if close_descriptors && me.running.load() {
+                if close_descriptors && me.running.load(Ordering::Acquire) {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
                         let _ = bun_sys::close(fd);
@@ -354,7 +356,7 @@ impl Watcher {
     }
 
     fn thread_body(&mut self) -> bool {
-        self.watchloop_handle.store(true);
+        self.watchloop_handle.store(true, Ordering::Release);
         self.thread_lock.lock();
         Output::Source::configure_named_thread(zstr!("File Watcher"));
 
@@ -364,8 +366,8 @@ impl Watcher {
             self.platform.stop();
             // Hold the mutex so `shutdown` can't free `self` or `ctx` before `on_error` returns.
             let _guard = self.mutex.lock_guard();
-            if self.running.load() {
-                self.watchloop_handle.store(false);
+            if self.running.load(Ordering::Acquire) {
+                self.watchloop_handle.store(false, Ordering::Release);
                 (self.on_error)(self.ctx, err);
                 return true;
             }
@@ -374,7 +376,7 @@ impl Watcher {
         // `thread_main` frees `self` next, so wait for `shutdown` to release the mutex.
         let close_descriptors = {
             let _guard = self.mutex.lock_guard();
-            self.close_descriptors.load()
+            self.close_descriptors.load(Ordering::Acquire)
         };
         if close_descriptors {
             let fds = self.watchlist.items_fd();
@@ -470,7 +472,7 @@ impl Watcher {
     }
 
     fn watch_loop(&mut self) -> sys::Result<()> {
-        while self.running.load() {
+        while self.running.load(Ordering::Acquire) {
             // individual platform implementation will call onFileUpdate
             platform::watch_loop_cycle(self)?;
         }

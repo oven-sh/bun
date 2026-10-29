@@ -66,8 +66,7 @@ describe("EventEmitterAsyncResource", () => {
     asl.run(456, () => {
       expect(ee.emit("test")).toBe(true);
     });
-    // Listener runs in the resource's async scope even with captureRejections on
-    // (own-property emit stamped by the base constructor must not shadow it).
+    // Listener runs in the resource's async scope even with captureRejections on.
     expect(listenerStore).toBe(123);
 
     const { err, event } = await promise;
@@ -88,6 +87,28 @@ describe("EventEmitterAsyncResource", () => {
         return original.apply(this, args);
       };
       const ee = new EventEmitterAsyncResource("test" as any);
+      let fired = false;
+      ee.on("x", () => {
+        fired = true;
+      });
+      ee.emit("x");
+      expect(fired).toBe(true);
+      expect(calls).toBe(1);
+    } finally {
+      EventEmitter.prototype.emit = original;
+    }
+  });
+
+  test("emit routes through EventEmitter.prototype.emit with captureRejections", () => {
+    const original = EventEmitter.prototype.emit;
+    let calls = 0;
+    try {
+      EventEmitter.prototype.emit = function (...args) {
+        calls++;
+        return original.apply(this, args);
+      };
+      const ee = new EventEmitterAsyncResource({ name: "test", captureRejections: true });
+      expect(Object.hasOwn(ee, "emit")).toBe(false);
       let fired = false;
       ee.on("x", () => {
         fired = true;

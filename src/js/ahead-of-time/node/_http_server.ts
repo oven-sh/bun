@@ -3099,7 +3099,6 @@ const nop = () => {};
 const {
   addListener: eventEmitterOn,
   emit: eventEmitterEmit,
-  storeEmitWithRejectionCapture,
   removeListener: eventEmitterRemoveListener,
 } = shared.originals.eventEmitter!;
 
@@ -3120,10 +3119,7 @@ function ServerResponse(
     this._eventsCount = 0;
     this[kShapeMode] = false;
     this._maxListeners = undefined;
-    if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
-      ("unlikely");
-      storeEmitWithRejectionCapture(this);
-    }
+    this[kCapture] = EventEmitterPrototype[kCapture];
     this.outputData = [];
     this.outputSize = 0;
     this.destroyed = false;
@@ -3190,9 +3186,7 @@ function ServerResponse(
   this._eventsCount = 0;
   this[kShapeMode] = false;
   this._maxListeners = undefined;
-  if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
-    storeEmitWithRejectionCapture(this);
-  }
+  this[kCapture] = EventEmitterPrototype[kCapture];
   this.outputData = [];
   this.outputSize = 0;
   this.destroyed = false;

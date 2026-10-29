@@ -540,11 +540,9 @@ function getTestAgent(platform: Platform): Agent {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
-    // The mac fleet has a fixed number of machines (every other test lane
-    // starts one per job), so a lane can ask for more than its pool runs. The
-    // queue serves the oldest build first. A job that no agent takes within 60
-    // minutes expires and is retried three times. The fourth expiry fails the
-    // build, hours after the push. Both settings live outside this repository.
+    // The mac agents are a fixed pool that serves the oldest build first. A
+    // job that no agent takes in 60 minutes expires, and its fourth expiry
+    // fails the build (#47389).
     //
     // `release-tier` is emitted by scripts/agent.ts based on the box's macOS
     // major version. arm64 splits into `latest` (current macOS) + `previous`
@@ -1883,12 +1881,14 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   // The asan and hardened profiles are PR-only (see includeEveryProfile above),
   // so their test lanes are dropped on main along with their builds.
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
-  // No x64 lane: the Intel pool cannot start one for every PR build before
-  // its jobs expire (see getTestAgent). x64 tests run on main, on manual
-  // builds, and with `[macos tests]` in the commit subject. Put
-  // `{ os: "darwin", arch: "x64", release: "any" }` back when the pool can
-  // take PR volume again.
+  // PR builds get no x64 lane until the Intel pool can take PR volume: its
+  // jobs expired unrun and failed their builds (#47389). `[macos tests]` in
+  // the commit subject runs the x64 tests on a PR. The merge queue has few
+  // builds and keeps the lane.
   const prDarwinTestPlatforms: Platform[] = [{ os: "darwin", arch: "aarch64", release: "any" }];
+  if (isMergeQueue()) {
+    prDarwinTestPlatforms.push({ os: "darwin", arch: "x64", release: "any" });
+  }
   const darwinTestsEnabled =
     isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage() ?? "");
   // The macOS beta lane: a single home-hosted mini on the next macOS,

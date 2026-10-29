@@ -660,22 +660,14 @@ pub mod parse_worker {
     // getEmptyCSSAST / getEmptyAST
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `transpiler: *mut Transpiler` stays raw. Callers
-    // (`get_ast`, `run_with_source_code`) may also hold a raw pointer to
-    // `(*transpiler).resolver`; materializing `&mut Transpiler` here would assert
-    // exclusive access to the whole struct and invalidate that sibling pointer.
-    // We only touch the disjoint `options.define` field.
     fn get_empty_css_ast(
         log: &mut Log,
-        transpiler: *mut Transpiler,
+        define: &'static js_parser::Define,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
         source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
-        // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
-        // is disjoint from any other field the caller may hold a pointer to.
-        let define = unsafe { &mut (*transpiler).options.define };
         let mut ast = JSAst::init(
             js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
                 .ok_or(AnyError::ParserError)?,
@@ -688,14 +680,12 @@ pub mod parse_worker {
 
     fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
         log: &mut Log,
-        transpiler: *mut Transpiler,
+        define: &'static js_parser::Define,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
         source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
-        // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
-        let define = unsafe { &mut (*transpiler).options.define };
         Ok(JSAst::init(
             js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
                 .ok_or(AnyError::ParserError)?,
@@ -809,15 +799,11 @@ pub mod parse_worker {
     // getAST
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `transpiler`/`resolver` are raw `*mut`. The caller may pass
-    // `resolver = &transpiler.resolver`, so
-    // the two may point into the same allocation. Taking `&mut Transpiler` +
-    // `&mut Resolver` would be aliased-`&mut` UB. We instead reborrow only the
-    // disjoint `(*transpiler).options` field, never the whole struct.
+    // `resolver` stays raw: `MacroContext::call` forms a `&mut` to that `Resolver` while a JS arm parses.
     #[allow(clippy::too_many_arguments)]
     fn get_ast(
         log: &mut Log,
-        transpiler: *mut Transpiler,
+        topts: &'static options::BundleOptions<'static>,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
         resolver: *mut Resolver,
@@ -828,11 +814,6 @@ pub mod parse_worker {
         has_any_css_locals: &AtomicU32,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
-
-        // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`.
-        // `options` and `resolver` are disjoint fields of `Transpiler`; reborrowing
-        // `options` here does not overlap any access through `resolver` below.
-        let topts = unsafe { &mut (*transpiler).options };
 
         match loader {
             Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {
@@ -858,9 +839,9 @@ pub mod parse_worker {
                         }
                     }
                 } else if module_type == options::ModuleType::Esm {
-                    get_empty_ast::<E::Undefined>(log, transpiler, fallback_opts, bump, source)
+                    get_empty_ast::<E::Undefined>(log, &topts.define, fallback_opts, bump, source)
                 } else {
-                    get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)
+                    get_empty_ast::<E::Object>(log, &topts.define, fallback_opts, bump, source)
                 };
             }
             Loader::Json | Loader::Jsonc => {
@@ -871,14 +852,14 @@ pub mod parse_worker {
                     bun_resolver::tsconfig_json::JsonMode::Json
                 };
                 // SAFETY: `resolver` is a live `*mut Resolver`;
-                // `caches` is disjoint from `(*transpiler).options` reborrowed above.
+                // `caches` is disjoint from the `options` field that `topts` borrows.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
                     .parse_json(log, source, mode)?
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
-                        &mut topts.define,
+                        &topts.define,
                         opts,
                         log,
                         root,
@@ -901,7 +882,7 @@ pub mod parse_worker {
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
-                            &mut topts.define,
+                            &topts.define,
                             opts,
                             &mut temp_log,
                             root,
@@ -927,7 +908,7 @@ pub mod parse_worker {
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
-                            &mut topts.define,
+                            &topts.define,
                             opts,
                             &mut temp_log,
                             root,
@@ -949,7 +930,7 @@ pub mod parse_worker {
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
-                            &mut topts.define,
+                            &topts.define,
                             opts,
                             &mut temp_log,
                             root,
@@ -980,7 +961,7 @@ pub mod parse_worker {
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
-                            &mut topts.define,
+                            &topts.define,
                             opts,
                             &mut temp_log,
                             root,
@@ -1017,7 +998,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
-                        &mut topts.define,
+                        &topts.define,
                         opts,
                         log,
                         root,
@@ -1058,7 +1039,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
-                        &mut topts.define,
+                        &topts.define,
                         opts,
                         log,
                         root,
@@ -1168,7 +1149,7 @@ pub mod parse_worker {
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
-                        &mut topts.define,
+                        &topts.define,
                         opts,
                         log,
                         root,
@@ -1203,7 +1184,7 @@ pub mod parse_worker {
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
-                        &mut topts.define,
+                        &topts.define,
                         opts,
                         log,
                         root,
@@ -1223,7 +1204,7 @@ pub mod parse_worker {
                 let output_format = opts.output_format;
                 let mut ast = js_parser::new_lazy_export_ast(
                     bump,
-                    &mut topts.define,
+                    &topts.define,
                     opts,
                     log,
                     Expr::init(E::Missing {}, Loc::EMPTY),
@@ -1341,7 +1322,7 @@ pub mod parse_worker {
                 // not dropped on the error path.
                 let lazy = js_parser::new_lazy_export_ast_impl(
                     bump,
-                    &mut topts.define,
+                    &topts.define,
                     opts,
                     &mut temp_log,
                     root,
@@ -1358,7 +1339,7 @@ pub mod parse_worker {
             }
             // TODO:
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
-                return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
+                return get_empty_ast::<E::String>(log, &topts.define, opts, bump, source);
             }
             Loader::File | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
@@ -1412,7 +1393,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
-                        &mut topts.define,
+                        &topts.define,
                         opts,
                         log,
                         root,
@@ -2339,7 +2320,9 @@ pub mod parse_worker {
         let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
         // reassigned above); reborrow only the disjoint `options` field.
-        let topts = unsafe { &(*transpiler).options };
+        // `'static` erasure: symbol names in the returned AST can point into `define`, which,
+        // like `bump`, lives until `Worker::deinit`.
+        let topts: &'static options::BundleOptions<'static> = unsafe { &(*transpiler).options };
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
         // `&'bump Source<'bump>` parameter is satisfied (`bump` is the same arena).
@@ -2386,11 +2369,8 @@ pub mod parse_worker {
         );
         opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
-        // `AllowUnresolved` is the same nominal type on
-        // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
-        // a worker-owned `Transpiler` that outlives the parse.
-        // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
-        opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
+        // `AllowUnresolved` is the same nominal type on both sides (re-export in options.rs).
+        opts.allow_unresolved = &topts.allow_unresolved;
         // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
         // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
         // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
@@ -2598,8 +2578,6 @@ pub mod parse_worker {
         };
         let task_ctx = task.ctx.expect("ParseTask.ctx unset");
         let module_type = opts.module_type;
-        // `topts` (a `&BundleOptions`) is dead past this point; the callees take
-        // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let ast_result: core::result::Result<JSAst, AnyError> =
             if let Some(message) = unsupported_directive {
                 log.add_range_error(Some(source), UseDirective::range(entry_contents), message);
@@ -2607,7 +2585,7 @@ pub mod parse_worker {
             } else if !is_empty || loader.handles_empty_file() {
                 get_ast(
                     log,
-                    transpiler,
+                    topts,
                     opts,
                     bump,
                     resolver,
@@ -2618,11 +2596,11 @@ pub mod parse_worker {
                     &task_ctx.linker.has_any_css_locals,
                 )
             } else if loader.is_css() {
-                get_empty_css_ast(log, transpiler, opts, bump, source)
+                get_empty_css_ast(log, &topts.define, opts, bump, source)
             } else if module_type == options::ModuleType::Esm {
-                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
+                get_empty_ast::<E::Undefined>(log, &topts.define, opts, bump, source)
             } else {
-                get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
+                get_empty_ast::<E::Object>(log, &topts.define, opts, bump, source)
             };
         let mut ast = match ast_result {
             Ok(a) => a,

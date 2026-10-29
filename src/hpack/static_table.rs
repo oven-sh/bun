@@ -8,7 +8,9 @@ macro_rules! static_table {
         const ENTRIES: [(&[u8], &[u8]); LEN as usize] = [$($(($name, $value),)+)*];
 
         bun_core::comptime_string_map! {
-            static FIRST_INDEX_OF_NAME: u32 = { $($name => $first_index,)* };
+            static INDICES_OF_NAME: (u32, u32) = {
+                $($name => ($first_index, $first_index + [$($value as &[u8]),+].len() as u32),)*
+            };
         }
     };
 }
@@ -73,20 +75,12 @@ pub(crate) fn get(index: u32) -> Option<(&'static [u8], &'static [u8])> {
     ENTRIES.get((index as usize).checked_sub(1)?).copied()
 }
 
-pub(crate) fn find_name(name: &[u8]) -> Option<u32> {
-    FIRST_INDEX_OF_NAME.get(name).copied()
+/// The index of the first entry with that name, and the one after the last.
+pub(crate) fn find_name(name: &[u8]) -> Option<(u32, u32)> {
+    INDICES_OF_NAME.get(name).copied()
 }
 
-/// `name_index` is what [`find_name`] gave for `name`.
-pub(crate) fn find(name_index: u32, name: &[u8], value: &[u8]) -> Option<u32> {
-    for index in name_index..=LEN {
-        let (entry_name, entry_value) = get(index)?;
-        if entry_name != name {
-            break;
-        }
-        if entry_value == value {
-            return Some(index);
-        }
-    }
-    None
+/// `indices` is what [`find_name`] gave for the name.
+pub(crate) fn find(indices: (u32, u32), value: &[u8]) -> Option<u32> {
+    (indices.0..indices.1).find(|&index| get(index).is_some_and(|entry| entry.1 == value))
 }

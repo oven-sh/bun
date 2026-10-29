@@ -37,6 +37,8 @@ const ENTRY_OVERHEAD: usize = 32;
 mod tests {
     use super::*;
 
+    // Miri skips the tests that take it over 10 seconds. `cargo test` runs them all.
+
     fn hex(text: &str) -> Vec<u8> {
         let digits: Vec<u32> = text.chars().filter_map(|c| c.to_digit(16)).collect();
         digits
@@ -236,6 +238,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn memory_stays_bounded() {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
         // The table holds about ten of these, so it turns over many times.
@@ -269,6 +272,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn a_large_table_is_not_moved_every_few_blocks() {
         for capacity in [6000, 8192, 1 << 20] {
             let mut decoder = Decoder::new();
@@ -329,6 +333,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn entries_are_found_until_they_are_evicted() {
         check_lookups(4096, 120, 150);
         check_lookups(1024, 30, 90);
@@ -461,6 +466,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn huffman_codes_of_every_byte() {
         let every_byte: Vec<u8> = (0..=255).collect();
         for string in every_byte.chunks(1).chain([&every_byte[..]]) {
@@ -482,6 +488,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn huffman_codes_of_every_length_next_to_each_other() {
         // Codes of 5, 6, 7, 8, 10, 13, 15, 19, 26 and 30 bits.
         let bytes = b"a-:&!~{\\\xff\x0a";
@@ -494,6 +501,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn huffman_codes_that_end_where_8_bytes_end() {
         // Codes of 14 and 15 bits, from every bit of a byte on.
         for (fives, sixes) in (0..8).flat_map(|fives| (0..8).map(move |sixes| (fives, sixes))) {
@@ -508,6 +516,7 @@ mod tests {
 
     /// Every way the coder writes 7 bytes at once, after every number of pending bits, and every rest.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn huffman_codes_in_groups() {
         let groups: [&[u8; 7]; 12] = [
             b"aaaaaaa",      // 35 bits
@@ -578,6 +587,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn a_lower_capacity_gives_memory_back() {
         let mut decoder = Decoder::new();
         decoder.set_max_capacity(65536);
@@ -636,20 +646,22 @@ mod tests {
             .collect();
         for (index, &(name, value)) in (1..).zip(&entries) {
             let first = 1 + entries.iter().position(|entry| entry.0 == name).unwrap() as u32;
-            assert_eq!(static_table::find_name(name), Some(first));
-            assert_eq!(static_table::find(first, name, value), Some(index));
-            assert_eq!(static_table::find(first, name, b"no such value"), None);
+            let end = 2 + entries.iter().rposition(|entry| entry.0 == name).unwrap() as u32;
+            assert_eq!(static_table::find_name(name), Some((first, end)));
+            assert_eq!(static_table::find((first, end), value), Some(index));
+            assert_eq!(static_table::find((first, end), b"no such value"), None);
         }
         // Values that only later entries, with other names, have, and near misses.
-        for (first, name, value) in [
-            (2, ":method", "/"),
-            (2, ":method", "get"),
-            (2, ":method", "GETs"),
-            (8, ":status", "2000"),
-            (16, "accept-encoding", ""),
-            (16, "accept-encoding", "GZIP, DEFLATE"),
+        for (name, value) in [
+            (":method", "/"),
+            (":method", "get"),
+            (":method", "GETs"),
+            (":status", "2000"),
+            ("accept-encoding", ""),
+            ("accept-encoding", "GZIP, DEFLATE"),
         ] {
-            let found = static_table::find(first, name.as_bytes(), value.as_bytes());
+            let indices = static_table::find_name(name.as_bytes()).unwrap();
+            let found = static_table::find(indices, value.as_bytes());
             assert_eq!(found, None, "{name}: {value}");
         }
         assert_eq!(static_table::find_name(b"x-a"), None);
@@ -695,6 +707,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn field_length_limit() {
         let mut encoder = Encoder::new();
         let name = "n".repeat(6);
@@ -729,6 +742,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn field_length_limit_however_the_strings_are_coded() {
         let string = |len: usize, coded| {
             let mut out = Vec::new();
@@ -744,7 +758,6 @@ mod tests {
             }
             out
         };
-        // The long string is coded in three of these only: each takes Miri a minute.
         for (name_len, name_coded, value_len, value_coded, fits) in [
             (6, true, MAX_FIELD_LEN - 6, false, true),
             (6, true, MAX_FIELD_LEN - 5, false, false),
@@ -773,6 +786,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn field_length_limit_with_a_name_from_a_table() {
         // :authority, and an entry with a name of 9,000 bytes.
         for (name_index, name_len) in [("01", 10), ("0f2f", 9000)] {

@@ -195,7 +195,8 @@ impl Encoder {
         }
         self.announce_capacity(out);
 
-        let static_name = static_table::find_name(name);
+        let static_indices = static_table::find_name(name);
+        let static_name = static_indices.map(|indices| indices.0);
         // Its index tells a name of the static table apart just as well.
         let name_hash = static_name.unwrap_or_else(|| bun_wyhash::hash(name) as u32);
         let field_hash = bun_wyhash::hash_with_seed(u64::from(name_hash), value) as u32;
@@ -204,8 +205,8 @@ impl Encoder {
         let field_index = if indexing == Indexing::Never {
             None
         } else {
-            static_name
-                .and_then(|index| static_table::find(index, name, value))
+            static_indices
+                .and_then(|indices| static_table::find(indices, value))
                 .or_else(|| self.find(name, value, field_hash))
         };
         // Adding it would only empty the table (§4.4).

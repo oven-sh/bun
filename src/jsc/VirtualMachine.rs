@@ -1892,8 +1892,8 @@ impl VirtualMachine {
     fn has_handles_off_the_loop(&self) -> bool {
         !self.child_workers.is_empty()
             || !self.root_context.owns_nothing()
-            // SAFETY: registered ⇒ not freed.
             || (self.graph_contexts.values().iter())
+                // SAFETY: registered ⇒ not freed.
                 .any(|context| !unsafe { context.as_ref() }.owns_nothing())
     }
 

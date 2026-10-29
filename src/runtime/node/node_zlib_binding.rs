@@ -170,9 +170,8 @@ pub(crate) trait CompressionStreamImpl:
     fn pending_close(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
 
-    /// Recover `*mut Self` from the embedded `WorkPoolTask`.
-    /// SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
-    unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self;
+    /// Byte offset of the embedded `WorkPoolTask`.
+    const TASK_OFFSET: usize;
 
     // Per-class codegen (`T.js.*` cached-property accessors).
     fn write_result_get_cached(this_value: JSValue) -> Option<JSValue>;
@@ -693,10 +692,10 @@ fn async_job_run_task<T: CompressionStreamImpl>(task: *mut WorkPoolTask) {
     // SAFETY: `task` points to `T.task` — only ever invoked by the thread
     // pool against a `T` scheduled in `write`, so provenance covers the
     // full `T` allocation. Recover *mut T via container_of
-    // (`CompressionStreamImpl::from_task`). The task field is a
+    // (`CompressionStreamImpl::TASK_OFFSET`). The task field is a
     // `JsCell<WorkPoolTask>` — `#[repr(transparent)]` over the value, so
     // `offset_of!(T, task)` is the value's offset.
-    let this: *mut T = unsafe { T::from_task(task) };
+    let this: *mut T = unsafe { bun_core::container_of(task, T::TASK_OFFSET) };
     async_job_run(this);
 }
 
@@ -907,13 +906,7 @@ macro_rules! __impl_compression_stream {
                 &self.closed
             }
 
-            #[inline]
-            unsafe fn from_task(task: *mut ::bun_jsc::WorkPoolTask) -> *mut Self {
-                // SAFETY: `task` points at the `task` field of a live `Self`;
-                // `from_field_ptr!`
-                // computes the byte offset via `offset_of!(Self, task)`.
-                unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
-            }
+            const TASK_OFFSET: usize = ::core::mem::offset_of!(Self, task);
 
             #[inline]
             fn write_result_get_cached(

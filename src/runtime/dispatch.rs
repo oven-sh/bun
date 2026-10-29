@@ -336,31 +336,35 @@ pub(crate) fn run_task(
                 unsafe { bun_core::heap::take(update) }.run();
             }
         ),
-        task_tag::AsyncCpTask => {
-            feature_arm!(
-                [NodeFs],
-                |copy: crate::node::fs::AsyncCpTask| -> JsResult<()> {
-                    // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
-                    Ok(())
-                }
-            )?
-        }
-        task_tag::ShellAsyncCpTask => {
-            feature_arm!(
-                [Shell],
-                |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
-                    // SAFETY: as above.
-                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
-                    Ok(())
-                }
-            )?
-        }
+        task_tag::AsyncCpTask => in_features!(
+            [NodeFs],
+            (
+                copy: *mut crate::node::fs::AsyncCpTask = cast_ptr!(crate::node::fs::AsyncCpTask),
+                global: &JSGlobalObject = global,
+            ) -> JsResult<()> {
+                // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
+                unsafe { bun_core::heap::take(copy) }.run_from_js_thread(global)?;
+                Ok(())
+            }
+        )?,
+        task_tag::ShellAsyncCpTask => in_features!(
+            [Shell],
+            (
+                copy: *mut crate::node::fs::ShellAsyncCpTask =
+                    cast_ptr!(crate::node::fs::ShellAsyncCpTask),
+                global: &JSGlobalObject = global,
+            ) -> JsResult<()> {
+                // SAFETY: as above.
+                unsafe { bun_core::heap::take(copy) }.run_from_js_thread(global)?;
+                Ok(())
+            }
+        )?,
         task_tag::StatWatcherHop => feature_arm!(
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
-                // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
-                unsafe { crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher) }?;
+                // SAFETY: posted by `StatWatcher::post_to_js_thread`; the task owns that ref.
+                let watcher = unsafe { bun_ptr::RefPtr::from_raw(watcher) };
+                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher)?;
                 Ok(())
             }
         )?,
@@ -699,8 +703,8 @@ pub(crate) fn run_task(
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
                     $(task_tag::$tag => feature_arm!([NodeFs], |request: fs_async::$ty| -> JsResult<()> {
-                        // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
-                        unsafe { fs_async::$ty::run_from_js_thread(request) }?;
+                        // SAFETY: §Dispatch — tag identifies pointee, `Box::leak`'d in `UVFSRequest::create`; the arm consumes it.
+                        unsafe { bun_core::heap::take(request) }.run_from_js_thread()?;
                         Ok(())
                     })?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.

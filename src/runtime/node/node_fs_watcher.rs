@@ -147,7 +147,7 @@ pub(crate) struct FSWatchTaskPosix {
     ctx: Option<ParentRef<FSWatcher, bun_ptr::Mut>>,
     count: u8,
 
-    entries: [MaybeUninit<Entry>; 8],
+    entries: [MaybeUninit<Event>; 8],
     concurrent_task: ConcurrentTask,
 }
 
@@ -168,12 +168,6 @@ impl Taskable for FSWatchTaskPosix {
 }
 
 #[cfg(not(windows))]
-pub(crate) struct Entry {
-    event: Event,
-    needs_free: bool,
-}
-
-#[cfg(not(windows))]
 impl FSWatchTaskPosix {
     fn ctx(&self) -> &FSWatcher {
         // BACKREF — `ctx` is the live owning FSWatcher (set right after
@@ -183,7 +177,7 @@ impl FSWatchTaskPosix {
         self.ctx.as_ref().expect("FSWatchTask.ctx unset").get()
     }
 
-    pub(crate) fn append(&mut self, event: Event, needs_free: bool) {
+    pub(crate) fn append(&mut self, event: Event) {
         if self.count == 8 {
             self.enqueue();
             let ctx = self.ctx;
@@ -195,7 +189,7 @@ impl FSWatchTaskPosix {
             };
         }
 
-        self.entries[self.count as usize].write(Entry { event, needs_free });
+        self.entries[self.count as usize].write(event);
         self.count += 1;
     }
 
@@ -204,7 +198,7 @@ impl FSWatchTaskPosix {
         for i in 0..self.count as usize {
             // SAFETY: entries [0..count) were written by `append`.
             let entry = unsafe { self.entries[i].assume_init_ref() };
-            let emitted = match &entry.event {
+            let emitted = match entry {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
                 Event::Error { err, close } => {
@@ -229,7 +223,7 @@ impl FSWatchTaskPosix {
     }
 
     pub(crate) fn append_abort(&mut self) {
-        self.append(Event::Abort, false);
+        self.append(Event::Abort);
         self.enqueue();
     }
 
@@ -271,14 +265,10 @@ impl FSWatchTaskPosix {
     }
 
     pub(crate) fn clean_entries(&mut self) {
-        for i in 0..self.count as usize {
-            // SAFETY: entries [0..count) were written by `append`.
-            let needs_free = unsafe { self.entries[i].assume_init_ref() }.needs_free;
-            if needs_free {
-                // SAFETY: entries [0..count) were written by `append`; dropped at most once
-                // (count is reset to 0 below).
-                unsafe { self.entries[i].assume_init_drop() };
-            }
+        for entry in &mut self.entries[..self.count as usize] {
+            // SAFETY: entries [0..count) were written by `append`; dropped at most once
+            // (count is reset to 0 below).
+            unsafe { entry.assume_init_drop() };
         }
         self.count = 0;
     }
@@ -296,7 +286,12 @@ impl FSWatchTaskPosix {
         self.clean_entries();
         // SAFETY: `ctx` is private and only `enqueue()` boxes a task with it set, after
         // `ref_task()`.
-        unsafe { FSWatcher::unref_task(self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
+        // Never the last ref on the watcher thread: `finalize` detaches the watcher before the wrapper's ref is dropped.
+        unsafe {
+            ThreadSafeRefCount::<FSWatcher>::deref(
+                self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr(),
+            )
+        };
     }
 }
 
@@ -508,7 +503,11 @@ impl FSWatchTaskWindows {
     pub(crate) fn deinit(self: Box<Self>) {
         // SAFETY: `ctx` is private and only `append_abort()` and `on_path_update_windows()` box a
         // task with it set, after `ref_task()`.
-        unsafe { FSWatcher::unref_task(self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
+        unsafe {
+            ThreadSafeRefCount::<FSWatcher>::deref(
+                self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr(),
+            )
+        };
     }
 }
 
@@ -551,7 +550,7 @@ impl FSWatcher {
             }
         }
 
-        this.current_task.with_mut(|t| t.append(event, true));
+        this.current_task.with_mut(|t| t.append(event));
     }
 
     #[cfg(windows)]
@@ -738,43 +737,6 @@ impl<'a> Arguments<'a> {
 }
 
 impl FSWatcher {
-    /// # Safety
-    /// `this` must be the unique `heap::alloc` pointer produced by `init`;
-    /// JS-thread only.
-    pub(crate) unsafe fn init_js(this: *mut Self, listener: JSValue) {
-        // SAFETY: caller contract — `this` is uniquely owned and live.
-        // R-2: deref as shared; mutation goes through `Cell`/`JsCell`.
-        let this_ref = unsafe { &*this };
-        if this_ref.persistent.get() {
-            let vm_ctx = this_ref.vm_ctx();
-            this_ref.poll_ref.with_mut(|r| r.ref_(vm_ctx));
-        }
-
-        // SAFETY: the GC wrapper takes over the ref `this` was created with.
-        let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
-        js_this.ensure_still_alive();
-        this_ref
-            .js_this
-            .set(JsRef::init_strong(js_this, &this_ref.global_this));
-        js::listener_set_cached(js_this, &this_ref.global_this, listener);
-
-        if let Some(s) = this_ref.signal.get() {
-            // already aborted?
-            if s.aborted() {
-                // safely abort next tick
-                this_ref.current_task.set(FSWatchTask {
-                    // SAFETY: `this` is the live boxed FSWatcher.
-                    ctx: Some(unsafe { ParentRef::from_raw_mut(this) }),
-                    ..Default::default()
-                });
-                this_ref.current_task.with_mut(|t| t.append_abort());
-            } else {
-                // SAFETY: `this` is the live boxed FSWatcher; `detach()` disarms the handle.
-                unsafe { bun_jsc::AbortHandle::follow_owner(this, s.clone()) };
-            }
-        }
-    }
-
     pub(crate) fn emit_if_aborted(&self) {
         let reason = match self.signal.get() {
             Some(s) if s.aborted() => Some(s.js_reason(&self.global_this)),
@@ -968,15 +930,6 @@ impl FSWatcher {
         true
     }
 
-    /// Never the last ref on the watcher thread: `finalize` detaches the watcher before the wrapper's ref is dropped.
-    ///
-    /// # Safety
-    /// `this` is live and the caller owns a ref that `ref_task` took.
-    pub(crate) unsafe fn unref_task(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { ThreadSafeRefCount::<Self>::deref(this) };
-    }
-
     pub(crate) fn close(&self) {
         self.mutex.lock();
         if !self.closed.get() {
@@ -1151,14 +1104,34 @@ impl FSWatcher {
             } else {
                 None
             });
-        // SAFETY: `ctx` is the unique heap pointer; `init_js` hands ownership to
-        // the GC wrapper via `to_js_ptr`.
-        unsafe {
-            FSWatcher::init_js(
-                ctx,
-                args.listener.with_async_context_if_needed(args.global_this),
-            )
-        };
+        let listener = args.listener.with_async_context_if_needed(args.global_this);
+        if ctx_ref.persistent.get() {
+            let vm_ctx = ctx_ref.vm_ctx();
+            ctx_ref.poll_ref.with_mut(|r| r.ref_(vm_ctx));
+        }
+
+        // SAFETY: the GC wrapper takes over the ref `ctx` was created with.
+        let js_this = unsafe { Self::to_js_ptr(ctx, &ctx_ref.global_this) };
+        js_this.ensure_still_alive();
+        ctx_ref
+            .js_this
+            .set(JsRef::init_strong(js_this, &ctx_ref.global_this));
+        js::listener_set_cached(js_this, &ctx_ref.global_this, listener);
+
+        if let Some(s) = ctx_ref.signal.get() {
+            // already aborted?
+            if s.aborted() {
+                // safely abort next tick
+                ctx_ref.current_task.set(FSWatchTask {
+                    ctx: Some(parent),
+                    ..Default::default()
+                });
+                ctx_ref.current_task.with_mut(|t| t.append_abort());
+            } else {
+                // SAFETY: `ctx` is the live boxed FSWatcher; `detach()` disarms the handle.
+                unsafe { bun_jsc::AbortHandle::follow_owner(ctx, s.clone()) };
+            }
+        }
         // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
         unsafe { bun_jsc::AbortHandle::arm_owner(ctx, args.context) };
         Ok(ctx_ref.js_this.get_or_undefined())

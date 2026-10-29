@@ -1,0 +1,94 @@
+# String.prototype.concat with every kind of operand, beside the template that says the same.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="concat-with-every-kind-of-operand.js" displayPath="concat-with-every-kind-of-operand.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=undefined|null|string elements=[String{value="ab"}, String{value="cd"}, String{value="ef"}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Data data=d0
+    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v9)
+  b1(v10):
+    LoopHint
+    v12 = String string="o"
+    v13 = Call v3, -, v12 calleeName="others"
+    v14 = String string="ab"
+    v15 = Call v5, -, v14 calleeName="many"
+    v16 = String string="<"
+    v17 = Integer integer=1
+    v18 = ElemGet v7, v17
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]}
+    v20 = ToString v19
+    v21 = String string=":"
+    v22 = Builtin builtin=String
+    v23 = Integer integer=3
+    v24 = Call v22, -, v23 calleeName="String"
+    v25 = Convert v24 declared={type=undefined|null|string flags=[IsExpected]}
+    v26 = ToString v25
+    v27 = String string=">"
+    v28 = Strcat v16, v20, v21, v26, v27
+    v29 = Integer integer=3
+    v30 = Call v1, -, v29 calleeName="four"
+    v31 = Convert v30 declared={type=undefined|null|string flags=[IsExpected]}
+    v32 = StrictEq v28, v31
+    v33 = Increment v10
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v34)
+}
+function f1 name="four" module=m0 position=315 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="others" module=m0 position=527 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = PropGet v0 key="concat"
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
+    v3 = Undefined
+    v4 = Null
+    v5 = Boolean boolean=true
+    v6 = Boolean
+    v7 = BigInt digits="10"
+    v8 = Call v2, v0, v3, v4, v5, v6, v7 calleeKey="concat" calleeName="s.concat"
+    ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f3 name="many" module=m0 position=650 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = PropGet v0 key="concat"
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
+    v3 = Call v2, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 calleeKey="concat" calleeName="s.concat"
+    ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0 storage=Frame
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v2: "o" = String string="o"
+# CHECK-NEXT: v3: bigint = BigInt digits="10"
+# CHECK-NEXT: v4: "undefined" = String string="undefined" @0:2 tail
+# CHECK-NEXT: v5: "null" = String string="null" @0:2 tail
+# CHECK-NEXT: v6: "true" = String string="true" @0:2 tail
+# CHECK-NEXT: v7: "false" = String string="false" @0:2 tail
+# CHECK-NEXT: v8: string = ToString v3 calledBuiltin=StringPrototypeConcat @0:2 tail
+# CHECK-NEXT: v9: string = Strcat v2, v4, v5, v6, v7, v8 @0:2 tail
+# CHECK-NEXT: v10: "<" = String string="<"
+# CHECK-NEXT: v11: "cd" = String string="cd"
+# CHECK-NEXT: v12: ":" = String string=":"
+# CHECK-NEXT: v13: 3 = Integer integer=3
+# CHECK-NEXT: v14: string = CallBuiltin -, v13 overload=String/0 accessSite=3
+# CHECK-NEXT: v15: ">" = String string=">"
+# CHECK-NEXT: v16: string = Strcat v10, v11, v12, v14, v15
+# CHECK-NEXT: v17: 3 = Integer integer=3
+# CHECK-NEXT: v18: anything ~ undefined|null|string = Call v0, -, v17 calleeName="four" accessSite=4 callees=[f1]
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }

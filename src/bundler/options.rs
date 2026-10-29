@@ -41,7 +41,6 @@ pub use bun_collections::StringSet;
 
 pub(crate) fn validate_path(
     log: &mut bun_ast::Log,
-    _fs: &mut Fs::Implementation,
     cwd: &[u8],
     rel_path: &[u8],
     path_kind: &[u8],
@@ -109,9 +108,8 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
 
 /// Free fn for the same orphan-rule
 /// reason as [`is_node_builtin`]; stays at bundler tier because it needs
-/// `Fs`/`logger`/`NODE_BUILTIN_PATTERNS`.
+/// `logger`/`NODE_BUILTIN_PATTERNS`.
 pub(crate) fn init_external_modules(
-    fs: &mut Fs::Implementation,
     cwd: &[u8],
     externals: &[&[u8]],
     log: &mut bun_ast::Log,
@@ -168,7 +166,7 @@ pub(crate) fn init_external_modules(
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            let normalized = validate_path(log, fs, cwd, external, b"external path");
+            let normalized = validate_path(log, cwd, external, b"external path");
 
             if !normalized.is_empty() {
                 result.abs_paths.insert(&normalized).expect("unreachable");
@@ -1705,7 +1703,6 @@ impl<'a> BundleOptions<'a> {
     }
 
     pub(crate) fn from_api(
-        fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, crate::Error> {
@@ -1942,10 +1939,8 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
-        let top_level_dir = fs.top_level_dir();
         opts.external = init_external_modules(
-            &mut fs.fs,
-            top_level_dir,
+            Fs::FileSystem::get().top_level_dir(),
             &transform
                 .external
                 .iter()

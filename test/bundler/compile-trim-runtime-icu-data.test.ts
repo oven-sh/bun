@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { statSync } from "node:fs";
-import { join } from "node:path";
-import { unsupported } from "../aot/run-programs";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { unsupported } from "../aot/harness/compiler";
+import { sharedBuilds, sizeOf } from "../aot/harness/shared-builds";
 import { canTrim, featureNamed, saysFeatureWasRemoved, withoutFeatures } from "./compile-trim-features";
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
@@ -140,14 +139,11 @@ const features = [
 ];
 const without = (...kept: string[]) => features.filter(feature => !kept.includes(feature));
 
-describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and ICU's data", () => {
-  async function build(folder: string, entry: string, outfile: string, forcedOut: string[] | undefined) {
-    const trim = forcedOut === undefined ? [] : ["--trim", ...withoutFeatures(forcedOut)];
-    const built = await run([bunExe(), "build", "--compile", "--aot", ...trim, entry, "--outfile", outfile], folder);
-    expect(built.stderr).not.toMatch(/^error\b/m);
-    expect(built.exitCode).toBe(0);
-    return statSync(join(folder, outfile + (isWindows ? ".exe" : ""))).size;
-  }
+(canTrim && !unsupported ? describe.concurrent : describe.skip)("--compile --aot --trim and ICU's data", () => {
+  const shared = sharedBuilds("compile-trim-runtime-icu-data", files);
+  const { folder } = shared;
+  const build = (entry: string, forcedOut: string[]) =>
+    shared.build(entry, "--aot", "--trim", ...withoutFeatures(forcedOut));
 
   const environments: Record<string, string | undefined>[] = [
     { TZ: undefined },
@@ -156,36 +152,27 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and ICU's dat
     { TZ: "Etc/GMT+5", LANG: "C" },
   ];
 
-  async function runsLikeUntrimmed(entry: string, forcedOut: string[]) {
-    using dir = tempDir("compile-trim-runtime-icu-data", files);
-    const folder = String(dir);
-    await build(folder, entry, "whole", undefined);
-    await build(folder, entry, "trimmed", forcedOut);
+  async function runsLikeBun(entry: string, forcedOut: string[]) {
+    const trimmed = await build(entry, forcedOut);
     for (const environment of environments) {
       const env = { ...bunEnv, LANG: undefined, LC_ALL: undefined, ...environment };
-      const whole = await run([join(folder, "whole")], folder, env);
+      const whole = await run([bunExe(), entry], folder, env);
       expect(whole).toMatchObject({ stderr: "", exitCode: 0 });
-      expect(await run([join(folder, "trimmed")], folder, env)).toEqual(whole);
+      expect(await run([trimmed.executable], folder, env)).toEqual(whole);
     }
   }
 
   test.skipIf(!isLinux && !isWindows)("most of the data is removed with the features that read it", async () => {
-    using dir = tempDir("compile-trim-runtime-icu-data", files);
-    const folder = String(dir);
-    const kept = await build(folder, "names-Intl.ts", "kept", []);
-    const forcedOut = await build(folder, "names-Intl.ts", "forced-out", without());
-    expect(kept - forcedOut).toBeGreaterThan(7_900_000);
+    const [kept, forcedOut] = [await build("names-Intl.ts", []), await build("names-Intl.ts", without())];
+    expect(sizeOf(kept) - sizeOf(forcedOut)).toBeGreaterThan(7_900_000);
   });
 
   test.skipIf(!isLinux && !isWindows)(
     "a program that doesn't use Intl has no rules and dictionaries for breaking text",
     async () => {
-      using dir = tempDir("compile-trim-runtime-icu-data", files);
-      const folder = String(dir);
-      const named = await build(folder, "names-Intl.ts", "named", []);
-      const notNamed = await build(folder, "hello.ts", "not-named", []);
-      expect(named - notNamed).toBeGreaterThan(2_500_000);
-      expect(await run([join(folder, "not-named")], folder)).toMatchObject({
+      const [named, notNamed] = [await build("names-Intl.ts", []), await build("hello.ts", [])];
+      expect(sizeOf(named) - sizeOf(notNamed)).toBeGreaterThan(2_500_000);
+      expect(await run([notNamed.executable], folder)).toMatchObject({
         stdout: "hello world\n",
         stderr: "",
         exitCode: 0,
@@ -194,39 +181,36 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and ICU's dat
   );
 
   test("dates, URLs, normalization and case do not need it", async () => {
-    await runsLikeUntrimmed("names-none.ts", without());
+    await runsLikeBun("names-none.ts", without());
   });
 
   test("localeCompare needs only the data of collation", async () => {
-    await runsLikeUntrimmed("names-localeCompare.ts", without("IntlCollation"));
+    await runsLikeBun("names-localeCompare.ts", without("IntlCollation"));
   });
 
   test("toLocaleDateString and toLocaleTimeString need only the data of date formatting", async () => {
-    await runsLikeUntrimmed("names-toLocaleDateString.ts", without("IntlDateTimeFormat"));
+    await runsLikeBun("names-toLocaleDateString.ts", without("IntlDateTimeFormat"));
   });
 
   test("toLocaleString of a Date needs only the data of date formatting", async () => {
-    await runsLikeUntrimmed("names-date-toLocaleString.ts", without("IntlDateTimeFormat"));
+    await runsLikeBun("names-date-toLocaleString.ts", without("IntlDateTimeFormat"));
   });
 
   test("toLocaleString of a Number or a BigInt needs only the data of number formatting and of units", async () => {
-    await runsLikeUntrimmed("names-number-toLocaleString.ts", without("IntlNumberFormat", "IntlUnits"));
+    await runsLikeBun("names-number-toLocaleString.ts", without("IntlNumberFormat", "IntlUnits"));
   });
 
   test("toLocaleString of anything needs the data of both and of units", async () => {
-    await runsLikeUntrimmed("names-toLocaleString.ts", without("IntlDateTimeFormat", "IntlNumberFormat", "IntlUnits"));
+    await runsLikeBun("names-toLocaleString.ts", without("IntlDateTimeFormat", "IntlNumberFormat", "IntlUnits"));
   });
 
   test("a program that uses every Intl service keeps all of it", async () => {
-    await runsLikeUntrimmed("names-Intl.ts", []);
+    await runsLikeBun("names-Intl.ts", []);
   });
 
   for (const feature of without("IntlUnits")) {
     test(`${feature}: with it forced out, the executable says so`, async () => {
-      using dir = tempDir("compile-trim-runtime-icu-data", files);
-      const folder = String(dir);
-      await build(folder, `uses-${feature}.ts`, "forced-out", [feature]);
-      const failed = await run([join(folder, "forced-out")], folder);
+      const failed = await run([(await build(`uses-${feature}.ts`, [feature])).executable], folder);
       expect({ stderr: failed.stderr, saysSo: saysFeatureWasRemoved(failed.stderr, featureNamed(feature)) }).toEqual({
         stderr: failed.stderr,
         saysSo: true,
@@ -239,10 +223,7 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and ICU's dat
   test.skipIf(!isLinux && !isWindows)(
     "units: with them forced out, formatting with a unit throws a TypeError",
     async () => {
-      using dir = tempDir("compile-trim-runtime-icu-data", files);
-      const folder = String(dir);
-      await build(folder, "uses-IntlUnits.ts", "forced-out", ["IntlUnits"]);
-      expect(await run([join(folder, "forced-out")], folder)).toEqual({
+      expect(await run([(await build("uses-IntlUnits.ts", ["IntlUnits"])).executable], folder)).toEqual({
         stdout: `unit TypeError: Failed to initialize NumberFormat\nplain "3,5"\n`,
         stderr: "",
         exitCode: 0,

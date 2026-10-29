@@ -1,0 +1,33 @@
+# One source is open at a time, whatever it was opened on: the guards of two JSONSourceOpen tests on two texts meet in a parameter that still proves it
+# FORM: Prepared
+# RUN: verify
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoTexts" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = JSONSourceOpen v1
+    Branch v3 -> taken b3(| 0), notTaken b4()
+  b2():
+    v4 = JSONSourceOpen v2
+    Branch v4 -> taken b3(| 0), notTaken b4()
+  b3(v5):
+    JSONSourceAbandon v5
+    Return
+  b4():
+    Return
+}
+function f1 name="oneText" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = JSONSourceOpen v1
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b2():
+    v3 = JSONSourceOpen v1
+    Branch v3 -> taken b3(| 0), notTaken b4()
+  b3(v4):
+    JSONSourceAbandon v4
+    Return
+  b4():
+    Return
+}

@@ -1,1 +1,0 @@
-exports.r = [require.main === module, require.main === module.parent, !!module.parent, module.parent == null, typeof module.parent, module.parent && 1, (module.parent || 0) === require.main, module.parent ? "y" : "n"];

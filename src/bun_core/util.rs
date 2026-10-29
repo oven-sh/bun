@@ -1272,9 +1272,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
 /// -2 when the buffer is too small, 0 on
 /// non-Windows. Body is a single kernel32 call, so it lives at T0 — moved
 /// down from `bun_sys` per PORTING.md (no cross-crate extern).
-///
-/// SAFETY: `buf` must be valid for `cap` writable `u16` units.
-pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
+pub fn fd_path_raw_w(fd: Fd, buf: &mut [u16]) -> isize {
     #[cfg(windows)]
     {
         unsafe extern "system" {
@@ -1285,9 +1283,11 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
                 dwFlags: u32,
             ) -> u32;
         }
+        let cap = buf.len();
         // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
         // SAFETY: buf has `cap` u16 units; handle from Fd::native().
-        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
+        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf.as_mut_ptr(), cap as u32, 0) }
+            as usize;
         // The size check below is `>=` because a return
         // value equal to `cap` is the buffer-too-small sentinel (required size
         // including NUL), not a successful write of `cap` chars.
@@ -1301,44 +1301,33 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         }
         // Strip the `\\?\` prefix if present so callers see a plain DOS path
         // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
-        // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
-        // or `&mut [u16]` over `buf` while the memmove runs, or the write through
-        // `buf` would invalidate that borrow's tag under Stacked Borrows.
-        // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
-        // bounds-checked against `n` first.
-        let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
+        let buf = &mut buf[..n];
         let bs = b'\\' as u16;
         let off: usize =
-            if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
+            if n >= 4 && buf[0] == bs && buf[1] == bs && buf[2] == b'?' as u16 && buf[3] == bs {
                 if n >= 8
-                    && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
-                    && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
-                    && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
-                    && at(7) == bs
+                    && (buf[4] == b'U' as u16 || buf[4] == b'u' as u16)
+                    && (buf[5] == b'N' as u16 || buf[5] == b'n' as u16)
+                    && (buf[6] == b'C' as u16 || buf[6] == b'c' as u16)
+                    && buf[7] == bs
                 {
                     // `\\?\UNC\server\share` → `\\server\share`
-                    // SAFETY: index 6 < n (checked above).
-                    unsafe { *buf.add(6) = bs };
+                    buf[6] = bs;
+                    buf.copy_within(6.., 0);
                     6
                 } else {
                     // `\\?\C:\...` → `C:\...`
+                    buf.copy_within(4.., 0);
                     4
                 }
             } else {
                 0
             };
-        let out_len = n - off;
-        if off != 0 {
-            // SAFETY: src = buf+off and dst = buf both derive from the same
-            // raw `*mut u16` provenance (no intervening reference), src > dst,
-            // and `out_len` units fit within the `n` initialized units.
-            unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
-        }
-        return out_len as isize;
+        return (n - off) as isize;
     }
     #[cfg(not(windows))]
     {
-        let _ = (fd, buf, cap);
+        let _ = (fd, buf);
         0
     }
 }

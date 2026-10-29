@@ -4,7 +4,13 @@ const { isUint8Array } = require("node:util/types");
 
 const { validateOneOf } = require("internal/validators");
 
-let isError;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const BufferPrototype = Buffer.prototype;
+// Node pools Buffer allocations smaller than half of Buffer.poolSize
+// (8192 >>> 1 = 4096 by default; see poolSize handling in node lib/buffer.js).
+const kBufferPoolBypassThreshold = Buffer.poolSize >>> 1;
+
+let isError: ((value: unknown) => boolean) | undefined;
 
 // Cached resolved promise to avoid allocating a new one on every sync fast-path.
 const kResolvedPromise = Promise.resolve();
@@ -38,7 +44,7 @@ function clampHWM(value) {
  * @param {AbortSignal} signal
  * @param {Function} handler
  */
-function onSignalAbort(signal, handler) {
+function onSignalAbort(signal: AbortSignal, handler: () => void) {
   if (signal.aborted) {
     handler();
   } else {
@@ -90,7 +96,7 @@ function toUint8Array(chunk) {
  * @param {Array<Uint8Array|string>} chunks
  * @returns {boolean}
  */
-function allUint8Array(chunks) {
+function allUint8Array(chunks: Array<Uint8Array | string>): chunks is Uint8Array[] {
   // Ok, well, kind of. This is more a check for "no strings"...
   for (let i = 0; i < chunks.length; i++) {
     if (typeof chunks[i] === "string") return false;
@@ -112,10 +118,14 @@ function concatBytes(chunks) {
   // otherwise return a copy
   if (chunks.length === 1) {
     const chunk = chunks[0];
-    // If non-zero offset, skip the remaining buffer checks.
+    // Bun's Buffer.from has no shared pool, so emulate Node's split: Buffers below the pool
+    // threshold always copy; anything else covering its backing buffer is returned by identity.
+    // https://github.com/nodejs/node/blob/main/lib/buffer.js (Buffer.poolSize >>> 1)
     if (chunk.byteOffset === 0) {
-      // Works for both ArrayBuffer and SharedArrayBuffer backings.
-      if (chunk.byteLength === chunk.buffer.byteLength) {
+      const isSmallBuffer =
+        chunk.byteLength < kBufferPoolBypassThreshold && ObjectGetPrototypeOf(chunk) === BufferPrototype;
+      if (!isSmallBuffer && chunk.byteLength === chunk.buffer.byteLength) {
+        // Works for both ArrayBuffer and SharedArrayBuffer backings.
         return chunk;
       }
     }
@@ -141,7 +151,7 @@ function concatBytes(chunks) {
  * @param {Array<Uint8Array|string>} chunks
  * @returns {Uint8Array[]}
  */
-function convertChunks(chunks) {
+function convertChunks(chunks: Array<Uint8Array | string>): Uint8Array[] {
   if (allUint8Array(chunks)) {
     return chunks.slice();
   }
@@ -158,9 +168,9 @@ function convertChunks(chunks) {
  * @param {unknown} error
  * @returns {Error}
  */
-function wrapError(error) {
+function wrapError(error: unknown): Error {
   isError ??= require("node:util").isError;
-  return isError(error) ? error : $ERR_OPERATION_FAILED(String(error));
+  return isError!(error) ? (error as Error) : $ERR_OPERATION_FAILED(String(error));
 }
 
 /**
@@ -170,7 +180,7 @@ function wrapError(error) {
  * @param {symbol} symbol
  * @returns {boolean}
  */
-function hasProtocol(value, symbol) {
+function hasProtocol<S extends symbol>(value, symbol: S): value is { [K in S]: (...args: unknown[]) => unknown } {
   return value !== null && typeof value === "object" && symbol in value && typeof value[symbol] === "function";
 }
 
@@ -207,7 +217,7 @@ function isTransform(value) {
  * @param {Array} args
  * @returns {{ transforms: Array, options: object|undefined }}
  */
-function parsePullArgs(args) {
+function parsePullArgs(args: unknown[]) {
   if (args.length === 0) {
     return { __proto__: null, transforms: [], options: undefined };
   }

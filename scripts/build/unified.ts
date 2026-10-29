@@ -58,8 +58,20 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/napi.cpp",
   "src/jsc/bindings/webcore/SerializedScriptValue.cpp",
 
+  // Defines malloc and operator new; nothing else belongs in that translation unit.
+  "src/jsc/bindings/MimallocOverrideDarwin.cpp",
+
   // No longer heavy; kept standalone so webcore bundle composition stays put.
   "src/jsc/bindings/webcore/HTTPParsers.cpp",
+
+  // The ahead-of-time compiler's files: standalone, so that they move no other file into another bundle.
+  "src/jsc/bindings/BunAOTCompile.cpp",
+  "src/jsc/bindings/BunAOTRuntime.cpp",
+  "src/jsc/bindings/BunCompiledEntryPoint.cpp",
+  "src/jsc/bindings/BunCompiledModules.cpp",
+  "src/jsc/bindings/BunCompilers.cpp",
+  "src/jsc/bindings/BunSignalActions.cpp",
+  "src/jsc/bindings/RemovedFeature.cpp",
 
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
   // both end up in the same bundle. TODO: extract helpers to a shared header.
@@ -91,7 +103,6 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmECDSA.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmHMAC.cpp",
-  "src/jsc/bindings/webcrypto/CryptoAlgorithmRSAES_PKCS1_v1_5.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_OAEP.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
@@ -140,6 +151,8 @@ const noUnify: readonly string[] = [
   // Fifth highway TU (JSON structural indexer) — same foreach_target.h
   // include-guard reason.
   "src/jsc/bindings/highway_json.cpp",
+  // Sixth highway TU (XML structural indexer) — same reason.
+  "src/jsc/bindings/highway_xml.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.
@@ -166,7 +179,7 @@ const noUnifyDirs: readonly string[] = [
  * How many .cpp files per bundle. WebKit defaults to 8.
  *
  * Release (incl. release-asan): 32. Measured 701s vs 866s @ 16 vs 1532s @ 8
- * release cpp-only — frontend parsing dominates, so more dedup wins. ~70 TUs
+ * release, C/C++ objects only — frontend parsing dominates, so more dedup wins. ~70 TUs
  * still keeps CI's 16–32 cores saturated.
  *
  * Debug: 8. Local iteration cares about incremental blast radius — editing
@@ -199,8 +212,7 @@ export interface UnifiedSplit {
  *
  * `cxxSources` must be absolute paths (the glob output). Generated codegen
  * .cpp files should NOT be passed here — those are already large single TUs
- * (ZigGeneratedClasses.cpp etc.) and are added to the compile list separately
- * in bun.ts.
+ * and are added to the compile list separately in bun.ts.
  */
 export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[]): UnifiedSplit {
   const outDir = resolve(cfg.buildDir, "unified");

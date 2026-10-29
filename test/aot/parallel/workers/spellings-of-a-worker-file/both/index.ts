@@ -1,0 +1,1 @@
+postMessage("both/index.ts");

@@ -68,8 +68,8 @@ it("should encrypt & decrypt using streaming interface", () => {
   // Since Node 26, read() with no size returns one buffered chunk at a time,
   // so drain the stream instead of assuming a single read returns everything.
   const readAll = stream => {
-    const chunks = [];
-    for (let chunk; (chunk = stream.read()) !== null; ) chunks.push(chunk);
+    const chunks: Buffer[] = [];
+    for (let chunk; (chunk = stream.read()) !== null;) chunks.push(chunk);
     return Buffer.concat(chunks);
   };
 
@@ -117,6 +117,19 @@ it("only zero-sized iv or null should be accepted in ECB mode", () => {
 it("should allow only valid iv lengths in GCM mode", () => {
   expect(sampleEncryptDecryptGCM("aes-256-gcm", randomBytes(32), randomBytes(1))).toBe(true);
   expect(sampleEncryptDecryptGCM("aes-256-gcm", randomBytes(32), randomBytes(96))).toBe(true);
+  expect(sampleEncryptDecryptGCM("aes-256-gcm", randomBytes(32), randomBytes(128))).toBe(true);
+});
+
+it("should reject GCM IVs longer than 128 bytes", () => {
+  // Node.js (OpenSSL 3) caps GCM IV length at 1024 bits / 128 bytes.
+  const invalidIV = { code: "ERR_CRYPTO_INVALID_IV" };
+  for (const algo of ["aes-128-gcm", "aes-192-gcm", "aes-256-gcm"] as const) {
+    const key = randomBytes(algo === "aes-128-gcm" ? 16 : algo === "aes-192-gcm" ? 24 : 32);
+    expect(() => createCipheriv(algo, key, Buffer.alloc(128))).not.toThrow();
+    expect(() => createCipheriv(algo, key, Buffer.alloc(129))).toThrow(expect.objectContaining(invalidIV));
+    expect(() => createCipheriv(algo, key, Buffer.alloc(4096))).toThrow(expect.objectContaining(invalidIV));
+    expect(() => createDecipheriv(algo, key, Buffer.alloc(129))).toThrow(expect.objectContaining(invalidIV));
+  }
 });
 
 const referencePlaintext = "Out of the mountain of despair, a stone of hope.";
@@ -225,7 +238,7 @@ it("should not accept negative authTagLength, or other coercable values", () => 
   for (const length of lengths) {
     expect(() => {
       createCipheriv("aes-128-gcm", randomBytes(16), randomBytes(16), {
-        authTagLength: length,
+        authTagLength: length as any,
       });
     }).toThrow(`The property 'options.authTagLength' is invalid. Received `);
   }

@@ -14,10 +14,10 @@ use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
 use bun_alloc::Arena;
-use bun_core::ZigString;
+use bun_core::EncodedSlice;
 use bun_core::{Global, Output};
+use bun_jsc as jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject};
 
 // `repl.rs` is a sibling file with no other consumers; declare it as a child
 // module here so `Repl` resolves without touching `cli/mod.rs`.
@@ -55,8 +55,10 @@ impl ReplCommand {
             )?;
         }
 
-        // Initialize JSC
-        jsc::initialize(true); // true for eval mode
+        jsc::initialize(jsc::InitializeOptions {
+            eval_mode: true,
+            ..Default::default()
+        });
 
         bun_ast::initialize_store();
         // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
@@ -78,6 +80,7 @@ impl ReplCommand {
             transform_options: core::mem::take(&mut ctx.args),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),
+            global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             eval_mode: true,
             is_main_thread: true,
@@ -103,13 +106,11 @@ impl ReplCommand {
         let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
         let offline = ctx
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online);
         b.resolver.opts.install_preference = offline;
-        b.options.global_cache = b.resolver.opts.global_cache;
         b.options.install_preference = offline;
         b.resolver.env_loader = NonNull::new(b.env);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
@@ -179,7 +180,6 @@ impl ReplCommand {
     fn dump_build_error(vm: &VirtualMachine) {
         Output::flush();
         let writer = Output::error_writer_buffered();
-        // defer Output.flush()
         let _flush = Output::flush_guard();
         if let Some(log) = vm.log {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
@@ -249,13 +249,11 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 
     fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
         let vm = VirtualMachine::get().as_mut();
+        let global = vm.global();
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
         // This must be done inside the API lock as it allocates JS objects
-        // SAFETY: vm.global is a valid JSGlobalObject pointer for the duration of the API lock.
-        unsafe {
-            Bun__ExposeNodeModuleGlobals(vm.global);
-        }
+        bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(global);
 
         // Set up require(), module, __filename, __dirname relative to cwd
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
@@ -264,33 +262,19 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // which opens a `TopExceptionScope` before the call (post-hoc `has_exception()`
         // would assert under `BUN_JSC_validateExceptionChecks=1`).
         unsafe {
-            bun_jsc::cpp::Bun__REPL__setupGlobalRequire(&*vm.global, cwd.as_ptr(), cwd.len())?;
+            bun_jsc::cpp::Bun__REPL__setupGlobalRequire(global, cwd.as_ptr(), cwd.len())?;
         }
 
         // Set timezone if specified
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
         if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
-                // SAFETY: vm.global is valid; ZigString borrows `tz` for the FFI call duration.
-                // `JSGlobalObject::set_time_zone` isn't exposed on the Rust
-                // wrapper yet — call the underlying C++ export directly.
-                let _ = unsafe { JSGlobalObject__setTimeZone(vm.global, &ZigString::init(tz)) };
+                let _ = global.set_time_zone(&EncodedSlice::from_bytes(tz));
             }
         }
 
         Ok(())
     }
-}
-
-// Local extern declarations for C++ exports the bun_jsc wrappers don't expose yet.
-unsafe extern "C" {
-    fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
-    // Local shim for `JSGlobalObject::setTimeZone` (ZigGlobalObject.cpp) until
-    // bun_jsc grows a wrapper.
-    fn JSGlobalObject__setTimeZone(
-        global: *const JSGlobalObject,
-        time_zone: *const ZigString,
-    ) -> bool;
 }
 
 use bun_bundler::options::EnvBehavior;

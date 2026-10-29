@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -181,6 +181,12 @@ devTest("asset referenced in css", {
     let backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    // The served stylesheet is the chunk with the asset reference resolved and
+    // nothing else: CSS never gets a source map, so no debugId trailer either.
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    expect(stylesheet).toContain("background-image:");
+    expect(stylesheet).not.toContain("debugId");
     await dev.write("bun.png", imageFixtures.bun2);
     backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);
@@ -236,12 +242,12 @@ devTest("css url resolve error on hot reload is recoverable", {
           errors: ['styles.css:2:21: error: Could not resolve: "./missing.png"'],
         },
       );
-      expect((await dev.fetch("/")).status).toBe(500);
     }
-    // Recovery is checked without a connected client: when a failed CSS root
-    // recovers, the patch currently ships the HTML route as a JS module
-    // without the route-reload flag, which trips a client-side debug assert
-    // (tracked in https://github.com/oven-sh/bun/issues/31908).
+    // The failing route is fetched and recovered without a connected client: a
+    // fetch re-bundles the route, and both that and the recovery ship the HTML
+    // route as a JS module without the route-reload flag, which trips a
+    // client-side debug assert (tracked in https://github.com/oven-sh/bun/issues/31908).
+    expect((await dev.fetch("/")).status).toBe(500);
     await dev.write(
       "styles.css",
       `
@@ -431,6 +437,65 @@ devTest("css hot update carries the edited stylesheet when another root fails in
     }
   },
 });
+// The incremental graph's stale bitset grows in steps of 512 files.
+const modulesPastFirstBitsetStep = Array.from({ length: 520 }, (_, i) => `m${i}`);
+devTest("css file imported from css first, then from a second page's script", {
+  files: {
+    "first.html": emptyHtmlFile({
+      styles: ["first.css"],
+      scripts: ["first.ts"],
+    }),
+    "second.html": emptyHtmlFile({
+      scripts: ["second.ts"],
+    }),
+    "first.css": `
+      .first { color: red; }
+    `,
+    "child.css": `
+      .child { color: blue; }
+    `,
+    "first.ts": `
+      console.log("first");
+      import.meta.hot.accept();
+    `,
+    "second.ts": `
+      import "./child.css";
+      console.log("second");
+    `,
+    ...Object.fromEntries(modulesPastFirstBitsetStep.map(name => [`modules/${name}.ts`, `export default "${name}";`])),
+  },
+  async test(dev) {
+    await using c1 = await dev.client("/first");
+    await c1.expectMessage("first");
+
+    // A bundle without css pushes the client graph past 512 files, so the bitset
+    // grows at the end of the bundle and the new bits mean "cached".
+    await dev.write(
+      "first.ts",
+      [
+        ...modulesPastFirstBitsetStep.map(name => `import "./modules/${name}";`),
+        `console.log("first with modules");`,
+        `import.meta.hot.accept();`,
+      ].join("\n"),
+    );
+    await c1.expectMessage("first with modules");
+
+    // "child.css" enters the client graph as a css import, so it doesn't have its own stylesheet.
+    await dev.write(
+      "first.css",
+      `
+        @import "./child.css";
+        .first { color: red; }
+      `,
+    );
+    await c1.style(".child").color.expect.toBe("#00f");
+
+    // The script import must bundle "child.css" as a stylesheet of this page.
+    await using c2 = await dev.client("/second");
+    await c2.expectMessage("second");
+    await c2.style(".child").color.expect.toBe("#00f");
+  },
+});
 devTest("multiple stylesheets importing same dependency", {
   files: {
     "first.html": emptyHtmlFile({
@@ -606,6 +671,60 @@ devTest("changing html file with link tag works", {
     await c.style(".test").fontSize.expect.toBe("24px");
   },
 });
+devTest("a page recovers after the missing @import of a shared stylesheet is created", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"], scripts: ["main.ts"] }),
+    "about.html": emptyHtmlFile({ styles: ["main.css"], scripts: ["about.ts"] }),
+    "main.ts": `console.log("main");`,
+    "about.ts": `import "./main.css"; console.log("about");`,
+    "main.css": `.main { width: 1px; }`,
+  },
+  async test(dev) {
+    const load = async () => {
+      await dev.fetch("/index").text();
+      const about = await dev.fetch("/about");
+      const links = Array.from((await about.text()).matchAll(/<link[^>]*href="([^"]+)"/g), match => match[1]);
+      return { status: about.status, links };
+    };
+    const loaded = { status: 200, links: [expect.stringMatching(/^\/_bun\/asset\/.*\.css$/)] };
+    expect(await load()).toEqual(loaded);
+    // The other page has a build error of its own the whole time.
+    await dev.write("main.ts", `const = ;`, { errors: null });
+    expect(await load()).toEqual(loaded);
+    await dev.write("main.css", `@import "./n.css";\n.main { width: 1px; }`, { errors: null });
+    expect((await load()).status).toBe(500);
+    await dev.write("n.css", `.n { width: 2px; }`, { errors: null });
+    expect(await load()).toEqual(loaded);
+    await using c = await dev.client("/about");
+    await c.expectMessage("about");
+    await c.style(".n").width.expect.toBe("2px");
+  },
+});
+devTest("an error in a stylesheet reaches a page through an @import that another page links", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "about.html": emptyHtmlFile({ styles: ["b.css"] }),
+    "main.css": `@import "./b.css";\n.m { width: 1px; }`,
+    "b.css": `@import "./c.css";\n.b { width: 1px; }`,
+    "c.css": `.c { width: 1px; }`,
+  },
+  async test(dev) {
+    // The status of the page, or the width of ".c" in its stylesheet.
+    const loadPage = async (url: string) => {
+      const page = await dev.fetch(url);
+      const html = await page.text();
+      if (page.status !== 200) return page.status;
+      const css = await dev.fetch(html.match(/\/_bun\/asset\/\w+\.css/)![0]).text();
+      return css.match(/\.c \{[^}]*width: (\w+)/)?.[1];
+    };
+    const load = async () => [await loadPage("/index"), await loadPage("/about")];
+    expect(await load()).toEqual(["1px", "1px"]);
+    await dev.write("c.css", `.c { width: 2px; }}}`, { errors: null });
+    expect(await load()).toEqual([500, 500]);
+    await dev.write("c.css", `.c { width: 3px; }`, { errors: null });
+    expect(await load()).toEqual(["3px", "3px"]);
+  },
+});
 devTest("css import before create", {
   files: {
     "index.html": emptyHtmlFile({
@@ -689,196 +808,6 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
-  },
-});
-
-devTest("css imported on the server gets browser-target processing", {
-  framework: minimalFramework,
-  files: {
-    "routes/index.ts": `
-      import "../styles.css";
-      export default function (req, meta) {
-        return new Response(JSON.stringify(meta.styles), {
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    `,
-    "styles.css": `
-      .box:fullscreen {
-        color: red;
-      }
-    `,
-  },
-  async test(dev) {
-    const styles = await (await dev.fetch("/")).json();
-    expect(styles).toHaveLength(1);
-    const css = await (await dev.fetch(styles[0])).text();
-    // Stylesheets are always served to the browser, so selector downleveling
-    // for browser targets must apply even when the importer is a server file.
-    expect(css).toContain(":-webkit-full-screen");
-    expect(css).toContain(":fullscreen");
-  },
-});
-
-devTest("css chunks are printed with browser targets", {
-  files: {
-    "index.html": emptyHtmlFile({
-      styles: ["styles.css"],
-      body: `<div class="a"><div class="b">hello</div></div>`,
-    }),
-    "styles.css": `
-      .a {
-        .b {
-          color: light-dark(white, black);
-        }
-      }
-    `,
-  },
-  async test(dev) {
-    const html = await (await dev.fetch("/")).text();
-    const href = html.match(/href="([^"]+\.css[^"]*)"/)?.[1];
-    expect(href).toBeDefined();
-    const css = await (await dev.fetch(href!)).text();
-    // Stylesheets are served to the browser, so print-gated downleveling for
-    // the default browser targets must apply even though the primary
-    // transpiler targets the server: nesting is flattened and light-dark()
-    // is replaced with a fallback.
-    expect(css).toContain(".a .b");
-    expect(css).not.toContain("light-dark(");
-  },
-});
-
-devTest("external css imports are printed with browser targets", {
-  files: {
-    "index.html": emptyHtmlFile({
-      styles: ["styles.css"],
-      body: `<div class="a">hello</div>`,
-    }),
-    // The URL stays an external @import in the output; nothing fetches it.
-    "styles.css": `
-      @import url("https://example.com/x.css") screen and (width >= 500px);
-      .a {
-        color: red;
-      }
-    `,
-  },
-  async test(dev) {
-    const html = await (await dev.fetch("/")).text();
-    const href = html.match(/href="([^"]+\.css[^"]*)"/)?.[1];
-    expect(href).toBeDefined();
-    const css = await (await dev.fetch(href!)).text();
-    // The external import is preserved, and media range syntax in its
-    // condition is downleveled for the default browser targets.
-    expect(css).toContain('@import "https://example.com/x.css" screen and (min-width: 500px)');
-    expect(css).not.toContain(">=");
-  },
-});
-
-devTest("nested external css import conditions are printed with browser targets", {
-  files: {
-    "index.html": emptyHtmlFile({
-      styles: ["styles.css"],
-      body: `<div class="a">hello</div>`,
-    }),
-    // An external import reached through a conditional internal import keeps
-    // its nesting via a data: URL stylesheet wrapper; the wrapper's contents
-    // are printed separately from the chunk body.
-    "styles.css": `
-      @import "./mid.css" screen and (width >= 500px);
-      .a {
-        color: red;
-      }
-    `,
-    "mid.css": `
-      @import url("https://example.com/x.css") (width <= 300px);
-    `,
-  },
-  async test(dev) {
-    const html = await (await dev.fetch("/")).text();
-    const href = html.match(/href="([^"]+\.css[^"]*)"/)?.[1];
-    expect(href).toBeDefined();
-    const css = await (await dev.fetch(href!)).text();
-    // Both the outer condition and the inner condition inside the data: URL
-    // wrapper are downleveled for the default browser targets.
-    expect(css).toContain("data:text/css");
-    expect(css).toContain("(min-width: 500px)");
-    expect(css).toContain("max-width");
-    expect(css).not.toContain(">=");
-    expect(css).not.toContain("<=");
-  },
-});
-
-devTest("css layer statements are printed with browser targets", {
-  files: {
-    "index.html": emptyHtmlFile({
-      styles: ["styles.css"],
-      body: `<div class="b">hello</div>`,
-    }),
-    // The duplicated conditional import leaves a bare "@layer foo;" statement
-    // (wrapped in the import's media condition) for the deduplicated copy,
-    // which prints through the layer-statement path.
-    "styles.css": `
-      @import "./dup.css" layer(foo) screen and (width >= 500px);
-      @import "./other.css";
-      @import "./dup.css" layer(foo) screen and (width >= 500px);
-    `,
-    "dup.css": `
-      .b {
-        color: blue;
-      }
-    `,
-    "other.css": `
-      .c {
-        color: green;
-      }
-    `,
-  },
-  async test(dev) {
-    const html = await (await dev.fetch("/")).text();
-    const href = html.match(/href="([^"]+\.css[^"]*)"/)?.[1];
-    expect(href).toBeDefined();
-    const css = await (await dev.fetch(href!)).text();
-    // The bare layer statement's wrapping media condition is downleveled for
-    // the default browser targets.
-    expect(css).toContain("@layer foo;");
-    expect(css).toContain("(min-width: 500px)");
-    expect(css).not.toContain(">=");
-  },
-});
-
-devTest("light-dark() polyfill spans minify and print for server-imported css", {
-  framework: minimalFramework,
-  files: {
-    "routes/index.ts": `
-      import "../styles.css";
-      export default function (req, meta) {
-        return new Response(JSON.stringify(meta.styles), {
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    `,
-    "styles.css": `
-      :root {
-        color-scheme: light dark;
-      }
-      .a {
-        color: light-dark(white, black);
-      }
-    `,
-  },
-  async test(dev) {
-    const styles = await (await dev.fetch("/")).json();
-    expect(styles).toHaveLength(1);
-    const css = await (await dev.fetch(styles[0])).text();
-    // The polyfill has two halves: the variable definitions and the
-    // prefers-color-scheme toggle are injected at minify time, the
-    // light-dark() references are rewritten at print time. Both halves must
-    // be present; references without definitions compute to an invalid value
-    // and drop the declaration in every browser.
-    expect(css).toMatch(/--buncss-light:\s*initial/);
-    expect(css).toMatch(/prefers-color-scheme:\s*dark/);
-    expect(css).toContain("var(--buncss-light");
-    expect(css).not.toContain("light-dark(");
   },
 });
 

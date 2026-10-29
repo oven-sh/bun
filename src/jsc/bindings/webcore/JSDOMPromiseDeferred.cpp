@@ -28,7 +28,6 @@
 
 // #include "DOMWindow.h"
 #include "JSDOMExceptionHandling.h"
-#include "JSDOMPromise.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -75,14 +74,6 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
 
     if (m_mode == Mode::ClearPromiseOnResolve)
         clear();
-}
-
-void DeferredPromise::whenSettled(Function<void()>&& callback)
-{
-    if (shouldIgnoreRequestToFulfill())
-        return;
-
-    DOMPromise::whenPromiseIsSettled(globalObject(), deferred(), WTF::move(callback));
 }
 
 void DeferredPromise::reject(RejectAsHandled rejectAsHandled)
@@ -227,21 +218,6 @@ JSC::EncodedJSValue createRejectedPromiseWithTypeError(JSC::JSGlobalObject& lexi
         rejectionValue->setNativeGetterTypeError();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(&lexicalGlobalObject, rejectionValue)));
-}
-
-static inline JSC::JSValue parseAsJSON(JSC::JSGlobalObject* lexicalGlobalObject, const String& data)
-{
-    JSC::JSLockHolder lock(lexicalGlobalObject);
-    return JSC::JSONParse(lexicalGlobalObject, data);
-}
-
-void fulfillPromiseWithJSON(Ref<DeferredPromise>&& promise, const String& data)
-{
-    JSC::JSValue value = parseAsJSON(promise->globalObject(), data);
-    if (!value)
-        promise->reject(SyntaxError);
-    else
-        promise->resolve<IDLAny>(value);
 }
 
 void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, ArrayBuffer* arrayBuffer)

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
-import { tempDirWithBakeDeps } from "../bake-harness";
+import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -302,6 +302,209 @@ export default function GettingStarted() {
     expect(blogIndex).toContain(platformPath('/pages/blog/[...slug].tsx"'));
   });
 
+  test("params are collected from the page's parent routes too", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-nested-params", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/[category]/[id].tsx": `
+export default function Item({ params }) {
+  return <p>{params.category + "/" + params.id}</p>;
+}
+
+export async function getStaticPaths() {
+  return {
+    paths: [
+      { params: { category: "tech", id: "bun" } },
+      { params: { category: "news", id: "release" } },
+    ],
+  };
+}
+`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const htmlFiles = Array.from(new Bun.Glob("dist/**/*.html").scanSync(dir))
+      .sort()
+      .map(p => normalizePath(p));
+    expect(htmlFiles).toEqual(["dist/news/release/index.html", "dist/tech/bun/index.html"]);
+    expect(await Bun.file(path.join(dir, "dist", "tech", "bun", "index.html")).text()).toContain("tech/bun");
+  });
+
+  test("optional catch-all routes are rejected", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-optional-catch-all", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/docs/[[...slug]].tsx": `
+export default function Docs() {
+  return <p>docs</p>;
+}
+`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("catch-all routes are not supported in static site generation");
+    expect(exitCode).toBe(1);
+  });
+
+  test("two pages resolving to the same route are reported", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-route-collision", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
+      "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
+    });
+
+    const { stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
+  });
+
+  // The bundler has no transform for these modules yet. The build used to abort
+  // in the parser instead of reporting the file.
+  test.concurrent.each([
+    ["with a semicolon", `"use server";\nexport async function save() {\n  return "saved";\n}\n`],
+    ["without a semicolon", `'use server'\nexport async function save() {\n  return "saved";\n}\n`],
+  ])('a "use server" module is a build error (%s)', async (_, actions) => {
+    using dir = tempDir("bake-production-use-server", {
+      "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,
+      "routes/index.ts": `
+import "../actions";
+export default function () {
+  return new Response("Hello");
+}
+`,
+      "actions.ts": actions,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts", "--outdir", "./dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('error: "use server" is not supported yet');
+    expect(normalizePath(stderr)).toContain("/actions.ts:1:1");
+    expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // A production build has no client references without a separate SSR graph.
+  // The build used to abort instead of reporting the file: in the parser when it
+  // wraps an exported value, and in the linker when it has nothing to wrap.
+  test.concurrent.each([
+    ["an exported function", `export function Button() {}`],
+    ["an export clause", `function Button() {}\nexport { Button };`],
+  ])('a "use client" module without a separate SSR graph is a build error (%s)', async (_, exports) => {
+    const framework = {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: false },
+    };
+    using dir = tempDir("bake-production-use-client-single-graph", {
+      "app.ts": `export default { app: { framework: ${JSON.stringify(framework)} } };`,
+      "routes/index.ts": `
+import { Button } from "../components/Button";
+export default function () {
+  return new Response("Hello, " + typeof Button);
+}
+`,
+      "components/Button.ts": `"use client";\n${exports}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts", "--outdir", "./dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(
+      `error: "use client" is not supported yet in a production build unless 'framework.serverComponents.separateSSRGraph' is true`,
+    );
+    expect(normalizePath(stderr)).toContain("/components/Button.ts:1:1");
+    expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  test('a framework entry point that a "browser" map disables is reported', async () => {
+    using dir = tempDir("bake-production-disabled-entry", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),
+      "client.ts": `export {};`,
+      "server.ts": `export function render() { return new Response("ok"); }`,
+      "routes/index.ts": `export default () => new Response("ok");`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("Failed to resolve './client.ts' for framework (client side entrypoint)");
+    expect(exitCode).toBe(1);
+  });
+
+  test("builds a framework without server components and keeps its client entry point", async () => {
+    using dir = tempDir("bake-production-custom-framework", {
+      "client.ts": `console.log("client loaded");`,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          const scripts = meta.modules.map(m => '<script type="module" src="' + m + '"></script>').join("");
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + scripts + "</body>" } };
+        }
+      `,
+      "routes/index.ts": `export default () => "homepage";`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => stderr.toString());
+    expect(html).toContain("homepage");
+    const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/);
+    expect(script).toBeTruthy();
+    expect(existsSync(path.join(String(dir), "dist", script![1]))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("fails the build for a route file with an invalid name", async () => {
+    using dir = tempDir("bake-production-invalid-route", {
+      "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,
+      "routes/index.ts": `export default () => new Response("index");`,
+      "routes/[oops.ts": `export default () => new Response("oops");`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain('"routes/[oops.ts" is not a valid route');
+    expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,
@@ -595,20 +798,15 @@ export default function IndexPage() {
     expect(htmlContent).not.toContain('<script type="module"');
   });
 
-  test("css imported on the server gets browser-target processing", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-server-css", {
+  test("a page can make a WebSocket while it is prerendered", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-websocket", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
-      // Importing the stylesheet from a page puts it in the server graph, but
-      // the emitted CSS is still a browser asset, so selector downleveling for
-      // browser targets must apply.
-      "pages/index.tsx": `
-import "../styles.css";
-export default function IndexPage() {
-  return <div>Hello World</div>;
-}`,
-      "styles.css": `
-.box:fullscreen {
-  color: red;
+      "pages/index.tsx": `export default function IndexPage() {
+  const socket = new WebSocket("ws://127.0.0.1:1/");
+  socket.onerror = () => {};
+  const state = socket.readyState;
+  socket.close();
+  return <div>readyState={state}</div>;
 }`,
       "package.json": JSON.stringify({
         "name": "test-app",
@@ -620,210 +818,59 @@ export default function IndexPage() {
       }),
     });
 
-    const { exitCode } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+    const buildProc = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
       .cwd(dir)
       .env(bunEnv)
       .throws(false);
-    expect(exitCode).toBe(0);
 
-    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
-    expect(cssFiles).toHaveLength(1);
-    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
-    expect(css).toContain(":-webkit-full-screen");
-    expect(css).toContain(":fullscreen");
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html"))
+      .text()
+      .catch(() => buildProc.stderr.toString());
+    expect(indexHtml).toContain("readyState=<!-- -->" + WebSocket.CONNECTING);
+    expect(buildProc.exitCode).toBe(0);
   });
 
-  test("css imported through a 'use client' component is bundled once", async () => {
-    // The boundary file is parsed into both the client and SSR graphs; its
-    // stylesheet must share one source index across graphs or the build emits
-    // two chunks whose identical content collides on one output path.
-    const dir = await tempDirWithBakeDeps("bake-production-client-css", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `
-import Client from "../components/Client";
-export default function IndexPage() {
-  return <div>Hello <Client /></div>;
-}`,
-      "components/Client.tsx": `
-"use client";
-import "../styles.css";
-export default function Client() {
-  return <span>client</span>;
-}`,
-      "styles.css": `
-.box:fullscreen {
-  color: red;
-}`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
+  // A debug build with BUN_JSC_validateExceptionChecks=1 aborts on the first JSC call with an unchecked exception.
+  // Windows resolves the import()'s absolute path as a relative path.
+  test.skipIf(isWindows)("the module loader hooks check for exceptions", async () => {
+    using dir = tempDir("bake-production-exception-checks", {
+      "server.ts": `
+        export async function prerender(meta) {
+          return { files: { "/index.html": await meta.pageModule.default(meta.params) } };
+        }
+        export function getParams() {
+          return [{ slug: "first" }];
+        }
+      `,
+      "extra/banner.mjs": `export const banner = "read from disk";`,
+      // The specifier is computed, so the import() is resolved at runtime and loads a file outside the bundle.
+      "routes/index.ts": `
+        import { join } from "node:path";
+        export default async () => (await import(join(import.meta.dir, "../extra/banner.mjs"))).banner;
+      `,
+      "routes/posts/[slug].ts": `export default params => "post " + params.slug;`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+      "unresolved.ts": `
+        import "./does-not-exist";
+        export default {};
+      `,
     });
+    const env = { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" };
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
-    expect(exitCode).toBe(0);
+    const built = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(String(dir)).env(env).throws(false);
+    const read = (file: string) =>
+      Bun.file(path.join(String(dir), "dist", file))
+        .text()
+        .catch(() => built.stderr.toString());
+    expect(await read("index.html")).toBe("read from disk");
+    expect(await read("posts/first/index.html")).toBe("post first");
+    expect(built.exitCode).toBe(0);
 
-    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
-    expect(cssFiles).toHaveLength(1);
-    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
-    expect(css).toContain(":-webkit-full-screen");
-  });
-
-  test("css imported from both a page and a 'use client' component is bundled once", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-shared-css", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `
-import "../styles.css";
-import Client from "../components/Client";
-export default function IndexPage() {
-  return <div>Hello <Client /></div>;
-}`,
-      "components/Client.tsx": `
-"use client";
-import "../styles.css";
-export default function Client() {
-  return <span>client</span>;
-}`,
-      "styles.css": `
-.box:fullscreen {
-  color: red;
-}`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
-    });
-
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
-    expect(exitCode).toBe(0);
-
-    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
-    expect(cssFiles).toHaveLength(1);
-    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
-    expect(css).toContain(":-webkit-full-screen");
-  });
-
-  test("css is printed with browser targets", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-css-print-targets", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `
-import "../styles.css";
-export default function IndexPage() {
-  return <div className="a"><div className="b">Hello World</div></div>;
-}`,
-      "styles.css": `
-:root {
-  color-scheme: light dark;
-}
-.a {
-  .b {
-    color: light-dark(white, black);
-  }
-}`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
-    });
-
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    // A successful bake build still writes the experimental banner and
-    // progress lines to stderr, so assert on errors rather than emptiness.
-    expect(stderr.toString()).not.toContain("error:");
-    expect(exitCode).toBe(0);
-
-    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
-    expect(cssFiles).toHaveLength(1);
-    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
-    // The emitted stylesheet is a browser asset, so downleveling for the
-    // default browser targets must apply even though the build's primary
-    // transpiler targets the server: nesting is flattened and light-dark()
-    // becomes the full variable polyfill (definitions and toggle injected at
-    // minify, references rewritten at print).
-    expect(css).toContain(".a .b");
-    expect(css).toMatch(/--buncss-light:\s*initial/);
-    expect(css).toMatch(/prefers-color-scheme:\s*dark/);
-    expect(css).toContain("var(--buncss-light");
-    expect(css).not.toContain("light-dark(");
-  });
-
-  test("css resolved through an onResolve plugin is bundled once", async () => {
-    // The plugin success arm creates the source index directly from the
-    // plugin's returned path; it must share that index across graphs like the
-    // built-in resolver paths do, or the client and SSR copies collide on one
-    // content-hashed output path.
-    const dir = await tempDirWithBakeDeps("bake-production-plugin-css", {
-      "src/index.tsx": `
-import path from "node:path";
-import type { BunPlugin } from "bun";
-const cssRedirect: BunPlugin = {
-  name: "css-redirect",
-  setup(build) {
-    build.onResolve({ filter: /^virtual-styles$/ }, () => ({
-      path: path.join(import.meta.dir, "../styles.css"),
-    }));
-  },
-};
-export default { app: { framework: "react", plugins: [cssRedirect] } };`,
-      "pages/index.tsx": `
-import "virtual-styles";
-import Client from "../components/Client";
-export default function IndexPage() {
-  return <div>Hello <Client /></div>;
-}`,
-      "components/Client.tsx": `
-"use client";
-import "virtual-styles";
-export default function Client() {
-  return <span>client</span>;
-}`,
-      "styles.css": `
-.box:fullscreen {
-  color: red;
-}`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
-    });
-
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
-    expect(exitCode).toBe(0);
-
-    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
-    expect(cssFiles).toHaveLength(1);
-    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
-    expect(css).toContain(":-webkit-full-screen");
+    const unresolved = await Bun.$`${bunExe()} build --app ./unresolved.ts`.cwd(String(dir)).env(env).throws(false);
+    expect(unresolved.stderr.toString()).toContain("Cannot find module './does-not-exist'");
+    expect(unresolved.exitCode).toBe(1);
   });
 });

@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_core::{Timespec, TimespecMockMode};
 
-use crate::jsc::virtual_machine::{IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE, VirtualMachine};
+use crate::jsc::virtual_machine::VirtualMachine;
 use crate::webcore::script_execution_context::Identifier as ScriptExecutionContextIdentifier;
 
 use super::{
@@ -56,16 +56,6 @@ pub(crate) struct WTFTimer {
 }
 
 bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
-
-/// # Safety
-/// `vm` must be the live `VirtualMachine` for the current thread.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
-    // SAFETY: per fn contract.
-    let el = unsafe { (*vm).event_loop() };
-    // SAFETY: `event_loop()` returns the VM's owned EventLoop pointer.
-    unsafe { (*el).run_imminent_gc_timer() };
-}
 
 impl WTFTimer {
     /// Fire the underlying `RunLoop::TimerBase`,
@@ -236,26 +226,28 @@ impl WTFTimer {
     }
 
     /// # Safety
-    /// `this` must be the unique owner of a `heap::alloc`-produced `WTFTimer`.
+    /// `this` must be the unique owner of a `WTFTimer` produced by `WTFTimer__create`.
     pub(crate) unsafe fn deinit(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { Self::cancel(this) };
-        // SAFETY: `bun.TrivialNew` ↔ `heap::alloc`, so `heap::take` is
-        // the paired free.
+        // SAFETY: `WTFTimer__create` handed its `Box` over via `heap::into_raw`,
+        // so `heap::take` is the paired reclaim.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
+/// A `WTF::RunLoop` timer on this thread, backed by this thread's event loop. Null when the thread has no Bun
+/// `VirtualMachine` (a `JSC::VM` on a bundler thread generating bytecode, say): the timer then never fires, which
+/// `RunLoop::TimerBase` accepts.
+///
 /// # Safety
 /// `run_loop_timer` must be a non-null, live `WTF::RunLoop::TimerBase` owned
 /// by the caller for the lifetime of the returned `WTFTimer`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
-    if IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.get() {
+    let Some(vm) = VirtualMachine::get_or_null() else {
         return ptr::null_mut();
-    }
-
-    let vm = VirtualMachine::get_mut_ptr();
+    };
 
     // SAFETY: `vm` is the thread-local VirtualMachine; `run_loop_timer` is
     // non-null per caller contract; `event_loop().imminent_gc_timer` lives as

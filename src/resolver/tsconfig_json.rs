@@ -51,7 +51,7 @@ impl JsonCache {
         let mut temp_log = bun_ast::Log::init();
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let result = func(source, &mut temp_log, bump).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to(log);
         Ok(result)
     }
 
@@ -67,7 +67,7 @@ impl JsonCache {
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         let result = func(source, &mut temp_log).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to(log);
         Ok(result)
     }
 
@@ -163,6 +163,7 @@ pub struct TSConfigJSON {
     pub experimental_decorators: bool,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
+    pub(crate) has_compiler_options: bool,
 }
 
 impl Default for TSConfigJSON {
@@ -179,6 +180,7 @@ impl Default for TSConfigJSON {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
+            has_compiler_options: false,
         }
     }
 }
@@ -307,11 +309,13 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
+    #[inline(never)]
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
+        bun_removable_features::removable_definition!(PackageFiles, Self::parse);
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
         // TypeScript compiler.
@@ -369,6 +373,7 @@ impl TSConfigJSON {
 
         // Parse "compilerOptions"
         if let Some(compiler_opts) = compiler_opts {
+            result.has_compiler_options = true;
             // Single pass over `compilerOptions`' properties; first occurrence
             // of each key wins (matching `asProperty`).
             let mut base_url_v: Option<&bun_ast::E::JsonValue> = None;
@@ -449,18 +454,22 @@ impl TSConfigJSON {
 
             // Parse "jsxFactory"
             if let Some((jsx_prop, loc)) = jsx_factory_v {
-                if let Some(str) = jsx_prop.as_str() {
-                    result.jsx.factory =
-                        Self::parse_member_expression_for_jsx(log, source, loc, str)?.into();
+                if let Some(factory) = jsx_prop
+                    .as_str()
+                    .and_then(|str| Self::parse_member_expression_for_jsx(log, source, loc, str))
+                {
+                    result.jsx.factory = factory.into();
                     result.jsx_flags.insert(JsxField::Factory);
                 }
             }
 
             // Parse "jsxFragmentFactory"
             if let Some((jsx_prop, loc)) = jsx_fragment_factory_v {
-                if let Some(str) = jsx_prop.as_str() {
-                    result.jsx.fragment =
-                        Self::parse_member_expression_for_jsx(log, source, loc, str)?.into();
+                if let Some(fragment) = jsx_prop
+                    .as_str()
+                    .and_then(|str| Self::parse_member_expression_for_jsx(log, source, loc, str))
+                {
+                    result.jsx.fragment = fragment.into();
                     result.jsx_flags.insert(JsxField::Fragment);
                 }
             }
@@ -492,11 +501,6 @@ impl TSConfigJSON {
             // Parse "jsxImportSource"
             if let Some(jsx_prop) = jsx_import_source_v {
                 if let Some(str) = jsx_prop.as_str() {
-                    if str.len() >= b"solid-js".len() && &str[..b"solid-js".len()] == b"solid-js" {
-                        result.jsx.runtime = options::jsx::Runtime::Solid;
-                        result.jsx_flags.insert(JsxField::Runtime);
-                    }
-
                     result.jsx.package_name = str.to_vec().into();
                     result.jsx.set_import_source();
                     result.jsx_flags.insert(JsxField::ImportSource);
@@ -697,61 +701,41 @@ impl TSConfigJSON {
         true
     }
 
+    /// `"React.createElement"` => `["React", "createElement"]`. `None` (after
+    /// a warning, unless `text` is empty) when `text` is not a dotted chain
+    /// of identifiers.
     pub(crate) fn parse_member_expression_for_jsx(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         text: &[u8],
-    ) -> Result<Box<[Box<[u8]>]>, crate::Error> {
+    ) -> Option<Box<[Box<[u8]>]>> {
         if text.is_empty() {
-            return Ok(Box::default());
-        }
-        // foo.bar == 2
-        // foo.bar. == 2
-        // foo == 1
-        // foo.bar.baz == 3
-        // foo.bar.baz.bun == 4
-        let parts_count =
-            text.iter().filter(|&&b| b == b'.').count() + usize::from(text[text.len() - 1] != b'.');
-        let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(parts_count);
-
-        if parts_count == 1 {
-            if !js_lexer::is_identifier(text) {
-                let warn = source.range_of_string(loc);
-                let _ = log.add_range_warning_fmt(
-                    Some(source),
-                    warn,
-                    format_args!(
-                        "Invalid JSX member expression: \"{}\"",
-                        bstr::BStr::new(text)
-                    ),
-                );
-                return Ok(Box::default());
-            }
-
-            parts.push(Box::from(text));
-            return Ok(parts.into_boxed_slice());
+            return None;
         }
 
-        let iter = text.split(|b| *b == b'.').filter(|s| !s.is_empty());
+        let mut parts = strings::tokenize(text, b".").peekable();
+        // Text made of dots only ("." or "..") has no parts; report the whole text.
+        let invalid = if parts.peek().is_none() {
+            Some(text)
+        } else {
+            parts.find(|part| !js_lexer::is_identifier(part))
+        };
 
-        for part in iter {
-            if !js_lexer::is_identifier(part) {
-                let warn = source.range_of_string(loc);
-                let _ = log.add_range_warning_fmt(
-                    Some(source),
-                    warn,
-                    format_args!(
-                        "Invalid JSX member expression: \"{}\"",
-                        bstr::BStr::new(part)
-                    ),
-                );
-                return Ok(Box::default());
-            }
-            parts.push(Box::from(part));
+        if let Some(invalid) = invalid {
+            let warn = source.range_of_string(loc);
+            let _ = log.add_range_warning_fmt(
+                Some(source),
+                warn,
+                format_args!(
+                    "Invalid JSX member expression: \"{}\"",
+                    bstr::BStr::new(invalid)
+                ),
+            );
+            return None;
         }
 
-        Ok(parts.into_boxed_slice())
+        Some(strings::tokenize(text, b".").map(Box::from).collect())
     }
 
     pub(crate) fn is_valid_tsconfig_path_no_base_url_pattern(

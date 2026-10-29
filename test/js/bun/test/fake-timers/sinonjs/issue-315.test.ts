@@ -7,7 +7,7 @@ describe("issue #315 - praseInt if delay is not a number", function () {
     const clock = FakeTimers.install();
     const stub1 = sinon.stub();
 
-    clock.setTimeout(stub1, "1");
+    clock.setTimeout(stub1, "1" as any);
     clock.tick(1);
     assert(stub1.calledOnce);
 

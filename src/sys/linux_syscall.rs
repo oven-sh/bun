@@ -89,38 +89,38 @@ pub(crate) fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd,
     retry(|| rustix::fs::openat(dir, path.as_cstr(), oflags, mode)).map(own_fd)
 }
 
-#[inline]
-pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
-    let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
-    let mode = rustix::fs::Mode::from_raw_mode(mode);
-    let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::BENEATH,
-        )
+/// Android's seccomp answers `openat2`/`fchmodat2` with SIGSYS; Termux runs the linux build.
+pub(crate) fn is_android_kernel() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| {
+        let release = bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
+        cfg!(target_os = "android")
+            || bun_core::strings::contains_case_insensitive_ascii(release, b"android")
+            || bun_core::env_var::ANDROID_ROOT::get_not_empty().is_some_and(|root| {
+                let linker = [root, b"/bin/linker64\0"].concat();
+                faccessat(Fd::cwd(), ZStr::from_slice_with_nul(&linker), libc::F_OK).is_ok()
+            })
     })
-    .map(own_fd)
 }
 
+pub(crate) use rustix::fs::ResolveFlags;
+
 #[inline]
-pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+pub(crate) fn openat2(
+    dir: Fd,
+    path: &ZStr,
+    flags: i32,
+    mode: Mode,
+    resolve: ResolveFlags,
+) -> Result<Fd, i32> {
+    use bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH as DISABLED;
+    if is_android_kernel() || DISABLED.get().unwrap_or(false) {
+        return Err(libc::ENOSYS);
+    }
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
-        )
-    })
-    .map(own_fd)
+    retry(|| rustix::fs::openat2(dir, path.as_cstr(), oflags, mode, resolve)).map(own_fd)
 }
 
 #[inline]
@@ -199,6 +199,21 @@ pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i
     let dir = unsafe { bfd(dir) };
     let at = rustix::fs::AtFlags::from_bits_retain(flags as u32);
     retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
+}
+
+/// `faccessat(2)`, the syscall without a `flags` argument. Do not use libc's
+/// `faccessat()` for this: glibc 2.33+ issues `faccessat2` first even for
+/// `flags == 0` and falls back on ENOSYS only, so a seccomp filter that
+/// answers the newer call with any other errno (EPERM from a profile written
+/// before Linux 5.8) fails every check. With empty flags rustix goes straight
+/// to `faccessat`.
+#[inline]
+pub(crate) fn faccessat(dir: Fd, path: &ZStr, mode: i32) -> Result<(), i32> {
+    // `Access` is `c_uint` bits on rustix's linux_raw backend, `c_int` on its
+    // libc backend (Android, where bionic's `faccessat` is already flag-less).
+    let access = rustix::fs::Access::from_bits_retain(mode as _);
+    let dir = dir.as_borrowed_fd();
+    retry(|| rustix::fs::accessat(dir, path.as_cstr(), access, rustix::fs::AtFlags::empty()))
 }
 
 /// Map rustix's kernel `struct stat` → `libc::stat`.
@@ -385,7 +400,7 @@ pub(crate) unsafe fn pwritev(
 // `-errno` returns, which callers decode via `GetErrno for isize`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Raw `read(2)` — libc-convention return (for `linux::read` / `posix::read`).
+/// Raw `read(2)` — libc-convention return (for `linux::read`).
 ///
 /// This is a libc-convention thunk: callers may pass `fd == -1` (expecting
 /// EBADF), `buf == NULL` with `count == 0` (expecting `0`), or an
@@ -399,14 +414,6 @@ pub(crate) unsafe fn pwritev(
 pub(crate) unsafe fn read_raw(fd: i32, buf: *mut u8, count: usize) -> isize {
     // SAFETY: raw `read(2)`; kernel validates `fd`/`buf`/`count`.
     unsafe { libc::syscall(libc::SYS_read, fd, buf, count) as isize }
-}
-
-/// Raw `write(2)` — libc-convention return. See `read_raw` for why this
-/// bypasses rustix's typed wrapper.
-#[inline]
-pub(crate) unsafe fn write_raw(fd: i32, buf: *const u8, count: usize) -> isize {
-    // SAFETY: raw `write(2)`; kernel validates `fd`/`buf`/`count`.
-    unsafe { libc::syscall(libc::SYS_write, fd, buf, count) as isize }
 }
 
 /// Raw `epoll_ctl(2)` — libc-convention return.

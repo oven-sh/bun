@@ -14,21 +14,306 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  /**
+   * A whole number from -2147483648 to 2147483647.
+   *
+   * To TypeScript, and under `bun run`, this is a `number`. With `--aot`, a variable, field, parameter
+   * or return value of this type takes four bytes, and arithmetic on it skips the checks for fractions.
+   * The build must prove that every value stored in an `int32` is one, and reports an error where it
+   * can't. `| 0` turns any number into an int32.
+   *
+   * ```ts
+   * import type { int32 } from "bun";
+   * class Cursor { line: int32 = 0; column: int32 = 0; }
+   * function advance(cursor: Cursor, by: int32) {
+   *   cursor.column = (cursor.column + by) | 0; // without `| 0` the sum could overflow: error TS100031
+   * }
+   * ```
+   */
+  type int32 = number & { readonly "bun.int32"?: true };
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
-    | NodeJS.TypedArray<TArrayBuffer>
-    | DataView<TArrayBuffer>;
+    NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray<ArrayBufferLike> | DataView<ArrayBufferLike> | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type XMLHttpRequestBodyInit = Blob | BufferSource | FormData | URLSearchParams | string;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
-    | ReadableStreamDefaultReadValueResult<T>
-    | ReadableStreamDefaultReadDoneResult;
+    ReadableStreamDefaultReadValueResult<T> | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
   type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
-  type Encoding = "utf-8" | "windows-1252" | "utf-16";
+  /**
+   * An encoding label from the WHATWG Encoding Standard, as accepted by the
+   * `TextDecoder` constructor.
+   *
+   * The labels of the `replacement` encoding are excluded: the `TextDecoder`
+   * constructor rejects them with a `RangeError`.
+   *
+   * @see https://encoding.spec.whatwg.org/#names-and-labels
+   */
+  type Encoding =
+    // utf-8
+    | "unicode-1-1-utf-8"
+    | "unicode11utf8"
+    | "unicode20utf8"
+    | "utf-8"
+    | "utf8"
+    | "x-unicode20utf8"
+    // ibm866
+    | "866"
+    | "cp866"
+    | "csibm866"
+    | "ibm866"
+    // iso-8859-2
+    | "csisolatin2"
+    | "iso-8859-2"
+    | "iso-ir-101"
+    | "iso8859-2"
+    | "iso88592"
+    | "iso_8859-2"
+    | "iso_8859-2:1987"
+    | "l2"
+    | "latin2"
+    // iso-8859-3
+    | "csisolatin3"
+    | "iso-8859-3"
+    | "iso-ir-109"
+    | "iso8859-3"
+    | "iso88593"
+    | "iso_8859-3"
+    | "iso_8859-3:1988"
+    | "l3"
+    | "latin3"
+    // iso-8859-4
+    | "csisolatin4"
+    | "iso-8859-4"
+    | "iso-ir-110"
+    | "iso8859-4"
+    | "iso88594"
+    | "iso_8859-4"
+    | "iso_8859-4:1988"
+    | "l4"
+    | "latin4"
+    // iso-8859-5
+    | "csisolatincyrillic"
+    | "cyrillic"
+    | "iso-8859-5"
+    | "iso-ir-144"
+    | "iso8859-5"
+    | "iso88595"
+    | "iso_8859-5"
+    | "iso_8859-5:1988"
+    // iso-8859-6
+    | "arabic"
+    | "asmo-708"
+    | "csiso88596e"
+    | "csiso88596i"
+    | "csisolatinarabic"
+    | "ecma-114"
+    | "iso-8859-6"
+    | "iso-8859-6-e"
+    | "iso-8859-6-i"
+    | "iso-ir-127"
+    | "iso8859-6"
+    | "iso88596"
+    | "iso_8859-6"
+    | "iso_8859-6:1987"
+    // iso-8859-7
+    | "csisolatingreek"
+    | "ecma-118"
+    | "elot_928"
+    | "greek"
+    | "greek8"
+    | "iso-8859-7"
+    | "iso-ir-126"
+    | "iso8859-7"
+    | "iso88597"
+    | "iso_8859-7"
+    | "iso_8859-7:1987"
+    | "sun_eu_greek"
+    // iso-8859-8
+    | "csiso88598e"
+    | "csisolatinhebrew"
+    | "hebrew"
+    | "iso-8859-8"
+    | "iso-8859-8-e"
+    | "iso-ir-138"
+    | "iso8859-8"
+    | "iso88598"
+    | "iso_8859-8"
+    | "iso_8859-8:1988"
+    | "visual"
+    // iso-8859-8-i
+    | "csiso88598i"
+    | "iso-8859-8-i"
+    | "logical"
+    // iso-8859-10
+    | "csisolatin6"
+    | "iso-8859-10"
+    | "iso-ir-157"
+    | "iso8859-10"
+    | "iso885910"
+    | "l6"
+    | "latin6"
+    // iso-8859-13
+    | "iso-8859-13"
+    | "iso8859-13"
+    | "iso885913"
+    // iso-8859-14
+    | "iso-8859-14"
+    | "iso8859-14"
+    | "iso885914"
+    // iso-8859-15
+    | "csisolatin9"
+    | "iso-8859-15"
+    | "iso8859-15"
+    | "iso885915"
+    | "iso_8859-15"
+    | "l9"
+    // iso-8859-16
+    | "iso-8859-16"
+    // koi8-r
+    | "cskoi8r"
+    | "koi"
+    | "koi8"
+    | "koi8-r"
+    | "koi8_r"
+    // koi8-u
+    | "koi8-ru"
+    | "koi8-u"
+    // macintosh
+    | "csmacintosh"
+    | "mac"
+    | "macintosh"
+    | "x-mac-roman"
+    // windows-874
+    | "dos-874"
+    | "iso-8859-11"
+    | "iso8859-11"
+    | "iso885911"
+    | "tis-620"
+    | "windows-874"
+    // windows-1250
+    | "cp1250"
+    | "windows-1250"
+    | "x-cp1250"
+    // windows-1251
+    | "cp1251"
+    | "windows-1251"
+    | "x-cp1251"
+    // windows-1252
+    | "ansi_x3.4-1968"
+    | "ascii"
+    | "cp1252"
+    | "cp819"
+    | "csisolatin1"
+    | "ibm819"
+    | "iso-8859-1"
+    | "iso-ir-100"
+    | "iso8859-1"
+    | "iso88591"
+    | "iso_8859-1"
+    | "iso_8859-1:1987"
+    | "l1"
+    | "latin1"
+    | "us-ascii"
+    | "windows-1252"
+    | "x-cp1252"
+    // windows-1253
+    | "cp1253"
+    | "windows-1253"
+    | "x-cp1253"
+    // windows-1254
+    | "cp1254"
+    | "csisolatin5"
+    | "iso-8859-9"
+    | "iso-ir-148"
+    | "iso8859-9"
+    | "iso88599"
+    | "iso_8859-9"
+    | "iso_8859-9:1989"
+    | "l5"
+    | "latin5"
+    | "windows-1254"
+    | "x-cp1254"
+    // windows-1255
+    | "cp1255"
+    | "windows-1255"
+    | "x-cp1255"
+    // windows-1256
+    | "cp1256"
+    | "windows-1256"
+    | "x-cp1256"
+    // windows-1257
+    | "cp1257"
+    | "windows-1257"
+    | "x-cp1257"
+    // windows-1258
+    | "cp1258"
+    | "windows-1258"
+    | "x-cp1258"
+    // x-mac-cyrillic
+    | "x-mac-cyrillic"
+    | "x-mac-ukrainian"
+    // gbk
+    | "chinese"
+    | "csgb2312"
+    | "csiso58gb231280"
+    | "gb2312"
+    | "gb_2312"
+    | "gb_2312-80"
+    | "gbk"
+    | "iso-ir-58"
+    | "x-gbk"
+    // gb18030
+    | "gb18030"
+    // big5
+    | "big5"
+    | "big5-hkscs"
+    | "cn-big5"
+    | "csbig5"
+    | "x-x-big5"
+    // euc-jp
+    | "cseucpkdfmtjapanese"
+    | "euc-jp"
+    | "x-euc-jp"
+    // iso-2022-jp
+    | "csiso2022jp"
+    | "iso-2022-jp"
+    // shift_jis
+    | "csshiftjis"
+    | "ms932"
+    | "ms_kanji"
+    | "shift-jis"
+    | "shift_jis"
+    | "sjis"
+    | "windows-31j"
+    | "x-sjis"
+    // euc-kr
+    | "cseuckr"
+    | "csksc56011987"
+    | "euc-kr"
+    | "iso-ir-149"
+    | "korean"
+    | "ks_c_5601-1987"
+    | "ks_c_5601-1989"
+    | "ksc5601"
+    | "ksc_5601"
+    | "windows-949"
+    // utf-16be
+    | "unicodefffe"
+    | "utf-16be"
+    // utf-16le
+    | "csunicode"
+    | "iso-10646-ucs-2"
+    | "ucs-2"
+    | "unicode"
+    | "unicodefeff"
+    | "utf-16"
+    | "utf-16le"
+    // x-user-defined
+    | "x-user-defined";
   type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
   type MultipleResolveType = "resolve" | "reject";
   type BeforeExitListener = (code: number) => void;
@@ -301,14 +586,24 @@ declare module "bun" {
     cancel?: UnderlyingSourceCancelCallback;
     pull?: UnderlyingSourcePullCallback<R>;
     start?: UnderlyingSourceStartCallback<R>;
-    /**
-     * Mode "bytes" is not supported.
-     */
     type?: undefined;
   }
 
   interface DirectUnderlyingSource<R = any> {
     cancel?: UnderlyingSourceCancelCallback;
+    /**
+     * Write the stream's data with `controller.write()` (await it for
+     * backpressure) and finish with `controller.close()`.
+     *
+     * A destination that takes the whole body (`Bun.serve`, `Bun.write`,
+     * `.text()`, ...) calls `pull()` once. If it returns a promise, the stream
+     * stays open while it is pending, ends when it resolves, and errors if it
+     * rejects. If it returns synchronously without closing, the stream stays
+     * open until `controller.close()` is called.
+     *
+     * A reader (`getReader()`, `for await`, `pipeTo()`) calls `pull()` again
+     * for a later read, once the previous call has settled.
+     */
     pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
     type: "direct";
   }
@@ -555,6 +850,18 @@ declare module "bun" {
      * @default true
      */
     ambiguousIsNarrow?: boolean;
+
+    /**
+     * If `true`, measure every Unicode code point individually (East Asian
+     * Width plus emoji presentation, the algorithm Node.js uses for
+     * `console.table` and `util.inspect` alignment), so each member of an
+     * emoji ZWJ sequence is counted: `"👨‍👩‍👧‍👦"` measures 8. If `false`,
+     * emoji sequences and other grapheme clusters count once: `"👨‍👩‍👧‍👦"`
+     * measures 2.
+     *
+     * @default false
+     */
+    perCodePoint?: boolean;
   }
 
   /**
@@ -780,13 +1087,17 @@ declare module "bun" {
     /**
      * Parse a TOML (v1.1.0) document into a JavaScript object.
      *
-     * Date/time values parse as strings of their source text. Integers
-     * outside `Number.MAX_SAFE_INTEGER` throw, since they cannot be
-     * represented losslessly as JavaScript numbers.
+     * Date/time values parse as Temporal objects: offset date-times as
+     * `Temporal.Instant`, local date-times as `Temporal.PlainDateTime`,
+     * local dates as `Temporal.PlainDate`, and local times as
+     * `Temporal.PlainTime`. Integers outside `Number.MAX_SAFE_INTEGER`
+     * throw, since they cannot be represented losslessly as JavaScript
+     * numbers.
      *
      * @category Utilities
      *
-     * @param input The TOML document to parse, as a string or UTF-8 bytes
+     * @param input The TOML document to parse, as a string or UTF-8 bytes. A `Blob` that is backed by a file, such
+     * as `Bun.file()`, throws: pass `await file.text()`.
      * @returns A JavaScript object
      * @throws {SyntaxError} If the input is not valid TOML
      */
@@ -798,8 +1109,15 @@ declare module "bun" {
      * Serialize a JavaScript object to a TOML document.
      *
      * The top-level value must be an object (a TOML document is a table).
-     * `Date` values become TOML offset date-times. `null`, `BigInt`, and
-     * circular structures throw, since TOML cannot represent them;
+     * `Temporal.Instant`, `Temporal.PlainDateTime`, `Temporal.PlainDate`,
+     * and `Temporal.PlainTime` values become the corresponding TOML
+     * date/time literals, `Temporal.ZonedDateTime` becomes an offset
+     * date-time, and `Date` becomes an offset date-time in UTC; time-zone
+     * and calendar annotations are dropped, since TOML has no syntax for
+     * them. `null`, `BigInt`, circular structures, invalid `Date`s, date
+     * values outside years 0000–9999, and Temporal types with no TOML form
+     * (`Temporal.PlainYearMonth`, `Temporal.PlainMonthDay`,
+     * `Temporal.Duration`) throw, since TOML cannot represent them;
      * `undefined`, function, and symbol properties are skipped (inside
      * arrays they throw, since TOML arrays cannot have holes).
      *
@@ -818,7 +1136,247 @@ declare module "bun" {
      * // 'name = "app"\n\n[server]\nport = 8080\n'
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+    export function stringify<T>(
+      input: T,
+      replacer?: undefined | null,
+      space?: string | number,
+    ): T extends Function | symbol | undefined ? undefined : T extends object ? string : string | undefined;
+  }
+
+  /**
+   * XML related APIs
+   */
+  namespace XML {
+    // ── compact shape ──────────────────────────────────────────────────────
+
+    /**
+     * An element in the compact shape {@link parse} returns by default: its
+     * character data (a string) when it has no attributes and no child
+     * elements, otherwise an {@link Element}.
+     */
+    type Value = string | Element;
+
+    /**
+     * An element that has attributes or child elements, in the compact shape.
+     *
+     * - `"@name"` — one per attribute, holding its value.
+     * - `"#text"` — the element's own character data, exactly, when it has any:
+     *   its text runs concatenated, leaving out only whitespace-only runs that
+     *   sit between child elements (layout).
+     * - any other key — a child element name, holding that child's
+     *   {@link Value}, or an array of them when the name occurs more than once
+     *   in this element.
+     *
+     * Keys are in document order: attributes first, then child names and
+     * `"#text"` in order of first appearance. `@` and `#` cannot begin an XML
+     * name, so these keys never collide with element names.
+     */
+    interface Element {
+      [key: string]: Value | Value[];
+    }
+
+    /**
+     * A parsed document in the compact shape: exactly one key, the root
+     * element's name. This is also what importing an `.xml` file evaluates to.
+     */
+    interface Document {
+      [rootName: string]: Value;
+    }
+
+    // ── tree shape ─────────────────────────────────────────────────────────
+
+    /** An element in the tree {@link parse} returns with `{ compact: false }`. */
+    interface Node {
+      /** The element name as written, including any namespace prefix (`"soap:Envelope"`). */
+      name: string;
+      /**
+       * Attribute values by name as written, in document order, after
+       * attribute-value normalization and with defaults declared in the
+       * internal DTD subset applied. Namespace declarations (`xmlns`,
+       * `xmlns:*`) are ordinary attributes.
+       */
+      attributes: Record<string, string>;
+      /**
+       * The element's content in document order: character data as strings
+       * (exact — CDATA sections, character references and internal entities
+       * expanded, whitespace untouched, adjacent text merged into one string),
+       * child elements, comments and processing instructions. An object here is
+       * an element if it has `name`, a comment if it has `comment`, and a
+       * processing instruction if it has `target`.
+       */
+      children: Array<string | Node | Comment | ProcessingInstruction>;
+    }
+
+    /** `<!--comment-->` among a {@link Node}'s children. */
+    interface Comment {
+      comment: string;
+    }
+
+    /** `<?target data?>` among a {@link Node}'s children. */
+    interface ProcessingInstruction {
+      target: string;
+      /** The text after the whitespace that follows the target; `""` when there is none. */
+      data: string;
+    }
+
+    // ── parse ──────────────────────────────────────────────────────────────
+
+    interface ParseOptions {
+      /**
+       * Selects the shape of the result.
+       *
+       * - `true` (default): the compact {@link Document} — elements keyed by
+       *   name, leaves as strings. The shape for data. It does not keep the
+       *   relative order of differently named siblings, where text sat relative
+       *   to child elements, comments, or processing instructions.
+       * - `false`: the root element as a {@link Node} tree, which keeps all of
+       *   those, in document order. The shape for documents.
+       *
+       * Neither shape represents the XML declaration, the document type
+       * declaration, or anything outside the root element.
+       *
+       * @default true
+       */
+      compact?: boolean;
+    }
+
+    /**
+     * Parse an XML 1.0 document.
+     *
+     * `Bun.XML` is a conforming, non-validating XML processor. The document —
+     * including any internal DTD subset — must be well-formed or a
+     * `SyntaxError` is thrown; there is no lenient mode. Internal entities are
+     * expanded (within an expansion limit), attribute values are normalized,
+     * and attribute defaults declared in the internal subset are applied.
+     * External DTDs and external entities are never read. Nothing is coerced:
+     * every value is a string.
+     *
+     * `compact` selects a structure; it never alters character data. The text
+     * of an element is the same in both shapes — as written, whitespace
+     * included. The compact shape only does what having a single `"#text"`
+     * forces: an element's text runs are concatenated, and a whitespace-only
+     * run between child elements (the document's layout) is left out.
+     *
+     * A reference to an entity that only an unread external DTD could declare
+     * is not an error (XML 1.0 §4.1) and is kept in the text as written
+     * (`"&name;"` — indistinguishable afterwards from an escaped `&amp;name;`).
+     *
+     * A string is parsed as already-decoded text. Bytes (`Buffer`,
+     * `TypedArray`, `DataView`, `ArrayBuffer`, `Blob`) are decoded per the XML
+     * rules: a byte-order mark or the `encoding` declared in `<?xml ...?>`
+     * selects UTF-8, UTF-16, or ISO-8859-1; other encodings throw.
+     *
+     * @category Utilities
+     *
+     * @param input The XML document
+     * @throws {SyntaxError} If the document is not well-formed, uses an
+     * unsupported encoding, or exceeds the entity-expansion limits
+     * @throws {RangeError} If elements are nested too deeply
+     *
+     * @example
+     * ```ts
+     * import { XML } from "bun";
+     *
+     * XML.parse(`<order id="A1"><item sku="x">Tea</item><item sku="y">Mug</item><paid/></order>`);
+     * // {
+     * //   order: {
+     * //     "@id": "A1",
+     * //     item: [ { "@sku": "x", "#text": "Tea" }, { "@sku": "y", "#text": "Mug" } ],
+     * //     paid: "",
+     * //   },
+     * // }
+     *
+     * XML.parse(`<p>Hello <b>world</b>!<!-- bye --></p>`, { compact: false });
+     * // {
+     * //   name: "p",
+     * //   attributes: {},
+     * //   children: [ "Hello ", { name: "b", attributes: {}, children: ["world"] }, "!", { comment: " bye " } ],
+     * // }
+     * ```
+     */
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options?: ParseOptions & { compact?: true },
+    ): Document;
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options: ParseOptions & { compact: false },
+    ): Node;
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options?: ParseOptions,
+    ): Document | Node;
+
+    // ── stringify ──────────────────────────────────────────────────────────
+
+    /** A value {@link stringify} writes as text: `String(v)`, or the ISO string of a `Date`. */
+    type Scalar = string | number | boolean | bigint | Date;
+
+    /**
+     * A {@link Node} as {@link stringify} accepts it: `attributes` and
+     * `children` may be omitted, scalars may stand where text goes, and
+     * `null`/`undefined` entries are skipped.
+     */
+    interface NodeInput {
+      name: string;
+      attributes?: { [name: string]: Scalar | null | undefined } | null;
+      children?: Array<Scalar | NodeInput | Comment | ProcessingInstruction | null | undefined> | null;
+    }
+
+    /**
+     * Serialize one element to XML: a {@link NodeInput} tree (any object with a
+     * string `name` and a `children` or `attributes` property), or a compact
+     * object with exactly one key naming the root element whose value follows
+     * the {@link Element} conventions.
+     *
+     * The result is that element's markup only — no XML declaration and no
+     * document type declaration; prepend them as text when writing a file
+     * (`'<?xml version="1.0" encoding="UTF-8"?>\n' + XML.stringify(doc)`).
+     * Because of that, results can be concatenated inside an enclosing element.
+     *
+     * The output is well-formed or `stringify` throws. `& < >` are escaped
+     * everywhere; `"`, tabs and newlines in attribute values, and carriage
+     * returns anywhere, are written as character references so they survive
+     * being parsed again. It throws for element, attribute or processing
+     * instruction names that are not XML names; for characters XML cannot
+     * contain (U+0000, other C0 controls except tab/newline/carriage return,
+     * U+FFFE, U+FFFF, unpaired surrogates); for `--` inside a comment or `?>`
+     * inside processing-instruction data; for an array at the root or inside
+     * another array; and for circular structures.
+     *
+     * Strings, numbers, booleans and bigints become text via `String()`, a
+     * `Date` its ISO string; `null` becomes an empty element (or leaves an
+     * attribute out); `undefined`, functions and symbols are skipped, as are
+     * symbol-keyed, non-enumerable and inherited properties. In the compact
+     * shape an array is one element per item and any other object is a child
+     * element.
+     *
+     * `XML.parse(XML.stringify(value))` deep-equals `value` for anything
+     * `XML.parse` returned, in either shape.
+     *
+     * @category Utilities
+     *
+     * @param value The element to serialize
+     * @param replacer Reserved; must be `undefined` or `null`
+     * @param space Indentation for element-only content, as in `JSON.stringify`:
+     * a number of spaces (at most 10) or a string (its first 10 characters).
+     * An element with any text child is written on one line so character data
+     * is unchanged.
+     * @returns The XML, or `undefined` if `value` is `undefined`, a function, or a symbol
+     *
+     * @example
+     * ```ts
+     * import { XML } from "bun";
+     *
+     * XML.stringify({ order: { "@id": "A1", item: ["Tea", "Mug"], paid: null } });
+     * // '<order id="A1"><item>Tea</item><item>Mug</item><paid/></order>'
+     *
+     * XML.stringify({ name: "p", attributes: { class: "x" }, children: ["Hi ", { name: "b", children: ["!"] }] }, null, 2);
+     * // '<p class="x">Hi <b>!</b></p>'
+     * ```
+     */
+    function stringify(value: NodeInput | Document, replacer?: undefined | null, space?: string | number): string;
+    function stringify(value: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
   }
 
   /**
@@ -955,7 +1513,8 @@ declare module "bun" {
      *
      * @category Utilities
      *
-     * @param input The YAML string to parse
+     * @param input The YAML document to parse, as a string or UTF-8 bytes. A `Blob` that is backed by a file, such
+     * as `Bun.file()`, throws: pass `await file.text()`.
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -970,7 +1529,9 @@ declare module "bun" {
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+    ): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
@@ -1606,7 +2167,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive,
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -1624,19 +2185,20 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destination The file to write to. If the file doesn't exist, it is
    * created; if it does, it is overwritten. If `input` is smaller than
    * `destination`, `destination` is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destination: BunFile,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -1650,17 +2212,18 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destinationPath The file path to write to. If the file doesn't
    * exist, it is created; if it does, it is overwritten. If `input` is
    * smaller than the existing file, the file is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destinationPath: PathLike,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -2212,7 +2775,7 @@ declare module "bun" {
      * @param options - The options to use for the write.
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | ReadableStream,
       options?: { highWaterMark?: number },
     ): Promise<number>;
 
@@ -2338,10 +2901,7 @@ declare module "bun" {
    * @param data The data to hash.
    * @param seed The seed to use.
    */
-  const hash: ((
-    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-    seed?: number | bigint,
-  ) => number | bigint) &
+  const hash: ((data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number | bigint) => bigint) &
     Hash;
 
   interface Hash {
@@ -2633,6 +3193,86 @@ declare module "bun" {
       | `bun-linux-${Architecture}-${SIMD}-${Libc}`
       | `bun-windows-${Architecture}`
       | `bun-windows-x64-${SIMD}`;
+    /**
+     * The name of a feature of Bun that `compile.trim.allow` keeps in an executable and
+     * `compile.trim.remove` takes out of it.
+     *
+     * @see https://bun.com/docs/compiler/size#feature-names
+     */
+    type TrimFeature =
+      | "cli"
+      | "lint"
+      | "fmt"
+      | "check"
+      | "install"
+      | "aot"
+      | "repl"
+      | "create"
+      | "upgrade"
+      | "run"
+      | "spawn"
+      | "process-kill"
+      | "process-report"
+      | "dialogs"
+      | "ipc"
+      | "native-code"
+      | "jit"
+      | "interpreter"
+      | "bundler"
+      | "test"
+      | "inspector"
+      | "profiler"
+      | "source-maps"
+      | "image"
+      | "archive"
+      | "sqlite"
+      | "sql"
+      | "redis"
+      | "s3"
+      | "html-rewriter"
+      | "ffi"
+      | "native-addons"
+      | "webassembly"
+      | "shell"
+      | "webview"
+      | "fetch"
+      | "serve"
+      | "sockets"
+      | "dns"
+      | "http2"
+      | "http3"
+      | "websocket"
+      | "udp"
+      | "worker"
+      | "node-vm"
+      | "node-crypto"
+      | "web-crypto"
+      | "password"
+      | "brotli"
+      | "intl"
+      | "intl-segmenter"
+      | "temporal"
+      | "bun-jsc"
+      | "plugin"
+      | "fs-router"
+      | "terminal"
+      | "cron"
+      | "secrets"
+      | "markdown"
+      | "yaml"
+      | "toml"
+      | "json5"
+      | "jsonc"
+      | "jsonl"
+      | "xml"
+      | "glob"
+      | "semver"
+      | "color"
+      | "cookie"
+      | "csrf"
+      | "hash"
+      | "crypto-hasher"
+      | "url-pattern";
   }
 
   /**
@@ -2643,6 +3283,46 @@ declare module "bun" {
      * Enable code splitting
      */
     splitting?: boolean;
+
+    /**
+     * With `splitting` and `target: "bun"`, every `require()` of a bundled ES
+     * module is a chunk boundary too. The call stays synchronous: it is
+     * emitted as `import.meta.require("./chunk-…js")` and the chunk is
+     * evaluated when the call runs, so a `require()` inside a function that
+     * never runs costs nothing at startup. Set to `false` to keep such
+     * modules inlined in the calling chunk. No effect for other targets.
+     *
+     * @default true
+     */
+    splitRequire?: boolean;
+
+    /**
+     * With `splitting`, chunks that are always loaded together are folded
+     * into one (for example, code shared by an entry point and a module it
+     * `import()`s lives in the entry point's chunk). This option additionally
+     * folds chunks whose combined source size is below this many bytes and
+     * whose modules have no top-level side effects into a chunk loaded by a
+     * superset of their importers, so fewer modules are loaded at runtime.
+     * Nothing lazy becomes eager and no side effect runs earlier; the chunk
+     * that absorbs a folded chunk exports the symbols other chunks import
+     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
+     * builds, where every chunk is a request, 16384 is a good value.
+     * Nothing folds into an entry point without `[hash]` in its name.
+     *
+     * @default 0 (disabled)
+     */
+    minChunkSize?: number;
+
+    /**
+     * With `splitting` and `target: "browser"`, HTML entrypoints get a
+     * `<link rel="modulepreload">` for every chunk their script statically
+     * imports, and each `import()` first adds one for every chunk its target
+     * statically imports, so a chunk's dependencies download in parallel
+     * instead of one import depth per round trip. CLI: `--no-module-preload`.
+     *
+     * @default true
+     */
+    modulePreload?: boolean;
 
     /**
      * List of entrypoints, usually file paths
@@ -2664,10 +3344,11 @@ declare module "bun" {
      *
      * @default "esm"
      */
-    format?: /**
-     * ECMAScript Module format
-     */
-    | "esm"
+    format?:
+      /**
+       * ECMAScript Module format
+       */
+      | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -2678,13 +3359,21 @@ declare module "bun" {
        * **Experimental**
        */
       | "iife";
+    /**
+     * Output file name templates. Tokens: `[dir]`, `[name]`, `[ext]`,
+     * `[target]`, and `[hash]` (8 characters of the content hash, more when
+     * two outputs would otherwise share a name) or `[hash9]`…`[hash13]` for a
+     * wider minimum.
+     *
+     * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
+     */
     naming?:
       | string
       | {
           chunk?: string;
           entry?: string;
           asset?: string;
-        }; // | string;
+        };
     root?: string; // project root
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
@@ -2788,6 +3477,19 @@ declare module "bun" {
     emitDCEAnnotations?: boolean;
 
     /**
+     * Give bundled module namespace objects (`import * as ns`, `export * as ns`)
+     * a setter per export, so assigning `ns.foo = value` is silently accepted
+     * (reads still return the module's binding) instead of throwing like a
+     * real module namespace object. When `false`, namespace objects are
+     * getter-only.
+     *
+     * @deprecated This exists for backwards compatibility and will be removed
+     * (behaving as `false`) in a future release.
+     * @default true
+     */
+    deprecatedNamespaceObjectSetters?: boolean;
+
+    /**
      * Whether to enable tree-shaking (removal of unreferenced top-level
      * declarations and unused exports). Defaults to `true`. Set to `false` to
      * keep dead code in the output for debugging or test fixtures.
@@ -2821,6 +3523,29 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+
+    /**
+     * How many levels of nested functions to compile to bytecode ahead of time.
+     * `0` compiles only each module's top-level code; nested functions past the
+     * limit are compiled from source when first called. Lower values make the
+     * bytecode smaller at the cost of some startup work.
+     *
+     * Must be a non-negative integer. Only used when `bytecode: true`.
+     * @default undefined (all nested functions)
+     */
+    bytecodeDepth?: number;
+
+    /**
+     * Build-time optimizations for `bytecode` builds.
+     */
+    optimize?: {
+      /**
+       * Run JavaScriptCore's build-time optimization passes over the generated
+       * bytecode. Only used when `bytecode: true`.
+       * @default true
+       */
+      bytecode?: boolean;
+    };
 
     /**
      * Add a banner to the bundled code such as "use client";
@@ -2877,6 +3602,64 @@ declare module "bun" {
     optimizeImports?: string[];
 
     /**
+     * Type check the entrypoints and everything they import, like `bun check`.
+     * Equivalent to `--check` in the CLI.
+     *
+     * A type error fails the build like any other build error: nothing is
+     * written, and each error is a {@link BuildMessage} whose message starts
+     * with TypeScript's error code.
+     *
+     * The compiler options come from the `tsconfig.json` of the project, or
+     * from the file that `tsconfig` names. The check also uses the `conditions`
+     * and the `loader` of the build.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   check: true,
+     *   throw: false,
+     * });
+     * for (const log of result.logs) {
+     *   // TS2322: Type 'string' is not assignable to type 'number'.
+     *   console.error(`${log.position?.file}:${log.position?.line}: ${log.message}`);
+     * }
+     * ```
+     */
+    check?: boolean;
+
+    /**
+     * Write a TypeScript declaration file (`.d.ts`) for each source file, and each
+     * JavaScript output file once more with its types kept (`index.js` and `index.aot.ts`).
+     * The entrypoints and everything they import are type checked first, as with `check`.
+     * Equivalent to `--dts` in the CLI.
+     *
+     * `bun compile` compiles a package from its `.aot.ts` files where the `"aot"`
+     * condition in the `"exports"` of its `package.json` names them. Every other tool reads
+     * `index.js` and `index.d.ts`. `"compilerOptions"` in the `package.json` says how strict they
+     * are. Without it they are checked as `strict`.
+     *
+     * The files are in `outputs` with `kind: "asset"`. They are written to `outdir` if there is one.
+     * Can't be used with `compile`.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   dts: true,
+     * });
+     * // dist/index.js, dist/index.d.ts, dist/index.aot.ts
+     * ```
+     */
+    dts?: boolean;
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -2885,7 +3668,9 @@ declare module "bun" {
     throw?: boolean;
 
     /**
-     * Custom tsconfig.json file path to use for path resolution.
+     * Custom tsconfig.json file path. This build reads it in place of every
+     * `tsconfig.json` it would otherwise find, for `paths`, JSX and decorator
+     * settings, and for `check`. A directory means the `tsconfig.json` in it.
      * Equivalent to `--tsconfig-override` in the CLI.
      * @example
      * ```ts
@@ -3074,10 +3859,88 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
+  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "missed-optimizations" | "allocations";
+
+  type AotHeat = "everything-is-hot" | "everything-is-cold" | "only-loops-are-hot" | "nothing-is-hottest" | "shuffled";
+
+  interface TrimOptions {
+    /**
+     * Features to keep even if your code never uses them, along with the features they need.
+     *
+     * Use it when something the compiler can't see uses an API: a string passed to `eval()`, a
+     * native addon, or a module loaded at run time.
+     */
+    allow?: Bun.Build.TrimFeature[];
+    /**
+     * Features to remove even if your code uses them.
+     *
+     * Every import, global and property is still there, so `typeof` and `in` answer as before. A
+     * call throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`. Use it to make sure that an
+     * executable can't do something, such as load native code: `remove: ["native-code"]`.
+     *
+     * A name can't be in both `allow` and `remove`.
+     */
+    remove?: Bun.Build.TrimFeature[];
+    /**
+     * The only locales to keep, such as `"en"` or `"de-AT"`.
+     *
+     * Without it, Bun keeps the locales your code passes to `Intl` as constants, and every locale
+     * if one of them isn't a constant. If the program asks for a locale that was removed, the
+     * process exits with code 70. It has no effect on macOS, where Bun uses the system's ICU.
+     *
+     * Equivalent CLI flag: `--trim-locales`, which implies `--trim`
+     */
+    locales?: string[];
+    /**
+     * Add notes to `BuildOutput.logs` that list what was removed and how much smaller the executable is.
+     *
+     * @default false
+     */
+    log?: boolean;
+  }
+
   interface CompileBuildOptions {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
+    /**
+     * In the executable, `eval()` and the `Function` constructors throw an
+     * `EvalError`, as with Node.js's `--disallow-code-generation-from-strings`.
+     * `"strict"` also blocks every other way to run code from a string.
+     *
+     * Equivalent CLI flag: `--disallow-code-generation-from-strings`
+     */
+    disallowCodeGenerationFromStrings?: boolean | "strict";
     executablePath?: string;
+    /**
+     * Remove the Bun and Node.js APIs your code never calls from the executable.
+     *
+     * With `aot`, the compiler knows which APIs the program uses, and Bun removes every other
+     * feature. Without `aot`, Bun only removes the command-line tools. An object does what `true`
+     * does, with the options in {@link TrimOptions}.
+     *
+     * Removing a feature removes its code, not its names: every global, constructor, prototype,
+     * property and constant is still there. A call, a `new`, a getter or a setter of a removed
+     * feature throws an `Error` whose message has the API's name and whose `code` is
+     * `"ERR_FEATURE_REMOVED"`. Importing a removed built-in module, such as `bun:sqlite`, throws an
+     * `Error` whose `code` is `"ERR_MODULE_NOT_FOUND"`. If code reaches a removed feature any other
+     * way, the process prints the feature and exits with code 70.
+     *
+     * The build fails if `allow` has an unknown name, or `locales` has a locale that Bun has no
+     * data for.
+     *
+     * Equivalent CLI flag: `--trim`
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ["./server.ts"],
+     *   compile: { outfile: "./server", aot: true, trim: { allow: ["sqlite"], locales: ["en"] } },
+     * });
+     * ```
+     *
+     * @default false
+     */
+    trim?: boolean | TrimOptions;
     outfile?: string;
     /**
      * Files or directories to embed into the executable under their original
@@ -3087,6 +3950,32 @@ declare module "bun" {
      * Equivalent CLI flag: `--asset` (repeatable)
      */
     assets?: string[];
+    /**
+     * With `aot`: embed each function's source code in the executable.
+     *
+     * With `false`, `fn.toString()` returns `function name() { [native code] }` and the executable
+     * is smaller. `--preload` in `BUN_OPTIONS` is an error at startup, with `inspector` too.
+     * `obfuscate` implies `false`.
+     *
+     * Equivalent CLI flag: `--no-compile-function-source`
+     *
+     * @default true
+     */
+    functionSource?: boolean;
+    /**
+     * With `aot`: let a dynamic `import()` or `require()` load code that isn't in the executable
+     * from disk when the program runs, such as a plugin or a config file. Bun interprets that code.
+     *
+     * Without it, the executable only runs code that was compiled into it, and such a load throws.
+     * The option keeps Bun's transpiler and the source code of Bun's built-in modules in the
+     * executable, and the compiler can prove less about the program, so the executable is larger
+     * and can run slower.
+     *
+     * Equivalent CLI flag: `--aot-allow-code-from-disk`
+     *
+     * @default false
+     */
+    allowCodeFromDisk?: boolean;
     /**
      * Whether the standalone executable loads .env files when it runs
      *
@@ -3100,7 +3989,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
      *
-     * @default true
+     * @default true, or false with `trim`
      */
     autoloadBunfig?: boolean;
     /**
@@ -3119,6 +4008,133 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * Compile the program's JavaScript and TypeScript to machine code at build time.
+     * `bytecode` has no effect with it.
+     *
+     * The executable has no JIT. Code that only exists at run time, such as a string passed to
+     * `eval()` or `new Function()`, runs in the interpreter.
+     *
+     * Built-in objects such as `Object.prototype`, `Array.prototype` and `Promise` are read-only in
+     * the executable. Assigning to one throws a `TypeError` in strict mode and does nothing in
+     * sloppy mode. Breakpoints aren't available.
+     *
+     * Requires `format: "esm"` (the default with `aot`) and a `target` that matches the platform
+     * and Bun version running the build.
+     *
+     * Equivalent CLI flag: `--aot`
+     *
+     * @default false
+     */
+    aot?: boolean;
+    /**
+     * With `aot`: strip function names and file names from the executable and write a source map
+     * next to it. `sourcemap: "external"` does the same.
+     *
+     * Equivalent CLI flag: `--obfuscate`
+     *
+     * @default false
+     */
+    obfuscate?: boolean;
+    /**
+     * With `aot`: let a debugger attach to the executable through `BUN_INSPECT`, or `--inspect`,
+     * `--inspect-wait` and `--inspect-brk` in `BUN_OPTIONS`.
+     *
+     * A debugger can run any code in any scope, so the compiler can prove less about the program.
+     * The executable is larger and slower.
+     *
+     * Equivalent CLI flag: `--compile-inspector`
+     *
+     * @default false
+     */
+    inspector?: boolean;
+    /**
+     * With `aot`: log every value that doesn't match its declared type.
+     *
+     * A mismatch never changes what the program does: the function falls back to its slow path and
+     * behaves as it does under `bun run`. Each log line has the location, the expected type and the
+     * kind of value it got, never the value itself. Lines go to stderr, or to the file in the
+     * `BUN_AOT_TYPE_MISMATCH_LOG` environment variable.
+     *
+     * Equivalent CLI flag: `--aot-log-type-mismatches`
+     *
+     * @default false
+     */
+    aotLogTypeMismatches?: boolean;
+    /**
+     * With `aot`: reports to add to `BuildOutput.logs`, at level `"verbose"`.
+     *
+     * - `"text"`: the code that compiled to a slow path, one entry per cause with a fix, worst first
+     * - `"json"`: the same, one JSON object per line
+     * - `"guards"`: every type guard that can fail at run time, why the compiler couldn't remove it,
+     *   and how to fix it
+     * - `"guards-json"`: the same, one JSON object per line
+     * - `"trim"`: which Bun and Node.js APIs the program uses, and why `trim` kept or removed each feature
+     * - `"missed-optimizations"`: calls that weren't inlined, loops that weren't optimized, and why
+     * - `"allocations"`: where each object is allocated (stack, heap or removed), and why
+     *
+     * Equivalent CLI flag: `--explain`
+     */
+    aotExplain?: AotReport | AotReport[];
+    /**
+     * With `aot`: build without some steps of the compiler. The program behaves the same. The
+     * executable can be larger and slower.
+     *
+     * When the compiler can't finish a build, the error names the step to list here, such as
+     * `"pass:PlaceTypeTests"`. Apart from that, the option is for working on the compiler.
+     *
+     * - `"pass:<name>"`: one optimization pass
+     * - `"flow:<name>"`: one kind of result of the whole-program analysis
+     * - `"flow-results"`: the whole-program analysis and all its results
+     *
+     * Takes a list of names, or one string with commas between the names. `Bun.build` throws if
+     * the compiler doesn't know a name.
+     *
+     * Equivalent CLI flag: `--aot-disable`
+     */
+    aotDisable?: string | string[];
+    /**
+     * With `aot`: replace the compiler's estimate of how often each part of the program runs. The
+     * program behaves the same. The option is for working on the compiler.
+     *
+     * The compiler makes code that it expects to run often fast, and the rest small.
+     *
+     * - `"everything-is-hot"`: all code runs often
+     * - `"everything-is-cold"`: all code runs rarely
+     * - `"only-loops-are-hot"`: every function is entered equally often, so only loops run often
+     * - `"nothing-is-hottest"`: the estimate, without its list of the hottest functions
+     * - `"shuffled"`: each function gets an estimate at random, the same one in every build
+     *
+     * Equivalent CLI flag: `--aot-heat`
+     */
+    aotHeat?: AotHeat;
+    /**
+     * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
+     *
+     * Run an executable built with `bytecode: true` with `BUN_BYTECODE_ORDER_OUT=<path>`
+     * to record which functions it uses, then build again with that file. Bun places
+     * the bytecode the run used together at the front, so the executable starts faster
+     * and uses less memory. A profile from an older build of the app still applies.
+     *
+     * With several files, list the most common way of starting the app first.
+     * `false` and `null` mean no profile, so `bytecodeOrder: haveProfile && path` works.
+     *
+     * Equivalent CLI flag: `--bytecode-order <file>[,<file>...]`
+     *
+     * @see https://bun.com/docs/compiler/executables#profile-guided-bytecode-layout
+     */
+    bytecodeOrder?: string | string[] | false | null;
+    /**
+     * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
+     * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
+     * thresholds so code that only runs during startup stays in the interpreter
+     * longer; the app should call `Bun.unsafe.setJITPolicy(1)` once it is interactive.
+     *
+     * Equivalent CLI flag: `--compile-jit-policy <n>`
+     *
+     * @default 1
+     */
+    jitPolicy?: number;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -3583,6 +4599,27 @@ declare module "bun" {
        * @platform macOS - Only affects macOS keychain behavior. Ignored on other platforms.
        */
       allowUnrestrictedAccess?: boolean;
+
+      /**
+       * Which computers can see the credential on Windows. Bun passes it to
+       * Credential Manager as the `Persist` field of the entry.
+       *
+       * - `"enterprise"`: `CRED_PERSIST_ENTERPRISE`. The current user sees the
+       *   credential on this computer. When the user account has roaming state,
+       *   such as a roaming profile on a domain, the user also sees it on other
+       *   computers.
+       * - `"local"`: `CRED_PERSIST_LOCAL_MACHINE`. The current user sees the
+       *   credential on this computer only. Use it for a secret that belongs to
+       *   one device, such as a refresh token that rotates on use.
+       *
+       * Every `set()` replaces the whole entry, so the `persist` of the latest
+       * `set()` applies. A value other than these two strings throws
+       * `ERR_INVALID_ARG_VALUE` on every platform.
+       *
+       * @default "enterprise"
+       * @platform Windows - Only affects Windows Credential Manager. Ignored on other platforms.
+       */
+      persist?: "local" | "enterprise" | undefined;
     }): Promise<void>;
 
     /**
@@ -3735,6 +4772,15 @@ declare module "bun" {
           kind: ImportKind;
           /** Original import specifier before resolution (if different from path) */
           original?: string;
+          /**
+           * With `splitting`, an `import()` (or, for `target: "bun"`, a
+           * `require()` of an ES module) of a bundled file loads another
+           * output file: `path` then points at that output instead of an
+           * input, and `external` is `true`. `entryPoint` is the input file
+           * that output was built from. It is a key of `inputs` and equals
+           * that output's `outputs[...].entryPoint`.
+           */
+          entryPoint?: string;
           /** Whether this import is external to the bundle */
           external?: boolean;
           /** Import attributes, for example `{ type: "json" }` */
@@ -4047,6 +5093,11 @@ declare module "bun" {
     serverName?: string;
 
     /**
+     * Alias of {@link serverName}, the `node:tls` spelling. `serverName` wins if both are set.
+     */
+    servername?: string;
+
+    /**
      * Sets `OPENSSL_RELEASE_BUFFERS` to 1.
      * Reduces overall performance but saves some memory.
      * @default false
@@ -4055,12 +5106,16 @@ declare module "bun" {
 
     /**
      * If set to `false`, any certificate is accepted.
-     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     *
+     * For a server, the default is `true`. `$NODE_TLS_REJECT_UNAUTHORIZED` does not change it.
+     * For a client, the default is the `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
      */
     rejectUnauthorized?: boolean;
 
     /**
-     * If set to `true`, the server requests a client certificate.
+     * If set to `true`, the server requests a client certificate, and refuses
+     * a client without a valid one unless `rejectUnauthorized` is `false`.
+     * This option alone decides it: `ca` does not request a certificate.
      *
      * Default is `false`.
      */
@@ -4070,8 +5125,17 @@ declare module "bun" {
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
+     *
+     * On a server these verify client certificates, which it requests only
+     * with `requestCert: true`.
      */
     ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
+    /**
+     * PEM formatted CRLs (Certificate Revocation Lists). A peer certificate
+     * listed in one of them fails verification: a client certificate when a
+     * server sets `requestCert`, or the server certificate when connecting.
+     */
+    crl?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -4278,14 +5342,32 @@ declare module "bun" {
      * });
      * ```
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions & {
+      /**
+       * The Node.js spelling of `serverName`.
+       */
+      servername?: string;
+      /**
+       * Replaces the built-in hostname check, as in `fetch()` and `tls.connect()`.
+       * Any truthy return value rejects the server, including the Promise of an
+       * `async` function.
+       * Through an HTTPS proxy it runs for the target's certificate only. The
+       * proxy's certificate goes to `proxy.tls.checkServerIdentity`.
+       * With `rejectUnauthorized: false` it still runs when the certificate
+       * chain verified, but its result is not enforced.
+       * @param hostname - The name the certificate is verified against: `serverName` if set, else the URL host
+       * @param cert - The leaf certificate of the server, as in `fetch()`. Unlike in `tls.connect()`, it has no `issuerCertificate`
+       * @returns An error if the server is unauthorized, otherwise undefined
+       */
+      checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+    };
   };
 
   type WebSocketOptionsHeaders = {
     /**
      * Headers to send to the server
      */
-    headers?: import("node:http").OutgoingHttpHeaders;
+    headers?: import("node:http").OutgoingHttpHeaders | Headers | [string, string][];
   };
 
   type WebSocketOptionsProxy = {
@@ -4293,7 +5375,7 @@ declare module "bun" {
      * HTTP proxy to use for the WebSocket connection.
      *
      * Can be a string URL, a URL instance, or an object with `url` and
-     * optional `headers`.
+     * optional `headers` and `tls`.
      *
      * @example
      * ```ts
@@ -4331,6 +5413,29 @@ declare module "bun" {
            * Supports plain objects or Headers class instances.
            */
           headers?: import("node:http").OutgoingHttpHeaders | Headers;
+          /**
+           * TLS options for the connection to an `https://` proxy.
+           *
+           * If set, even to `{}` or `true`, the proxy uses only these options and the
+           * target uses only the top-level `tls` option. Otherwise `tls`
+           * applies to both connections.
+           *
+           * `serverName` and `checkServerIdentity` are the exception: the
+           * top-level ones never apply to the proxy, only the ones given here.
+           * By default the proxy's certificate is checked against the hostname
+           * in the proxy URL.
+           *
+           * @example
+           * ```ts
+           * const ws = new WebSocket("wss://example.com", {
+           *   proxy: {
+           *     url: "https://proxy.internal:8443",
+           *     tls: { ca: Bun.file("./proxy-ca.pem") }
+           *   }
+           * });
+           * ```
+           */
+          tls?: WebSocketOptionsTLS["tls"] | boolean;
         };
   };
 
@@ -4361,9 +5466,19 @@ declare module "bun" {
 
   interface WebSocketEventMap {
     close: CloseEvent;
-    error: Event;
-    message: MessageEvent;
+    error: ErrorEvent;
+    message: globalThis.MessageEvent;
     open: Event;
+    /**
+     * Fired when a Ping frame is received. Bun has already replied with a Pong.
+     * `data` is the payload, typed according to `binaryType`. Not available in browsers.
+     */
+    ping: globalThis.MessageEvent;
+    /**
+     * Fired when a Pong frame is received. `data` is the payload, typed according
+     * to `binaryType`. Not available in browsers.
+     */
+    pong: globalThis.MessageEvent;
   }
 
   /**
@@ -4405,10 +5520,7 @@ declare module "bun" {
      * The current state of the connection
      */
     readonly readyState:
-      | typeof WebSocket.CONNECTING
-      | typeof WebSocket.OPEN
-      | typeof WebSocket.CLOSING
-      | typeof WebSocket.CLOSED;
+      typeof WebSocket.CONNECTING | typeof WebSocket.OPEN | typeof WebSocket.CLOSING | typeof WebSocket.CLOSED;
 
     /**
      * The number of bytes of data that have been queued using send() but not yet transmitted to the network
@@ -4426,9 +5538,10 @@ declare module "bun" {
     readonly extensions: string;
 
     /**
-     * The type of binary data being received.
+     * The type of `data` for binary `message`, `ping` and `pong` events: `Buffer`
+     * (`"nodebuffer"`, the default), `ArrayBuffer` or `Blob`.
      */
-    binaryType: "arraybuffer" | "nodebuffer";
+    binaryType: "arraybuffer" | "blob" | "nodebuffer";
 
     /**
      * Event handler for open event
@@ -4438,15 +5551,20 @@ declare module "bun" {
     /**
      * Event handler for message event
      */
-    onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+    onmessage: ((this: WebSocket, ev: globalThis.MessageEvent) => any) | null;
 
     /**
-     * Event handler for error event
+     * Event handler for error event. Fires when the connection fails, followed by a
+     * `close` event with code `1006`. `ev.message` describes the failure. `ev.error` is
+     * an `Error` that may have a `code`, such as `"ECONNREFUSED"`, `"ENOTFOUND"`,
+     * `"SELF_SIGNED_CERT_IN_CHAIN"` or `"WS_ERR_INVALID_UTF8"`.
      */
-    onerror: ((this: WebSocket, ev: Event) => any) | null;
+    onerror: ((this: WebSocket, ev: ErrorEvent) => any) | null;
 
     /**
-     * Event handler for close event
+     * Event handler for close event. Fires once the connection closes. `code` and
+     * `reason` come from the server's Close frame (`1005` if the frame had no code).
+     * `code` is `1006` if the connection ended without a Close frame.
      */
     onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
 
@@ -4454,12 +5572,15 @@ declare module "bun" {
      * Transmits data to the server
      * @param data The data to send to the server
      */
-    send(data: string | ArrayBufferLike | ArrayBufferView): void;
+    send(data: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
-     * Closes the WebSocket connection
+     * Starts the closing handshake. Sends a Close frame and sets `readyState` to `CLOSING`.
+     * The `close` event fires once the server replies with its own Close frame and closes
+     * the connection. If the server hasn't done so after 30 seconds, Bun closes the connection.
      * @param code A close code an endpoint is allowed to send (RFC 6455): `1000`-`1014` except
      * the reserved `1004`-`1006`, or `3000`-`4999`. Any other code throws an `InvalidAccessError`.
+     * If omitted, the Close frame has no code or reason.
      * @param reason A human-readable string explaining why the connection is closing. Throws a
      * `SyntaxError` if longer than 123 bytes of UTF-8
      */
@@ -4469,18 +5590,38 @@ declare module "bun" {
      * Sends a ping frame to the server
      * @param data Optional data to include in the ping frame
      */
-    ping(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    ping(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Sends a pong frame to the server
      * @param data Optional data to include in the pong frame
      */
-    pong(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    pong(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Immediately terminates the connection
      */
     terminate(): void;
+
+    /**
+     * Stops reading from the underlying socket, so the peer sees TCP
+     * backpressure instead of the client buffering in memory. Messages
+     * already received may still be dispatched. A pause before the
+     * connection opens takes effect once it does.
+     * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
+     */
+    pause(): boolean;
+
+    /**
+     * Resumes reading from the underlying socket after `pause()`.
+     * @returns `true` if the socket was resumed (or will be on open), `false` if there is no socket to resume
+     */
+    resume(): boolean;
+
+    /**
+     * Whether the connection is currently paused via `pause()`.
+     */
+    readonly isPaused: boolean;
 
     /**
      * Registers an event handler of a specific event type on the WebSocket.
@@ -4565,12 +5706,12 @@ declare module "bun" {
      * Byte offset into the file where the mapping starts.
      * @default 0
      */
-    offset?: number;
+    offset?: number | bigint;
     /**
      * Maximum number of bytes to map. Clamped to the file size
      * (minus `offset`). Defaults to mapping the rest of the file.
      */
-    size?: number;
+    size?: number | bigint;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
@@ -4590,7 +5731,7 @@ declare module "bun" {
    *
    * To close the file, set the array to `null`; it is garbage collected eventually.
    */
-  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
+  function mmap(path: string, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
 
   /**
    * Write to stdout
@@ -4638,11 +5779,12 @@ declare module "bun" {
    */
   function color(
     input: ColorInput,
-    outputFormat?: /**
-     * True color ANSI color string, for use in terminals
-     * @example \x1b[38;2;100;200;200m
-     */
-    | "ansi"
+    outputFormat?:
+      /**
+       * True color ANSI color string, for use in terminals
+       * @example \x1b[38;2;100;200;200m
+       */
+      | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -4720,6 +5862,128 @@ declare module "bun" {
    */
   function color(input: ColorInput, outputFormat: "number"): number | null;
 
+  interface ModuleGraphOptions {
+    /**
+     * Values for free identifiers in all of the graph's module code
+     * (e.g. `{ process: myProcess, fetch: myFetch }`). Graphs constructed
+     * with the same set of names share their ES modules' compiled code with
+     * each other.
+     */
+    globals?: Record<string, unknown> | undefined;
+    /**
+     * Called with the uncaught exceptions and unhandled rejections that happen
+     * in this graph's context, instead of the process-wide
+     * `uncaughtException` / `unhandledRejection` handling. `kind` says which.
+     *
+     * An error is the graph's when it happens in the graph's context, whoever
+     * wrote the code that threw: the graph's modules and what they start, and
+     * what the host calls through {@link ModuleGraph.run}. A function of the
+     * graph's that the host calls directly runs in the host's context, and
+     * its errors are the host's. The promise {@link ModuleGraph.import}
+     * returns is its caller's.
+     *
+     * The handler runs in the context the graph was made in, so what it throws
+     * or rejects is that context's: the host's, when the host made the graph.
+     *
+     * Without an `onError`, errors go to the `onError` of the graph in whose
+     * context this graph was made, and to the process-wide path when the host
+     * made it.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#errors
+     */
+    onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
+  }
+
+  /**
+   * A further instantiation of ES module graphs in **this** global object.
+   *
+   * Every graph that loads a file shares that file's parsed code and
+   * bytecode with every other graph and with the host, and for ES modules
+   * the JIT-compiled code too; each graph gets its own module-level state
+   * (top-level bindings, classes, closures), its own module registry for
+   * `import` / `import()`, its own `require.cache` (`require()`,
+   * `import.meta.require()` and `createRequire()` called from the graph's
+   * code load into it), its own `import.meta`, and its own values for the
+   * names in `globals`. Everything else — `globalThis`, `process`,
+   * intrinsics, builtin modules (so `require("node:module")._cache` is the
+   * host's cache), native
+   * addons, the event loop — is the global object's, shared: this runs
+   * instances of a program side by side, it is not a sandbox.
+   *
+   * A graph has a context of its own for timers and I/O. Everything its
+   * code opens — timers, `Bun.serve` / `Bun.listen` servers, sockets,
+   * `fetch()` requests, watchers, child processes — belongs to the graph,
+   * and {@link ModuleGraph.dispose} closes all of it. The context follows
+   * the graph's code through `await`, timers, socket handlers and the
+   * listeners of what it made, the way `AsyncLocalStorage` stores do
+   * (creating the first graph turns that tracking on for the process). Code
+   * of the graph that the host calls directly runs in the host's context;
+   * use {@link ModuleGraph.run} to call it in the graph's.
+   *
+   * @experimental
+   * @example
+   * ```ts
+   * const graph = new Bun.ModuleGraph({
+   *   globals: { process: Object.create(process, { env: { value: { NAME: "a" } } }) },
+   *   onError: (err, kind) => console.error(kind, err),
+   * });
+   * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
+   * graph.run(() => app.start()); // what start() opens is the graph's
+   * graph.dispose(); // and is closed here
+   * ```
+   */
+  class ModuleGraph {
+    constructor(options?: ModuleGraphOptions);
+    /**
+     * The graph whose context the calling code is running in
+     * (what it opens now would belong to that graph), or `undefined` in the
+     * host's context. For host functions shared by several graphs, and for
+     * asserting that a call went through {@link ModuleGraph.run}.
+     */
+    static readonly current: ModuleGraph | undefined;
+    /**
+     * Load `specifier` (resolved against `process.cwd()` when relative) and
+     * instantiate it and its dependencies into this graph, evaluating what
+     * has not been evaluated in this graph yet.
+     *
+     * The first module imported into a graph is its main module:
+     * `import.meta.main` is true in it and in no other module of the graph.
+     *
+     * @param specifier module specifier, as for `import()`
+     * @returns the module's namespace object for this graph
+     */
+    import<T = any>(specifier: string): Promise<T>;
+    /**
+     * Call `fn` inside the graph's context: what `fn` and everything it
+     * starts open belongs to the graph.
+     *
+     * Throws `ERR_INVALID_STATE` once the graph is disposed.
+     *
+     * @returns what `fn` returns
+     */
+    run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
+    /**
+     * Closes everything the graph's code opened (and disposes any graph its
+     * code made), and drops the graph's modules: `graph.import()` and
+     * `graph.run()` fail from here on, the graph's `require()` throws, and
+     * modules that had not run yet never will.
+     *
+     * The graph is told nothing, like a worker that was terminated: no
+     * `close` handler, `onExit` or `'error'` event is called, and no promise
+     * is settled — one waiting on the graph's work (a `fetch()`, a child's
+     * `exited`, an `import()` still loading) stays pending. Microtasks and
+     * `process.nextTick` callbacks it had already queued still run once; what
+     * they start reports nothing either. Objects the graph's code made (a
+     * socket, a worker, a stream) no longer work, for the host either.
+     *
+     * Not a sandbox: synchronous calls run to completion. Idempotent.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#disposing
+     */
+    dispose(): void;
+    [Symbol.dispose](): void;
+  }
+
   /**
    * Bun.semver parses and compares version numbers.
    */
@@ -4779,16 +6043,30 @@ declare module "bun" {
     function mimallocDump(): void;
 
     /**
-     * Accurate per-process memory footprint in bytes.
+     * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
      *
-     * Unlike `process.memoryUsage.rss()`, this excludes pages already
-     * returned to the OS that the kernel keeps mapped lazily (Darwin's
-     * `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
+     * `1` is the normal JIT policy. A value `> 1` makes the JIT that many times more
+     * reluctant to compile, e.g. during a burst of run-once startup code; it stays in
+     * effect until the next call. `bun build --compile` executables can start with a
+     * scale baked in (`compile.jitPolicy` / `--compile-jit-policy`) and call
+     * `setJITPolicy(1)` once interactive.
      *
-     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on Darwin, `Pss:`
-     * from `/proc/self/smaps_rollup` on Linux, and `PrivateUsage` on Windows.
-     * Returns `undefined` on platforms with no accurate accessor; callers
-     * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
+     * @param scale a finite number `>= 1`
+     * @throws {TypeError} if `scale` is not a number
+     * @throws {RangeError} if `scale` is not finite or `< 1`
+     */
+    function setJITPolicy(scale: number): void;
+
+    /**
+     * Per-process memory footprint in bytes: the memory that only this
+     * process keeps the machine from reusing.
+     *
+     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on macOS (the same
+     * number `process.memoryUsage.rss()` reports there), `Pss:` from
+     * `/proc/self/smaps_rollup` on Linux (shared pages are split between the
+     * processes that map them), and `PrivateUsage` on Windows (this process's
+     * commit charge). Returns `undefined` on platforms with no such accessor;
+     * callers should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
      */
     function memoryFootprint(): number | undefined;
   }
@@ -4911,6 +6189,11 @@ declare module "bun" {
    * This class only exists in types
    */
   abstract class CryptoHashInterface<T> {
+    /**
+     * The number of bytes the hash produces
+     */
+    readonly byteLength: number;
+
     /**
      * Update the hash with data
      *
@@ -5245,7 +6528,7 @@ declare module "bun" {
      *
      * A value of `1` uses minimum memory but is slow and reduces compression ratio.
      *
-     * A value of `9` uses maximum memory for optimal speed. The default is `8`.
+     * A value of `9` uses maximum memory for optimal speed. The default is `8`. Any other value throws.
      */
     memLevel?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
     /**
@@ -5261,35 +6544,15 @@ declare module "bun" {
      * The gzip header has no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
-      | -9
-      | -10
-      | -11
-      | -12
-      | -13
-      | -14
-      | -15
-      | 9
-      | 10
-      | 11
-      | 12
-      | 13
-      | 14
-      | 15
-      | 25
-      | 26
-      | 27
-      | 28
-      | 29
-      | 30
-      | 31;
+      -9 | -10 | -11 | -12 | -13 | -14 | -15 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 25 | 26 | 27 | 28 | 29 | 30 | 31;
     /**
-     * Tunes the compression algorithm.
+     * Tunes the compression algorithm. One of these `constants` of `node:zlib`; any other value throws.
      *
-     * - `Z_DEFAULT_STRATEGY`: For normal data **(Default)**
-     * - `Z_FILTERED`: For data produced by a filter or predictor
-     * - `Z_HUFFMAN_ONLY`: Force Huffman encoding only (no string match)
-     * - `Z_RLE`: Limit match distances to one (run-length encoding)
-     * - `Z_FIXED` prevents the use of dynamic Huffman codes
+     * - `Z_DEFAULT_STRATEGY` (`0`): For normal data **(Default)**
+     * - `Z_FILTERED` (`1`): For data produced by a filter or predictor
+     * - `Z_HUFFMAN_ONLY` (`2`): Force Huffman encoding only (no string match)
+     * - `Z_RLE` (`3`): Limit match distances to one (run-length encoding)
+     * - `Z_FIXED` (`4`): Prevents the use of dynamic Huffman codes
      *
      * `Z_RLE` is designed to be almost as fast as `Z_HUFFMAN_ONLY`, but give better compression for PNG image data.
      *
@@ -5411,6 +6674,7 @@ declare module "bun" {
     | "jsonc"
     | "toml"
     | "yaml"
+    | "xml"
     | "file"
     | "napi"
     | "wasm"
@@ -5548,6 +6812,15 @@ declare module "bun" {
   interface OnResolveResult {
     /**
      * The destination of the import
+     *
+     * In a runtime plugin, a path without a `namespace` is resolved from the
+     * importing module like any other import, without running `onResolve`
+     * callbacks on it. If nothing is found there, it is used as it is when an
+     * `onLoad` callback matches it.
+     *
+     * A bare name could also be a package in the registry, so `onResolve`
+     * callbacks run on it once more. If one of them returns a path, the name is
+     * the plugin's own and is never auto-installed.
      */
     path: string;
     /**
@@ -5927,6 +7200,9 @@ declare module "bun" {
      * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
      * Consider using {@link close close()} or {@link end end()} for graceful shutdowns.
      *
+     * In the `handshake` callback of a TLS 1.3 client, this refuses the server
+     * before the client certificate is sent.
+     *
      * @example
      * ```ts
      * socket.terminate();
@@ -5935,20 +7211,19 @@ declare module "bun" {
     terminate(): void;
 
     /**
-     * Shuts down the write-half or both halves of the connection.
-     * This allows the socket to enter a half-closed state where it can still receive data
-     * but can no longer send data (`halfClose = true`), or close both read and write
-     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Shuts down one half of the connection.
+     * With no argument, sends a FIN: the socket can still receive data but can no longer send it.
+     * With `true`, stops receiving data.
      * Calls the `shutdown(2)` syscall internally.
      *
-     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @param halfClose If `true`, shuts down the read side. If `false` or omitted, shuts down the write side. Defaults to `false`.
      * @example
      * ```ts
      * // Stop sending data, but allow receiving
-     * socket.shutdown(true);
-     *
-     * // Shutdown both reading and writing
      * socket.shutdown();
+     *
+     * // Stop receiving data
+     * socket.shutdown(true);
      * ```
      */
     shutdown(halfClose?: boolean): void;
@@ -6275,7 +7550,11 @@ declare module "bun" {
     getSession(): void;
 
     /**
-     * Sets the session of the socket.
+     * Sets the TLS session to offer for resumption.
+     *
+     * Only has an effect before the handshake starts: in `open`, before any
+     * `write()`, on a client socket that also has a `handshake` handler. A later
+     * call is ignored.
      *
      * @param session The session to set.
      */
@@ -6364,6 +7643,11 @@ declare module "bun" {
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
+    /**
+     * Called when a handler throws, and when an established TLS session fails
+     * (a record that does not decrypt, a fatal alert from the peer). After a
+     * TLS failure the socket closes, with or without this handler.
+     */
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
@@ -6811,6 +8095,33 @@ declare module "bun" {
       gid?: number;
 
       /**
+       * Start the child process inside this control group.
+       *
+       * Pass the path of an existing cgroup directory (e.g.
+       * `"/sys/fs/cgroup/my-jobs"`), or an open file descriptor for one. The
+       * child joins it before it begins executing, so resource limits
+       * configured on the cgroup (`memory.max`, `pids.max`, …) apply from its
+       * first instruction and to everything it spawns in turn. Works with both
+       * cgroup v1 and v2 hierarchies.
+       *
+       * Bun does not create or configure the cgroup; do that with `node:fs`
+       * beforehand.
+       *
+       * Linux only; ignored on other platforms. On Linux, the spawn fails if
+       * the cgroup cannot be joined (e.g. the directory does not exist).
+       *
+       * @example
+       * ```ts
+       * import { mkdirSync, writeFileSync } from "node:fs";
+       * const dir = "/sys/fs/cgroup/build-jobs";
+       * mkdirSync(dir, { recursive: true });
+       * writeFileSync(dir + "/memory.max", String(2 * 1024 ** 3));
+       * Bun.spawn({ cmd: ["make"], cgroup: dir });
+       * ```
+       */
+      cgroup?: string | number;
+
+      /**
        * The environment variables of the process
        *
        * Defaults to `process.env` as it was when the current Bun process launched.
@@ -6912,7 +8223,7 @@ declare module "bun" {
       onExit?(
         subprocess: Subprocess<In, Out, Err>,
         exitCode: number | null,
-        signalCode: number | null,
+        signalCode: NodeJS.Signals | number | null,
         /**
          * If an error occurred in the call to waitpid2, this is the error.
          */
@@ -7084,11 +8395,17 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {
       /**
        * If true, the stdout and stderr pipes don't automatically start reading
        * data. Reading begins only when you access the `stdout` or `stderr`
@@ -7189,15 +8506,15 @@ declare module "bun" {
       /**
        * User CPU time used by the process, in microseconds.
        */
-      user: number;
+      user: bigint;
       /**
        * System CPU time used by the process, in microseconds.
        */
-      system: number;
+      system: bigint;
       /**
        * Total CPU time used by the process, in microseconds.
        */
-      total: number;
+      total: bigint;
     };
     /**
      * The maximum resident set size (in bytes) used by the process during its lifetime.
@@ -7330,10 +8647,10 @@ declare module "bun" {
      *
      * To receive signal code changes, use the `onExit` callback.
      *
-     * If the signal code is unknown, this is the original signal code
-     * number, but that case should never happen in practice.
+     * If the signal has no name (for example a Linux real-time signal), this
+     * is its number.
      */
-    readonly signalCode: NodeJS.Signals | null;
+    readonly signalCode: NodeJS.Signals | number | null;
 
     /**
      * Whether the process has exited
@@ -7403,7 +8720,7 @@ declare module "bun" {
      */
     resourceUsage: ResourceUsage;
 
-    signalCode?: string;
+    signalCode?: NodeJS.Signals | number;
     exitedDueToTimeout?: boolean;
     exitedDueToMaxBuffer?: boolean;
     pid: number;
@@ -8065,6 +9382,149 @@ declare module "bun" {
   // ): number;
 
   /**
+   * The proxy a `fetch()` uses.
+   *
+   * - A URL string, a `URL`, or `{ url, headers, respectNoProxy }` selects that proxy.
+   * - `false` connects directly, even when `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` are set.
+   * - `undefined` uses the proxy environment variables.
+   */
+  type FetchProxyOption =
+    | string
+    | URL
+    | false
+    | {
+        /**
+         * The proxy URL, as a string or a `URL`.
+         */
+        url: string | URL;
+        /**
+         * Custom headers to send to the proxy server.
+         * These headers are sent in the CONNECT request (for HTTPS targets)
+         * or in the proxy request (for HTTP targets).
+         */
+        headers?: HeadersInit | undefined;
+        /**
+         * Whether hosts listed in `NO_PROXY` / `no_proxy` bypass this proxy.
+         * Set to `false` to send every request through the proxy.
+         *
+         * @default true
+         */
+        respectNoProxy?: boolean | undefined;
+      };
+
+  interface FetchSessionInit {
+    /**
+     * TLS options for the connections of this session. A request that passes
+     * its own `tls` uses that instead, as a whole.
+     *
+     * A `checkServerIdentity` given here runs once per connection, and the
+     * connection is then shared by the requests of this session.
+     */
+    tls?: BunFetchRequestInitTLS | undefined;
+    /**
+     * The proxy for the requests of this session.
+     *
+     * The constructor throws for a value that names no proxy, such as a number
+     * or an object without a `url`. Only `undefined`, `null` and `""` mean no
+     * option. On a request, `fetch()` ignores such a value.
+     */
+    proxy?: FetchProxyOption | undefined;
+    /**
+     * Connection reuse. `false` closes every connection after its response.
+     * The limits do not apply to HTTP/3 connections.
+     *
+     * @default true
+     */
+    keepAlive?:
+      | boolean
+      | {
+          /**
+           * Seconds an idle connection stays in the pool before it is closed.
+           * The socket timer is coarse: it moves in 4 second steps up to four
+           * minutes, and in whole minutes beyond that. Bun rounds the value up
+           * to the timer, so a connection is never closed before `idleTimeout`,
+           * and it can stay open for up to two steps longer. The longest is
+           * 238 minutes (14280), and a larger value means that.
+           *
+           * @default 300
+           */
+          idleTimeout?: number | undefined;
+          /**
+           * Most idle connections this session keeps per kind of connection
+           * (plain, TLS, each distinct `tls` configuration, Unix socket). When
+           * one more is released, the longest-idle one is closed.
+           *
+           * Without it the session has no limit of its own. The idle
+           * connections of all sessions and of plain `fetch()` share one bounded
+           * pool per kind, and when it is full Bun closes the longest-idle
+           * connection in it. A value above the size of that pool has no effect.
+           */
+          maxIdleSockets?: number | undefined;
+        }
+      | undefined;
+    /**
+     * Send the requests of this session over a Unix socket.
+     */
+    unix?: string | undefined;
+  }
+
+  /**
+   * Connection settings shared by the `fetch()` calls that name it, and the
+   * keep-alive connection pool they share. Connections are never shared between
+   * two sessions, or between a session and plain `fetch()`.
+   *
+   * @example
+   * ```ts
+   * const session = new Bun.FetchSession({
+   *   proxy: { url: "http://proxy.internal:8080", respectNoProxy: false },
+   *   tls: { ca: await Bun.file("corp-ca.pem").text() },
+   * });
+   *
+   * const response = await session.fetch("https://example.com");
+   * // the same request, as an option of the global fetch():
+   * await fetch("https://example.com", { session });
+   * ```
+   */
+  class FetchSession {
+    constructor(init?: FetchSessionInit);
+    /**
+     * `fetch()` with this session. The function is bound: hand it to anything
+     * that takes a `fetch`. A `session` in `init` does not replace this one.
+     *
+     * It has no `preconnect`, so where an option is typed `typeof fetch`
+     * (which in Bun includes `fetch.preconnect`), pass
+     * `session.fetch as typeof fetch`.
+     *
+     * @example
+     * ```ts
+     * const client = new SomeClient({ fetch: session.fetch });
+     * ```
+     */
+    readonly fetch: (input: string | URL | Request, init?: BunFetchRequestInit) => Promise<Response>;
+    /**
+     * Close the idle connections in this session's pool. Requests in flight
+     * finish, and the session stays usable.
+     */
+    close(): void;
+    [Symbol.dispose](): void;
+  }
+
+  /** Options for the {@link FileSystemRouter} constructor. */
+  interface FileSystemRouterOptions {
+    /**
+     * The root directory containing the files to route
+     */
+    dir: string;
+    style: "nextjs";
+
+    /** The base path to use when routing */
+    assetPrefix?: string;
+    origin?: string;
+    /** Limit the pages to those with particular file extensions. */
+    fileExtensions?: string[];
+  }
+
+  /**
    * Resolve routes against a directory of files using Next.js-style (`pages`
    * directory) conventions.
    */
@@ -8086,29 +9546,19 @@ declare module "bun" {
      * @param options.dir The root directory containing the files to route
      * @param options.style The style of router to use (only "nextjs" is supported)
      */
-    constructor(options: {
-      /**
-       * The root directory containing the files to route
-       */
-      dir: string;
-      style: "nextjs";
-
-      /** The base path to use when routing */
-      assetPrefix?: string;
-      origin?: string;
-      /** Limit the pages to those with particular file extensions. */
-      fileExtensions?: string[];
-    });
+    constructor(options: FileSystemRouterOptions);
 
     // todo: URL
     match(input: string | Request | Response): MatchedRoute | null;
 
-    readonly assetPrefix: string;
-    readonly origin: string;
-    readonly style: string;
+    /** The `assetPrefix` option, or `null` if it was absent or empty */
+    readonly assetPrefix: string | null;
+    /** The `origin` option, or `null` if it was absent or empty */
+    readonly origin: string | null;
+    readonly style: "nextjs";
     readonly routes: Record<string, string>;
 
-    reload(): void;
+    reload(): this;
   }
 
   interface MatchedRoute {
@@ -8135,6 +9585,8 @@ declare module "bun" {
     readonly name: string;
     readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
     readonly src: string;
+    /** @deprecated Use {@link src} */
+    readonly scriptSrc: string;
   }
 
   /**
@@ -8162,7 +9614,7 @@ declare module "bun" {
    *
    * Like `readline()`, but without the IO.
    */
-  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
+  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number | bigint): number;
 
   interface GlobScanOptions {
     /**
@@ -8226,10 +9678,14 @@ declare module "bun" {
    *     in the brackets.
    * - `{a,b}`
    *     Match one of the patterns contained in the braces.
-   *     The sub-patterns can use any of the other wildcards.
-   *     Braces may be nested up to 10 levels deep.
+   *     The sub-patterns can use any of the other wildcards, and braces can nest.
+   * - `{1..3}`, `{a..e}`, `{01..10}`, `{1..9..2}`
+   *     Matches any number or letter in the range. A third value is the step.
+   * - `?(a|b)`, `*(a|b)`, `+(a|b)`, `@(a|b)`, `!(a|b)`
+   *     Matches zero or one, zero or more, one or more, exactly one, or none
+   *     of the patterns. Parentheses without one of these prefixes are literal.
    * - `!`
-   *     Negates the result when at the start of the pattern.
+   *     Negates the result when at the start of the pattern, unless a "(" follows.
    *     Multiple "!" characters negate the pattern multiple times.
    * - `\`
    *     Escapes any of the special characters listed here.
@@ -8308,6 +9764,9 @@ declare module "bun" {
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
+     *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
+     *   bytes, a missing end marker, truncated scan data) does not reject.
+     *   Blocks with no data come back flat grey.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
@@ -8346,6 +9805,8 @@ declare module "bun" {
        * Reject inputs whose `width × height` exceeds this many pixels. The
        * check runs after the header is read but before any pixel buffer is
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
+       * A lower limit also lowers how much a compressed PNG chunk, such as an
+       * ICC profile, may inflate to before the image is refused.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */
       maxPixels?: number;
@@ -8739,8 +10200,9 @@ declare module "bun" {
        * constructor returns; `await view.navigate(otherUrl)` or any other
        * operation waits for it to complete first.
        *
-       * Equivalent to calling `view.navigate(url)` immediately after
-       * construction.
+       * Starts the same navigation `view.navigate(url)` would, but its
+       * promise stays internal: a failure never surfaces as a rejection.
+       * Set {@link WebView.onNavigationFailed} to observe it.
        */
       url?: string;
       /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */
@@ -9052,15 +10514,20 @@ declare module "bun" {
     resize(width: number, height: number): Promise<void>;
 
     /** Navigate back in session history. */
-    back(): Promise<void>;
+    goBack(): Promise<void>;
     /** Navigate forward in session history. */
-    forward(): Promise<void>;
+    goForward(): Promise<void>;
     /** Reload the current page. */
     reload(): Promise<void>;
 
     /**
      * Close the view and release its WebContent process. After close,
      * all methods throw. Idempotent.
+     *
+     * Pending operations reject with `Error("WebView closed")`. The
+     * rejections are marked as handled: a promise you hold still rejects
+     * catchably, but a pending operation nothing holds never triggers
+     * `unhandledRejection`.
      */
     close(): void;
 
@@ -9285,6 +10752,10 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files are overwritten.
      *
+     * On Linux and macOS, nothing is written through a symlink in the target directory that is absolute or leads out of it.
+     * The promise rejects when a file entry needs such a symlink, unless `options.glob` is set, which skips the entry.
+     * The `code` of the error is `"EXDEV"`, and its `path` is the path of the entry relative to the target directory.
+     *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
      * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)
@@ -9376,6 +10847,8 @@ declare module "bun" {
      *
      * Only regular files are included; directories are not returned.
      * File contents are loaded into memory, so for large archives consider using `extract()` instead.
+     * The promise rejects once the holes read from the archive's sparse files add up to more than 1,024 times
+     * the size of the archive. Up to 64 MiB are always read, and never more than 1 GiB.
      *
      * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
      *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized
@@ -9573,6 +11046,8 @@ declare module "bun" {
     optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalPeers?: string[];
+    /** Names in `optionalDependencies` that did not resolve, listed when another package in the lockfile has the name */
+    unresolved?: string[];
     bin?: string | Record<string, string>;
     binDir?: string;
   };
@@ -9585,6 +11060,7 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    hasInstallScript?: true;
     bundled?: true;
   };
 

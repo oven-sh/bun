@@ -1,9 +1,8 @@
 //! Carries stdin/stdout/stderr for a state node.
 //!
-//! `IO` is a plain `Clone` value; `IOReader`/`IOWriter` are `Arc`-refcounted.
+//! `IO` is a plain `Clone` value; `IOReader`/`IOWriter` are `Rc`-refcounted.
 
 use bun_collections::VecExt;
-use core::fmt;
 
 use crate::api::bun_spawn::stdio::{Capture, Stdio};
 use crate::shell::interpreter::OutputNeedsIOSafeGuard;
@@ -12,20 +11,10 @@ use crate::shell::io_writer::IOWriter;
 use crate::shell::shell_body::subproc::ShellIO;
 
 #[derive(Clone, Default)]
-pub struct IO {
+pub(crate) struct IO {
     pub(crate) stdin: InKind,
     pub(crate) stdout: OutKind,
     pub(crate) stderr: OutKind,
-}
-
-impl fmt::Display for IO {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "stdin: {}\nstdout: {}\nstderr: {}",
-            self.stdin, self.stdout, self.stderr
-        )
-    }
 }
 
 impl IO {
@@ -40,7 +29,7 @@ impl IO {
 
     /// Maps the state-node IO triple onto
     /// `subproc::Stdio` for [`ShellSubprocess::spawn_async`], and stashes the
-    /// owning `IOWriter` Arcs on `shellio` so [`PipeReader`]'s captured-writer
+    /// owning `IOWriter` `Rc`s on `shellio` so [`PipeReader`]'s captured-writer
     /// path can tee subprocess output back into the JS-side buffers.
     pub(crate) fn to_subproc_stdio(&self, stdio: &mut [Stdio; 3], shellio: &mut ShellIO) {
         stdio[0] = self.stdin.to_subproc_stdio();
@@ -50,25 +39,16 @@ impl IO {
 }
 
 #[derive(Clone, Default)]
-pub enum InKind {
-    Fd(std::sync::Arc<IOReader>),
+pub(crate) enum InKind {
+    Fd(std::rc::Rc<IOReader>),
     #[default]
     Ignore,
-}
-
-impl fmt::Display for InKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InKind::Fd(_) => write!(f, "fd"),
-            InKind::Ignore => write!(f, "ignore"),
-        }
-    }
 }
 
 /// Write to a file descriptor (via `IOWriter`), tee into a captured buffer,
 /// pipe to a subprocess, or drop.
 #[derive(Clone, Default)]
-pub enum OutKind {
+pub(crate) enum OutKind {
     Fd(OutFd),
     Pipe,
     #[default]
@@ -77,10 +57,10 @@ pub enum OutKind {
 
 // Clone: bitwise OK for `captured` — it is a non-owning backref into
 // `ShellExecEnv::_buffered_{stdout,stderr}`; the env owns the Vec. `writer`
-// is `Arc` so it ref-counts on clone.
+// is `Rc` so it ref-counts on clone.
 #[derive(Clone)]
-pub struct OutFd {
-    pub(crate) writer: std::sync::Arc<IOWriter>,
+pub(crate) struct OutFd {
+    pub(crate) writer: std::rc::Rc<IOWriter>,
     /// If set, also append every chunk to this buffer (the JS-side captured
     /// stdout/stderr). Points into `ShellExecEnv::_buffered_{stdout,stderr}`.
     pub(crate) captured: Option<*mut Vec<u8>>,
@@ -104,16 +84,6 @@ impl OutFd {
     pub(crate) unsafe fn captured_mut(&self) -> Option<&mut Vec<u8>> {
         // SAFETY: caller contract — single-threaded shell, env outlives `self`.
         self.captured.map(|p| unsafe { &mut *p })
-    }
-}
-
-impl fmt::Display for OutKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OutKind::Fd(_) => write!(f, "fd"),
-            OutKind::Pipe => write!(f, "pipe"),
-            OutKind::Ignore => write!(f, "ignore"),
-        }
     }
 }
 
@@ -163,13 +133,13 @@ impl OutKind {
         }
     }
 
-    /// Retains the `IOWriter` Arc on
+    /// Retains the `IOWriter` Rc on
     /// `shellio` so the subprocess's `PipeReader::captured_writer` can drain
     /// captured bytes into it after the spawn returns.
-    fn to_subproc_stdio(&self, shellio: &mut Option<std::sync::Arc<IOWriter>>) -> Stdio {
+    fn to_subproc_stdio(&self, shellio: &mut Option<std::rc::Rc<IOWriter>>) -> Stdio {
         match self {
             OutKind::Fd(val) => {
-                *shellio = Some(std::sync::Arc::clone(&val.writer));
+                *shellio = Some(std::rc::Rc::clone(&val.writer));
                 if let Some(cap) = val.captured {
                     #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     let _ = cap;

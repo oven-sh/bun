@@ -72,8 +72,6 @@ public:
 };
 
 struct SignJob {
-    static SignJob* create(JSC::JSGlobalObject*, SignJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, SignJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 }

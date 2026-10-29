@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+const x0 = (a + b)
+  // prettier-ignore
+  .foo(1, 2);
+
+const x1 = foo({ a: 1, b: 2 })
+  // prettier-ignore
+  .bar();
+
+const x2 = (a + b) // foo
+  .foo(1, 2);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const x0 = (a + b)
+  // prettier-ignore
+  .foo(1, 2);
+
+const x1 = foo({ a: 1, b: 2 })
+  // prettier-ignore
+  .bar();
+
+const x2 = (a + b) // foo
+  .foo(1, 2);
+
+===================== End =====================

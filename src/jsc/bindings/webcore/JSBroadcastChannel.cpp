@@ -21,6 +21,8 @@
 #include "config.h"
 #include "JSBroadcastChannel.h"
 
+#include "ActiveDOMObject.h"
+
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -39,6 +41,7 @@
 #include "JSEventListener.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "streams/WebStreamsInspectCustom.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
@@ -74,7 +77,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSBroadcastChannelPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSBroadcastChannelPrototype* ptr = new (NotNull, JSC::allocateCell<JSBroadcastChannelPrototype>(vm)) JSBroadcastChannelPrototype(vm, globalObject, structure);
+        JSBroadcastChannelPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBroadcastChannelPrototype))) JSBroadcastChannelPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -88,7 +91,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -105,6 +108,7 @@ using JSBroadcastChannelDOMConstructor = JSDOMConstructor<JSBroadcastChannel>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, JSBroadcastChannelDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSBroadcastChannelDOMConstructor>(callFrame->jsCallee());
@@ -117,15 +121,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMCon
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto* structure = structureForNewTarget<BroadcastChannel>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = BroadcastChannel::create(*context, WTF::move(name));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<BroadcastChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<BroadcastChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<BroadcastChannel>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSBroadcastChannelDOMConstructorConstruct, JSBroadcastChannelDOMConstructor::construct);
@@ -139,11 +143,7 @@ template<> JSValue JSBroadcastChannelDOMConstructor::prototypeForStructure(JSC::
 
 template<> void JSBroadcastChannelDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "BroadcastChannel"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSBroadcastChannel::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "BroadcastChannel"_s, JSBroadcastChannel::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -198,7 +198,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
         JSValue value = options->get(lexicalGlobalObject, name);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        newOptions->putDirect(vm, name, value, 0);
+        newOptions->putDirectMayBeIndex(lexicalGlobalObject, name, value);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
@@ -234,10 +234,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
 void JSBroadcastChannelPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSBroadcastChannel::info(), JSBroadcastChannelPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-    BunBuiltinNames& builtinNames = WebCore::builtinNames(vm);
-    putDirectNativeFunction(vm, globalObject, builtinNames.inspectCustomPublicName(), 2, jsBroadcastChannelPrototype_inspectCustom, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+    Bun::reifyStaticPropertyTable(vm, JSBroadcastChannel::info(), JSBroadcastChannelPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
+    Bun::WebStreams::installInspectCustom(vm, this, jsBroadcastChannelPrototype_inspectCustom);
 }
 
 const ClassInfo JSBroadcastChannel::s_info = { "BroadcastChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBroadcastChannel) };
@@ -247,7 +246,7 @@ JSBroadcastChannel::JSBroadcastChannel(Structure* structure, JSDOMGlobalObject& 
 {
 }
 
-// static_assert(std::is_base_of<ActiveDOMObject, BroadcastChannel>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+static_assert(std::is_base_of<ActiveDOMObject, BroadcastChannel>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 
 JSObject* JSBroadcastChannel::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -360,6 +359,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_postMessag
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsBroadcastChannelPrototypeFunction_postMessage);
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_postMessageBody>(*lexicalGlobalObject, *callFrame, "postMessage");
 }
 
@@ -376,6 +376,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_closeBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsBroadcastChannelPrototypeFunction_close);
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_closeBody>(*lexicalGlobalObject, *callFrame, "close");
 }
 
@@ -391,6 +392,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_refBody(JS
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_ref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsBroadcastChannelPrototypeFunction_ref);
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_refBody>(*lexicalGlobalObject, *callFrame, "ref");
 }
 
@@ -407,17 +409,13 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_unrefBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_unref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsBroadcastChannelPrototypeFunction_unref);
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
 JSC::GCClient::IsoSubspace* JSBroadcastChannel::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSBroadcastChannel, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBroadcastChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBroadcastChannel = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBroadcastChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBroadcastChannel = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSBroadcastChannel, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBroadcastChannel, m_subspaceForBroadcastChannel));
 }
 
 void JSBroadcastChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -485,8 +483,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<BroadcastChannel>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, BroadcastChannel& impl)
+NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, BroadcastChannel& impl)
 {
+    BUN_REMOVABLE_DEFINITION(MessageChannel, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, BroadcastChannel&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 

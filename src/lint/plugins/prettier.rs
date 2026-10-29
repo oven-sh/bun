@@ -1,0 +1,175 @@
+//! The code shared by `prettier/prettier` and `bun/format`, which is everything except the choice of formatter to
+//! match.
+//!
+//! The reports match eslint-plugin-prettier 5.5.6, which splits the difference between the file and the formatted text
+//! with `generateDifferences()` from prettier-linter-helpers 1.0.1.
+
+use bun_core::strings;
+use bun_lint::formats::{Formatted, FormatterKind, Reason, Request};
+use bun_lint::prelude::*;
+use bun_text_diff::{CharDiff, Hunk};
+
+const INSERT: Message = Message::new("insert", "Insert `{{ insertText }}`");
+const DELETE: Message = Message::new("delete", "Delete `{{ deleteText }}`");
+const REPLACE: Message = Message::new(
+    "replace",
+    "Replace `{{ deleteText }}` with `{{ insertText }}`",
+);
+const UNCHECKED: Message = Message::new(
+    "unchecked",
+    "This file was not checked because {{ reason }}.",
+);
+
+fn show_invisibles(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len() * 2);
+    for &byte in input {
+        match byte {
+            b' ' => out.extend_from_slice("\u{B7}".as_bytes()),
+            b'\n' => out.extend_from_slice("\u{23CE}".as_bytes()),
+            b'\t' => out.extend_from_slice("\u{21B9}".as_bytes()),
+            b'\r' => out.extend_from_slice("\u{240D}".as_bytes()),
+            _ => out.push(byte),
+        }
+    }
+    out
+}
+
+/// `bytes` as UTF-16 code units, as in JavaScript, and for each unit the offset in `bytes` where its character starts.
+/// The offsets end with `bytes.len()`.
+fn code_units(bytes: &[u8]) -> (Vec<u16>, Vec<usize>) {
+    let mut units = Vec::with_capacity(bytes.len());
+    let mut starts = Vec::with_capacity(bytes.len() + 1);
+    for (at, c) in strings::wtf8_codepoints(bytes) {
+        match c.checked_sub(0x10000) {
+            Some(c) => {
+                units.extend([0xD800 | (c >> 10) as u16, 0xDC00 | (c & 0x3FF) as u16]);
+                starts.extend([at, at]);
+            }
+            None => {
+                units.push(c as u16);
+                starts.push(at);
+            }
+        }
+    }
+    starts.push(bytes.len());
+    (units, starts)
+}
+
+/// `generateDifferences()`: which byte ranges of `source` to replace with which byte ranges of `formatted`.
+fn differences(source: &[u8], formatted: &[u8]) -> Vec<Hunk> {
+    let mut differ = CharDiff::default();
+    let is_ascii = |it: &[u8]| strings::first_non_ascii(it).is_none();
+    let mut hunks = if is_ascii(source) && is_ascii(formatted) {
+        differ.diff_as_fast_diff(source, formatted).to_vec()
+    } else {
+        let ((a, a_starts), (b, b_starts)) = (code_units(source), code_units(formatted));
+        let byte_of = |starts: &[usize], unit: usize| starts.get(unit).copied().unwrap_or_default();
+        let units = differ.diff_as_fast_diff(&a, &b).iter();
+        let in_bytes = units.map(|it| Hunk {
+            a_lo: byte_of(&a_starts, it.a_lo),
+            a_hi: byte_of(&a_starts, it.a_hi),
+            b_lo: byte_of(&b_starts, it.b_lo),
+            b_hi: byte_of(&b_starts, it.b_hi),
+        });
+        in_bytes.collect()
+    };
+    // Merge two hunks, together with the text between them, unless that text has a line break.
+    hunks.dedup_by(|next, last| {
+        let between = source.get(last.a_hi..next.a_lo);
+        let joins = between.is_some_and(|it| !strings::contains_js_line_break(it));
+        if joins {
+            (last.a_hi, last.b_hi) = (next.a_hi, next.b_hi);
+        }
+        joins
+    });
+    hunks
+}
+
+/// The options, which are the same for both rules.
+pub(crate) struct Settings {
+    options: Option<Json>,
+    uses_configuration: bool,
+    file_info_options: Option<Json>,
+}
+
+impl Settings {
+    pub(crate) fn new(options: &Options) -> Self {
+        let second = options.object(1);
+        Settings {
+            options: options.get(0).cloned(),
+            uses_configuration: second.bool_or("usePrettierrc", true),
+            file_info_options: second.get("fileInfoOptions").cloned(),
+        }
+    }
+
+    /// Returns the formatted text of `source`, which is the whole text of `file`, and the hunks where the two differ.
+    /// `None` if they don't differ.
+    fn compare(
+        &self,
+        formatter_kind: FormatterKind,
+        file: &File,
+        source: &[u8],
+    ) -> Result<Option<(Vec<u8>, Vec<Hunk>)>, Reason> {
+        let formatted = match file.formatter() {
+            Some(formatter) => formatter.formats.formatted(&Request {
+                formatter_kind,
+                path_on_disk: formatter.path_on_disk,
+                path: file.path(),
+                text: source,
+                options: self.options.as_ref(),
+                uses_configuration: self.uses_configuration,
+                file_info_options: self.file_info_options.as_ref(),
+                package_module: file.package_module(),
+                follows_packages: !file.language().has_no_foreign_config,
+            }),
+            None => Formatted::NotNative(Reason::NoFormatter),
+        };
+        match formatted {
+            Formatted::Text(formatted) => {
+                let hunks = differences(source, &formatted);
+                Ok(Some((formatted, hunks)))
+            }
+            Formatted::NotNative(reason) => Err(reason),
+            Formatted::Same | Formatted::Skipped => Ok(None),
+        }
+    }
+
+    pub(crate) fn check<R: Rule>(&self, formatter_kind: FormatterKind, cx: &Cx<'_, R>) {
+        let file = cx.file();
+        // ESLint's text doesn't include the byte order mark.
+        let skipped = if file.has_bom() { 3 } else { 0 };
+        let source = file.text().get(skipped..).unwrap_or_default();
+        let (formatted, hunks) = match self.compare(formatter_kind, file, source) {
+            Ok(Some(it)) => it,
+            Ok(None) | Err(Reason::NoFormatter) => return,
+            Err(reason)
+                if formatter_kind == FormatterKind::InstalledPrettier
+                    && !file.language().has_no_foreign_config =>
+            {
+                return file.hand_back(reason);
+            }
+            // There's no package rule to fall back to, so report that the file wasn't checked.
+            Err(reason) => {
+                // Report after the comments at the top, one of which may turn the rule off.
+                let at = cx.program_span().start;
+                cx.report(Span::new(at, at), UNCHECKED)
+                    .data("reason", reason.text());
+                return;
+            }
+        };
+        for it in hunks {
+            let deleted = source.get(it.a_lo..it.a_hi).unwrap_or_default();
+            let inserted = formatted.get(it.b_lo..it.b_hi).unwrap_or_default();
+            let span = Span::new((skipped + it.a_lo) as u32, (skipped + it.a_hi) as u32);
+            let message = match (deleted, inserted) {
+                ([], _) => INSERT,
+                (_, []) => DELETE,
+                _ => REPLACE,
+            };
+            cx.report(span, message)
+                .data("deleteText", show_invisibles(deleted))
+                .data("insertText", show_invisibles(inserted))
+                .fix(|fixer| fixer.replace(span, inserted));
+        }
+    }
+}

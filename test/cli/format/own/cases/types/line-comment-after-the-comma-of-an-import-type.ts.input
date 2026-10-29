@@ -1,0 +1,7 @@
+type A = import("x", // c
+{ with: { "resolution-mode": "import" } }).B;
+type C = import("x"
+
+// c
+
+, { with: { "resolution-mode": "import" } }).B;

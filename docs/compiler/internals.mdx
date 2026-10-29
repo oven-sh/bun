@@ -1,0 +1,99 @@
+---
+title: "How bun compile works"
+sidebarTitle: "How it works"
+description: "What bun compile does with your code and your types, and what ends up in the executable"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+`bun compile` type checks your whole program, compiles it to machine code at build time, and puts that code into a copy of the Bun runtime. The executable has no JIT, so nothing is compiled while your program runs.
+
+You don't need this page to [use `bun compile`](/compiler/aot). Read it if you want to know what to expect from the code it generates.
+
+## From source to executable
+
+1. Bun follows the imports from your entry point with the same resolver, loaders and plugins as `bun build`. npm packages are compiled along with your code. So are the `node:` and `bun:` modules you import, because much of `node:fs`, `node:http` and `node:stream` is written in TypeScript.
+2. It type checks your TypeScript with the checker behind [`bun check`](/runtime/check). A type error stops the build.
+3. It tracks values through the whole program. For each variable, parameter and property it works out which objects can end up there, and for each call, which functions it can reach.
+4. It optimizes each function and generates machine code with the backend of JavaScriptCore's fastest JIT.
+5. It copies the `bun` that runs the build, leaves out the parts a compiled program can't use, and adds the machine code. You don't need a linker or a C toolchain.
+
+Your code is never bundled or printed back out as JavaScript, so stack traces point at your original source without a source map.
+
+## What types are used for
+
+```ts dot.ts icon="/icons/typescript.svg"
+interface Vec {
+  x: number;
+  y: number;
+}
+
+function dot(a: Vec, b: Vec) {
+  return a.x * b.x + a.y * b.y;
+}
+
+const unit: Vec = { x: 1, y: 0.5 };
+const input = JSON.parse(process.argv[2]);
+
+console.log(dot(unit, input));
+```
+
+```bash terminal icon="terminal"
+bun compile ./dot.ts && ./dot '{"x":2,"y":4}'
+```
+
+```txt
+4
+```
+
+`Vec` gets a fixed layout, like a struct in Go or Rust. `x` and `y` sit at fixed offsets. Your program creates `unit` itself, so the compiler knows it has that layout, and `a.x` is one load with no check in front of it.
+
+`input` comes from outside. TypeScript lets it through because `JSON.parse` returns `any`, but nothing proves it's a `Vec`. So `dot` checks `b` once, on entry. If the check passes, `b.x` is one load too. If it fails, the call goes to a second copy of `dot` that treats `b` as plain JavaScript and looks `x` up at run time. `a` stays typed in that copy.
+
+The same rule applies everywhere. A type is a fact about values your program creates. It's a guess about values your program receives, such as parsed data, the result of a function that only has a `.d.ts` file, or anything that went through `any` or `as`. A fact costs nothing at run time. A guess costs one check where the value arrives.
+
+The check compares layouts and doesn't look inside the object. Nothing here tells `JSON.parse` about `Vec`, so `input` fails the check even when it has the right properties. To avoid that, [declare the type where you parse](/compiler/types#declare-the-type-where-you-parse).
+
+## When a type is wrong
+
+Types change how fast your program runs, never what it does. A value that doesn't match its type doesn't throw, and it isn't converted or copied. The code that touches it takes the slow path. [Types](/compiler/types#when-a-value-doesnt-match-its-type) has an example.
+
+Anything the compiler rejects that `bun run` accepts, it rejects at build time. The exceptions are [read-only built-ins](#read-only-built-ins) and [an import of code that isn't in the executable](/compiler/compatibility#dynamic-imports).
+
+## Code without types
+
+JavaScript files, `any` and untyped packages are compiled to machine code like everything else. Code that the build saw never falls back to the interpreter. The compiler still tracks objects from where they're created, so a class in a `.js` file gets a fixed layout too.
+
+Where it can't tell which objects reach a property access, the compiled code looks the property up at run time. That works the same and runs slower. [`bun compile --explain`](/compiler/explain) lists those places and what causes them.
+
+## Code the build can't see
+
+Strings passed to `eval`, `new Function` and `node:vm` run in JavaScriptCore's interpreter, in the same process and on the same objects. There's no JIT above it, so a library that generates its hot code this way runs slower compiled.
+
+The compiler finds these calls at build time and assumes less about whatever they can reach. If it finds none, it assumes it has seen all the code there is, and a call that gets to `eval` anyway throws an `EvalError`. See [Code from strings](/compiler/compatibility#code-from-strings).
+
+## Read-only built-ins
+
+Compiled code calls `Array.prototype.push` directly. A JIT can do that too, because it can throw the code away if something replaces `push`. Code in a file can't be thrown away. So Bun makes the assumption true, and replacing or deleting an existing member of a built-in object throws a `TypeError`.
+
+Adding your own method to `Array.prototype` still works, and so does patching `console`, `process` or `fetch`. See [Built-in objects are read-only](/compiler/compatibility#built-in-objects-are-read-only).
+
+## What's in the executable
+
+The file holds the machine code for your program and its packages, Bun's native APIs, the event loop, the garbage collector, and the interpreter for code from strings. It also holds function names and source positions for stack traces, and the source text of each function so that `fn.toString()` works.
+
+It doesn't hold the JIT compilers, the `bun` command line, the bundler, the type checker or the compiler itself. Built-in modules that your program never imports aren't there either.
+
+The machine code and its tables are read-only and mapped straight from the file, so processes and Workers share them. [Smaller executables](/compiler/size) covers what else you can remove.
+
+## What it doesn't do
+
+- No profile or training run.
+- None of your code runs during the build, apart from [macros](/bundler/macros). There's no heap snapshot.
+- No cache between builds.
+- No new syntax, pragmas or restricted subset. What's fast under `bun compile` is ordinary TypeScript.
+- No cross-compilation yet. Build on the platform you deploy to.
+
+## How it's tested
+
+Each test program runs three ways: with `bun run`, compiled, and compiled with every type annotation erased. All three have to print the same thing and exit the same way. The programs are also compiled with every guess forced to fail, which exercises the slow paths, and in a mode where the executable checks every fact it relies on while it runs. The same comparison runs over test262, the test suites of Node.js and Bun, and apps built on the common web frameworks.

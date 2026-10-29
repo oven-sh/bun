@@ -23,6 +23,7 @@ pub use hir::environment_config::EnvironmentConfig;
 
 mod compile_result;
 mod imports;
+mod lint;
 mod options;
 
 pub mod codegen;
@@ -31,8 +32,9 @@ pub(crate) mod pipeline;
 pub mod program;
 
 pub use compile_result::{CompileDiagnostic, CompileOutput};
+pub use lint::{Categories, Linted, lint_function};
 pub use options::ReactCompilerOptions;
 pub use program::{
-    CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState, SymbolHost,
+    CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState,
     collect_import_bindings, finish, has_module_scope_opt_out, maybe_compile_pending,
 };

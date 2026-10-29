@@ -1,7 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("MaxPathExceeded")]
-    MaxPathExceeded,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -14,7 +12,6 @@ impl Error {
         match self {
             Self::Sys(e) => <&'static str>::from(e),
             Self::Core(e) => e.name(),
-            Self::MaxPathExceeded => "MaxPathExceeded",
         }
     }
 }

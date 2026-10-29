@@ -2,14 +2,66 @@
 
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
-const { validateString } = require("internal/validators");
+const { validateString, validateOneOf } = require("internal/validators");
+const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
-const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
-  "NodeV8.cpp",
-  "Bun::createNodeV8Binding",
-);
+interface GCEvent {
+  isFullCollection: boolean;
+  cost: number;
+  usedBefore: number;
+  capacityBefore: number;
+  externalBefore: number;
+  usedAfter: number;
+  capacityAfter: number;
+  externalAfter: number;
+}
+
+const {
+  isStringOneByteRepresentation,
+  startGCProfiler,
+  stopGCProfiler,
+  discardGCProfiler,
+}: {
+  isStringOneByteRepresentation(content: string): boolean;
+  /** The session's id. */
+  startGCProfiler(): number;
+  stopGCProfiler(session: number): GCEvent[];
+  discardGCProfiler(session: number): void;
+} = $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 const DateNow = Date.now;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const Uint8ArrayCtor = Uint8Array;
+const BufferAllocUnsafe = Buffer.allocUnsafe;
+const TypedArrayProto = Object.getPrototypeOf(Uint8ArrayCtor.prototype);
+type ViewGetter<T> = (this: ArrayBufferView) => T;
+const TypedArrayPrototypeGetBuffer: ViewGetter<ArrayBufferLike> = ObjectGetOwnPropertyDescriptor(
+  TypedArrayProto,
+  "buffer",
+)!.get!;
+const TypedArrayPrototypeGetByteOffset: ViewGetter<number> = ObjectGetOwnPropertyDescriptor(
+  TypedArrayProto,
+  "byteOffset",
+)!.get!;
+const TypedArrayPrototypeGetByteLength: ViewGetter<number> = ObjectGetOwnPropertyDescriptor(
+  TypedArrayProto,
+  "byteLength",
+)!.get!;
+const TypedArrayPrototypeSet: (this: Uint8Array, array: ArrayLike<number>, offset?: number) => void =
+  TypedArrayProto.set;
+const DataViewPrototypeGetBuffer: ViewGetter<ArrayBufferLike> = ObjectGetOwnPropertyDescriptor(
+  DataView.prototype,
+  "buffer",
+)!.get!;
+const DataViewPrototypeGetByteOffset: ViewGetter<number> = ObjectGetOwnPropertyDescriptor(
+  DataView.prototype,
+  "byteOffset",
+)!.get!;
+const DataViewPrototypeGetByteLength: ViewGetter<number> = ObjectGetOwnPropertyDescriptor(
+  DataView.prototype,
+  "byteLength",
+)!.get!;
+const Uint8ArrayPrototypeSubarray = Uint8ArrayCtor.prototype.subarray;
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -114,10 +166,16 @@ class GCProfiler {
   }
 }
 
+// Node derives this tag from the V8 version, command-line flags, and CPU
+// features; Bun mirrors that with its own version plus the flags recorded by
+// setFlagsFromString, so the tag is stable until the flags change.
+let versionTagFlags = "";
+let versionTag: number | undefined;
 function cachedDataVersionTag() {
-  notimpl("cachedDataVersionTag");
+  versionTag ??= Bun.hash.crc32(`bun ${Bun.version}-${Bun.revision}${versionTagFlags}`);
+  return versionTag;
 }
-var HeapSnapshotReadable_;
+var HeapSnapshotReadable_: (new () => $Node.Readable) | undefined;
 function getHeapSnapshot() {
   if (!HeapSnapshotReadable_) {
     const Readable = require("node:stream").Readable;
@@ -158,6 +216,7 @@ function getHeapStatistics() {
     total_physical_size: memory.peak,
     total_available_size: totalmem() - stats.heapSize,
     used_heap_size: stats.heapSize,
+    total_allocated_bytes: stats.heapCapacity,
     heap_size_limit: Math.min(memory.peak * 10, totalmem()),
     malloced_memory: stats.heapSize,
     peak_malloced_memory: memory.peak,
@@ -173,20 +232,115 @@ function getHeapStatistics() {
     external_memory: stats.extraMemorySize,
   };
 }
+// V8 divides its heap into fixed spaces; JSC manages one undivided heap, so
+// the JSC totals are reported under "old_space" and the other V8 space names
+// exist for shape compatibility.
+const kHeapSpaces = [
+  "read_only_space",
+  "new_space",
+  "old_space",
+  "code_space",
+  "shared_space",
+  "trusted_space",
+  "new_large_object_space",
+  "large_object_space",
+  "code_large_object_space",
+  "shared_large_object_space",
+  "shared_trusted_space",
+  "shared_trusted_large_object_space",
+  "trusted_large_object_space",
+];
 function getHeapSpaceStatistics() {
-  notimpl("getHeapSpaceStatistics");
+  const stats = jsc.heapStats();
+  const spaces = [];
+  for (let i = 0; i < kHeapSpaces.length; i++) {
+    const space_name = kHeapSpaces[i];
+    const isHeap = space_name === "old_space";
+    const used = isHeap ? stats.heapSize : 0;
+    const size = isHeap ? stats.heapCapacity : 0;
+    $arrayPush(spaces, {
+      space_name,
+      space_size: size,
+      space_used_size: used,
+      space_available_size: size > used ? size - used : 0,
+      physical_space_size: size,
+    });
+  }
+  return spaces;
 }
+// JSC does not expose a per-category code size breakdown; report zeros rather
+// than invented numbers, like node does for counters V8 is not tracking
+// (e.g. cpu_profiler_metadata_size).
 function getHeapCodeStatistics() {
-  notimpl("getHeapCodeStatistics");
+  return {
+    code_and_metadata_size: 0,
+    bytecode_and_metadata_size: 0,
+    external_script_source_size: 0,
+    cpu_profiler_metadata_size: 0,
+  };
 }
 function setFlagsFromString(flags) {
-  // Validate before reporting the gap: node rejects a non-string argument
-  // regardless of whether the flag itself can be applied.
   validateString(flags, "flags");
-  notimpl("setFlagsFromString");
+  // V8 flags have no JSC equivalent; record them so cachedDataVersionTag
+  // changes like node's does, and otherwise ignore them.
+  versionTagFlags += ` ${flags}`;
+  versionTag = undefined;
 }
+// Bun has no cppgc (Oilpan) C++ heap, so the statistics are always empty;
+// this matches node's shape with nothing allocated through cppgc.
+function getCppHeapStatistics(type = "detailed") {
+  validateOneOf(type, "type", ["brief", "detailed"]);
+  return {
+    committed_size_bytes: 0,
+    resident_size_bytes: 0,
+    used_size_bytes: 0,
+    space_statistics: [],
+    type_names: [],
+    detail_level: type,
+  };
+}
+// Buffer-bearing payloads are framed as MAGIC + version + SSV([value, buffers]) so deserialize
+// can restore Buffer prototypes (see internal/serialization_buffers). Leading 0xFF cannot collide
+// with bare SSV output; Buffer-free payloads stay bare SSV so older readers keep working.
+const kBufferEnvelopeMagic = [0xff, 0x42, 0x55, 0x4e, 0x01]; // 0xFF "BUN" v1
+
+function hasBufferEnvelopeMagic(view: Uint8Array) {
+  // In-bounds integer-indexed reads on a typed array never consult the
+  // prototype chain, so the indexing is tamper-proof as-is.
+  if (TypedArrayPrototypeGetByteLength.$call(view) < kBufferEnvelopeMagic.length) return false;
+  for (let i = 0; i < kBufferEnvelopeMagic.length; i++) {
+    if (view[i] !== kBufferEnvelopeMagic[i]) return false;
+  }
+  return true;
+}
+
 function deserialize(value) {
-  return jsc.deserialize(value);
+  let view: Uint8Array;
+  if ($isTypedArrayView(value)) {
+    view = new Uint8ArrayCtor(
+      TypedArrayPrototypeGetBuffer.$call(value),
+      TypedArrayPrototypeGetByteOffset.$call(value),
+      TypedArrayPrototypeGetByteLength.$call(value),
+    );
+  } else if (isDataView(value)) {
+    // $isTypedArrayView excludes DataView, whose accessors live on its own
+    // prototype rather than %TypedArray%.prototype.
+    view = new Uint8ArrayCtor(
+      DataViewPrototypeGetBuffer.$call(value),
+      DataViewPrototypeGetByteOffset.$call(value),
+      DataViewPrototypeGetByteLength.$call(value),
+    );
+  } else if (isAnyArrayBuffer(value)) {
+    view = new Uint8ArrayCtor(value);
+  } else {
+    // Let jsc.deserialize validate and reject non-buffer input itself.
+    return jsc.deserialize(value);
+  }
+  if (hasBufferEnvelopeMagic(view)) {
+    const envelope = jsc.deserialize(Uint8ArrayPrototypeSubarray.$call(view, kBufferEnvelopeMagic.length));
+    return require("internal/serialization_buffers").restoreBuffers(envelope);
+  }
+  return jsc.deserialize(value as ArrayBuffer);
 }
 function takeCoverage() {
   notimpl("takeCoverage");
@@ -195,7 +349,15 @@ function stopCoverage() {
   notimpl("stopCoverage");
 }
 function serialize(arg1) {
-  return jsc.serialize(arg1, { binaryType: "nodebuffer" });
+  const tagged = require("internal/serialization_buffers").tagBuffers(arg1);
+  if (tagged === null) {
+    return jsc.serialize(arg1, { binaryType: "nodebuffer" });
+  }
+  const payload = jsc.serialize(tagged, { binaryType: "nodebuffer" });
+  const framed = BufferAllocUnsafe(kBufferEnvelopeMagic.length + TypedArrayPrototypeGetByteLength.$call(payload));
+  for (let i = 0; i < kBufferEnvelopeMagic.length; i++) framed[i] = kBufferEnvelopeMagic[i];
+  TypedArrayPrototypeSet.$call(framed, payload, kBufferEnvelopeMagic.length);
+  return framed;
 }
 
 function getDefaultHeapSnapshotPath() {
@@ -215,8 +377,6 @@ function getDefaultHeapSnapshotPath() {
   return `Heap-${yyyy}${mm}${dd}-${hh}${MM}${ss}-${process.pid}-${thread_id}.heapsnapshot`;
 }
 
-let fs;
-
 function writeHeapSnapshot(path, _options) {
   if (path !== undefined) {
     if (typeof path !== "string") {
@@ -230,16 +390,17 @@ function writeHeapSnapshot(path, _options) {
     path = getDefaultHeapSnapshotPath();
   }
 
-  if (!fs) {
-    fs = require("node:fs");
-  }
-  fs.writeFileSync(path, Bun.generateHeapSnapshot("v8"), "utf-8");
+  require("node:fs").writeFileSync(path, Bun.generateHeapSnapshot("v8"), "utf-8");
 
   return path;
 }
 function setHeapSnapshotNearHeapLimit() {
   notimpl("setHeapSnapshotNearHeapLimit");
 }
+function throwNotBuildingSnapshot() {
+  throw $ERR_NOT_BUILDING_SNAPSHOT("Operation cannot be invoked when not building startup snapshot");
+}
+
 const promiseHooks = {
     createHook: () => {
       notimpl("createHook");
@@ -258,9 +419,9 @@ const promiseHooks = {
     },
   },
   startupSnapshot = {
-    addDeserializeCallback: () => notimpl("addDeserializeCallback"),
-    addSerializeCallback: () => notimpl("addSerializeCallback"),
-    setDeserializeMainFunction: () => notimpl("setDeserializeMainFunction"),
+    addDeserializeCallback: throwNotBuildingSnapshot,
+    addSerializeCallback: throwNotBuildingSnapshot,
+    setDeserializeMainFunction: throwNotBuildingSnapshot,
     // Bun never builds a V8 startup snapshot, so this is always false, matching
     // Node's behavior during normal execution.
     isBuildingSnapshot: () => false,
@@ -274,6 +435,7 @@ export default {
   getHeapStatistics,
   getHeapSpaceStatistics,
   getHeapCodeStatistics,
+  getCppHeapStatistics,
   setFlagsFromString,
   deserialize,
   takeCoverage,
@@ -291,11 +453,13 @@ export default {
 
 hideFromStack(
   notimpl,
+  throwNotBuildingSnapshot,
   cachedDataVersionTag,
   getHeapSnapshot,
   getHeapStatistics,
   getHeapSpaceStatistics,
   getHeapCodeStatistics,
+  getCppHeapStatistics,
   setFlagsFromString,
   deserialize,
   takeCoverage,

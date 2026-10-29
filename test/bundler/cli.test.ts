@@ -525,15 +525,24 @@ describe.concurrent("the default root of a multi-entry build", () => {
     expect(await outputs(String(dir), [main, "src/w/worker.ts"])).toEqual(["main.js", "w/worker.js"]);
   });
 
-  test("is the shared directory also when it is above the working directory", async () => {
+  test("stays the working directory when an entry point lies above it", async () => {
     using dir = tempDir("build-root-above", {
       "app/index.ts": `console.log("index");`,
       "worker.ts": `console.log("worker");`,
     });
     expect(await outputs(path.join(String(dir), "app"), ["./index.ts", "../worker.ts"])).toEqual([
-      "app/index.js",
-      "worker.js",
+      "_.._/worker.js",
+      "index.js",
     ]);
+  });
+
+  test("is the shared directory when every entry point lies above the working directory", async () => {
+    using dir = tempDir("build-root-all-above", {
+      "scripts/.keep": "",
+      "a.ts": `console.log("a");`,
+      "b.ts": `console.log("b");`,
+    });
+    expect(await outputs(path.join(String(dir), "scripts"), ["../a.ts", "../b.ts"])).toEqual(["a.js", "b.js"]);
   });
 
   test("is the directory that holds nine or more entry points", async () => {

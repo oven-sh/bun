@@ -7,9 +7,7 @@ import path from "node:path";
 // `bun build --compile` must keep the `..` parent segment in an out-of-root
 // entrypoint's embedded bunfs name. Sanitizing it to `_.._` (correct for
 // `--outdir` disk output) breaks runtime `new Worker("/$bunfs/root/../x.js")`
-// references, which still use `..`, with ModuleNotFound. `--root .` keeps the
-// worker outside the root: by default the root is the directory that holds
-// both entry points.
+// references, which still use `..`, with ModuleNotFound.
 test("compile preserves parent-segment entrypoint path for Worker resolution", async () => {
   using dir = tempDir("compile-parent-entrypoint", {
     "worker.js": `postMessage("worker started");`,
@@ -26,7 +24,7 @@ test("compile preserves parent-segment entrypoint path for Worker resolution", a
   // The worker sits one directory above the main entrypoint, so its `[dir]`
   // placeholder resolves to `..` relative to the compile root.
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--root", ".", "./index.js", "../worker.js", "--outfile", "app"],
+    cmd: [bunExe(), "build", "--compile", "./index.js", "../worker.js", "--outfile", "app"],
     cwd: appDir,
     env: bunEnv,
     stdout: "pipe",
@@ -66,7 +64,7 @@ test.skipIf(!isDebug)("compile code dump stays within BUN_FEATURE_FLAG_DUMP_CODE
   const dumpDir = path.join(appDir, "dump");
 
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--root", ".", "./index.js", "../worker.js", "--outfile", "app"],
+    cmd: [bunExe(), "build", "--compile", "./index.js", "../worker.js", "--outfile", "app"],
     cwd: appDir,
     env: { ...bunEnv, BUN_FEATURE_FLAG_DUMP_CODE: dumpDir },
     stdout: "pipe",
@@ -99,8 +97,6 @@ test.skipIf(!isDebug)("compile code dump stays contained under a custom entry-na
       bunExe(),
       "build",
       "--compile",
-      "--root",
-      ".",
       "--entry-naming",
       "out/[dir]/[name].[ext]",
       "./index.js",

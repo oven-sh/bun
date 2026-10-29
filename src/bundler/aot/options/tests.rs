@@ -614,13 +614,16 @@ fn single_entry_point_directory_is_root() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn common_entry_point_directory_is_root() {
-    let cases: [(&[&[u8]], &[u8]); 6] = [
+    let cases: [(&[&[u8]], &[u8]); 9] = [
         (&[b"src/a.ts", b"lib/b.ts"], b"/project"),
         (&[b"src/a.ts", b"src/lib/b.ts"], b"/project/src"),
         (&[b"src/lib/b.ts", b"src/a.ts"], b"/project/src"),
         (&[b"src/a.ts", b"src-gen/b.ts"], b"/project"),
         (&[b"src/a.ts", b"./src/b.ts"], b"/project/src"),
         (&[b"a.ts", b"/other/b.ts"], b"/"),
+        (&[b"a.ts", b"../b.ts"], b"/project"),
+        (&[b"src/a.ts", b"../../b.ts"], b"/project"),
+        (&[b"../a.ts", b"../b.ts"], b"/"),
     ];
     for (entry_points, root_directory) in cases {
         assert_eq!(

@@ -70,20 +70,34 @@ pub(crate) fn validate_path(
     Box::from(out)
 }
 
-/// The default `root`: the directory that holds every entry point, from their absolute paths.
+/// The default `root`: the directory that holds every entry point, from their absolute paths. An entry
+/// point above the working directory (`../worker.ts`) does not lift the root above an entry point inside it.
 pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) -> Vec<u8> {
+    use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
     let paths: Vec<Vec<u8>> = entry_points
         .iter()
         .map(|entry| absolute_path(working_directory, entry))
         .collect();
-    let common: &[u8] = match &paths[..] {
-        [only] => bun_core::dirname(only).unwrap_or(only),
+    let working_directory = absolute_path(working_directory, b"");
+    let is_inside =
+        |path: &[u8]| is_parent_or_equal(&working_directory, path) != ParentEqual::Unrelated;
+    let is_above = |path: &[u8]| {
+        let directory = bun_core::dirname(path).unwrap_or(path);
+        is_parent_or_equal(directory, &working_directory) == ParentEqual::Parent
+    };
+    let common: Vec<u8> = match &paths[..] {
+        [only] => absolute_path(&working_directory, bun_core::dirname(only).unwrap_or(only)),
+        all if all.iter().any(|path| is_inside(path))
+            && all.iter().any(|path| !is_inside(path))
+            && all.iter().all(|path| is_inside(path) || is_above(path)) =>
+        {
+            working_directory
+        }
         all => {
             let all: Vec<&[u8]> = all.iter().map(|path| &path[..]).collect();
-            longest_common_path_of(&all)
+            absolute_path(&working_directory, longest_common_path_of(&all))
         }
     };
-    let common = absolute_path(working_directory, common);
     bun_paths::string_paths::without_trailing_slash_windows_path(&common).to_vec()
 }
 

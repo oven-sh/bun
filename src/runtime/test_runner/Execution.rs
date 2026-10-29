@@ -682,7 +682,7 @@ impl Execution {
     /// afterEach after the test body already threw) accumulate instead of
     /// clobbering the primary failure.
     fn discard_junit_failure(file: &FileInfo) {
-        if let Some(reporter) = file.reporter {
+        if let Some(reporter) = file.reporter.get() {
             // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
             // provenance (see `FileInfo` docs); single-threaded, no other borrow.
             unsafe { (*reporter.as_ptr()).test_failure = None };
@@ -847,7 +847,7 @@ fn step_group_one(
 ) -> JsResult<AdvanceStatus> {
     let buntest = buntest_strong.get();
     let mut final_status = AdvanceStatus::Done;
-    let concurrent_limit: usize = if let Some(reporter) = buntest.file.reporter {
+    let concurrent_limit: usize = if let Some(reporter) = buntest.file.reporter.get() {
         // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
         unsafe { reporter.as_ref() }.jest.max_concurrency as usize
     } else {

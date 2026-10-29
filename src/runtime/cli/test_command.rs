@@ -1267,7 +1267,7 @@ impl CommandLineReporter {
             // before the `&mut` derived from the same `NonNull` below
             // (stacked-borrows hygiene).
             let reporter_ref: Option<&CommandLineReporter> =
-                file.reporter.map(|p| unsafe { &*p.as_ptr() });
+                file.reporter.get().map(|p| unsafe { &*p.as_ptr() });
             let basic = result.basic_result();
             let dots_branch = reporter_ref.is_some_and(|r| r.reporters.dots)
                 && matches!(
@@ -1331,7 +1331,7 @@ impl CommandLineReporter {
         }
         let formatted_line = &output_buf[initial_length..];
 
-        let Some(this) = file.reporter else {
+        let Some(this) = file.reporter.get() else {
             let _ = Output::error_writer().write_all(formatted_line);
             return;
         };

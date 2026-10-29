@@ -196,7 +196,7 @@ impl Expect {
             sequence.expect_call_count = sequence.expect_call_count.saturating_add(1);
         } else {
             // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
-            if let Some(reporter) = buntest.file.reporter {
+            if let Some(reporter) = buntest.file.reporter.get() {
                 // SAFETY: `reporter` is `Option<NonNull<CommandLineReporter>>`,
                 // owned by `test_command` for the process lifetime, never
                 // aliased mutably elsewhere here.

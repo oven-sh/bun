@@ -625,9 +625,14 @@ const isNamedPipeSocket: (socket: SocketHandle | null) => boolean = $bindgen(
   "isNamedPipeSocket",
 );
 const getBufferedAmount: (socket: SocketHandle) => number = $bindgen("socket_body.bind.ts", "getBufferedAmount");
-let setKeepAliveEx:
-  | ((socket: SocketHandle, enable: boolean, initialDelay: number, interval: unknown, count: unknown) => boolean)
-  | undefined;
+type SetKeepAliveEx = (
+  socket: SocketHandle,
+  enable: boolean,
+  initialDelay: number,
+  interval: unknown,
+  count: unknown,
+) => boolean;
+let setKeepAliveEx: SetKeepAliveEx | undefined;
 
 const bunTlsSymbol: typeof netSymbols.bunTlsSymbol = netSymbols.bunTlsSymbol;
 const bunSocketServerOptions: typeof netSymbols.bunSocketServerOptions = netSymbols.bunSocketServerOptions;
@@ -3273,7 +3278,7 @@ function setHandleKeepAlive(self: $Node.Socket, handle: SocketHandle) {
   // The method of a socket of Bun takes milliseconds, so node:net does not call it. A function put over it gets the call first: it can pass it on.
   const replaced = method !== ObjectGetPrototypeOf(handle)?.setKeepAlive;
   if (replaced) method.$call(handle, enable, initialDelay, interval, count);
-  setKeepAliveEx ??= $bindgen("socket_body.bind.ts", "setKeepAliveEx");
+  setKeepAliveEx ??= $bindgen("socket_body.bind.ts", "setKeepAliveEx") as SetKeepAliveEx;
   if (!setKeepAliveEx(handle, enable, initialDelay, interval, count) && !replaced) {
     method.$call(handle, enable, initialDelay, interval, count);
   }

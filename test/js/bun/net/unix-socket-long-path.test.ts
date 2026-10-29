@@ -108,14 +108,14 @@ describe.skipIf(!isLinux)("unix domain socket long-path workaround", () => {
 // that open() fails, the errno it set (ENOENT, ENOTDIR, EACCES) is the error
 // the user sees, the same as for a path that fits sun_path.
 describe.skipIf(isWindows)("unix domain socket long-path workaround: missing parent directory", () => {
-  // 120 bytes is past sun_path on both Linux (108) and macOS (104).
-  function makeMissingParentSockPath(prefix: string, total: number) {
-    const pad = Buffer.alloc(Math.max(0, total - 60), "d").toString();
-    const dir = tempDir(prefix + pad, {});
-    // "/missing" is never created, so the parent directory open() fails.
-    const basenameLen = total - String(dir).length - "/missing/".length;
-    const sock = String(dir) + "/missing/" + Buffer.alloc(basenameLen, "l").toString();
-    expect(sock.length).toBe(total);
+  // 120 bytes is past sun_path on both Linux (108) and macOS (104). The
+  // padding goes into the missing directory component, never created, so the
+  // path is at least that long whatever TMPDIR is and the basename stays short.
+  function makeMissingParentSockPath(prefix: string, minLength: number) {
+    const dir = tempDir(prefix, {});
+    const padLen = Math.max(1, minLength - String(dir).length - "/missing-/s.sock".length);
+    const sock = String(dir) + "/missing-" + Buffer.alloc(padLen, "d").toString() + "/s.sock";
+    expect(sock.length).toBeGreaterThanOrEqual(minLength);
     return { dir, sock };
   }
 

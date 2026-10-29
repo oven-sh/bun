@@ -986,7 +986,7 @@ unsafe extern "C" {
     // Borrows — the borrow checker does NOT gate the raw-pointer callbacks.
     pub safe fn ares_cancel(channel: &mut Channel);
     pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
-    pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);
+    pub safe fn ares_set_local_ip6(channel: &mut Channel, local_ip6: &[u8; 16]);
     pub fn ares_getaddrinfo(
         channel: *mut Channel,
         node: *const c_char,
@@ -1546,9 +1546,9 @@ unsafe extern "C" {
         channel: *mut Channel,
         servers: *mut struct_ares_addr_port_node,
     ) -> c_int;
-    pub fn ares_get_servers_ports(
-        channel: *mut Channel,
-        servers: *mut *mut struct_ares_addr_port_node,
+    pub safe fn ares_get_servers_ports(
+        channel: &mut Channel,
+        servers: &mut *mut struct_ares_addr_port_node,
     ) -> c_int;
     /// https://c-ares.org/docs/ares_inet_ntop.html
     pub fn ares_inet_ntop(

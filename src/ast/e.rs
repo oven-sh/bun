@@ -992,11 +992,6 @@ pub struct JsonTape {
     pub encoding: StrEncoding,
 }
 
-// SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
-unsafe impl Send for JsonTape {}
-// SAFETY: see the `Send` impl.
-unsafe impl Sync for JsonTape {}
-
 impl JsonTape {
     const STR_CHUNK: usize = 4096;
 

@@ -194,12 +194,7 @@ impl Ls {
         Self::next(interp, cmd)
     }
 
-    /// # Safety
-    /// `task` must be a live heap allocation produced by
-    /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: NonNull<ShellLsTask>) {
-        // SAFETY: precondition.
-        let mut task = unsafe { bun_core::heap::take(task.as_ptr()) };
+    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellLsTask) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -623,12 +618,12 @@ impl ShellLsTask {
 
     /// # Safety
     /// `this` must be a live heap allocation produced by
-    /// [`ShellLsTask::create`]; ownership is reclaimed via
-    /// [`Ls::on_shell_ls_task_done`].
+    /// [`ShellLsTask::create`]; ownership is reclaimed here.
     fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
         // SAFETY: precondition.
-        let cmd = unsafe { this.as_ref() }.cmd;
-        Ls::on_shell_ls_task_done(interp, cmd, this);
+        let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
+        let cmd = task.cmd;
+        Ls::on_shell_ls_task_done(interp, cmd, &mut task);
     }
 }
 

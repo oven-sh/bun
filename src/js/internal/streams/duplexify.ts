@@ -97,8 +97,7 @@ function duplexify(body, name?: string): $Node.Duplex {
           if (val != null) {
             throw $ERR_INVALID_RETURN_VALUE("nully", "body", val);
           }
-          // It returned before final() began, so it did not read its input to the end: https://github.com/nodejs/node/pull/65963
-          // destroyer() adds Node's AbortError (nodejs/node#66349). When a Node release takes nodejs/node#66243, this is d.destroy().
+          // Returned before final() began: input was left unread (nodejs/node#65963). destroyer() adds Node's AbortError (nodejs/node#66349).
           if (!finalized) {
             destroyer(d);
           }

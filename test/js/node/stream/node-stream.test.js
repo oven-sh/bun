@@ -2087,7 +2087,7 @@ describe("Duplex.from(async function) that returns before it has read its input 
   // What a whole program sees. The expected results are those of Node.js v26.10.0 to v26.12.1, so the Node.js of the
   // machine runs the same scripts. The uncaught AbortError is https://github.com/nodejs/node/issues/66349. The node rows
   // fail when a Node.js release stops it (https://github.com/nodejs/node/pull/66243), and Bun takes that change then.
-  // Not concurrent: five debug builds that start together take up to 4.8 s each, and the timeout is 5 s.
+  // Not concurrent: five debug builds that start together took up to 4.8 s each, and the timeout is 5 s.
   describe("a whole program", () => {
     const programs = {
       "with no 'error' listener on the duplex, the AbortError is uncaught": {
@@ -2129,6 +2129,20 @@ describe("Duplex.from(async function) that returns before it has read its input 
           process.on("exit", () => console.log(JSON.stringify({ events, got })));
         `,
         expected: { stdout: `{"events":["close"],"got":[]}\n`, exitCode: 1, abortError: true },
+      },
+      "the same with nothing written: destroy() ends the source, and the pipe finishes with no chunk": {
+        script: `
+          const { Duplex, Readable, Writable } = require("node:stream");
+          const events = [];
+          const dest = new Writable({ objectMode: true, write(chunk, encoding, callback) { callback(); } });
+          dest.on("finish", () => events.push("dest finish"));
+          const d = Duplex.from(async source => {
+            Readable.from(source).pipe(dest);
+          });
+          d.on("error", err => events.push("error " + err.code)).on("close", () => events.push("close"));
+          process.on("exit", () => console.log(JSON.stringify(events)));
+        `,
+        expected: { stdout: `["error ABORT_ERR","close","dest finish"]\n`, exitCode: 0, abortError: false },
       },
       "a function that returns a value leaves the duplex open": {
         script: `

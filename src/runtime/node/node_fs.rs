@@ -1864,6 +1864,17 @@ mod _async_tasks {
             vm: &mut VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
+            Self::schedule(cx, args, vm, callback)
+        }
+
+        /// [`Self::create`] for a caller that has no `Binding`.
+        #[inline(always)]
+        pub(crate) fn schedule(
+            cx: &bun_jsc::JsThread<'_>,
+            args: ThreadIsolated<A>,
+            vm: &mut VirtualMachine,
+            callback: Option<JSValue>,
+        ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
             let completion = FsCompletion::new(cx.global(), callback);

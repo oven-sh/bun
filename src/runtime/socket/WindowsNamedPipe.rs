@@ -1055,7 +1055,7 @@ impl Drop for WindowsNamedPipe {
 
 // Hand-written `ssl` shim for the `bun_uws` cycle-break extern — the safe
 // method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
-// raw pointer. All other `WindowsNamedPipe__*` symbols are emitted by
+// raw pointer. All `WindowsNamedPipe__*` symbols but the three below are emitted by
 // `#[uws_callback(export = …)]` on the inherent methods above.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe) {

@@ -313,10 +313,10 @@ impl DateHeaderTimer {
     /// reschedule for 1s later iff there are active connections.
     pub(crate) fn run(&mut self, vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        // `uws_loop_mut` is the audited safe accessor (loop owned by the VM,
+        // `uws_loop_ref` is the audited safe accessor (loop owned by the VM,
         // separate allocation from `RuntimeState.timer` so no aliasing with
         // `&mut self`).
-        let loop_ = vm.uws_loop_mut();
+        let loop_ = vm.uws_loop_ref();
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
 
         // Record when we last ran it.

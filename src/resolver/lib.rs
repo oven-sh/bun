@@ -2338,9 +2338,14 @@ mod dir_cache_tests {
         assert!(map.remove(b"/cached"));
         // The key reads as one that was never put.
         assert!(map.get(b"/cached").is_none());
-        let again = map.get_or_put(b"/cached").unwrap();
+        let mut again = map.get_or_put(b"/cached").unwrap();
         assert!(matches!(again.status, ItemStatus::Unknown));
         assert!(!again.has_checked_if_exists());
+        // The next value goes in under the kept key.
+        map.put(&mut again, 9).unwrap();
+        assert_eq!(map.get(b"/cached").copied(), Some(9));
+        assert!(map.remove(b"/cached"));
+        assert!(map.get(b"/cached").is_none());
 
         let missing = map.get_or_put(b"/missing").unwrap();
         map.mark_not_found(missing);

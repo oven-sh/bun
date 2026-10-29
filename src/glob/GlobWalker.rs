@@ -629,7 +629,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 if had_dot_dot {
                     break 'fd match A::openat(self.cwd_fd, dir_path)? {
                         Err(err) => {
-                            return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
+                            return Ok(Err(err.with_path(dir_path.as_bytes())));
                         }
                         Ok(fd_) => {
                             self.bump_open_fds();
@@ -644,7 +644,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
             match A::openat(self.cwd_fd, dir_path)? {
                 Err(err) => {
-                    return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
+                    return Ok(Err(err.with_path(dir_path.as_bytes())));
                 }
                 Ok(fd_) => {
                     self.bump_open_fds();
@@ -897,10 +897,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             break 'brk None;
                                         }
                                         if self.walker.error_on_broken_symlinks {
-                                            return Ok(Err(self.walker.handle_sys_err_with_path(
-                                                &err,
-                                                symlink_full_path_z,
-                                            )));
+                                            return Ok(Err(
+                                                err.with_path(symlink_full_path_z.as_bytes())
+                                            ));
                                         }
                                         if !self.walker.only_files
                                             && self.walker.eval_file(&active, entry_name)
@@ -999,7 +998,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let at_cwd = dir.at_cwd;
                             let dir_path = dir.dir_path();
                             // Note: reshaped for borrowck
-                            let err = self.walker.handle_sys_err_with_path(&err, dir_path);
+                            let err = err.with_path(dir_path.as_bytes());
                             if !at_cwd {
                                 self.close_disallowing_cwd(dir_fd);
                             }
@@ -1490,24 +1489,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Ok(this))
     }
 
-    pub(crate) fn handle_sys_err_with_path(&mut self, err: &SysError, path_buf: &ZStr) -> SysError {
-        let src = path_buf.as_bytes();
-        let copy_len = src.len().min(self.path_buf.len());
-        // Several callers pass a `path_buf` that is itself a slice of
-        // `self.path_buf` (e.g. Iterator::init error path, next() symlink
-        // openat error path). When src and dst alias the same range,
-        // `copy_from_slice` is UB (its safety contract requires
-        // non-overlapping).
-        // Short-circuit identical-range, otherwise use overlap-safe ptr::copy.
-        let dst = self.path_buf.as_mut_ptr();
-        if src.as_ptr() != dst.cast_const() {
-            // SAFETY: copy_len ≤ both src and dst capacity; ptr::copy is memmove
-            // (overlap-safe) so partial overlap is fine too.
-            unsafe { core::ptr::copy(src.as_ptr(), dst, copy_len) };
-        }
-        err.with_path(&self.path_buf[0..copy_len])
-    }
-
     pub fn walk(&mut self) -> Result<Maybe<()>, Error> {
         if self.pattern_components.is_empty() {
             return Ok(Ok(()));
@@ -1534,9 +1515,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     // Note: associated fn taking `pattern_components` so callers can
     // split-borrow it from `&mut self.path_buf` (Rust
-    // forbids `&mut self` + `&mut self.path_buf`). Error path builds SysError
-    // directly from `path_buf` (which is already `self.path_buf` for the
-    // symlink caller) instead of routing through `handle_sys_err_with_path`.
+    // forbids `&mut self` + `&mut self.path_buf`).
     fn collapse_dots_disjoint(
         pattern_components: &[Component],
         idx: u32,

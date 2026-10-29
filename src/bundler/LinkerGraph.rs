@@ -264,6 +264,7 @@ pub struct LinkerGraph<'a> {
 //   `LinkerContext::link()` shortens them all with `follow_all()` before workers
 //   follow any. The dev server skips `link()`: its links come from the parser and
 //   stay within one file, and tasks that run at the same time work on different files.
+// - `Symbol.import_item_status`, a `Cell` written only by step 4 of `scan_imports_and_exports`, while no worker reads symbols.
 // Only the bundle thread allocates from the arena; workers use `worker.arena()`.
 unsafe impl Sync for LinkerGraph<'_> {}
 

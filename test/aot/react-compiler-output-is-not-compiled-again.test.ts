@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned, unsupported } from "./run-programs";
+import { slot, spawned, unsupported } from "./harness/commands";
 
 const standIn = join(import.meta.dir, "react-compiler", "react-stand-in");
 

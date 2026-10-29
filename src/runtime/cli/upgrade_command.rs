@@ -178,8 +178,7 @@ impl UpgradeCommand {
 
     pub(crate) fn get_latest_version<const SILENT: bool>(
         env_loader: &mut DotEnv::Loader,
-        refresher: Option<&mut Progress::Progress>,
-        mut progress: Option<&mut Progress::Node>,
+        mut refresher: Option<&mut Progress::Progress>,
         use_profile: bool,
     ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
@@ -271,9 +270,10 @@ impl UpgradeCommand {
 
         if !SILENT {
             // `progress_node` stores an untracked NonNull borrow of the caller's
-            // `progress`; sound because `send_sync` below completes before this
+            // `refresher.root`; sound because `send_sync` below completes before this
             // frame returns, so the pointee outlives every use.
-            async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
+            async_http.client.progress_node =
+                Some(NonNull::from(&mut refresher.as_deref_mut().unwrap().root));
         }
         let response = async_http.send_sync(metadata_body)?;
 
@@ -297,8 +297,9 @@ impl UpgradeCommand {
             Ok(e) => e,
             Err(err) => {
                 if !SILENT {
-                    progress.expect("infallible: progress active").end();
-                    refresher.expect("infallible: progress active").refresh();
+                    let refresher = refresher.expect("infallible: progress active");
+                    refresher.root.end();
+                    refresher.refresh();
 
                     if log.errors > 0 {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -318,8 +319,9 @@ impl UpgradeCommand {
 
         if log.errors > 0 {
             if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+                let refresher = refresher.expect("infallible: progress active");
+                refresher.root.end();
+                refresher.refresh();
 
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 Global::exit(1);
@@ -337,8 +339,9 @@ impl UpgradeCommand {
 
         if !expr.is_object() {
             if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+                let refresher = refresher.expect("infallible: progress active");
+                refresher.root.end();
+                refresher.refresh();
 
                 bun_core::pretty_errorln!(
                     "JSON error - expected an object but received {:?}",
@@ -358,8 +361,9 @@ impl UpgradeCommand {
 
         if version.tag.is_empty() {
             if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+                let refresher = refresher.expect("infallible: progress active");
+                refresher.root.end();
+                refresher.refresh();
 
                 bun_core::pretty_errorln!(
                     "JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{}",
@@ -452,8 +456,9 @@ impl UpgradeCommand {
         }
 
         if !SILENT {
-            progress.expect("infallible: progress active").end();
-            refresher.expect("infallible: progress active").refresh();
+            let refresher = refresher.expect("infallible: progress active");
+            refresher.root.end();
+            refresher.refresh();
             if let Some(name) = version.name() {
                 bun_core::pretty_errorln!(
                     "Bun v{} is out, but not for this platform ({}) yet.",
@@ -556,33 +561,21 @@ impl UpgradeCommand {
         let use_profile = argv_contains(b"--profile");
 
         let mut version: Version = if !use_canary {
-            // `Progress::start` returns `&mut Node` borrowing `refresher`;
-            // leak the Progress and use raw pointers so we can pass both
-            // `&mut refresher` and `&mut progress` to `get_latest_version`.
-            let refresher: *mut Progress::Progress =
-                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
-            // SAFETY: refresher is a fresh leaked allocation.
-            let progress: *mut Progress::Node =
-                unsafe { (*refresher).start(b"Fetching version tags", 0) };
+            let refresher: &mut Progress::Progress =
+                Box::leak(Box::new(Progress::Progress::default()));
+            refresher.start(b"Fetching version tags", 0);
 
             let Some(version) = Self::get_latest_version::<false>(
                 &mut env_loader,
-                // SAFETY: refresher/progress point into the same leaked allocation;
-                // `get_latest_version` only touches them on the !SILENT error
-                // path (no overlapping live borrows).
-                Some(unsafe { &mut *refresher }),
-                // SAFETY: progress points into the same leaked allocation (see above).
-                Some(unsafe { &mut *progress }),
+                Some(&mut *refresher),
                 use_profile,
             )?
             else {
                 return Ok(());
             };
 
-            // SAFETY: see above.
-            unsafe { (*progress).end() };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
+            refresher.root.end();
+            refresher.refresh();
 
             if !Environment::IS_CANARY {
                 if version.name().is_some() && version.is_current() {
@@ -636,15 +629,10 @@ impl UpgradeCommand {
         let http_proxy = env_loader.get_http_proxy_for(&zip_url);
 
         {
-            let refresher: *mut Progress::Progress =
-                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
-            // SAFETY: refresher is a fresh leaked allocation.
-            let progress: *mut Progress::Node =
-                unsafe { (*refresher).start(b"Downloading", version.size as usize) };
-            // SAFETY: see above.
-            unsafe { (*progress).unit = Progress::Unit::Bytes };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
+            let refresher: &mut Progress::Progress =
+                Box::leak(Box::new(Progress::Progress::default()));
+            refresher.start(b"Downloading", version.size as usize).unit = Progress::Unit::Bytes;
+            refresher.refresh();
             // Store in the process-lifetime CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
                 .alloc(MutableString::init(version.size.max(1024) as usize)?);
@@ -659,10 +647,9 @@ impl UpgradeCommand {
                 HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
             ));
-            // `progress` is intentionally leaked (process-lifetime), so the
+            // `refresher` is intentionally leaked (process-lifetime), so the
             // untracked NonNull stored in `progress_node` can never dangle.
-            async_http.client.progress_node =
-                Some(NonNull::new(progress).expect("leaked Box is non-null"));
+            async_http.client.progress_node = Some(NonNull::from(&mut refresher.root));
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
             let response = async_http.send_sync(zip_file_buffer)?;
@@ -691,10 +678,8 @@ impl UpgradeCommand {
 
             let bytes = zip_file_buffer.slice();
 
-            // SAFETY: refresher/progress are leaked allocations.
-            unsafe { (*progress).end() };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
+            refresher.root.end();
+            refresher.refresh();
 
             if bytes.is_empty() {
                 bun_core::pretty_errorln!(

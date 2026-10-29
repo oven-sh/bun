@@ -5315,22 +5315,17 @@ pub mod bv2_impl {
                         path.namespace = &result.namespace;
                     }
                     if !result.external {
-                        // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
-                        // lifetime, blocking the `graph` accesses below.
-                        // Capture `value_ptr` as a raw ptr + `found_existing` and drop
-                        // the borrow; the map entry is not rehashed before we write
-                        // through `value_ptr` (no intervening map mutation).
-                        let (value_ptr, found_existing) = {
-                            let existing = this
-                                .path_to_source_index_map(resolve.import_record.original_target)
-                                .get_or_put(path.text)
-                                .expect("oom");
-                            (
-                                std::ptr::from_mut(existing.value_ptr),
-                                existing.found_existing,
-                            )
-                        };
-                        if !found_existing {
+                        let existing = this.graph.build_graphs
+                            [resolve.import_record.original_target]
+                            .get_or_put(path.text)
+                            .expect("oom");
+                        if !existing.found_existing {
+                            // We need to parse this
+                            let source_index =
+                                Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
+                            *existing.value_ptr = source_index.get();
+                            out_source_index = Some(source_index);
+
                             let path = this
                                 .path_with_pretty_initialized(
                                     &path,
@@ -5340,12 +5335,6 @@ pub mod bv2_impl {
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
 
-                            // We need to parse this
-                            let source_index =
-                                Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
-                            // SAFETY: map slot from `get_or_put` above; map not mutated since.
-                            unsafe { *value_ptr = source_index.get() };
-                            out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
                             // A file that a plugin resolved the record to instead keeps its own loader.
                             let loader = this.requested_file_loader(
@@ -5423,8 +5412,7 @@ pub mod bv2_impl {
                                 this.graph.pool().schedule(task);
                             }
                         } else {
-                            // SAFETY: map slot from `get_or_put` above; map not mutated since.
-                            out_source_index = Some(Index::init(unsafe { *value_ptr }));
+                            out_source_index = Some(Index::init(*existing.value_ptr));
                         }
                     } else if resolve.import_record.kind == ImportKind::EntryPointBuild {
                         let log = this.log_for_resolution_failures(
@@ -7303,7 +7291,7 @@ pub mod bv2_impl {
             // reshaped for borrowck — `graph` and the
             // path map are both needed across the loop body. We (a) capture a raw self ptr for
             // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
-            // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
+            // borrow to the `build_graphs` field so later `self.graph.*` writes don't overlap.
             // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
             let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>> =
                 Some(unsafe {
@@ -7325,22 +7313,14 @@ pub mod bv2_impl {
                 });
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
-                // Select map and perform get_or_put, capturing the slot as a raw ptr
-                // so the &mut on self.graph is released before we touch other fields.
-                let (found_existing, value_ptr): (bool, *mut IndexInt) = {
-                    let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
-                        self.graph.path_to_source_index_map(Target::Browser)
-                    } else {
-                        self.graph.path_to_source_index_map(target)
-                    };
-                    let existing = map.get_or_put(key).expect("oom");
-                    (
-                        existing.found_existing,
-                        std::ptr::from_mut::<IndexInt>(existing.value_ptr),
-                    )
+                let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
+                    &mut self.graph.build_graphs[Target::Browser]
+                } else {
+                    &mut self.graph.build_graphs[target]
                 };
+                let existing = map.get_or_put(key).expect("oom");
 
-                if !found_existing {
+                if !existing.found_existing {
                     let new_task: &mut ParseTask = value;
                     let mut new_input_file = crate::Graph::InputFile {
                         source: bun_ast::Source::init_empty_file(new_task.path.text),
@@ -7365,11 +7345,7 @@ pub mod bv2_impl {
                     let new_source_index: u32 = new_input_file.source.index.0;
                     new_task.source_index = bun_ast::Index(new_source_index);
                     new_task.ctx = self_ptr;
-                    // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
-                    // intervening insert into that map has occurred since get_or_put.
-                    unsafe {
-                        *value_ptr = new_task.source_index.get();
-                    }
+                    *existing.value_ptr = new_task.source_index.get();
 
                     diff += 1;
 
@@ -7406,8 +7382,7 @@ pub mod bv2_impl {
                     self.graph.pool().schedule(new_task);
                 } else {
                     if loader.should_copy_for_bundling() {
-                        // SAFETY: value_ptr is valid (see above).
-                        let existing_idx = unsafe { *value_ptr };
+                        let existing_idx = *existing.value_ptr;
                         let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];

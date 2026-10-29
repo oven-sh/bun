@@ -74,18 +74,7 @@ bun_event_loop::impl_timer_owner!(StatWatcherScheduler; from_timer_ptr => event_
 
 type WatcherQueue = UnboundedQueue<StatWatcher>;
 
-// Intrusive `next`-link accessors for `UnboundedQueue<StatWatcher>`.
-//
-// SAFETY: all four route through the same `next: *mut StatWatcher` field; the
-// atomic variants reinterpret it as `AtomicPtr<StatWatcher>` (same size/align,
-// `addr_of!` preserves provenance).
-unsafe impl bun_threading::Linked for StatWatcher {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(StatWatcher, next: bun_threading::Link<StatWatcher>);
 
 impl Drop for StatWatcherScheduler {
     fn drop(&mut self) {

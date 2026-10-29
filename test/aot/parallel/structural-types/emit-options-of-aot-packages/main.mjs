@@ -1,0 +1,94 @@
+// The compilerOptions in the package.json of a package decide how the TypeScript under its "aot" condition becomes JavaScript.
+const settled = () => new Promise(resolve => setTimeout(resolve, 1));
+console.log("# program-states-usedefineforclassfields");
+await import("./program-states-usedefineforclassfields/main.ts");
+await settled();
+console.log("# program-states-target");
+await import("./program-states-target/main.ts");
+await settled();
+console.log("# program-states-experimentaldecorators");
+await import("./program-states-experimentaldecorators/main.ts");
+await settled();
+console.log("# program-states-emitdecoratormetadata");
+await import("./program-states-emitdecoratormetadata/main.ts");
+await settled();
+console.log("# program-states-jsx");
+await import("./program-states-jsx/main.ts");
+await settled();
+console.log("# program-states-jsxfactory");
+await import("./program-states-jsxfactory/main.ts");
+await settled();
+console.log("# program-states-jsxfragmentfactory");
+await import("./program-states-jsxfragmentfactory/main.ts");
+await settled();
+console.log("# program-states-jsximportsource");
+await import("./program-states-jsximportsource/main.ts");
+await settled();
+console.log("# program-states-verbatimmodulesyntax");
+await import("./program-states-verbatimmodulesyntax/main.ts");
+await settled();
+console.log("# package-states-usedefineforclassfields");
+await import("./package-states-usedefineforclassfields/main.ts");
+await settled();
+console.log("# package-states-experimentaldecorators");
+await import("./package-states-experimentaldecorators/main.ts");
+await settled();
+console.log("# package-states-emitdecoratormetadata");
+await import("./package-states-emitdecoratormetadata/main.ts");
+await settled();
+console.log("# package-states-jsx");
+await import("./package-states-jsx/main.ts");
+await settled();
+console.log("# package-states-jsxfactory");
+await import("./package-states-jsxfactory/main.ts");
+await settled();
+console.log("# package-states-jsxfragmentfactory");
+await import("./package-states-jsxfragmentfactory/main.ts");
+await settled();
+console.log("# package-states-jsximportsource");
+await import("./package-states-jsximportsource/main.ts");
+await settled();
+console.log("# loaded-with-require");
+await import("./loaded-with-require/required.cjs");
+await settled();
+console.log("# without-the-aot-condition");
+await import("./without-the-aot-condition/main.ts");
+await settled();
+/* Output:
+# program-states-usedefineforclassfields
+x,y z
+# program-states-target
+x,y z
+# program-states-experimentaldecorators
+standard
+# program-states-emitdecoratormetadata
+none
+# program-states-jsx
+automatic p
+# program-states-jsxfactory
+classic p
+# program-states-jsxfragmentfactory
+classic Fragment
+# program-states-jsximportsource
+automatic p
+# program-states-verbatimmodulesyntax
+dropped
+# package-states-usedefineforclassfields
+y seen
+# package-states-experimentaldecorators
+legacy
+# package-states-emitdecoratormetadata
+design:type
+# package-states-jsx
+classic p
+# package-states-jsxfactory
+made p
+# package-states-jsxfragmentfactory
+classic Part
+# package-states-jsximportsource
+tiny p
+# loaded-with-require
+x,y z
+# without-the-aot-condition
+y seen
+*/

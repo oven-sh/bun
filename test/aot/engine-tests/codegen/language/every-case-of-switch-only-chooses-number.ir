@@ -1,0 +1,315 @@
+# Every case of a switch only chooses a number.
+# FORM: AsRead
+# RUN: lower-to-air size f0 f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="every-case-of-switch-only-chooses-number.ts" displayPath="every-case-of-switch-only-chooses-number.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=2141 kind=Variable
+typesite w1 module=m0 position=64 kind=Parameter
+typesite w2 module=m0 position=49 kind=Result
+typesite w3 module=m0 position=321 kind=Parameter
+typesite w4 module=m0 position=307 kind=Result
+typesite w5 module=m0 position=606 kind=Parameter
+typesite w6 module=m0 position=590 kind=Result
+typesite w7 module=m0 position=901 kind=Parameter
+typesite w8 module=m0 position=912 kind=Parameter
+typesite w9 module=m0 position=885 kind=Result
+typesite w10 module=m0 position=1217 kind=Parameter
+typesite w11 module=m0 position=1228 kind=Parameter
+typesite w12 module=m0 position=1191 kind=Result
+typesite w13 module=m0 position=1561 kind=Parameter
+typesite w14 module=m0 position=1572 kind=Parameter
+typesite w15 module=m0 position=1546 kind=Result
+typesite w16 module=m0 position=1865 kind=Parameter
+typesite w17 module=m0 position=1846 kind=Result
+typesite w18 module=m0 position=2171 kind=Variable
+typesite w19 module=m0 position=2305 kind=Variable
+typesite w20 module=m0 position=2344 kind=Variable
+typesite w21 module=m0 position=2363 kind=Variable
+typesite w22 module=m0 position=2407 kind=Element
+typesite w23 module=m0 position=2428 kind=CallResult
+typesite w24 module=m0 position=2450 kind=CallResult
+typesite w25 module=m0 position=2482 kind=CallResult
+typesite w26 module=m0 position=2508 kind=CallResult
+typesite w27 module=m0 position=2518 kind=CallResult
+typesite w28 module=m0 position=2527 kind=CallResult
+typesite w29 module=m0 position=2548 kind=CallResult
+typesite w30 module=m0 position=2538 kind=CallResult
+data d0 root=Array{contents=number} module=m0
+data d1 root=Array{contents=undefined|null|number|string} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f7
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = Data data=d0
+    v15 = Convert v14 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v16 = Integer integer=-6
+    v17 = Convert v16 declared={type=number site=w18}
+    v18 = PropGet v15 key="push"
+    v19 = Integer integer=2147483647
+    v20 = Integer integer=-2147483648
+    v21 = Double number=1.5
+    v22 = Double number=NaN
+    v23 = Integer integer=4294967296
+    v24 = Double number=-0
+    v25 = Call v18, v15, v19, v20, v21, v22, v23, v24 calleeKey="push" calleeName="keys.push"
+    v26 = Integer
+    v27 = Convert v26 declared={type=number site=w19}
+    v28 = Convert v27 declared={type=number site=w20}
+    v29 = Data data=d1
+    v30 = Convert v29 declared={type=undefined|null|Array<undefined|null|number|string> site=w21 flags=[OmitsNull, OmitsUndefined]}
+    v31 = IteratorOpen v15
+    Jump -> next b1(v28)
+  b1(v32: number):
+    LoopHint
+    v34 = IteratorResume v31
+    v35 = ResultAt v34 index=1
+    Jump -> next b2()
+  b2() handler=b3():
+    v36 = Convert v35 declared={type=number site=w22} illTypedCause=ContainerWriterUnseen
+    v37 = Call v7, -, v36, v32 calleeName="masked"
+    v38 = Convert v37 declared={type=number site=w23}
+    v39 = Call v9, -, v36, v38 calleeName="someLeaveItAlone"
+    v40 = Convert v39 declared={type=number site=w24}
+    v41 = Call v11, -, v36, v40 calleeName="mixed"
+    v42 = Convert v41 declared={type=number site=w25}
+    v43 = PropGet v30 key="push"
+    v44 = Call v1, -, v36 calleeName="small"
+    v45 = Convert v44 declared={type=number site=w26}
+    v46 = Call v3, -, v36 calleeName="wide"
+    v47 = Convert v46 declared={type=number site=w27}
+    v48 = Call v5, -, v36 calleeName="signed"
+    v49 = Convert v48 declared={type=number site=w28}
+    v50 = Builtin builtin=Object
+    v51 = Builtin builtin=ObjectIs
+    v52 = Call v13, -, v36 calleeName="fractions"
+    v53 = Convert v52 declared={type=number site=w29}
+    v54 = Double number=-0
+    v55 = Call v51, v50, v53, v54 calleeName="Object.is"
+    v56 = Convert v55 declared={type=boolean site=w30} illTypedCause=DeclarationWithoutBody
+    v57 = String string="-0"
+    v58 = Call v43, v30, v45, v47, v49, v57, v42 calleeKey="push" calleeName="row.push"
+    Jump -> next b1(v42)
+  b3() role=IterationCleanup subject=v31:
+    v59 = CatchException
+    Rethrow v59
+}
+function f1 name="small" module=m0 position=49 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="wide" module=m0 position=307 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Switch v0 cases=[10, 11, 12, 13, 14, 15, 17, 18] -> case b1(| 0), case b2(| 0), case b3(| 0), case b4(| 0), case b5(| 0), case b6(| 0), case b7(| 0), case b8(| 0), otherwise b9()
+  b1(v1):
+    v2 = Integer integer=300
+    v3 = Convert v2 declared={type=number site=w4}
+    Return v3
+  b2(v4):
+    v5 = Integer integer=65535
+    v6 = Convert v5 declared={type=number site=w4}
+    Return v6
+  b3(v7):
+    v8 = Integer integer=256
+    v9 = Convert v8 declared={type=number site=w4}
+    Return v9
+  b4(v10):
+    v11 = Integer
+    v12 = Convert v11 declared={type=number site=w4}
+    Return v12
+  b5(v13):
+    v14 = Integer integer=4096
+    v15 = Convert v14 declared={type=number site=w4}
+    Return v15
+  b6(v16):
+    v17 = Integer integer=77
+    v18 = Convert v17 declared={type=number site=w4}
+    Return v18
+  b7(v19):
+    v20 = Integer integer=12345
+    v21 = Convert v20 declared={type=number site=w4}
+    Return v21
+  b8(v22):
+    v23 = Integer integer=1
+    v24 = Convert v23 declared={type=number site=w4}
+    Return v24
+  b9():
+    v25 = Integer integer=65000
+    v26 = Convert v25 declared={type=number site=w4}
+    Return v26
+}
+function f3 name="signed" module=m0 position=590 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w5}] results=[{type=number site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="masked" module=m0 position=885 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w7}, {type=number site=w8}] results=[{type=number site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Integer integer=7
+    v3 = BitAnd v0, v2
+    Switch v3 cases=[0, 1, 2, 3, 4, 5, 6, 7] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), otherwise b9()
+  b1():
+    v4 = Integer integer=1
+    v5 = BitXor v1, v4
+    v6 = Convert v5 declared={type=number site=w8}
+    Jump -> next b10(v6)
+  b2():
+    v7 = Integer integer=2
+    v8 = BitXor v1, v7
+    v9 = Convert v8 declared={type=number site=w8}
+    Jump -> next b10(v9)
+  b3():
+    v10 = Integer integer=5
+    v11 = BitXor v1, v10
+    v12 = Convert v11 declared={type=number site=w8}
+    Jump -> next b10(v12)
+  b4():
+    v13 = Integer integer=10
+    v14 = BitXor v1, v13
+    v15 = Convert v14 declared={type=number site=w8}
+    Jump -> next b10(v15)
+  b5():
+    v16 = Integer integer=17
+    v17 = BitXor v1, v16
+    v18 = Convert v17 declared={type=number site=w8}
+    Jump -> next b10(v18)
+  b6():
+    v19 = Integer integer=26
+    v20 = BitXor v1, v19
+    v21 = Convert v20 declared={type=number site=w8}
+    Jump -> next b10(v21)
+  b7():
+    v22 = Integer integer=37
+    v23 = BitXor v1, v22
+    v24 = Convert v23 declared={type=number site=w8}
+    Jump -> next b10(v24)
+  b8():
+    v25 = Integer integer=50
+    v26 = BitXor v1, v25
+    v27 = Convert v26 declared={type=number site=w8}
+    Jump -> next b10(v27)
+  b9():
+    Jump -> next b10(v1)
+  b10(v28: number):
+    v29 = Convert v28 declared={type=number site=w9}
+    Return v29
+}
+function f5 name="someLeaveItAlone" module=m0 position=1191 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w10}, {type=number site=w11}] results=[{type=number site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7] -> case b1(| 0), case b2(| 0), case b3(| 0), case b4(| 0), case b5(| 0), case b6(| 0), case b7(| 0), case b8(| 0), otherwise b9()
+  b1(v2):
+    v3 = Integer integer=100
+    v4 = Add v1, v3
+    v5 = Integer
+    v6 = BitOr v4, v5
+    v7 = Convert v6 declared={type=number site=w11}
+    Jump -> next b10(v7)
+  b2(v8):
+    v9 = Integer integer=2000
+    v10 = Add v1, v9
+    v11 = Integer
+    v12 = BitOr v10, v11
+    v13 = Convert v12 declared={type=number site=w11}
+    Jump -> next b10(v13)
+  b3(v14):
+    Jump -> next b10(v1)
+  b4(v15):
+    v16 = Integer integer=70000
+    v17 = Add v1, v16
+    v18 = Integer
+    v19 = BitOr v17, v18
+    v20 = Convert v19 declared={type=number site=w11}
+    Jump -> next b10(v20)
+  b5(v21):
+    v22 = Integer integer=-5
+    v23 = Add v1, v22
+    v24 = Integer
+    v25 = BitOr v23, v24
+    v26 = Convert v25 declared={type=number site=w11}
+    Jump -> next b10(v26)
+  b6(v27):
+    v28 = Integer integer=6
+    v29 = Add v1, v28
+    v30 = Integer
+    v31 = BitOr v29, v30
+    v32 = Convert v31 declared={type=number site=w11}
+    Jump -> next b10(v32)
+  b7(v33):
+    Jump -> next b10(v1)
+  b8(v34):
+    v35 = Integer integer=8
+    v36 = Add v1, v35
+    v37 = Integer
+    v38 = BitOr v36, v37
+    v39 = Convert v38 declared={type=number site=w11}
+    Jump -> next b10(v39)
+  b9():
+    Jump -> next b10(v1)
+  b10(v40: number):
+    v41 = Convert v40 declared={type=number site=w12}
+    Return v41
+}
+function f6 name="mixed" module=m0 position=1546 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w13}, {type=number site=w14}] results=[{type=number site=w15}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7] -> case b1(| 0), case b2(| 0), case b3(| 0), case b4(| 0), case b5(| 0), case b6(| 0), case b7(| 0), case b8(| 0), otherwise b9()
+  b1(v2):
+    v3 = Integer integer=1
+    v4 = BitXor v1, v3
+    v5 = Convert v4 declared={type=number site=w14}
+    Jump -> next b10(v5)
+  b2(v6):
+    v7 = Integer integer=2
+    v8 = BitOr v1, v7
+    v9 = Convert v8 declared={type=number site=w14}
+    Jump -> next b10(v9)
+  b3(v10):
+    v11 = Integer integer=5
+    v12 = BitXor v1, v11
+    v13 = Convert v12 declared={type=number site=w14}
+    Jump -> next b10(v13)
+  b4(v14):
+    v15 = Integer integer=10
+    v16 = Convert v15 declared={type=number site=w14}
+    Jump -> next b10(v16)
+  b5(v17):
+    v18 = Integer integer=17
+    v19 = BitXor v1, v18
+    v20 = Convert v19 declared={type=number site=w14}
+    Jump -> next b10(v20)
+  b6(v21):
+    v22 = Integer integer=26
+    v23 = BitXor v1, v22
+    v24 = Convert v23 declared={type=number site=w14}
+    Jump -> next b10(v24)
+  b7(v25):
+    v26 = Integer integer=37
+    v27 = BitXor v1, v26
+    v28 = Convert v27 declared={type=number site=w14}
+    Jump -> next b10(v28)
+  b8(v29):
+    v30 = Integer integer=50
+    v31 = BitXor v1, v30
+    v32 = Convert v31 declared={type=number site=w14}
+    Jump -> next b10(v32)
+  b9():
+    Jump -> next b10(v1)
+  b10(v33: number):
+    v34 = Convert v33 declared={type=number site=w15}
+    Return v34
+}
+function f7 name="fractions" module=m0 position=1846 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w16}] results=[{type=number site=w17}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0 wide
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 175, patchpoints: 22, rare instructions: 244, polls: 1
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="wide"
+# CHECK: role=GenericVersion
+# CHECK-NEXT: instructions: 11, patchpoints: 2
+# CHECK-NEXT: end of function f13

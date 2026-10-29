@@ -446,6 +446,9 @@ export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTic
     }
     $putInternalField(marker, 0, 1);
   }
+  // Object lists a member from when it is first read. internal/validators, which is loaded for a callback that is no function, reads these
+  // three when it loads: whoever has read process.nextTick finds them read, in this order.
+  const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
   if (IS_COMPILED_AHEAD_OF_TIME) {
     return install(process, marker, startRing, require("internal/process/next_tick_queue").nextTick);
   }
@@ -617,6 +620,11 @@ export function windowsEnv(
     ownKeys() {
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us
       return envMapList.slice();
+    },
+    preventExtensions() {
+      // As in Node: Object.preventExtensions(), Object.seal() and Object.freeze() throw a TypeError. Of a target that
+      // cannot be extended ownKeys() would have to answer the target's own keys, which are in upper case.
+      return false;
     },
   });
   return envProxy;

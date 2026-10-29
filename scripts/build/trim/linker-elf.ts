@@ -116,7 +116,12 @@ export function elf(linker: Linker): LinkerFormat {
       without: debuggerOnlyFlags,
     }),
     secondLinkArguments(order) {
-      writeFileSync(orderFile, order.groups.flatMap(group => group.names).join("\n") + "\n" + commandOrder, "latin1");
+      // What the command's file lists lies together: first of every group, then of no group.
+      const names = order.groups.flatMap(group => group.names);
+      const listed = new Set(commandOrder.split("\n"));
+      const isListed = (name: string) => listed.has(name);
+      const lines = [...names.filter(isListed), commandOrder, ...names.filter(name => !isListed(name))];
+      writeFileSync(orderFile, lines.join("\n") + "\n", "latin1");
       if (orderAt >= 0) return { last: [...commonFlags], replaced: new Map([[orderAt, orderFlag + orderFile]]) };
       return { last: [...commonFlags, orderFlag + orderFile, "-Wl,--no-warn-symbol-ordering"], replaced: new Map() };
     },

@@ -39,16 +39,12 @@ function f1 name="ofResponse" flags=[IsAsync] parameters=[{type=undefined|null|R
 # CHECK: function {{*}}name="ofResponse" {{*}}role=CoroutineBody
 # CHECK: = TypeTest v0 testedType=Response
 # CHECK: [[promise]]:{{*}}= CallBuiltin {{*}} overload=CompilerHelpersJsonSourceOfBody/0
-# CHECK-NEXT: [[yes]]: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next [[merge]]([[promise]], [[yes]])
-# CHECK: = Call {{*}} calleeKey="json"
-# CHECK-NEXT: [[no]]: false = Boolean
-# CHECK-NEXT: Jump -> next [[merge]]({{*}}, [[no]])
-# CHECK: [[merge]]([[awaitedPromise]]:{{*}}, [[holdsBytes]]: boolean{{*}}):
-# CHECK-NEXT: [[awaited]]:{{*}}= AwaitBySavingFrame [[awaitedPromise]],
-# CHECK-NEXT: Branch [[holdsBytes]] -> taken
-# CHECK: = JSONSourceOpen [[awaited]]
+# CHECK-NEXT: [[awaited]]:{{*}}= AwaitBySavingFrame [[promise]],
+# CHECK-NEXT: = JSONSourceOpen [[awaited]]
 # CHECK: = CallDirect {{*}} function=[[parserOfOrder]]
+# CHECK: = Call {{*}} calleeKey="json"
+# CHECK: = AwaitBySavingFrame
+# CHECK-NOT: JSONSourceOpen
 # CHECK-NOT: ResponsePrototypeJson/0
 # CHECK: function [[parserOfOrder]] {{*}}role=Parser
 # CHECK: = NewObject {{*}} layout=L0

@@ -453,6 +453,81 @@ test("PerformanceObserver delivers entries to a callback created in a node:vm co
   expect(exitCode).toBe(0);
 });
 
+test("a PerformanceObserver batch keeps the AsyncLocalStorage store of the call that scheduled it until it is delivered", async () => {
+  // Which store Node runs an observer callback in is in async_hooks/async-context/async-context-perf_hooks-observer.js,
+  // which runs under Node too. This is the part only Bun can check: the pending batch is all that keeps the store.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { AsyncLocalStorage } = require("node:async_hooks");
+       const als = new AsyncLocalStorage();
+       const delivered = [];
+       let wake;
+       const observer = new PerformanceObserver(() => {
+         delivered.push(als.getStore()?.id);
+         wake();
+       });
+       observer.observe({ entryTypes: ["mark"] });
+
+       function markUnderFreshStore(id) {
+         const store = { id };
+         als.run(store, () => performance.mark("mark-" + id));
+         return new WeakRef(store);
+       }
+
+       (async () => {
+         const stores = [];
+         for (let id = 0; id < 10; id++) {
+           const delivery = new Promise(resolve => (wake = resolve));
+           stores.push(markUnderFreshStore(id));
+           // A collection between the mark() and the callback must not take the store.
+           Bun.gc(true);
+           await delivery;
+         }
+         const alive = () => stores.filter(ref => ref.deref() !== undefined).length;
+         for (let i = 0; i < 50 && alive() > 0; i++) {
+           Bun.gc(true);
+           await new Promise(resolve => setImmediate(resolve));
+         }
+         console.log(JSON.stringify({ delivered, alive: alive() }));
+       })();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ delivered: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], alive: 0 });
+  expect(exitCode).toBe(0);
+});
+
+test("a PerformanceObserver batch of a worker runs in the AsyncLocalStorage store of the worker's mark()", async () => {
+  // Every thread has its own performance timeline, and so its own batches.
+  const worker = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+    const { AsyncLocalStorage } = require("node:async_hooks");
+    const als = new AsyncLocalStorage();
+    const observer = new PerformanceObserver(list => {
+      observer.disconnect();
+      parentPort.postMessage({ store: als.getStore(), names: list.getEntries().map(entry => entry.name) });
+    });
+    observer.observe({ entryTypes: ["mark"] });
+    als.run("worker", () => performance.mark("in-worker"));`,
+    { eval: true },
+  );
+  try {
+    const batch = await new Promise((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+    });
+    expect(batch).toEqual({ store: "worker", names: ["in-worker"] });
+  } finally {
+    await worker.terminate();
+  }
+});
+
 test("mark/measure toJSON and inspection include detail without perf_hooks being loaded", async () => {
   // These used to be patched onto the prototypes when node:perf_hooks was first required,
   // so JSON.stringify(performance.mark(...)) dropped `detail` until then.

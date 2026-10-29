@@ -1310,9 +1310,34 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
         MarkedArgumentBuffer args;
         args.append(jsString(vm, eventName.string()));
         args.append(jsNumber(signalNumber));
+        // Read before the emit: it removes a once() listener, and with the name's last listener
+        // the name's context, before that listener runs. A realm with a Bun.ModuleGraph enters none.
+        JSValue captured = globalObject->hasModuleGraphs() ? JSValue() : process->signalAsyncContext(vm, eventName);
+        AsyncContextScope asyncContext(globalObject, captured);
         fired |= process->wrapped().emitForBindings(eventName, args);
     }
     return fired;
+}
+
+JSValue Process::signalAsyncContext(VM& vm, const Identifier& signalName) const
+{
+    JSObject* contexts = m_signalAsyncContexts.get();
+    return contexts ? contexts->getDirect(vm, signalName) : JSValue();
+}
+
+void Process::setSignalAsyncContext(VM& vm, const Identifier& signalName, JSValue asyncContext)
+{
+    JSObject* contexts = m_signalAsyncContexts.get();
+    if (asyncContext.isUndefined()) {
+        if (contexts && contexts->getDirect(vm, signalName))
+            contexts->putDirect(vm, signalName, jsUndefined());
+        return;
+    }
+    if (!contexts) {
+        contexts = constructEmptyObject(vm, globalObject()->nullPrototypeObjectStructure());
+        m_signalAsyncContexts.set(vm, this, contexts);
+    }
+    contexts->putDirect(vm, signalName, asyncContext);
 }
 
 #if OS(WINDOWS)
@@ -1704,6 +1729,13 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #else
 #error unknown OS
 #endif
+                // Node has one Signal handle per name: made with the name's first listener, closed
+                // with its last. It is an async resource, so this is where the context is captured.
+                if (eventEmitter.listenerCount(eventName) == (isAdded ? 1 : 0)) {
+                    auto* global = defaultGlobalObject(eventEmitter.scriptExecutionContext()->jsGlobalObject());
+                    JSValue asyncContext = isAdded && !global->hasModuleGraphs() ? global->m_asyncContextData.get()->getInternalField(0) : jsUndefined();
+                    global->processObject()->setSignalAsyncContext(global->vm(), eventName, asyncContext);
+                }
 
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {
@@ -3962,6 +3994,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_onWarning);
+    visitor.append(thisObject->m_signalAsyncContexts);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);

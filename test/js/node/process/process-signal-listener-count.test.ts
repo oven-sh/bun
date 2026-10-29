@@ -177,6 +177,87 @@ done"
   expect(exitCode).toBe(0);
 });
 
+// Node's watcher for a signal name is an async resource, made with the name's first listener and closed
+// with its last. Which store a listener then runs in is in async_hooks/async-context/async-context-process-signal.js,
+// which runs under Node too. This is the part only Bun can check: how long the name keeps that store.
+test.skipIf(isWindows)(
+  "a signal name keeps the AsyncLocalStorage store of its first listener until its last listener is removed",
+  async () => {
+    const script = /*js*/ `
+      const { AsyncLocalStorage } = require("node:async_hooks");
+      const als = new AsyncLocalStorage();
+      const keepAlive = setInterval(() => {}, 1000);
+      let seen = [];
+      let wake;
+      const record = label => {
+        seen.push(label + ":" + als.getStore()?.id);
+        wake?.();
+      };
+      async function deliver(count) {
+        seen = [];
+        process.kill(process.pid, "SIGUSR2");
+        while (seen.length < count) await new Promise(resolve => (wake = resolve));
+        return seen;
+      }
+      function listenUnderFreshStore(id, method = "on") {
+        const store = { id };
+        const listener = () => record("listener");
+        als.run(store, () => process[method]("SIGUSR2", listener));
+        return { store: new WeakRef(store), listener };
+      }
+      const alive = stores => stores.filter(ref => ref.deref() !== undefined).length;
+      const out = {};
+
+      const kept = listenUnderFreshStore("kept");
+      Bun.gc(true);
+      out.whileListening = { alive: alive([kept.store]), seen: await deliver(1) };
+
+      // Every way of removing the name's last listener releases the store.
+      const released = [kept.store];
+      process.removeListener("SIGUSR2", kept.listener);
+      for (const remove of [() => process.removeAllListeners("SIGUSR2"), () => process.removeAllListeners()]) {
+        released.push(listenUnderFreshStore("removed").store);
+        remove();
+      }
+      released.push(listenUnderFreshStore("once", "once").store);
+      out.once = await deliver(1);
+      for (let i = 0; i < 50 && alive(released) > 0; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      out.aliveAfterRemoval = alive(released);
+
+      // A realm that has a Bun.ModuleGraph keeps no store: one delivery runs the listeners of every graph.
+      const graph = new Bun.ModuleGraph();
+      graph.run(() => als.run({ id: "graph" }, () => process.on("SIGUSR2", () => record("graph"))));
+      als.run({ id: "host" }, () => process.on("SIGUSR2", () => record("host")));
+      out.withModuleGraph = await deliver(2);
+      graph.dispose();
+
+      console.log(JSON.stringify(out));
+      process.exit(0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      whileListening: { alive: 1, seen: ["listener:kept"] },
+      once: ["listener:once"],
+      aliveAfterRemoval: 0,
+      withModuleGraph: ["graph:undefined", "host:undefined"],
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 // SIGIOT is an alias for SIGABRT. Node starts one watcher per event name, so one signal runs the listeners
 // for both names, and the OS handler is only removed once both names have no listeners.
 // On Windows, no signal number has two names.

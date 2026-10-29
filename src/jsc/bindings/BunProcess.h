@@ -34,6 +34,10 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
+    // Signal name -> the async context its first listener was added in. Node makes the name's
+    // Signal handle there, an async resource, so a signal from the OS runs the name's listeners
+    // in that context. Built on the first capture.
+    WriteBarrier<JSObject> m_signalAsyncContexts;
 
     void installDefaultWarningListener(JSC::VM&);
 
@@ -88,6 +92,11 @@ public:
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
     void clearCachedCwd() { m_cachedCwd.clear(); }
+
+    // Empty or undefined when the name has no captured context.
+    JSValue signalAsyncContext(JSC::VM&, const Identifier& signalName) const;
+    // undefined drops the name's context.
+    void setSignalAsyncContext(JSC::VM&, const Identifier& signalName, JSValue asyncContext);
 
     JSValue getArgv(JSGlobalObject* globalObject);
     JSValue getExecArgv(JSGlobalObject* globalObject);

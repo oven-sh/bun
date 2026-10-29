@@ -57,10 +57,15 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
+    DECLARE_VISIT_CHILDREN;
     Performance& wrapped() const
     {
         return static_cast<Performance&>(Base::wrapped());
     }
+
+    // The async context of the caller that scheduled the pending observer delivery task. Node
+    // schedules one setImmediate() per batch at that point, so the callbacks run in that context.
+    JSC::WriteBarrier<JSC::Unknown> m_pendingDeliveryAsyncContext;
 
 protected:
     JSPerformance(JSC::Structure*, JSDOMGlobalObject&, Ref<Performance>&&);

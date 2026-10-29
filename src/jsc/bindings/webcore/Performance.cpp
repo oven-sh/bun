@@ -33,11 +33,13 @@
 #include "config.h"
 #include "Performance.h"
 
+#include "AsyncContextFrame.h"
 // #include "Document.h"
 // #include "DocumentLoader.h"
 #include "Event.h"
 // #include "EventLoop.h"
 #include "EventNames.h"
+#include "JSPerformance.h"
 // #include "LocalFrame.h"
 #include "PerformanceEntry.h"
 #include "PerformanceMarkOptions.h"
@@ -47,6 +49,8 @@
 #include "PerformanceTiming.h"
 #include "PerformanceUserTiming.h"
 #include "ScriptExecutionContext.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "BunClientData.h"
 
@@ -295,9 +299,31 @@ void Performance::scheduleTaskIfNeeded()
     if (!context)
         return;
 
+    // Node delivers a batch from the setImmediate() that its first enqueue schedules, so the
+    // callbacks run in that caller's async context. A realm with a Bun.ModuleGraph keeps none:
+    // one batch there serves the observers of several graphs.
+    auto* globalObject = defaultGlobalObject(context->jsGlobalObject());
+    if (!globalObject->hasModuleGraphs()) {
+        JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+        if (!asyncContext.isUndefined()) {
+            auto* wrapper = uncheckedDowncast<JSPerformance>(globalObject->m_performanceObject.getInitializedOnMainThread(globalObject));
+            wrapper->m_pendingDeliveryAsyncContext.set(globalObject->vm(), wrapper, asyncContext);
+        }
+    }
+
     m_hasScheduledTimingBufferDeliveryTask = true;
     context->postTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
         m_hasScheduledTimingBufferDeliveryTask = false;
+
+        // Take the context before a callback runs: a mark() in a callback schedules the next batch.
+        std::optional<AsyncContextScope> asyncContext;
+        if (auto* wrapper = uncheckedDowncast<JSPerformance>(this->wrapper())) {
+            JSC::JSValue pending = wrapper->m_pendingDeliveryAsyncContext.get();
+            wrapper->m_pendingDeliveryAsyncContext.clear();
+            if (pending && !wrapper->globalObject()->hasModuleGraphs())
+                asyncContext.emplace(wrapper->globalObject(), pending);
+        }
+
         for (auto& observer : copyToVector(m_observers))
             observer->deliver();
     });

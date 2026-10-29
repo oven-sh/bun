@@ -187,7 +187,7 @@ impl AnyWebSocket {
         // `app` is the matching `uws_app_t*`; the `ssl` flag selects the
         // const-generic instantiation).
         if ssl {
-            uws::NewApp::<true>::publish_with_options(
+            uws::NewApp::<true>::publish(
                 bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<true>>()),
                 topic,
                 message,
@@ -195,7 +195,7 @@ impl AnyWebSocket {
                 compress,
             )
         } else {
-            uws::NewApp::<false>::publish_with_options(
+            uws::NewApp::<false>::publish(
                 bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<false>>()),
                 topic,
                 message,

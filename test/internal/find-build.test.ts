@@ -227,6 +227,26 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     });
   });
 
+  scenario("--errors limits `no error annotations` to the first 200 when the list is cut", async () => {
+    const result = await runFindBuild(["--errors", "7", "--no-compare"], {
+      annotations: { 7: Array.from({ length: 230 }, () => binarySize) },
+    });
+    expect(result).toEqual({
+      stdout: [
+        "build #7  https://buildkite.com/bun/bun/builds/7",
+        "",
+        cutNote,
+        "no error annotations in the first 200 (200 warning/info; pass --all to show)",
+        "",
+      ],
+      headings: [],
+      notes: [cutNote],
+      stderr: "",
+      exitCode: 0,
+      requests: { 7: [request(7, 1), request(7, 2), after200(7)] },
+    });
+  });
+
   scenario("--errors --all prints the flaky tests and the other annotations of a later page", async () => {
     const result = await runFindBuild(["--errors", "7", "--no-compare", "--all"], {
       annotations: { 7: [...failingFiles(120), flaky("test/js/retried.test.ts"), binarySize] },
@@ -313,7 +333,11 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         exitCode: 0,
         requests,
       });
-      expect(result.stdout.slice(-3)).toEqual(["", "(could not fetch recently merged PRs for comparison)", ""]);
+      expect(result.stdout.slice(-3)).toEqual([
+        "",
+        "(no comparison: could not read the builds of recently merged PRs)",
+        "",
+      ]);
     });
   });
 

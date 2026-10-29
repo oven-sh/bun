@@ -262,7 +262,8 @@ async function printErrors(
 
   if (shown.length === 0 && flaky.length === 0) {
     const other = rest.length;
-    console.log(`no error annotations${other ? ` (${other} warning/info; pass --all to show)` : ""}`);
+    const scope = more ? ` in the first ${anns.length}` : "";
+    console.log(`no error annotations${scope}${other ? ` (${other} warning/info; pass --all to show)` : ""}`);
     return;
   }
 
@@ -282,7 +283,7 @@ async function printErrors(
 
   if (cut) console.log(`\n${cut}`);
   if (baseline == null && compare) {
-    console.log(`\n${c.dim}(could not fetch recently merged PRs for comparison)${c.reset}`);
+    console.log(`\n${c.dim}(no comparison: could not read the builds of recently merged PRs)${c.reset}`);
   }
 }
 

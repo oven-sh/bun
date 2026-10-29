@@ -66,16 +66,13 @@ pub struct ThreadPool {
     pub(crate) v2: *const BundleV2<'static>,
 }
 
-// SAFETY: `ThreadPool` is shared across worker threads; the only mutated
-// field (`workers_assignments`) is guarded by its `bun_threading::Guarded`, and
-// the raw-pointer fields are set during init, before the pool is shared with
-// worker threads, and only read thereafter (mutation in `deinit` happens on the
-// owning thread after the workers are done).
-unsafe impl Send for ThreadPool {}
-// SAFETY: `&ThreadPool` is read concurrently from worker-pool threads via
-// `get_worker(&self)`; the only field mutated under `&self` is
-// `workers_assignments` (through its `bun_threading::Guarded` lock), and the
-// raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
+// SAFETY: tasks on the pool's threads share `&ThreadPool`. What is not `Sync` on its own:
+// - `worker_pool`. Only `init` and `deinit(&mut self)` write it. Under `&self` it is dereferenced
+//   only as `&ThreadPoolLib::ThreadPool`, which is `Sync`.
+// - `workers_assignments`. The map is behind its `Guarded` lock, and `get_worker_slow` takes out
+//   only the `*mut Worker` of the calling thread.
+// - `v2`. Only `init` writes it. `get_worker_slow` stores it as the `ctx` of a new `Worker`; what
+//   a worker reads through `ctx` is not covered here (`BundleV2` is not `Sync`).
 unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
@@ -479,9 +476,6 @@ impl Worker {
     // during pool drain (scheduled via `deinit_soon`). Writes: own `Worker`
     // fields only (`heap`, `data`, `ast_memory_store` teardown). The `Worker`
     // is per-OS-thread (`Thread::current()`-keyed), so `&mut *this` is unique.
-    // `Worker` is `Send` because its arena/backref pointers are
-    // owned-heap or per-thread; the `unsafe impl Send for ThreadPool` (the
-    // bundler pool that owns the workers vec) covers the cross-thread move.
     /// Thread-pool idle-task callback (safe fn — coerces to the
     /// `Task.callback` field type at the struct-init site). `task` is the
     /// `deinit_task` field of a live boxed `Worker` — guaranteed by

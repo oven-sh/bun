@@ -137,9 +137,8 @@ pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSI
     let Some(session) = NonNull::new(session) else {
         return;
     };
-    // SAFETY: `socket` is live for this call.
-    let owner = unsafe { us_socket_session_sink(socket) };
-    let Some(owner) = NonNull::new(owner.cast::<SessionSink>()) else {
+    let owner = us_socket_session_sink(socket);
+    let Some(mut owner) = NonNull::new(owner.cast::<SessionSink>()) else {
         return;
     };
     // SAFETY: `session` is live for this call; the sink takes its own reference.
@@ -147,7 +146,7 @@ pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSI
     // SAFETY: `owner` is the Box interior installed by [`install`]. Runs on
     // the HTTP thread inside `SSL_read`/`SSL_do_handshake`; nothing else
     // holds a borrow of the sink during that call.
-    let sink = unsafe { owner.as_ref() };
+    let sink = unsafe { owner.as_mut() };
     if sink.armed {
         // SAFETY: `ctx` is the `HTTPContext<true>` owning this socket's
         // group; it outlives every SSL attached to it.
@@ -158,13 +157,9 @@ pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSI
             &sink.unix_path,
             session,
         );
-    } else {
-        // SAFETY: unique access on the HTTP thread (see above).
-        let sink = unsafe { &mut *owner.as_ptr() };
-        if let Some(prev) = sink.pending.replace(session) {
-            // SAFETY: `pending` owned one reference.
-            unsafe { SSL_SESSION_free(prev.as_ptr()) };
-        }
+    } else if let Some(prev) = sink.pending.replace(session) {
+        // SAFETY: `pending` owned one reference.
+        unsafe { SSL_SESSION_free(prev.as_ptr()) };
     }
 }
 
@@ -183,7 +178,7 @@ unsafe extern "C" {
         sink: *mut c_void,
         on_free: Option<extern "C" fn(*mut c_void)>,
     );
-    fn us_socket_session_sink(s: *mut bun_uws::us_socket_t) -> *mut c_void;
+    safe fn us_socket_session_sink(s: &mut bun_uws::us_socket_t) -> *mut c_void;
     fn SSL_SESSION_up_ref(session: *mut SSL_SESSION) -> core::ffi::c_int;
 }
 
@@ -248,7 +243,7 @@ pub(crate) unsafe fn install(
 /// `socket` must be a live socket on the HTTP thread.
 pub(crate) unsafe fn arm(socket: *mut bun_uws::us_socket_t) {
     // SAFETY: caller contract.
-    let owner = unsafe { us_socket_session_sink(socket) };
+    let owner = us_socket_session_sink(unsafe { &mut *socket });
     let Some(mut owner) = NonNull::new(owner.cast::<SessionSink>()) else {
         return;
     };

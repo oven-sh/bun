@@ -324,31 +324,6 @@ impl DevServer {
         VirtualMachine::get_mut()
     }
 
-    // ── transpiler accessors ───────────────────────────────────────────────
-    // The three transpilers are `MaybeUninit` until `init()` writes them via
-    // `Framework::init_transpiler`. Every access after `init()` returns goes
-    // through these helpers; the SAFETY contract is that `init()` is the only
-    // constructor and it always populates all three before returning `Ok`.
-    #[inline]
-    pub(crate) fn server_transpiler(&self) -> &Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.server_transpiler.assume_init_ref() }
-    }
-    #[inline]
-    pub(crate) fn server_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.server_transpiler.assume_init_mut() }
-    }
-    #[inline]
-    pub(crate) fn client_transpiler(&self) -> &Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.client_transpiler.assume_init_ref() }
-    }
-    #[inline]
-    pub(crate) fn client_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.client_transpiler.assume_init_mut() }
-    }
     #[inline]
     pub(crate) fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
@@ -578,11 +553,10 @@ pub(crate) struct DevServer {
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
     // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
     // the server.
-    // `MaybeUninit` until `Framework::init_transpiler` populates them in place
-    // (in `init()` below) — `Transpiler` contains a non-nullable `&Arena`, so
-    // neither `Default` nor `mem::zeroed()` are sound (PORTING.md §Forbidden).
-    pub(crate) server_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
-    pub(crate) client_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    // `ManuallyDrop`: dropped in `Drop for DevServer`, before the framework views they borrow.
+    pub(crate) server_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
+    pub(crate) client_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
+    // Without a separate SSR graph, a bitwise copy of `server_transpiler`, not a value of its own.
     pub(crate) ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate

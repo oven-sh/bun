@@ -102,11 +102,7 @@ impl HotReloadEvent {
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
-                // SAFETY: server_transpiler is initialized in DevServer::init before any
-                // HotReloadEvent can fire.
-                let _ = unsafe { dev.server_transpiler.assume_init_mut() }
-                    .resolver
-                    .bust_dir_cache(changed_dir);
+                let _ = dev.server_transpiler.resolver.bust_dir_cache(changed_dir);
 
                 // if a directory watch exists for resolution failures, check those now.
                 if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
@@ -119,8 +115,8 @@ impl HotReloadEvent {
                         let source_file_path = dep.source_file_path;
                         it = dep.next;
 
-                        // SAFETY: as above, `DevServer::init` initialized `server_transpiler`.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                        let resolved = dev
+                            .server_transpiler
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(

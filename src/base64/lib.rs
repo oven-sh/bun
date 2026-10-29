@@ -592,8 +592,7 @@ pub mod zig_base64 {
             let mut dest_idx: usize = 0;
             let mut leftover_idx: Option<usize> = None;
             for (src_idx, &c) in source.iter().enumerate() {
-                // SAFETY: `c: u8` so `c as usize` is in 0..=255, and `char_to_index` is `[u8; 256]`.
-                let d = unsafe { *self.char_to_index.get_unchecked(c as usize) };
+                let d = self.char_to_index[c as usize];
                 if d == Self::INVALID_CHAR {
                     if self.pad_char.is_none() || c != self.pad_char.unwrap() {
                         return Err(Error::InvalidCharacter);

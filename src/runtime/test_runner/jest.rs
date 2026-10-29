@@ -301,9 +301,7 @@ pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 pub(crate) mod Jest {
     use super::*;
 
-    // JS-VM-thread-only singleton; RacyCell
-    // over `Option<NonNull<_>>` so direct `.read()` projections in
-    // `snapshot.rs` etc. keep their shape.
+    // JS-VM-thread-only singleton.
     pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
         bun_core::RacyCell::new(None);
 

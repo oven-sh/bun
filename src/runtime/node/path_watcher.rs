@@ -1265,8 +1265,7 @@ impl Drop for DarwinWatch {
 #[cfg(target_os = "macos")]
 impl Darwin {
     fn init() -> sys::Result<&'static PathWatcherManager> {
-        // SAFETY: just allocated; nothing after this can fail.
-        Ok(unsafe { &*bun_core::heap::into_raw(Box::new(PathWatcherManager::default())) })
+        Ok(Box::leak(Box::new(PathWatcherManager::default())))
     }
 
     /// Caller does NOT hold `manager.mutex` — `FSEvents.watch()` takes the FSEvents

@@ -467,15 +467,15 @@ impl QuicSession {
         }
     }
 
-    pub(super) fn create(
+    pub(super) fn create<'a>(
         global: &JSGlobalObject,
         vtable: *const lsquic::NqVtable,
-        endpoint: *mut QuicEndpoint,
+        endpoint: &'a QuicEndpoint,
         endpoint_handle: JSValue,
         conn: *mut lsquic::lsquic_conn,
         is_server: bool,
         application: Application,
-    ) -> JsResult<(*mut QuicSession, JSValue)> {
+    ) -> JsResult<(&'a QuicSession, JSValue)> {
         let this_value = Self::new(global, vtable).into_js_wrapper(global);
         let handle = this_value.to_js();
         let raw = this_value.payload_ptr().as_ptr();
@@ -495,7 +495,9 @@ impl QuicSession {
         handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
         handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
 
-        // SAFETY: the payload of `handle`.
+        // SAFETY: the payload of `handle`, which this frame holds. The strong ref set below roots
+        // it until `teardown`; after that the frame that has the reference holds it. Only `&` is
+        // formed to the payload before the sweeper drops it.
         let this = unsafe { &*raw };
         #[expect(
             clippy::cast_ptr_alignment,
@@ -525,7 +527,7 @@ impl QuicSession {
         )]
         this.stats.set(stats_ptr.cast::<u64>());
         this.conn.set(conn);
-        this.endpoint.set(endpoint);
+        this.endpoint.set(core::ptr::from_ref(endpoint).cast_mut());
         this.endpoint_js
             .set(Some(Strong::create(endpoint_handle, global)));
         this.is_server.set(is_server);
@@ -535,7 +537,7 @@ impl QuicSession {
         if !conn.is_null() {
             this.cache_sockaddrs(conn);
         }
-        Ok((raw, handle))
+        Ok((this, handle))
     }
 
     pub(super) fn bind_conn(&self, conn: *mut lsquic::lsquic_conn) {
@@ -745,22 +747,17 @@ impl QuicSession {
         None
     }
     /// Creates a stream for this session and registers it.
-    fn create_stream(
-        &self,
+    fn create_stream<'a>(
+        &'a self,
         global: &JSGlobalObject,
         session_handle: JSValue,
         raw: *mut lsquic::lsquic_stream,
-    ) -> JsResult<(super::stream::Key, *mut super::stream::QuicStream, JSValue)> {
+    ) -> JsResult<(super::stream::Key, &'a super::stream::QuicStream, JSValue)> {
         let key = super::stream::Key(self.next_stream_key.replace(self.next_stream_key.get() + 1));
-        let (qs, handle) = super::stream::QuicStream::create(
-            global,
-            self.vtable,
-            core::ptr::from_ref(self).cast_mut(),
-            key,
-            session_handle,
-            raw,
-        )?;
-        self.streams.with_mut(|v| v.push((key, qs)));
+        let (qs, handle) =
+            super::stream::QuicStream::create(global, self.vtable, self, key, session_handle, raw)?;
+        self.streams
+            .with_mut(|v| v.push((key, core::ptr::from_ref(qs).cast_mut())));
         Ok((key, qs, handle))
     }
     pub(super) fn remove_stream(&self, key: super::stream::Key) {
@@ -797,8 +794,7 @@ impl QuicSession {
         let global = unsafe { &*global_ptr };
         match self.create_stream(global, self.handle(), raw) {
             Ok((key, qs, _handle)) => {
-                // SAFETY: `qs` was just created.
-                unsafe { (*qs).mark_wrote_to_lsquic() };
+                qs.mark_wrote_to_lsquic();
                 // SAFETY: `raw` is the live stream lsquic just created.
                 if let Some(s) = unsafe { lsquic::Stream::from_raw(raw) } {
                     self.bump_stream_stat(s.id(), false);
@@ -807,11 +803,10 @@ impl QuicSession {
                     stream: key,
                     remote: true,
                 });
-                // SAFETY: `qs` was just created.
-                if let Some(code) = unsafe { (*qs).pre_reset_code() } {
+                if let Some(code) = qs.pre_reset_code() {
                     self.push_event(SessionEvent::StreamReset { stream: key, code });
                 }
-                qs
+                core::ptr::from_ref(qs).cast_mut()
             }
             Err(e) => {
                 crate::dispatch::fold(Err(e));
@@ -2080,18 +2075,13 @@ impl QuicSession {
         }
         self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
         if let Some(buf) = body.as_array_buffer(global) {
-            // SAFETY: `qs` was just created.
-            unsafe {
-                (*qs).outbound.with_mut(|o| {
-                    o.started = true;
-                    o.data.extend(buf.byte_slice().iter().copied());
-                    o.end = super::stream::PendingEnd::Fin;
-                });
-                // As attach_source/init_streaming_source/send_headers do: this
-                // is what makes a later setOutbound() throw instead of
-                // appending a second body.
-                (*qs).with_state(|s| s.has_outbound = 1);
-            }
+            qs.outbound.with_mut(|o| {
+                o.started = true;
+                o.data.extend(buf.byte_slice().iter().copied());
+                o.end = super::stream::PendingEnd::Fin;
+            });
+            // As in attach_source: a later setOutbound() throws instead of adding a second body.
+            qs.with_state(|s| s.has_outbound = 1);
         }
         // SAFETY: `conn` is non-null (checked above) and live.
         if let Some(conn) = unsafe { lsquic::Conn::from_raw(self.conn.get()) } {

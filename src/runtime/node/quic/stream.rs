@@ -147,19 +147,19 @@ impl Drop for QuicStream {
 }
 
 impl QuicStream {
-    pub(super) fn create(
+    pub(super) fn create<'a>(
         global: &JSGlobalObject,
         vtable: *const lsquic::NqVtable,
-        session: *mut QuicSession,
+        session: &'a QuicSession,
         key: Key,
         session_handle: JSValue,
         raw: *mut lsquic::lsquic_stream,
-    ) -> JsResult<(*mut QuicStream, JSValue)> {
+    ) -> JsResult<(&'a QuicStream, JSValue)> {
         // `bind_raw` sets `raw` after the allocations below succeed.
         let stream = QuicStream {
             vtable,
             raw: Cell::new(null_mut()),
-            session: Cell::new(session),
+            session: Cell::new(core::ptr::from_ref(session).cast_mut()),
             key,
             session_js: JsCell::new(Some(Strong::create(session_handle, global))),
             this_value: JsCell::new(JsRef::empty()),
@@ -198,7 +198,9 @@ impl QuicStream {
         handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
         handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
 
-        // SAFETY: the payload of `handle`.
+        // SAFETY: the payload of `handle`, which this frame holds. The strong ref set below roots
+        // it until `teardown` or `release_close_root`; after that the frame that has the reference
+        // holds it. Only `&` is formed to the payload before the sweeper drops it.
         let this = unsafe { &*raw_ptr };
         #[expect(
             clippy::cast_ptr_alignment,
@@ -220,7 +222,7 @@ impl QuicStream {
         if !raw.is_null() {
             this.bind_raw(raw);
         }
-        Ok((raw_ptr, handle))
+        Ok((this, handle))
     }
 
     fn bind_raw(&self, raw: *mut lsquic::lsquic_stream) {

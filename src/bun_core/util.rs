@@ -2755,8 +2755,7 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
 }
 
 // ── get_thread_count ──────────────────────────────────────────────────────
-// In [2, 1024]. A UV_THREADPOOL_SIZE with no positive count gives 2, and such a
-// GOMAXPROCS is ignored, as in Go. An empty value is not set.
+// In [2, 1024]. UV_THREADPOOL_SIZE comes first, then GOMAXPROCS, then the CPU count.
 pub fn get_thread_count() -> u16 {
     static CELL: Once<u16> = Once::new();
     *CELL.get_or_init(|| {
@@ -2774,6 +2773,7 @@ pub fn get_thread_count() -> u16 {
                 return None;
             }
             count(value).or_else(|| {
+                // Go ignores a GOMAXPROCS that is not a positive integer.
                 if !like_libuv {
                     return None;
                 }

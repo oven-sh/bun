@@ -6892,7 +6892,7 @@ pub(crate) mod __gated_printer {
                             self.print(b"\\u");
                             let mut tmp = [0u8; 4];
                             let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                            self.writer.print_slice(&tmp[..len]);
+                            self.print(&tmp[..len]);
                         }
                     }
                     continue;
@@ -6901,7 +6901,7 @@ pub(crate) mod __gated_printer {
                 {
                     let mut tmp = [0u8; 4];
                     let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                    self.writer.print_slice(&tmp[..len]);
+                    self.print(&tmp[..len]);
                 }
             }
             Ok(())

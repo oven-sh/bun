@@ -2979,7 +2979,13 @@ impl TestCommand {
             let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
-            bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
+            // The preload-level hooks wrap the whole loop, not every run. --isolate keeps them around every run.
+            let isolate = vm.test_isolation_enabled;
+            let run_first_last = bun_test::FirstLast {
+                first: first_last.first && (isolate || repeat_index == 0),
+                last: first_last.last && (isolate || repeat_index + 1 == repeat_count),
+            };
+            bun_test_root.enter_file(file_id, reporter, should_run_concurrent, run_first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
             scopeguard::defer! {
@@ -3028,6 +3034,33 @@ impl TestCommand {
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
+            }
+            // A file that fails to load is not run again, so this run ends the loop and owes the afterAll.
+            if first_last.last
+                && !run_first_last.last
+                && promise.is_none_or(|promise| {
+                    jsc::JSInternalPromise::opaque_mut(promise).status()
+                        == jsc::js_promise::Status::Rejected
+                })
+            {
+                match bun_test_root.active_file.as_deref() {
+                    Some(file) if file.phase == bun_test::Phase::Collection => {
+                        file.get().first_last.last = true;
+                    }
+                    // An error reported during the load made the file schedule its hooks already.
+                    _ => {
+                        bun_test_root.exit_file();
+                        bun_test_root.enter_file(
+                            file_id,
+                            reporter,
+                            should_run_concurrent,
+                            bun_test::FirstLast {
+                                first: false,
+                                last: true,
+                            },
+                        );
+                    }
+                }
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.

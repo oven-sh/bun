@@ -1826,9 +1826,8 @@ impl Resolver {
         // Failing the pending queries releases their refs on this resolver from
         // inside `ares_destroy`; hold one so it outlives its own channel close.
         // SAFETY: fn contract.
-        let _guard = unsafe { RefPtr::init_ref(this) };
-        // SAFETY: alive under the ref just taken.
-        let result = if unsafe { (*this).destroy_channel() } {
+        let guard = unsafe { RefPtr::init_ref(this) };
+        let result = if guard.destroy_channel() {
             SweepResult::Stopped
         } else {
             SweepResult::Idle
@@ -1836,8 +1835,7 @@ impl Resolver {
         // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
         // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
         // this resolver plus the uws active-handle bump) can still be linked.
-        // SAFETY: as above. `_guard` then releases our ref (may free `this`).
-        unsafe { (*this).remove_timer() };
+        guard.remove_timer();
         result
     }
 }
@@ -3790,12 +3788,7 @@ impl Resolver {
 
         if let Ok(channel) = self.get_channel_or_error(vm.global()) {
             if self.any_requests_pending() {
-                // SAFETY: `channel` is the live c-ares channel owned by `self`.
-                c_ares::ares_process_fd(
-                    unsafe { &mut *channel },
-                    c_ares::ARES_SOCKET_BAD,
-                    c_ares::ARES_SOCKET_BAD,
-                );
+                c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
                 // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
                 if self.any_requests_pending() {
                     let _ = self.add_timer(Some(&now));
@@ -4360,16 +4353,16 @@ impl Resolver {
         ChannelResult::Result(unsafe { &mut *self.channel.get().unwrap() })
     }
 
-    fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<*mut c_ares::Channel> {
+    fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<&mut c_ares::Channel> {
         global_resolver(global_this).get_channel_or_error(global_this)
     }
 
     pub(crate) fn get_channel_or_error(
         &self,
         global_this: &JSGlobalObject,
-    ) -> JsResult<*mut c_ares::Channel> {
+    ) -> JsResult<&mut c_ares::Channel> {
         match self.get_channel() {
-            ChannelResult::Result(result) => Ok(std::ptr::from_mut(result)),
+            ChannelResult::Result(result) => Ok(result),
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
@@ -4723,7 +4716,7 @@ impl Resolver {
             ));
         }
 
-        let channel: *mut c_ares::Channel = match self.get_channel() {
+        let channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 return Err(global_this.throw_value(
@@ -4754,7 +4747,7 @@ impl Resolver {
         // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
         // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
         unsafe {
-            (*channel).get_host_by_addr(ip, &mut *request);
+            channel.get_host_by_addr(ip, &mut *request);
         }
 
         // SAFETY: `bun_vm()` returns the live VM back-ptr.
@@ -5004,7 +4997,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let channel: *mut c_ares::Channel = match self.get_channel() {
+        let channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 // syscall = "query" + ucfirst(TYPE_NAME) — precomputed per record type.
@@ -5044,7 +5037,7 @@ impl Resolver {
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
         // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
         // consumes the request, so the `&mut` borrow is not held past this call.
-        unsafe { (*channel).resolve(name, &mut *request) };
+        unsafe { channel.resolve(name, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -5057,7 +5050,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let channel: *mut c_ares::Channel = match self.get_channel() {
+        let channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 let syscall = bun_core::String::create_atom(&query.name);
@@ -5101,7 +5094,7 @@ impl Resolver {
         // pointer and calls `AddrInfo::callback_wrapper::<GetAddrInfoRequest>`
         // (→ `on_cares_complete`) which consumes the request, so the `&mut`
         // borrow is not held past this call.
-        unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
+        unsafe { channel.get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -5111,7 +5104,7 @@ impl Resolver {
     // ───────── servers / local address ─────────
 
     fn get_channel_servers(
-        channel: *mut c_ares::Channel,
+        channel: &mut c_ares::Channel,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
@@ -5235,7 +5228,7 @@ impl Resolver {
     }
 
     fn set_channel_local_addresses(
-        channel: *mut c_ares::Channel,
+        channel: &mut c_ares::Channel,
         global_this: &JSGlobalObject,
         first: &bun_core::String,
         second: Option<bun_core::String>,
@@ -5262,7 +5255,7 @@ impl Resolver {
     }
 
     fn set_channel_local_address(
-        channel: *mut c_ares::Channel,
+        channel: &mut c_ares::Channel,
         global_this: &JSGlobalObject,
         value: &bun_core::String,
     ) -> JsResult<c_int> {
@@ -5276,8 +5269,7 @@ impl Resolver {
         } == 1
         {
             let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
-            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip);
+            c_ares::ares_set_local_ip4(channel, ip);
             return Ok(c_ares::AF::INET);
         }
 
@@ -5305,14 +5297,13 @@ impl Resolver {
     }
 
     fn set_channel_servers(
-        channel: *mut c_ares::Channel,
+        channel: &mut c_ares::Channel,
         global_this: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<()> {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
-        if channel != Self::get_channel_from_vm(global_this)?
-            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            && c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0
+        if !core::ptr::eq(channel, Self::get_channel_from_vm(global_this)?)
+            && c_ares::ares_queue_active_queries(channel) != 0
         {
             return Err(global_this
                 .err(
@@ -5467,9 +5458,7 @@ impl Resolver {
     }
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
-        let channel = self.get_channel_or_error(cx.global())?;
-        // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-        c_ares::ares_cancel(unsafe { &mut *channel });
+        c_ares::ares_cancel(self.get_channel_or_error(cx.global())?);
         Ok(())
     }
 
@@ -5547,7 +5536,7 @@ impl Resolver {
         // sockaddr_storage reborrowed as sockaddr; `request` was just
         // `heap::alloc`'d and is owned by c-ares until the callback fires.
         unsafe {
-            (*channel).get_name_info(
+            channel.get_name_info(
                 // See `get_sockaddr` call above — inferred `sockaddr` type is
                 // platform-dependent and unnameable on Windows from this crate.
                 &mut *(&raw mut sa).cast(),

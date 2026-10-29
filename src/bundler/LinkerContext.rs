@@ -148,11 +148,18 @@ pub struct LinkerContext<'a> {
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
 // `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
-// `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
+// `framework`) are backrefs into `BundleV2`/`Transpiler` whose
 // lifetimes strictly outlive every parallel section, and per-thread writes go
 // to disjoint SoA slots (see `compute_line_offsets`).
+// No bound asks for `Send`. The `SAFETY` note of `Send for ParentRef` does, of a caller of
+// `assume_mut` on another thread: that is `GenerateChunkCtx::c()`, on pool threads.
 unsafe impl<'a> Send for LinkerContext<'a> {}
-// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
+// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants. And:
+// - `r#loop` is the caller's event loop. Tasks reach it only through `any_loop_mut`: see there.
+// - `dev_server` is set before the bundle schedules its first task. Tasks only test it for `Some`.
+// - `log`: of the tasks, only `prepare_css_asts_for_chunk_impl` dereferences it, to add an error
+//   when an `@import` fails to print. The bundle thread waits meanwhile.
+//   FIXME: two such tasks are not ordered.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
 
 impl<'a> LinkerContext<'a> {

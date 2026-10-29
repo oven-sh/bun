@@ -3,7 +3,6 @@ use bun_collections::VecExt as _VecExt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_alloc::Arena;
 use bun_ast::{B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
 use bun_ast::{ImportRecord, Source};
 use bun_js_parser::js_lexer;
@@ -104,10 +103,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 all_sources,
             };
             let mut visitor = ComposesVisitor::new(&graph);
-            // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
-            // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
-            // borrow across the `this.log` reborrow below.
-            let arena: &Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(this.arena()) };
+            let arena = this.arena();
 
             for entry in css_ast.local_scope.values() {
                 let ref_ = entry.ref_;
@@ -228,11 +224,7 @@ pub(crate) fn generate_code_for_lazy_export(
                         continue;
                     }
 
-                    // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
-                    // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
-                    // across the `&mut self` call to `generate_named_export_in_file` below.
-                    let alloc: &bun_alloc::Arena =
-                        unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
+                    let alloc = this.arena();
                     let name: &[u8] = bun_core::handle_oom(key_str.flattened(alloc).string(alloc));
 
                     // TODO: support non-identifier names
@@ -285,11 +277,7 @@ pub(crate) fn generate_code_for_lazy_export(
                         .fmt_identifier()
                 )
                 .expect("write to Vec<u8> cannot fail");
-                // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
-                // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
-                // across the `&mut self` call to `generate_named_export_in_file` below.
-                let alloc: &bun_alloc::Arena =
-                    unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
+                let alloc = this.arena();
                 let name = alloc.alloc_slice_copy(&name_buf);
 
                 let generated =

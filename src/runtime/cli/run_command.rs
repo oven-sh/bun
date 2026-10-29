@@ -1465,20 +1465,16 @@ impl Run<'_> {
 
     /// Wire `--eval`/`--print`
     /// node-module globals and `--expose-gc` into the JSC global object.
-    fn add_conditional_globals(vm: &VirtualMachine, ctx: &ContextData) {
+    fn add_conditional_globals(global: &JSGlobalObject, ctx: &ContextData) {
         unsafe extern "C" {
-            fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
-            fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
             safe fn Bun__NodeVM__setNewContextsHaveGC(value: bool);
         }
         let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
-            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
-            unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
+            bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(global);
         }
         if ro.expose_gc {
-            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
-            unsafe { JSC__JSGlobalObject__addGc(vm.global) };
+            bun_jsc::cpp::JSC__JSGlobalObject__addGc(global);
             Bun__NodeVM__setNewContextsHaveGC(true);
         }
     }
@@ -1493,14 +1489,15 @@ impl Run<'_> {
             entry_path: mut entry,
             unchecked,
         } = self;
-        let _api_lock = vm.global().vm().get_api_lock();
+        let global = vm.global();
+        let _api_lock = global.vm().get_api_lock();
 
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
         start_profilers(vm, ctx);
 
-        Self::add_conditional_globals(vm, ctx);
+        Self::add_conditional_globals(global, ctx);
 
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
@@ -1509,7 +1506,6 @@ impl Run<'_> {
             }
             // Go through the global object's getter because `Bun.redis` is a
             // PropertyCallback (no direct WriteBarrier handle to read).
-            let global = vm.global();
             // `--redis-preconnect` is refused at start where `--trim` removed `Bun.redis`.
             let preconnect = || -> bun_jsc::JsResult<()> {
                 bun_removable_features::removable_body!(Valkey, Abort, {
@@ -1539,7 +1535,6 @@ impl Run<'_> {
             if !ctx.runtime_options.sql_preconnect {
                 break 'do_postgres_preconnect;
             }
-            let global = vm.global();
             let preconnect = || -> bun_jsc::JsResult<()> {
                 let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
                     return Ok(());
@@ -1632,13 +1627,11 @@ impl Run<'_> {
                 if promise.status() == PromiseStatus::Rejected {
                     // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
                     let result = promise.result(unsafe { &mut *vm.jsc_vm });
-                    let global = vm.global;
                     // A CJS entry runs synchronously in Node, so its top-level
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
                     let is_rejection = !vm.entry_point_is_commonjs();
-                    // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
+                    let handled = vm.uncaught_exception(global, result, is_rejection);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
@@ -1673,10 +1666,10 @@ impl Run<'_> {
         if vm.standalone_module_graph.is_none()
             && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
         {
-            vm.global().vm().release_weak_refs();
+            global.vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
             // GC; it would only be a memory-usage hint, not correctness.
-            let _ = vm.global().vm().run_gc(false);
+            let _ = global.vm().run_gc(false);
             vm.tick();
         }
 
@@ -1723,7 +1716,7 @@ impl Run<'_> {
                         match promise.status() {
                             PromiseStatus::Pending => {
                                 result.then2(
-                                    vm.global(),
+                                    global,
                                     JSValue::UNDEFINED,
                                     crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
                                     crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
@@ -1748,7 +1741,7 @@ impl Run<'_> {
                         ::core::ptr::null_mut(),
                         bun_jsc::ConsoleObject::MessageType::Log,
                         bun_jsc::ConsoleObject::MessageLevel::Log,
-                        vm.global(),
+                        global,
                         &raw const to_print,
                         1,
                     );
@@ -1764,7 +1757,7 @@ impl Run<'_> {
         }
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
-        let _ = vm.global().handle_rejected_promises();
+        let _ = global.handle_rejected_promises();
         // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
         if vm.unhandled_error_counter > 0 {
             vm.exit_handler.requested = true;
@@ -3852,7 +3845,7 @@ impl RunCommand {
                     if let Some(entries) = bin_dir.get_entries_const() {
                         // `.data` iteration must hold `entries_mutex`
                         // (uncontended on this single-threaded CLI path).
-                        let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        let _entries_lock = bun_resolver::fs::FileSystem::get()
                             .fs
                             .entries_mutex
                             .lock_guard();
@@ -3910,7 +3903,7 @@ impl RunCommand {
                 if let Some(entries) = dir_info.get_entries_const() {
                     // `.data` iteration must hold `entries_mutex`
                     // (uncontended on this single-threaded CLI path).
-                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                    let _entries_lock = bun_resolver::fs::FileSystem::get()
                         .fs
                         .entries_mutex
                         .lock_guard();

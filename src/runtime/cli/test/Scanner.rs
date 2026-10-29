@@ -22,7 +22,7 @@ pub(crate) struct Scanner<'a> {
     pub(crate) exclusion_names: &'a [&'a [u8]],
     /// When this list is empty, no filters are applied.
     /// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
-    pub(crate) filter_names: &'a [&'a [u8]],
+    pub(crate) filter_names: &'a [Box<[u8]>],
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
     pub(crate) path_ignore_patterns: &'a [bun_glob::Prepared<&'a [u8]>],

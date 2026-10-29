@@ -123,10 +123,8 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) only: bool,
     pub(crate) run_todo: bool,
     pub(crate) concurrent: bool,
-    /// Borrowed view over `ctx.test_options.concurrent_test_glob` (owned
-    /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
-    /// `test_command.rs` where this is populated.
-    pub(crate) concurrent_test_glob: Option<&'a [bun_glob::Prepared<&'a [u8]>]>,
+    /// `concurrentTestGlob` in bunfig: files that match one of these run their tests concurrently.
+    pub(crate) concurrent_test_glob: Option<Vec<bun_glob::Prepared<Box<[u8]>>>>,
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
@@ -226,7 +224,7 @@ impl<'a> TestRunner<'a> {
         }
 
         // If no glob patterns are set, don't run concurrently
-        let Some(glob_patterns) = self.concurrent_test_glob else {
+        let Some(glob_patterns) = &self.concurrent_test_glob else {
             return false;
         };
 

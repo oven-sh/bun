@@ -84,8 +84,8 @@ pub(crate) enum AsymmetricMatcherConstructorType {
 }
 
 unsafe extern "C" {
-    fn AsymmetricMatcherConstructorType__fromJS(
-        global_object: *const JSGlobalObject,
+    safe fn AsymmetricMatcherConstructorType__fromJS(
+        global_object: &JSGlobalObject,
         value: JSValue,
     ) -> i8;
 }
@@ -98,8 +98,7 @@ impl AsymmetricMatcherConstructorType {
         // (`AsymmetricMatcherConstructorType__fromJS` is `zero_is_throw`-shaped
         // with -1 as the sentinel).
         bun_jsc::validation_scope!(scope, global_object);
-        // SAFETY: FFI call with valid &JSGlobalObject; JSValue is Copy/repr(transparent)
-        let result = unsafe { AsymmetricMatcherConstructorType__fromJS(global_object, value) };
+        let result = AsymmetricMatcherConstructorType__fromJS(global_object, value);
         scope.assert_exception_presence_matches(result == -1);
         Ok(match result {
             -1 => return Err(JsError::Thrown),
@@ -1537,11 +1536,9 @@ impl Expect {
             ));
         };
 
-        // SAFETY: FFI call with valid &JSGlobalObject
-        let expect_proto = unsafe { Expect__getPrototype(global_this) };
+        let expect_proto = Expect__getPrototype(global_this);
         let expect_constructor = super::expect::js::get_constructor(global_this);
-        // SAFETY: FFI call with valid &JSGlobalObject
-        let expect_static_proto = unsafe { ExpectStatic__getPrototype(global_this) };
+        let expect_static_proto = ExpectStatic__getPrototype(global_this);
 
         {
             let iter = JSPropertyIterator::init(
@@ -1579,7 +1576,7 @@ impl Expect {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                // SAFETY: FFI call with valid global, &bun_core::String, host-fn ptr, and JSValue.
+                // SAFETY: `matcher_fn` is a function (checked above), so an object.
                 // C++ takes the function pointer **by value** (`NativeFunctionPtr`), not a
                 // pointer-to-function-pointer — `JSHostFn` already is the
                 // function-pointer type, so pass it directly.
@@ -2872,8 +2869,7 @@ impl ExpectMatcherUtils {
     }
 
     pub(crate) fn singleton(global_this: &JSGlobalObject) -> JSValue {
-        // SAFETY: FFI call with valid &JSGlobalObject
-        unsafe { ExpectMatcherUtils__getSingleton(global_this) }
+        ExpectMatcherUtils__getSingleton(global_this)
     }
 
     #[optimize(size)]
@@ -3191,44 +3187,6 @@ pub(crate) mod mock {
     use super::*;
     use bun_jsc::ComptimeStringMapExt as _;
 
-    // C++: `JSC::EncodedJSValue JSMockFunction__get{Calls,Returns}(
-    //         JSC::JSGlobalObject*, EncodedJSValue)` — `[[ZIG_EXPORT(zero_is_throw)]]`.
-    // The leading `globalThis` parameter is load-bearing: the body opens a
-    // `DECLARE_THROW_SCOPE(globalThis->vm())`, so omitting it shifts `value`
-    // into the pointer slot and dereferences a garbage `JSGlobalObject*`
-    // (UBSan: null `VM&` bind in JSGlobalObject.h).
-    unsafe extern "C" {
-        #[link_name = "JSMockFunction__getCalls"]
-        fn JSMockFunction__getCalls_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
-        #[link_name = "JSMockFunction__getReturns"]
-        fn JSMockFunction__getReturns_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
-    }
-
-    /// `bun.cpp.JSMockFunction__getCalls` — returns the `mock.calls` array for a
-    /// JSMockFunction, or `undefined` if `value` is not a mock. Safe wrapper
-    /// over the C++ shim so matchers don't carry their own `extern` blocks.
-    /// `zero_is_throw`: a `.zero` return means the throw scope is set.
-    #[allow(non_snake_case)]
-    #[track_caller]
-    #[inline]
-    fn JSMockFunction__getCalls(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
-        // SAFETY: `global` is live; JSValue is repr(transparent) i64.
-        bun_jsc::call_zero_is_throw(global, || unsafe {
-            JSMockFunction__getCalls_raw(global.as_ptr(), value)
-        })
-    }
-
-    /// `bun.cpp.JSMockFunction__getReturns` — see `JSMockFunction__getCalls`.
-    #[allow(non_snake_case)]
-    #[track_caller]
-    #[inline]
-    fn JSMockFunction__getReturns(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
-        // SAFETY: `global` is live; JSValue is repr(transparent) i64.
-        bun_jsc::call_zero_is_throw(global, || unsafe {
-            JSMockFunction__getReturns_raw(global.as_ptr(), value)
-        })
-    }
-
     /// Which mock-backed array a `toHave*` matcher inspects, plus which of the two
     /// "received is not a mock" error styles it emits. The three `*CalledWith`
     /// matchers use the Jest-style `Matcher error:` form routed through
@@ -3265,8 +3223,10 @@ pub(crate) mod mock {
         ) -> JsResult<(PostMatchGuard<'a>, JSValue, JSValue)> {
             let (this, value, _) = self.matcher_prelude(global, this_value, matcher_name, matcher_params)?;
             let arr = match kind {
-                MockKind::Calls | MockKind::CallsWithSig => JSMockFunction__getCalls(global, value)?,
-                MockKind::Returns => JSMockFunction__getReturns(global, value)?,
+                MockKind::Calls | MockKind::CallsWithSig => {
+                    bun_jsc::cpp::JSMockFunction__getCalls(global, value)?
+                }
+                MockKind::Returns => bun_jsc::cpp::JSMockFunction__getReturns(global, value)?,
             };
             if !arr.js_type().is_array() {
                 let mut formatter = make_formatter(global);
@@ -3459,27 +3419,29 @@ pub(crate) mod mock {
 // Extract the matcher_fn from a JSCustomExpectMatcherFunction instance
 #[inline]
 fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> Option<JSValue> {
-    // SAFETY: FFI call with valid JSValue and &JSGlobalObject
+    // SAFETY: `this_value` is the callee of a host call, so it is a cell.
     let matcher_fn = unsafe { Bun__JSWrappingFunction__getWrappedFunction(this_value, global_this) };
     if matcher_fn.is_empty() { None } else { Some(matcher_fn) }
 }
 
 unsafe extern "C" {
+    /// `wrapped_fn` must be an object.
     fn Bun__JSWrappingFunction__create(
-        global_this: *const JSGlobalObject,
+        global_this: &JSGlobalObject,
         symbol_name: &bun_core::String,
         // C++: `Bun::NativeFunctionPtr`. Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
     ) -> JSValue;
-    fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: *const JSGlobalObject) -> JSValue;
+    /// `this` must be a cell: `asCell()` is not checked.
+    fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: &JSGlobalObject) -> JSValue;
 
-    fn ExpectMatcherUtils__getSingleton(global_this: *const JSGlobalObject) -> JSValue;
+    safe fn ExpectMatcherUtils__getSingleton(global_this: &JSGlobalObject) -> JSValue;
 
     safe fn ExpectStringMatching__compile(global: &JSGlobalObject, source: JSValue) -> JSValue;
 
-    fn Expect__getPrototype(global_this: *const JSGlobalObject) -> JSValue;
-    fn ExpectStatic__getPrototype(global_this: *const JSGlobalObject) -> JSValue;
+    safe fn Expect__getPrototype(global_this: &JSGlobalObject) -> JSValue;
+    safe fn ExpectStatic__getPrototype(global_this: &JSGlobalObject) -> JSValue;
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:

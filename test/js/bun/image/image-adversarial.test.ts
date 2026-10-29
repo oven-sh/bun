@@ -13,6 +13,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
+import { hash, readPng } from "./jpeg-golden/observe";
 
 // Several tests below force `backend = "bun"` to reach the static decoders
 // regardless of platform; restore after every test so a throw can't leak the
@@ -608,6 +609,66 @@ describe("malformed JPEG", () => {
     for (const jpeg of [withScans([1], [2], [3], [1]), withScans([1], [2, 3], [3]), withScans([1, 2], [3], [2])]) {
       await expect(new Bun.Image(jpeg).png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
     }
+  });
+
+  // It takes 65,539 differences of 32767 to get a DC prediction out of 32 bits. What is expected is what Bun 1.4.4 did.
+  describe("a DC prediction at the end of 32 bits", () => {
+    /** Entropy-coded data from a string of bits: filled up with ones, a zero after every FF. */
+    const coded = (bits: string) =>
+      (bits + "1111111").match(/.{8}/g)!.flatMap(byte => (byte === "11111111" ? [0xff, 0] : [parseInt(byte, 2)]));
+    const repeated = (bits: string, count: number) => {
+      const bytes = Buffer.from(coded(bits));
+      return Buffer.alloc(bytes.length * count, bytes);
+    };
+    const gray = (sof: number, width: number, height: number, tables: number[][], band: number[], data: Buffer[]) =>
+      Buffer.concat([
+        Buffer.from([
+          ...[0xff, 0xd8],
+          ...segment(0xdb, 0, ...new Array(64).fill(1)),
+          ...segment(sof, 8, height >> 8, height & 255, width >> 8, width & 255, 1, 1, 0x11, 0),
+          ...tables.flatMap(table => segment(0xc4, ...table)),
+          ...segment(0xda, 1, 1, 0x00, ...band),
+        ]),
+        ...data,
+        Buffer.from([0xff, 0xd9]),
+      ]);
+    /** At 1/8 of the size, which is made of the DC coefficients alone. */
+    const eighth = (jpeg: Buffer, width: number, height: number) =>
+      new Bun.Image(jpeg)
+        .resize(width / 8, height / 8, { fit: "fill" })
+        .png({ compressionLevel: 1 })
+        .bytes()
+        .then(
+          png => hash(readPng(png).rgba),
+          error => error.code,
+        );
+    const lengths = (...counts: number[]) => [...counts, ...new Array(16 - counts.length).fill(0)];
+
+    // The codes 0, 10, 110 and 1110 are for differences of 15, 0, 1 and 2 bits.
+    test.each([
+      ["reaches the largest number", "0111111111111111", "1101", "2ae86a1bcf"],
+      ["goes past the largest number", "0111111111111111", "11011101", "ERR_IMAGE_DECODE_FAILED"],
+      ["reaches the smallest number", "0000000000000000", "111001", "49069c2e28"],
+      ["goes past the smallest number", "0000000000000000", "1110011100", "ERR_IMAGE_DECODE_FAILED"],
+    ])("in a progressive JPEG: %s", async (_, difference, last, expected) => {
+      const table = [0x00, ...lengths(1, 1, 1, 1), 15, 0, 1, 2];
+      const rest = Buffer.alloc(2 * 254, "10").toString();
+      const data = [repeated(difference, 65_538), Buffer.from(coded(last + rest))];
+      expect(await eighth(gray(0xc2, 2048, 2056, [table], [0, 0, 0], data), 2048, 2056)).toBe(expected);
+    });
+
+    // A difference of 15 bits and the end of the block, 8 blocks in 17 bytes.
+    test.each([
+      ["up", "01111111111111110", "a55e8e9100"],
+      ["down", "00000000000000000", "034de81c71"],
+    ])("in a baseline JPEG it wraps around, going %s", async (_, block, expected) => {
+      const tables = [
+        [0x00, ...lengths(1, 1), 15, 0],
+        [0x10, ...lengths(1), 0],
+      ];
+      const data = [repeated(Buffer.alloc(17 * 8, block).toString(), (300 * 300) / 8)];
+      expect(await eighth(gray(0xc0, 2400, 2400, tables, [0, 63, 0], data), 2400, 2400)).toBe(expected);
+    });
   });
 
   test("a bad first scan is refused before there is room for the coefficients of 268 megapixels", async () => {

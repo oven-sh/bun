@@ -432,9 +432,7 @@ impl ImageSetOption {
             };
 
             if let Some(dep) = dep_ {
-                // SAFETY: placeholder borrows the printer arena.
-                let placeholder = unsafe { crate::arena_str(dep.placeholder) };
-                dest.serialize_string(placeholder)?;
+                dest.serialize_string(dep.placeholder)?;
                 if let Some(dependencies) = &mut dest.dependencies {
                     // Vec::push aborts on OOM by default.
                     dependencies.push(css::Dependency::Url(dep));

@@ -1,4 +1,5 @@
 // Ported from Node.js v26.3.0 lib/internal/readline/interface.js for Bun's node:repl.
+// The history options record in InterfaceConstructor is from Node.js v26.7.0 (nodejs/node c25b8e3331).
 // Attribution: derived from Node.js, MIT licensed (Node.js contributors).
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
@@ -156,6 +157,7 @@ declare global {
       | ReadlineCallbackCompleter;
 
     interface ReadlineHistoryOptions {
+      __proto__?: null;
       size?: number;
       history?: string[];
       removeHistoryDuplicates?: boolean;
@@ -164,7 +166,7 @@ declare global {
       onHistoryFileLoaded?(err: Error | null, context: object): void;
     }
 
-    interface ReadlineInput extends Readable, ReadlineHistoryOptions {
+    interface ReadlineInput extends Readable {
       input?: undefined;
       isRaw?: boolean;
       setRawMode?(mode: boolean): unknown;
@@ -231,6 +233,7 @@ function InterfaceConstructor(
   let crlfDelay: number | undefined;
   let prompt = "> ";
   let signal: AbortSignal | undefined;
+  let historyOptions: HistoryOptions | undefined;
 
   if (input?.input) {
     // An options object was given
@@ -266,12 +269,16 @@ function InterfaceConstructor(
     crlfDelay = input.crlfDelay;
     input = input.input;
 
-    input.size = historySize;
-    input.history = history;
-    input.removeHistoryDuplicates = removeHistoryDuplicates;
+    historyOptions = {
+      __proto__: null,
+      size: historySize,
+      history,
+      removeHistoryDuplicates,
+    };
   }
 
-  this.setupHistoryManager(input);
+  // Without an options object, the stream itself is the history options, as in Node: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/readline/interface.js#L226
+  this.setupHistoryManager(historyOptions ?? (input as HistoryOptions));
 
   if (completer !== undefined && typeof completer !== "function") {
     throw new ERR_INVALID_ARG_VALUE("completer", completer);

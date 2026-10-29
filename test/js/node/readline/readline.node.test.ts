@@ -1,6 +1,8 @@
 // @ts-nocheck
+import { bunEnv, bunExe, isDebug, nodeExeAtLeast } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
 import readline from "node:readline";
 import { PassThrough, Readable, Writable } from "node:stream";
 const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
@@ -1941,6 +1943,54 @@ describe("readline.createInterface()", () => {
     for await (const line of rl) result.push(line);
     expect(result).toEqual(lines);
   });
+
+  const historyOptionsOffInput = [
+    "history options on the stream after readline.createInterface({ input }): none",
+    "history options on the stream after readline.createInterface({ input, output, terminal: true }): none",
+    "history options on the stream after new readline.Interface({ input }): none",
+    "history options on the stream after readline/promises createInterface({ input }): none",
+    "history options on the stream after repl.start({ input, output }): none",
+    "history options on the stream after repl.start({ input, output, terminal: true }): none",
+    "history options on process.stdin after readline.createInterface({ input: process.stdin }): none",
+    "history options on the stream after FileHandle.readLines(): none",
+    "own size of the stream after createInterface({ input }): mine",
+    "history options that createInterface({ input }) reads from a stream with a getter for each: none",
+    "createInterface({ input, terminal: false }) on a stream that is not extensible: made",
+    "the history of the interface is the array that was given: true",
+    "createInterface(input) after createInterface({ input, historySize: 3, history: ['x'] }): historySize 30, history []",
+    "createInterface(input, output, undefined, true) after createInterface({ input, output, terminal: true, historySize: 3 }): historySize 30, history []",
+    "createInterface({ input, historySize: -1 }): threw ERR_OUT_OF_RANGE",
+    "createInterface(input) after that: historySize 30, history []",
+    "setupHistoryManager receives from new Interface({ input }): a null-prototype object with size,history,removeHistoryDuplicates",
+    // Without an options object Node.js reads the history options off the stream (nodejs/node#61526). This row keeps Bun the same.
+    "setupHistoryManager receives from new Interface(input): the stream",
+  ];
+  for (const [name, runtime] of [
+    ["bun", bunExe()],
+    // Before v26.7.0 Node.js stored the history options on the stream (nodejs/node#64585).
+    ["node", nodeExeAtLeast("26.7.0")],
+  ]) {
+    it.skipIf(!runtime)(
+      `should keep the history options off the input stream (${name})`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [runtime, join(import.meta.dir, "history-options-off-input-fixture.cjs")],
+          env: bunEnv,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ rows: stdout.trimEnd().split(/\r?\n/), stderr, exitCode }).toEqual({
+          rows: historyOptionsOffInput,
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      // A debug build needs 2 to 3 s to load the readline and REPL stacks. Every other build keeps the default.
+      isDebug ? 15_000 : undefined,
+    );
+  }
 
   it("should respond to home and end sequences for common pttys ", () => {
     const input = new PassThrough();

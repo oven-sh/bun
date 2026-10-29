@@ -997,7 +997,7 @@ pub type DependencyList = bun_alloc::AstVec<Dependency>;
 /// splitting.
 pub struct Part {
     pub stmts: StoreSlice<Stmt>,
-    pub scopes: StoreSlice<*mut Scope>, // TODO: &'bump mut [&'bump mut Scope]
+    pub scopes: StoreSlice<StoreRef<Scope>>, // TODO: &'bump mut [&'bump mut Scope]
 
     /// Each is an index into the file-level import record list
     pub import_record_indices: PartImportRecordIndices,

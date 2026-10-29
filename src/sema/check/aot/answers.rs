@@ -37,6 +37,8 @@ pub struct QueryStatistics {
     pub members_gave_up: [u32; GaveUp::COUNT],
     /// See `Checker::closed_cycle_count`.
     pub closed_cycles: u32,
+    /// See `Checker::union_members_compared`.
+    pub union_members_compared: u64,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

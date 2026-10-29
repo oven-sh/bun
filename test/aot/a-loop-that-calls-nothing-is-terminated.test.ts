@@ -5,14 +5,9 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
 
-const program = join(
-  import.meta.dir,
-  "programs",
-  "calls",
-  "a-worker-is-terminated-inside-a-loop-that-calls-nothing.ts",
-);
+const program = join(import.meta.dir, "parallel", "calls", "worker-terminated-inside-loop-calls.ts");
 
 test.skipIf(!!unsupported)(
   "a Worker that spins in a compiled loop without calls is terminated",

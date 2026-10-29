@@ -1,6 +1,7 @@
 use crate::fs;
 use crate::package_json::{PackageJSON, SideEffects};
 use bun_options_types::bundle_enums::ModuleType;
+use bun_zstd as _;
 
 pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 

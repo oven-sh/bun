@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 type Completeness = "Complete" | "Incomplete";
 
@@ -38,76 +39,85 @@ function findCompleteness(report: string): Completeness | undefined {
   return isNotBlocked.test(report) ? "Complete" : undefined;
 }
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
-  "Bun.plugin in a trimmed executable",
-  () => {
-    for (const [name, { source, completeness, untrimmed, trimmed }] of Object.entries(programs)) {
-      test(
-        name,
-        () =>
-          slot(async () => {
-            using dir = tempDir("bun-plugin", { "program.mjs": source });
-            const folder = String(dir);
-            const found: Record<string, unknown> = {};
-            for (const [kind, flags] of [
-              ["untrimmed", []],
-              ["trimmed", ["--trim"]],
-            ] as const) {
-              const build = await spawned(
-                [bunExe(), "build", "--compile", "--aot", "--explain=trim", ...flags, "program.mjs", "--outfile", kind],
-                folder,
-                env,
-              );
-              built(build);
-              const ran = await spawned([join(folder, kind)], folder, env);
-              found[kind] = {
-                completeness: findCompleteness(build.stderr),
-                answer: ran.stdout.trim(),
-                exitCode: ran.exitCode,
-              };
-            }
-            expect(found).toEqual({
-              untrimmed: { completeness, answer: untrimmed, exitCode: 0 },
-              trimmed: { completeness, answer: trimmed, exitCode: 0 },
-            });
-          }),
-        600_000,
-      );
-    }
-
+(canTrim && !unsupported ? describe.concurrent : describe.skip)("Bun.plugin in a trimmed executable", () => {
+  for (const [name, { source, completeness, untrimmed, trimmed }] of Object.entries(programs)) {
     test(
-      "code that onLoad yields, in an executable whose transpiler was taken out by force: an error that the program catches",
+      name,
       () =>
         slot(async () => {
-          const source = `${registerPlugin}let answer;\ntry {\n  answer = (await import(["late", "module"].join(":"))).value;\n} catch (error) {\n  answer = error.name + " " + error.code;\n}\nconsole.log("answer:", answer);\n`;
           using dir = tempDir("bun-plugin", { "program.mjs": source });
           const folder = String(dir);
-          built(
-            await spawned(
+          const found: Record<string, unknown> = {};
+          for (const [kind, flags] of [
+            ["untrimmed", []],
+            ["trimmed", ["--trim"]],
+          ] as const) {
+            const build = await spawned(
               [
                 bunExe(),
                 "build",
                 "--compile",
+                ...withoutDebugInformation,
                 "--aot",
-                "--trim",
-                "--trim-without",
-                "RuntimeTranspiler",
+                "--explain=trim",
+                ...flags,
                 "program.mjs",
                 "--outfile",
-                "forced",
+                kind,
               ],
               folder,
               env,
-            ),
-          );
-          const ran = await spawned([join(folder, "forced")], folder, env);
-          expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
-            stdout: "answer: Error ERR_FEATURE_REMOVED\n",
-            exitCode: 0,
-            signal: null,
+            );
+            built(build);
+            const ran = await spawned([join(folder, kind)], folder, env);
+            found[kind] = {
+              completeness: findCompleteness(build.stderr),
+              answer: ran.stdout.trim(),
+              exitCode: ran.exitCode,
+            };
+          }
+          expect(found).toEqual({
+            untrimmed: { completeness, answer: untrimmed, exitCode: 0 },
+            trimmed: { completeness, answer: trimmed, exitCode: 0 },
           });
         }),
       600_000,
     );
-  },
-);
+  }
+
+  test(
+    "code that onLoad yields, in an executable whose transpiler was taken out by force: an error that the program catches",
+    () =>
+      slot(async () => {
+        const source = `${registerPlugin}let answer;\ntry {\n  answer = (await import(["late", "module"].join(":"))).value;\n} catch (error) {\n  answer = error.name + " " + error.code;\n}\nconsole.log("answer:", answer);\n`;
+        using dir = tempDir("bun-plugin", { "program.mjs": source });
+        const folder = String(dir);
+        built(
+          await spawned(
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...withoutDebugInformation,
+              "--aot",
+              "--trim",
+              "--trim-without",
+              "RuntimeTranspiler",
+              "program.mjs",
+              "--outfile",
+              "forced",
+            ],
+            folder,
+            env,
+          ),
+        );
+        const ran = await spawned([join(folder, "forced")], folder, env);
+        expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+          stdout: "answer: Error ERR_FEATURE_REMOVED\n",
+          exitCode: 0,
+          signal: null,
+        });
+      }),
+    600_000,
+  );
+});

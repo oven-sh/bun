@@ -1,0 +1,48 @@
+# Object.keys(process.report.getReport().environmentVariables)
+# On Windows process.env is a proxy that windowsEnv makes (runtimefunction 65583). The report holds that object, so whoever has the report may do anything to it: every trap is entered.
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65583 function=f1
+layout L0 fields=[{key="get" declared={type=anything}}, {key="getOwnPropertyDescriptor" declared={type=anything}}, {key="ownKeys" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="report"
+    v2 = PropGet v1 key="getReport"
+    v3 = Call v2, v1
+    v4 = PropGet v3 key="environmentVariables"
+    v5 = Builtin builtin=ObjectKeys
+    v6 = Call v5, -, v4
+    Return
+}
+function f1 name="windowsEnv" role=Library enclosingRuntimeFunction=65583 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f3
+    v8 = NewClosure function=f4
+    v9 = NewObject layout=L0
+    PropDefine v9, v6 key="get"
+    PropDefine v9, v7 key="getOwnPropertyDescriptor"
+    PropDefine v9, v8 key="ownKeys"
+    v13 = FinishObject v9
+    v14 = Builtin builtin=Proxy
+    v15 = Construct v14, -, v0, v13
+    Return v15
+}
+function f2 name="get" role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="getOwnPropertyDescriptor" role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f4 name="ownKeys" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

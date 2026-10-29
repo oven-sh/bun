@@ -1,9 +1,0 @@
-error: TS2440: Import declaration conflicts with local declaration of 'ConstantEnum'.
-error: TS2440: Import declaration conflicts with local declaration of 'Enum'.
-error: TS2440: Import declaration conflicts with local declaration of 'constant'.
-error: TS2440: Import declaration conflicts with local declaration of 'variable'.
-error: TS2440: Import declaration conflicts with local declaration of 'declared'.
-error: TS2440: Import declaration conflicts with local declaration of 'Class'.
-error: TS2440: Import declaration conflicts with local declaration of 'byDefault'.
-error: TS2440: Import declaration conflicts with local declaration of 'star'.
-error: TS2440: Import declaration conflicts with local declaration of 'below'.

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, spawned, unsupported, withoutDebugInformation } from "./harness/commands";
 
 type Completeness = "Complete" | "Incomplete";
 
@@ -17,31 +17,31 @@ const sources = {
   "index.html": `<html><head><link rel="stylesheet" href="./style.css"><script type="module" src="./client.ts"></script></head><body></body></html>\n`,
   "client.ts": `document.body.textContent = "ready" as string;\n`,
 };
-const programs: Record<string, { source: string; untrimmed: string; trimmed?: string; runsUnseenCode?: string }> = {
+const parts: Record<string, { source: string; printed: string; runsUnseenCode?: string }> = {
   "Bun.build of a file": {
-    source: `${prelude}const result = await Bun.build({ entrypoints: [directory + "entry.ts"], target: "bun" });\nprintResult(result);\nconsole.log((await result.outputs[0].text()).includes("x * 2"));\n`,
-    untrimmed: "true entry-point ts\ntrue\n",
+    source: `const result = await Bun.build({ entrypoints: [directory + "entry.ts"], target: "bun" });\nprintResult(result);\nconsole.log((await result.outputs[0].text()).includes("x * 2"));\n`,
+    printed: "true entry-point ts\ntrue\n",
     runsUnseenCode: "Bun.build",
   },
   "build imported from bun: a component and its style sheet, minified": {
-    source: `import { build } from "bun";\n${prelude}printResult(await build({ entrypoints: [directory + "page.tsx"], target: "browser", external: ["react", "react/jsx-dev-runtime", "react/jsx-runtime"], minify: true }));\n`,
-    untrimmed: "true entry-point tsx,asset tsx\n",
+    source: `import { build } from "bun";\nprintResult(await build({ entrypoints: [directory + "page.tsx"], target: "browser", external: ["react", "react/jsx-dev-runtime", "react/jsx-runtime"], minify: true }));\n`,
+    printed: "true entry-point tsx,asset tsx\n",
     runsUnseenCode: "Bun.build",
   },
   "Bun.build with the React Compiler": {
-    source: `${prelude}const result = await Bun.build({ entrypoints: [directory + "page.tsx"], target: "browser", reactCompiler: true, external: ["react", "react/compiler-runtime", "react/jsx-dev-runtime", "react/jsx-runtime"] });\nprintResult(result);\nconst text = await result.outputs[0].text();\nconsole.log(text.includes("react/compiler-runtime"), /\\b_c\\(\\d+\\)/.test(text));\n`,
-    untrimmed: "true entry-point tsx,asset tsx\ntrue true\n",
+    source: `const result = await Bun.build({ entrypoints: [directory + "page.tsx"], target: "browser", reactCompiler: true, external: ["react", "react/compiler-runtime", "react/jsx-dev-runtime", "react/jsx-runtime"] });\nprintResult(result);\nconst text = await result.outputs[0].text();\nconsole.log(text.includes("react/compiler-runtime"), /\\b_c\\(\\d+\\)/.test(text));\n`,
+    printed: "true entry-point tsx,asset tsx\ntrue true\n",
     runsUnseenCode: "Bun.build",
   },
   "Bun.build with a plugin": {
-    source: `${prelude}const result = await Bun.build({ entrypoints: [directory + "entry.ts"], target: "bun", plugins: [{ name: "triple", setup(builder) { builder.onLoad({ filter: /helper\\.ts$/ }, () => ({ contents: "export function double(x) { return x * 3; }", loader: "js" })); } }] });\nprintResult(result);\nconsole.log((await result.outputs[0].text()).includes("x * 3"));\n`,
-    untrimmed: "true entry-point ts\ntrue\n",
+    source: `const result = await Bun.build({ entrypoints: [directory + "entry.ts"], target: "bun", plugins: [{ name: "triple", setup(builder) { builder.onLoad({ filter: /helper\\.ts$/ }, () => ({ contents: "export function double(x) { return x * 3; }", loader: "js" })); } }] });\nprintResult(result);\nconsole.log((await result.outputs[0].text()).includes("x * 3"));\n`,
+    printed: "true entry-point ts\ntrue\n",
     runsUnseenCode: "Bun.build",
   },
   "Bun.build of a file that calls a macro whose file is not in the executable: the build fails and the program continues":
     {
-      source: `${prelude}printResult(await Bun.build({ entrypoints: [directory + "calls-macro.ts"], target: "bun", throw: false }));\nconsole.log("continues");\n`,
-      untrimmed: "false \ncontinues\n",
+      source: `printResult(await Bun.build({ entrypoints: [directory + "calls-macro.ts"], target: "bun", throw: false }));\nconsole.log("continues");\n`,
+      printed: "false \ncontinues\n",
       runsUnseenCode: "Bun.build",
     },
   "Bun.serve with an imported HTML file as a route": {
@@ -59,12 +59,12 @@ for (const path of assets) {
 }
 server.stop(true);
 `,
-    untrimmed:
+    printed:
       "/ 200 text/html;charset=utf-8\n/api 200 text/plain;charset=utf-8\n200 text/css;charset=utf-8 true\n200 text/javascript;charset=utf-8 true\n",
   },
   "Bun.Transpiler": {
     source: `const transpiler = new Bun.Transpiler({ loader: "tsx" });\nconsole.log(transpiler.transformSync("const x: number = 1; export default x;").trim());\nconsole.log(JSON.stringify(transpiler.scanImports("import a from 'a'; import('b');")));\n`,
-    untrimmed: `const x = 1;\nexport default x;\n[{"kind":"import-statement","path":"a"},{"kind":"dynamic-import","path":"b"}]\n`,
+    printed: `const x = 1;\nexport default x;\n[{"kind":"import-statement","path":"a"},{"kind":"dynamic-import","path":"b"}]\n`,
   },
 };
 
@@ -86,46 +86,64 @@ function usesEveryMember(report: string): boolean {
   return /^aot: trim: uses property toTemporalInstant$/m.test(report);
 }
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
+// The parts that call Bun.build are one program, and the others another.
+function programOf(runsUnseenCode: string | undefined) {
+  const taken = Object.entries(parts).filter(([, part]) => part.runsUnseenCode === runsUnseenCode);
+  const imports = /^import .*\n/gm;
+  return {
+    names: taken.map(([name]) => name).join("; "),
+    source:
+      taken.flatMap(([, { source }]) => source.match(imports) ?? []).join("") +
+      prelude +
+      taken.map(([, { source }]) => `{\n${source.replace(imports, "")}}\n`).join(""),
+    printed: taken.map(([, { printed }]) => printed).join(""),
+  };
+}
+
+(canTrim && !unsupported ? describe.concurrent : describe.skip)(
   "Bun.build, HTML routes and Bun.Transpiler in a trimmed executable",
   () => {
-    for (const [name, { source, untrimmed, trimmed = untrimmed, runsUnseenCode }] of Object.entries(programs)) {
+    for (const runsUnseenCode of ["Bun.build", undefined]) {
+      const { names, source, printed } = programOf(runsUnseenCode);
       test(
-        name,
-        () =>
-          slot(async () => {
-            using dir = tempDir("bundler", { "program.mjs": source, ...sources });
-            const folder = String(dir);
-            const found: Record<string, unknown> = {};
-            for (const [kind, flags] of [
-              ["untrimmed", []],
-              ["trimmed", ["--trim"]],
-            ] as const) {
-              const build = await spawned(
-                [bunExe(), "build", "--compile", "--aot", "--explain=trim", ...flags, "program.mjs", "--outfile", kind],
-                folder,
-                env,
-              );
-              built(build);
-              const ran = await spawned([join(folder, kind)], folder, env);
-              const openedBy = builtinsThatRunUnseenCode(build.stderr).filter(builtin => builtin === runsUnseenCode);
-              found[kind] = {
-                completeness: findCompleteness(build.stderr),
-                openedBy,
-                usesEveryMember: usesEveryMember(build.stderr),
-                stdout: ran.stdout,
-                exitCode: ran.exitCode,
-              };
-            }
-            const report =
-              runsUnseenCode === undefined
-                ? { completeness: "Complete", openedBy: [], usesEveryMember: false, exitCode: 0 }
-                : { completeness: "Incomplete", openedBy: [runsUnseenCode], usesEveryMember: true, exitCode: 0 };
-            expect(found).toEqual({
-              untrimmed: { ...report, stdout: untrimmed },
-              trimmed: { ...report, stdout: trimmed },
-            });
-          }),
+        names,
+        async () => {
+          using dir = tempDir("bundler", { "program.mjs": source, ...sources });
+          const folder = String(dir);
+          const build = await spawned(
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              "--explain=trim",
+              "--trim",
+              ...withoutDebugInformation(),
+              "program.mjs",
+              "--outfile",
+              "trimmed",
+            ],
+            folder,
+            env,
+          );
+          built(build);
+          const ran = await spawned([join(folder, "trimmed")], folder, env);
+          expect({
+            completeness: findCompleteness(build.stderr),
+            openedBy: [...new Set(builtinsThatRunUnseenCode(build.stderr))].filter(
+              builtin => builtin === runsUnseenCode,
+            ),
+            usesEveryMember: usesEveryMember(build.stderr),
+            stdout: ran.stdout,
+            exitCode: ran.exitCode,
+          }).toEqual({
+            ...(runsUnseenCode === undefined
+              ? { completeness: "Complete", openedBy: [], usesEveryMember: false }
+              : { completeness: "Incomplete", openedBy: [runsUnseenCode], usesEveryMember: true }),
+            stdout: printed,
+            exitCode: 0,
+          });
+        },
         600_000,
       );
     }

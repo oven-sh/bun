@@ -290,6 +290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
+            assigns_fields_in_constructor: false,
             inner_class_ref: js_ast::Ref::NONE,
         })
     }

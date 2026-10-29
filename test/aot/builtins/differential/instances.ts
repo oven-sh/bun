@@ -10,14 +10,57 @@ export type Candidate = {
   // Code of the candidate changes other operands, so a change of an operand says nothing about the built-in.
   isReentrant?: boolean;
   // For a value that takes time to make: its class, how to make the next one, and how to let it go after the call.
+  // `isAsMade`: the call left it as it was, and the next call of the same built-in may have it.
   instanceOf?: string;
   prepare?(): Promise<void>;
-  release?(): void;
+  release?(isAsMade?: boolean): void;
   create(log: Log, operand: OperandName, context: CreationContext): unknown;
 };
 type Create = Candidate["create"];
 
 export class Unavailable extends Error {}
+
+// `changesByItself`: it is another a moment later, whatever is done with it, so that each call gets its own.
+export type Opened = { value: object; close(): unknown; changesByItself?: boolean };
+
+/** A value that takes time to make. Where `open` fails there is none. */
+export function openedCandidate(name: string, instanceOf: string, open: () => Promise<Opened | undefined>): Candidate {
+  let current: Opened | undefined;
+  const candidate: Candidate = {
+    name,
+    kind: "Pristine",
+    instanceOf,
+    async prepare() {
+      current ??= await open();
+    },
+    create(log, operand) {
+      if (!current) throw new Unavailable(`no ${instanceOf} is there`);
+      log.identify(current.value, operandOrigin(operand));
+      return current.value;
+    },
+    release(isAsMade = false) {
+      if (isAsMade && current && !current.changesByItself) return keepForNextCall(candidate);
+      try {
+        void current?.close();
+      } catch {}
+      current = undefined;
+    },
+  };
+  return candidate;
+}
+
+const keptCandidates = new Set<Candidate>();
+
+/** The candidate holds on to its value until releaseKeptValues() lets go of it. */
+export function keepForNextCall(candidate: Candidate): void {
+  keptCandidates.add(candidate);
+}
+
+/** Lets go of the values that were kept for the next call. */
+export function releaseKeptValues(): void {
+  for (const candidate of keptCandidates) candidate.release!();
+  keptCandidates.clear();
+}
 export const elementsPerCollection = 3;
 
 export function operandOrigin(operand: OperandName): Origin {
@@ -717,6 +760,8 @@ const otherInstances: Candidate[] = [
   pristine("filled:IntlDurationFormat", available(() => new (Intl as any).DurationFormat("en"))),
   pristine("filled:IntlSegments", available(() => new Intl.Segmenter("en").segment("ab cd"))),
   customized("options:type", () => ({ type: "region", style: "long" })),
+  // Without them a key is derived with work that takes a thirtieth of a second.
+  customized("options:littleWork", () => ({ N: 2, r: 1, p: 1 })),
   pristine("file:Blob", available(() => Bun.file("differential-scratch.txt"))),
   pristine("filled:Timeout", available(() => {
     const timeout = setTimeout(() => {}, 1);
@@ -747,7 +792,6 @@ const otherInstances: Candidate[] = [
   )),
   pristine("filled:DisposableStack", available(() => new DisposableStack())),
   pristine("filled:AsyncDisposableStack", available(() => new AsyncDisposableStack())),
-  pristine("filled:ShadowRealm", available(() => new (globalThis as any).ShadowRealm())),
 ];
 
 // A built-in that visits every index never comes back from these.
@@ -773,8 +817,62 @@ export const everyCandidate: Candidate[] = [...objects, ...primitives];
 // Instances that are dear to make: one is passed only where a parameter names its class.
 export const candidatesForTheirClass: Candidate[] = [];
 
+// Values that native code can only tell from values of another family by one test: of the kind of a primitive, of the class of a cell, of
+// whether it can be called. The scouts of a family are passed in every position, the others where a scout shows that the test is made.
+// "Names": ordinary objects, which differ in the names that they answer to.
+export type Family = { name: string; kind: "Primitives" | "Instances" | "Names"; scouts: Candidate[]; others: Candidate[] };
+export const familyOfTheHost = "objects of the host";
+
+const namesOfScouts = new Set([
+  ...["object:proxy", "object:ordinary", "object:plain", "callback:object", "arrayIterator", "filled:Array", "filled:Map", "filled:Set", "filled:WeakMap"],
+  ...["fulfilled:Promise", "global:RegExp", "filled:Uint8Array", "filled:ArrayBuffer", "filled:DataView", "valid:Date", "filled:Error", "boxed:Number"],
+  ...["revoked:Proxy", "filled:Headers", "filled:Blob", "filled:IntlCollator", "filled:TemporalInstant", "filled:WebAssemblyGlobal", "filled:DisposableStack"],
+  ...["1", '"a"', "undefined", "null", "true", "Symbol(s)", "1n"].map(text => `primitive:${text}`),
+]);
+
+function familyNameOf({ name, kind }: Candidate, sample: () => unknown): string {
+  if (kind === "Primitive") return sample() === null ? "null" : typeof sample();
+  const [, className] = /^\w+:(\w+)$/.exec(name) ?? [];
+  if (/^(callback|function|constructor):|^revokedFunction:/.test(name)) return "functions";
+  if (/^(object|arrayLike|descriptor|thenable|iterable|options):|^(descriptorMap|thenable|toJSON|setLike|iterable|iterator)$/.test(name)) return "ordinary objects";
+  if (/[iI]terator(Helper)?$|[gG]enerator$/.test(name)) return "iterators";
+  if (name === "arguments") return "Array";
+  if (/^Weak|^FinalizationRegistry$/.test(className)) return "weak collections";
+  if (/^\w+Array$|^Buffer$/.test(className)) return "views";
+  if (/ArrayBuffer$/.test(className)) return "buffers";
+  if (/Error$/.test(className)) return "errors";
+  if (name.startsWith("boxed:")) return "boxed primitives";
+  for (const prefix of ["Intl", "Temporal", "WebAssembly"]) if (className.startsWith(prefix)) return prefix;
+  if (/DisposableStack$/.test(className)) return "stacks";
+  return ["Array", "Map", "Set", "Promise", "RegExp", "DataView", "Date", "Proxy"].includes(className) ? className : familyOfTheHost;
+}
+
+let families: { count: number; list: Family[] } | undefined;
+
+/** Every candidate is in one. */
+export function everyFamily(): Family[] {
+  // Candidates are added once the instances that take a connection are there.
+  if (families?.count === everyCandidate.length) return families.list;
+  const byName = new Map<string, Family>();
+  for (const candidate of everyCandidate) {
+    const name = familyNameOf(candidate, () => candidate.create(undefined!, 0, { receiver: undefined }));
+    const kind = candidate.kind === "Primitive" ? "Primitives" : name === "ordinary objects" ? "Names" : "Instances";
+    const family = byName.getOrInsertComputed(name, () => ({ name, kind, scouts: [], others: [] }));
+    (namesOfScouts.has(candidate.name) ? family.scouts : family.others).push(candidate);
+  }
+  families = { count: everyCandidate.length, list: [...byName.values()] };
+  return families.list;
+}
+
+const candidatesByName = new Map<string, Candidate>();
+
+export function findCandidateIfAny(name: string): Candidate | undefined {
+  if (candidatesByName.size !== everyCandidate.length) for (const candidate of everyCandidate) candidatesByName.set(candidate.name, candidate);
+  return candidatesByName.get(name);
+}
+
 export function findCandidate(name: string): Candidate {
-  const candidate = everyCandidate.find(other => other.name === name);
+  const candidate = findCandidateIfAny(name);
   if (!candidate) throw new Error(`no candidate is named ${name}`);
   return candidate;
 }

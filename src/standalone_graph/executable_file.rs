@@ -6,7 +6,8 @@ use bun_exe_format::elf::{self as bun_elf, ElfFile};
 use bun_exe_format::elf_payload::Piece;
 use bun_exe_format::elf_ranges::reserve_payload_segments;
 use bun_exe_format::elf_symbols::symbols_tail;
-pub(crate) use bun_exe_format::mapped_file::MappedFile;
+use bun_exe_format::mapped_file::ReadOnce;
+pub(crate) use bun_exe_format::mapped_file::{MappedFile, TemplateBytes};
 use bun_sys::Fd;
 
 #[derive(Copy, Clone)]
@@ -144,32 +145,32 @@ fn write_changed_blocks(
     Ok(bytes_written + (bytes.len() - changed_start) as u64)
 }
 
-/// Takes the whole pages of `bytes` out of this process. `bytes` are a part of a mapping. A page of a file stays what the file holds.
+/// Takes the whole pages of `written`, a part of a shared mapping of a file, out of this process. The file holds what was written.
 #[cfg(target_os = "linux")]
-fn let_go_of_pages(bytes: &[u8]) {
+fn let_go_of_written_pages(written: &mut [u8]) {
     let page_size = MappedFile::page_size();
-    let start = (bytes.as_ptr() as usize).next_multiple_of(page_size);
-    let end = (bytes.as_ptr() as usize + bytes.len()) / page_size * page_size;
+    let start = (written.as_ptr() as usize).next_multiple_of(page_size);
+    let end = (written.as_ptr() as usize + written.len()) / page_size * page_size;
     if start < end {
-        // SAFETY: the pages lie in a mapping, and the caller reads none of them again.
+        // SAFETY: the pages lie in a mapping, and they read the same afterwards.
         unsafe { libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED) };
     }
 }
 
-/// Fills `bytes` in at the end of `file` through a mapping, whose pages several threads make side by side. False: use `pwrite`.
+/// Fills `bytes` in at the end of `file` through a mapping, whose pages several threads make side by side.
+/// Gives `bytes` back where `pwrite` has to write them.
 /// A thread lets go of each block that it has copied, so the process never has the whole of it resident, let alone twice.
 #[cfg(target_os = "linux")]
-fn fill_behind_end(
+fn fill_behind_end<'a>(
     file: &bun_sys::File,
-    bytes: &[u8],
+    bytes: ReadOnce<'a>,
     position: u64,
-    spent: Option<&SpentMapping>,
-) -> bool {
+) -> Result<(), ReadOnce<'a>> {
     const FEWEST_BYTES: usize = 32 << 20;
     const MOST_THREADS: usize = 8;
     const BLOCK: usize = 1 << 20;
     if bytes.len() < FEWEST_BYTES {
-        return false;
+        return Err(bytes);
     }
     let first_page = position - position % MappedFile::page_size() as u64;
     let skipped = (position - first_page) as usize;
@@ -184,7 +185,7 @@ fn fill_behind_end(
         )
     };
     if reserved != 0 {
-        return false;
+        return Err(bytes);
     }
     let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
     let length = skipped + bytes.len();
@@ -196,7 +197,7 @@ fn fill_behind_end(
         file.handle(),
         first_page as i64,
     ) else {
-        return false;
+        return Err(bytes);
     };
     // SAFETY: the mapping holds `length` writable bytes until `munmap`, and nothing else refers to them.
     let target = unsafe { core::slice::from_raw_parts_mut(pointer.add(skipped), bytes.len()) };
@@ -205,48 +206,36 @@ fn fill_behind_end(
         .len()
         .div_ceil(threads)
         .next_multiple_of(MappedFile::page_size());
-    let shares = target.chunks_mut(share).zip(bytes.chunks(share));
-    let is_spent = spent.is_some_and(|spent| {
-        let start = bytes.as_ptr() as usize;
-        spent.start <= start && start + bytes.len() <= spent.end
-    });
+    let shares = target.chunks_mut(share).zip(bytes.blocks(share));
     bun_core::for_each_in_parallel(shares, |(target, bytes)| {
-        for (target, bytes) in target.chunks_mut(BLOCK).zip(bytes.chunks(BLOCK)) {
-            target.copy_from_slice(bytes);
-            let_go_of_pages(target);
-            if is_spent {
-                let_go_of_pages(bytes);
-            }
+        for (target, bytes) in target.chunks_mut(BLOCK).zip(bytes.blocks(BLOCK)) {
+            target.copy_from_slice(&bytes);
+            let_go_of_written_pages(target);
         }
     });
     let _ = bun_sys::munmap(pointer, length);
-    true
+    Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-fn fill_behind_end(
+fn fill_behind_end<'a>(
     _file: &bun_sys::File,
-    _bytes: &[u8],
+    bytes: ReadOnce<'a>,
     _position: u64,
-    _spent: Option<&SpentMapping>,
-) -> bool {
-    false
+) -> Result<(), ReadOnce<'a>> {
+    Err(bytes)
 }
 
 fn write_behind_end(
     file: &bun_sys::File,
-    bytes: &[u8],
+    bytes: ReadOnce<'_>,
     position: u64,
-    spent: Option<&SpentMapping>,
 ) -> bun_sys::Maybe<()> {
-    match fill_behind_end(file, bytes, position, spent) {
-        true => Ok(()),
-        false => file.pwrite_all(bytes, position as i64),
+    match fill_behind_end(file, bytes, position) {
+        Ok(()) => Ok(()),
+        Err(bytes) => file.pwrite_all(&bytes, position as i64),
     }
 }
-
-/// The addresses of a private mapping that nothing reads again once its bytes stand in the file.
-pub(crate) type SpentMapping = core::ops::Range<usize>;
 
 /// What `file` holds already.
 #[derive(Copy, Clone)]
@@ -257,11 +246,10 @@ pub(crate) struct Original<'a> {
 }
 
 /// Makes `pieces` the whole content of `file`. Returns its size and how many bytes were written.
-fn write_pieces(
+fn write_pieces<'a>(
     file: &bun_sys::File,
-    pieces: &[Piece<'_>],
+    pieces: impl IntoIterator<Item = Piece<'a>>,
     original: Option<Original<'_>>,
-    spent: Option<&SpentMapping>,
 ) -> Result<(u64, u64), ElfWriteError> {
     use ElfWriteError::{Seek, Truncate, Write};
     let mapping = original.and_then(|original| original.mapping);
@@ -272,40 +260,45 @@ fn write_pieces(
     let mut bytes_kept: u64 = 0;
     let previous_size = file.get_end_pos().map_err(Seek)? as u64;
     for piece in pieces {
+        let piece_size = piece.len();
         match (piece, original) {
-            (Piece::Bytes(bytes), Some(original)) => {
-                let inside = bytes.len().min(previous_size.saturating_sub(size) as usize);
-                let (inside, behind) = bytes.split_at(inside);
+            (Piece::Bytes(mut behind), Some(original)) => {
+                let inside = behind
+                    .len()
+                    .min(previous_size.saturating_sub(size) as usize);
+                let inside = behind.take_first(inside);
                 let written = write_changed_blocks(
                     file,
                     size,
-                    inside,
+                    &inside,
                     original.file,
                     untouched.as_ref(),
                     &mut block,
                 )
                 .map_err(Write)?;
                 bytes_kept += inside.len() as u64 - written;
-                write_behind_end(file, behind, size + inside.len() as u64, spent).map_err(Write)?;
+                write_behind_end(file, behind, size + inside.len() as u64).map_err(Write)?;
             }
-            (Piece::Bytes(bytes), None) => {
-                let inside = bytes.len().min(previous_size.saturating_sub(size) as usize);
-                let (inside, behind) = bytes.split_at(inside);
-                file.pwrite_all(inside, size as i64).map_err(Write)?;
-                write_behind_end(file, behind, size + inside.len() as u64, spent).map_err(Write)?;
+            (Piece::Bytes(mut behind), None) => {
+                let inside = behind
+                    .len()
+                    .min(previous_size.saturating_sub(size) as usize);
+                let inside = behind.take_first(inside);
+                file.pwrite_all(&inside, size as i64).map_err(Write)?;
+                write_behind_end(file, behind, size + inside.len() as u64).map_err(Write)?;
             }
-            (Piece::Length(length), _) => file.pwrite_all(length, size as i64).map_err(Write)?,
+            (Piece::Length(length), _) => file.pwrite_all(&length, size as i64).map_err(Write)?,
             (Piece::Zeros(count), _) => {
                 let mut written: u64 = 0;
-                while written < *count {
-                    let block = &zeros[..(*count - written).min(zeros.len() as u64) as usize];
+                while written < count {
+                    let block = &zeros[..(count - written).min(zeros.len() as u64) as usize];
                     file.pwrite_all(block, (size + written) as i64)
                         .map_err(Write)?;
                     written += block.len() as u64;
                 }
             }
         }
-        size += piece.len();
+        size += piece_size;
     }
     // A file that was truncated is written to disk when it is closed.
     if previous_size > size {
@@ -344,9 +337,8 @@ fn find_code_range(payload: &[u8], image: ImageRange) -> Option<core::ops::Range
 
 pub(crate) fn write_elf(
     file: Fd,
-    template: &mut [u8],
+    mut template: TemplateBytes<'_>,
     original: Option<Original<'_>>,
-    spent: Option<&SpentMapping>,
     payload: &mut [u8],
     image: Option<ImageRange>,
     symbols: Option<ImageSymbols<'_>>,
@@ -354,7 +346,7 @@ pub(crate) fn write_elf(
     use ElfWriteError::{Elf, Template};
     let file = bun_sys::File::borrow(&file);
     if image.is_some() {
-        let _ = reserve_payload_segments(template);
+        let _ = reserve_payload_segments(&mut template);
     }
     let mut elf = ElfFile::over(template).map_err(Template)?;
     elf.normalize_interpreter();
@@ -380,7 +372,7 @@ pub(crate) fn write_elf(
     }
     let code = image.and_then(|image| find_code_range(payload, image));
     let pieces = elf.bun_section_in_pieces(payload, code).map_err(Elf)?;
-    let (size, _) = write_pieces(file, &pieces, original, spent)?;
+    let (size, _) = write_pieces(file, pieces, original)?;
     let has_symbols = symbols.is_some_and(|symbols| append_elf_symbols(file, size, symbols));
     Ok(ElfWritten { has_symbols })
 }
@@ -407,22 +399,26 @@ mod tests {
         bun_sys::File::read_from(Fd::cwd(), path.as_bytes()).unwrap()
     }
 
+    fn kept(bytes: &[u8]) -> Piece<'_> {
+        Piece::Bytes(ReadOnce::kept(bytes))
+    }
+
     #[test]
     fn pieces_replace_longer_file() {
         let folder = TemporaryFolder::create("pieces");
         let path = folder.write("file", &[0xAA; 300_000]);
         let length = 7u64.to_le_bytes();
         let pieces = [
-            Piece::Bytes(b"head"),
+            kept(b"head"),
             Piece::Zeros(200_000),
             Piece::Length(length),
-            Piece::Bytes(b"payload"),
+            kept(b"payload"),
             Piece::Zeros(0),
         ];
         let expected = [&b"head"[..], &[0; 200_000], &length, b"payload"].concat();
 
         let file = bun_sys::File::open(&path, bun_sys::O::RDWR, 0).unwrap();
-        let (size, bytes_written) = write_pieces(&file, &pieces, None, None).unwrap();
+        let (size, bytes_written) = write_pieces(&file, pieces, None).unwrap();
         assert_eq!(size, expected.len() as u64);
         assert_eq!(bytes_written, expected.len() as u64);
         assert!(read_file(&path) == expected);
@@ -435,13 +431,15 @@ mod tests {
         let large: Vec<u8> = (0..(40u32 << 20) + 13)
             .map(|index| (index / 11) as u8)
             .collect();
-        let pieces = [
-            Piece::Bytes(&held[..70_000]),
-            Piece::Bytes(&large),
-            Piece::Zeros(5),
-            Piece::Bytes(&large),
-            Piece::Bytes(b"end"),
-        ];
+        let pieces = || {
+            [
+                kept(&held[..70_000]),
+                kept(&large),
+                Piece::Zeros(5),
+                kept(&large),
+                kept(b"end"),
+            ]
+        };
         let expected = [&held[..70_000], &large, &[0; 5], &large, b"end"].concat();
         let original_path = folder.write("original", &held);
         let original = bun_sys::File::open(&original_path, bun_sys::O::RDONLY, 0).unwrap();
@@ -452,7 +450,7 @@ mod tests {
         for original in [None, Some(original)] {
             let path = folder.write("file", &held);
             let file = bun_sys::File::open(&path, bun_sys::O::RDWR, 0).unwrap();
-            let (size, _) = write_pieces(&file, &pieces, original, None).unwrap();
+            let (size, _) = write_pieces(&file, pieces(), original).unwrap();
             assert_eq!(size, expected.len() as u64);
             assert!(read_file(&path) == expected);
         }
@@ -474,7 +472,8 @@ mod tests {
 
         let path = folder.write("file", b"head");
         let file = bun_sys::File::open(&path, bun_sys::O::RDWR, 0).unwrap();
-        if !fill_behind_end(&file, &mapped, 4, Some(&addresses)) {
+        let size = mapped.len();
+        if fill_behind_end(&file, mapped.split_read_once(size).0, 4).is_err() {
             return;
         }
         assert!(read_file(&path) == expected);
@@ -504,10 +503,10 @@ mod tests {
             head[at] ^= 0xFF;
         }
         let pieces = [
-            Piece::Bytes(&head),
+            kept(&head),
             Piece::Zeros(10),
-            Piece::Bytes(b"payload"),
-            Piece::Bytes(&held[..70_000]),
+            kept(b"payload"),
+            kept(&held[..70_000]),
         ];
         let expected = [&head[..], &[0; 10], b"payload", &held[..70_000]].concat();
 
@@ -517,7 +516,7 @@ mod tests {
             file: &original,
             mapping: None,
         };
-        let (size, bytes_written) = write_pieces(&file, &pieces, Some(original), None).unwrap();
+        let (size, bytes_written) = write_pieces(&file, pieces, Some(original)).unwrap();
         assert_eq!(size, expected.len() as u64);
         assert_eq!(bytes_written, expected.len() as u64 - 64 * 1024);
         assert!(read_file(&path) == expected);
@@ -543,7 +542,7 @@ mod tests {
             return;
         }
         let expected = [&mapped[..], &mapped[..BLOCK]].concat();
-        let pieces = [Piece::Bytes(&mapped), Piece::Bytes(&mapped[..BLOCK])];
+        let pieces = [kept(&mapped), kept(&mapped[..BLOCK])];
 
         let file = bun_sys::File::open(&path, bun_sys::O::RDWR, 0).unwrap();
         let other = bun_sys::File::open(&other, bun_sys::O::RDONLY, 0).unwrap();
@@ -551,7 +550,7 @@ mod tests {
             file: &other,
             mapping: Some((addresses.start, addresses.end)),
         };
-        let (size, bytes_written) = write_pieces(&file, &pieces, Some(original), None).unwrap();
+        let (size, bytes_written) = write_pieces(&file, pieces, Some(original)).unwrap();
         assert_eq!(size, expected.len() as u64);
         assert_eq!(bytes_written, 2 * BLOCK as u64);
         assert!(read_file(&path) == expected);
@@ -566,8 +565,7 @@ mod tests {
         let mut payload = b"payload".to_vec();
         let written = write_elf(
             file.handle(),
-            &mut template.clone(),
-            None,
+            TemplateBytes::Kept(&mut template.clone()),
             None,
             &mut payload,
             None,

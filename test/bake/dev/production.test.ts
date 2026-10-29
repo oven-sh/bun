@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
-import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
+import { copyCachedReactDeps, minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -942,15 +942,18 @@ export default function ClientOnly() {
   if (typeof window === "undefined") throw new Error("CLIENT_ONLY_THROW");
   return <p>rendered on the client</p>;
 }`;
-    // The HTML render gets the error of a server component as a copy with this message.
+    // React logs the error of a server component, and then the copy of it that the HTML render gets.
     const copy = expect.stringMatching(/^error: An error occurred in the Server Components render/);
+    // After the errors that React logs, the build names the route of the page that has no HTML.
+    const noHtml = (route: string) =>
+      `error: Route ${JSON.stringify(platformPath(route))} cannot be pre-rendered to a static page.`;
 
     // The React framework gives the pages of `getStaticPaths` as a pages object.
     test.concurrent.each([
-      ["throws an error", `throw new Error("page failed: " + params.id);`, "error: page failed: bad"],
-      ["rejects with no value", `await Promise.reject();`, copy],
-    ])("a React page from getStaticPaths that %s", async (_, fail, error) => {
-      const dir = await tempDirWithBakeDeps("bake-production-static-paths-throw", {
+      ["throws an error", `throw new Error("page failed: " + params.id);`, ["error: page failed: bad", copy]],
+      ["rejects with no value", `await Promise.reject();`, [copy]],
+    ])("a React page from getStaticPaths that %s", async (_, fail, errors) => {
+      using dir = tempDir("bake-production-static-paths-throw", {
         ...react,
         "pages/[id].tsx": `export default async function Page({ params }) {
   if (params.id === "bad") ${fail}
@@ -960,10 +963,15 @@ export function getStaticPaths() {
   return { paths: [{ params: { id: "ok" } }, { params: { id: "bad" } }], fallback: false };
 }`,
       });
+      await copyCachedReactDeps(String(dir));
 
-      const { dist, ...result } = await build(dir, "./src/index.tsx");
-      // The error of the component, and not "cannot be pre-rendered to a static page".
-      expect(result).toEqual({ errors: [error], stdout: "", exitCode: 1, signalCode: null });
+      const { dist, ...result } = await build(String(dir), "./src/index.tsx");
+      expect(result).toEqual({
+        errors: [...errors, noHtml("pages/[id].tsx")],
+        stdout: "",
+        exitCode: 1,
+        signalCode: null,
+      });
     });
 
     // A newer react-dom (0.0.0-experimental-dc9aed36-20261027) does not call `onAllReady` after an error outside
@@ -971,7 +979,7 @@ export function getStaticPaths() {
     test.concurrent(
       "a React client component, on a react-dom that does not call onAllReady after a shell error",
       async () => {
-        const dir = await tempDirWithBakeDeps("bake-production-shell-error", {
+        using dir = tempDir("bake-production-shell-error", {
           ...react,
           "components/ClientOnly.tsx": clientOnly,
           "pages/index.tsx": `import ClientOnly from "../components/ClientOnly";
@@ -979,8 +987,9 @@ export default function Page() {
   return <main><ClientOnly /></main>;
 }`,
         });
-        const server = path.join(dir, "node_modules", "react-dom", "server.node.js");
-        await Bun.write(path.join(dir, "node_modules", "react-dom", "server.node.real.js"), Bun.file(server));
+        await copyCachedReactDeps(String(dir));
+        const server = path.join(String(dir), "node_modules", "react-dom", "server.node.js");
+        await Bun.write(path.join(String(dir), "node_modules", "react-dom", "server.node.real.js"), Bun.file(server));
         await Bun.write(
           server,
           `const real = require("./server.node.real.js");
@@ -1002,8 +1011,13 @@ module.exports = {
 };`,
         );
 
-        const { dist, ...result } = await build(dir, "./src/index.tsx");
-        expect(result).toEqual({ errors: ["error: CLIENT_ONLY_THROW"], stdout: "", exitCode: 1, signalCode: null });
+        const { dist, ...result } = await build(String(dir), "./src/index.tsx");
+        expect(result).toEqual({
+          errors: ["error: CLIENT_ONLY_THROW", noHtml("pages/index.tsx")],
+          stdout: "",
+          exitCode: 1,
+          signalCode: null,
+        });
       },
     );
 
@@ -1016,7 +1030,7 @@ module.exports = {
         ["error: SERVER_THROW", copy],
       ],
     ])("but a React %s component that throws inside Suspense prerenders the fallback", async (_, broken, errors) => {
-      const dir = await tempDirWithBakeDeps("bake-production-suspense-fallback", {
+      using dir = tempDir("bake-production-suspense-fallback", {
         ...react,
         "components/Broken.tsx": broken,
         "pages/index.tsx": `import { Suspense } from "react";
@@ -1025,8 +1039,9 @@ export default function Page() {
   return <main><Suspense fallback={<p>FALLBACK</p>}><Broken /></Suspense></main>;
 }`,
       });
+      await copyCachedReactDeps(String(dir));
 
-      const { dist, ...result } = await build(dir, "./src/index.tsx");
+      const { dist, ...result } = await build(String(dir), "./src/index.tsx");
       expect(result).toEqual({ errors, stdout: "done\n", exitCode: 0, signalCode: null });
       expect(dist["index.html"]).toContain("FALLBACK");
     });

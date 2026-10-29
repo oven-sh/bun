@@ -100,38 +100,17 @@ export function renderToHtml(
 
 // Static builds can not stream suspense boundaries as they finish, but instead
 // produce a single HTML blob. The approach is otherwise similar to `renderToHtml`.
-export function renderToStaticHtml(
-  rscPayload: Readable,
-  bootstrapModules: readonly string[],
-  /** The errors of the flight render that writes `rscPayload`, and the function that stops that render. */
-  flightErrors: readonly unknown[],
-  abortFlight: () => void,
-): Promise<Blob> {
+export function renderToStaticHtml(rscPayload: Readable, bootstrapModules: readonly string[]): Promise<Blob> {
   const stream = new StaticRscInjectionStream(rscPayload);
   const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
   const Root = () => React.use(promise);
-  // An error inside a <Suspense> boundary is recoverable, so `onError` only collects.
-  const errors: unknown[] = [];
-  let shellFailed = false;
   const { pipe } = renderToPipeableStream(<Root />, {
     bootstrapModules,
-    onError: error => void errors.push(error),
-    // An error outside every boundary leaves no HTML, and a newer React does not call `onAllReady` after it.
-    onShellError(error) {
-      shellFailed = true;
-      // The error of a server component arrives as a copy that has a `digest` and not its message.
-      const digest = (error as { digest?: unknown } | null | undefined)?.digest;
-      stream.destroy(typeof digest === "string" ? (flightErrors[0] ?? error) : error);
-      abortFlight();
-    },
+    // An error outside every <Suspense> boundary leaves no HTML, and a newer React does not call `onAllReady` after it.
+    onShellError: error => stream.destroy(error),
     // Only begin flowing HTML once all of it is ready. This tells React
     // to not emit the flight chunks, just the entire HTML.
-    onAllReady() {
-      if (shellFailed) return;
-      for (const error of flightErrors) console.error(error);
-      for (const error of errors) console.error(error);
-      pipe(stream);
-    },
+    onAllReady: () => pipe(stream),
   });
   return stream.result;
 }

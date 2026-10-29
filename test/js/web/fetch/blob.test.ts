@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
+import { openAsBlob } from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -664,6 +665,9 @@ describe("consuming a slice's stream after the Blobs were collected", () => {
       return blob;
     });
     while (collected < tracked) await gcTick();
+    // Bun: `bun run` keeps every local variable of a function that waits alive. Compiled ahead of time, a registry that
+    // nothing names behind the loop is collected while the loop waits, and its callback never runs. So it is named here.
+    registry.unregister(registry);
     return result;
   }
 
@@ -983,4 +987,41 @@ test.each([
 ])("new Blob([], { type: %j }).slice().type", (type, expected) => {
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
+});
+
+test("fetch() sends no Content-Type for a Blob body with an empty type", async () => {
+  using dir = tempDir("blob-empty-type", { "data.txt": "hello world" });
+  const file = `${dir}/data.txt`;
+  await using server = Bun.serve({ port: 0, fetch: req => Response.json(req.headers.get("content-type")) });
+  const typed = () => new Blob(["hello world"], { type: "text/x" });
+  const bodies: Record<string, Blob> = {
+    "Blob slice": typed().slice(0, 5),
+    "File slice": new File(["hello world"], "a.txt", { type: "text/x" }).slice(0, 5),
+    "Bun.file(path, { type }) slice": Bun.file(file, { type: "text/x" }).slice(0, 5),
+    "fs.openAsBlob(path, { type }) slice": (await openAsBlob(file, { type: "text/x" })).slice(0, 5),
+    "response.blob() slice": (
+      await new Response("hello world", { headers: { "content-type": "application/pdf" } }).blob()
+    ).slice(0, 5),
+    "typed Blob": typed(),
+    "slice with a type": typed().slice(0, 5, "text/y"),
+    "Bun.file(path) slice": Bun.file(file).slice(0, 5),
+  };
+  const seen: Record<string, unknown> = {};
+  for (const [name, body] of Object.entries(bodies)) {
+    seen[name] = await (await fetch(server.url, { method: "POST", body })).json();
+    seen[`${name}, with another header`] = await (
+      await fetch(server.url, { method: "POST", body, headers: { "x-a": "1" } })
+    ).json();
+  }
+  const both = (name: string, type: string | null) => ({ [name]: type, [`${name}, with another header`]: type });
+  expect(seen).toEqual({
+    ...both("Blob slice", null),
+    ...both("File slice", null),
+    ...both("Bun.file(path, { type }) slice", null),
+    ...both("fs.openAsBlob(path, { type }) slice", null),
+    ...both("response.blob() slice", null),
+    ...both("typed Blob", "text/x"),
+    ...both("slice with a type", "text/y"),
+    ...both("Bun.file(path) slice", "text/plain;charset=utf-8"),
+  });
 });

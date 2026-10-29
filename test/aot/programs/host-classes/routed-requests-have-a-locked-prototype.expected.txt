@@ -1,0 +1,24 @@
+the prototype of a routed request is Request.prototype: false
+the prototype above it is Request.prototype: true
+own keys: Symbol(Symbol.toStringTag),clone,cookies,params
+prototype.clone = f: throws TypeError
+prototype.clone = the same function: allowed
+Object.defineProperty(prototype, "params", getter): throws TypeError
+prototype.params = 1: throws TypeError
+prototype.added = 1: throws TypeError
+prototype.method = 1: throws TypeError
+delete prototype.cookies: throws TypeError
+Object.setPrototypeOf(prototype, another object): throws TypeError
+Object.isExtensible(prototype): false
+routed: GET /users/7 b function true object
+routed params: 7
+clone of routed: GET /users/7 b function true object 7
+answer: GET 7 b
+plain: GET /other b function false undefined
+clone of plain: GET /other b function false undefined
+answer: GET
+own: OWN /b b function true string
+clone of own: OWN /bcloned  function true string
+Own.prototype.clone = f: /replaced
+an own property on a routed request: CHANGED /users/7 b function true object
+another prototype for a routed request: undefined undefined

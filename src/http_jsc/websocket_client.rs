@@ -64,11 +64,9 @@ const AUTO_PONG_BACKPRESSURE_LIMIT: usize = 16 * 1024 * 1024;
 /// Seconds to wait after sending our Close frame before dropping the connection (`closeTimeout` in `ws`).
 #[inline]
 fn close_timeout_seconds() -> core::ffi::c_uint {
-    bun_http::normalize_idle_timeout_seconds(
-        bun_core::env_var::BUN_CONFIG_WS_CLOSE_TIMEOUT
-            .get()
-            .unwrap_or(30),
-    )
+    bun_core::env_var::BUN_CONFIG_WS_CLOSE_TIMEOUT
+        .get()
+        .map_or(30, |seconds| u32::try_from(seconds).unwrap_or(u32::MAX))
 }
 
 /// Matches `WebSocketConnectedOptions` (WebSocketDeflate.h).

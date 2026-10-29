@@ -1,0 +1,3105 @@
+////: Box-4
+class Box {
+  constructor(width, height) {
+    this.width = width;
+    this.height = height;
+  }
+  area() {
+    return this.width * this.height;
+  }
+  reset() {
+    this.width = "reset";
+  }
+  set both(value) {
+    this.width = value;
+    this.height = value;
+  }
+  get drained() {
+    delete this.width;
+    return true;
+  }
+}
+////: for-56
+for (const [kind, make] of kinds) {
+  for (const [label, step] of steps) {
+    const box = make();
+    let line = kind + " | " + label + " -> ";
+    try {
+      line += show(step(box));
+    } catch (error) {
+      line += "threw " + error.constructor.name;
+    }
+    console.log(line + " | keys " + Object.keys(box).join());
+  }
+}
+////: lines-10
+function «1»(f) {
+  const result = f(1);
+  results.push(result);
+  return result;
+}
+////: lines-11
+function «1»(s) {
+  const result = s.charCodeAt(0);
+  results.push(result);
+  return result;
+}
+////: lines-124
+function «1»(«2», «3») {
+  const n = «4»(«3»);
+  return [n + 1, n | 0];
+}
+////: lines-6
+function «1»(o) {
+  o.x = 1;
+  const result = o;
+  results.push(result);
+  return result;
+}
+////: lines-8
+function «1»(o) {
+  const result = o.x + o.y;
+  results.push(result);
+  return result;
+}
+////: observe-3
+async function observe(label, run) {
+  results.length = 0;
+  const end = await outcome(async () => void (await run()));
+  console.log(label + " -> " + show(results) + " " + end);
+}
+////: steps
+const steps = [
+  ["nothing", box => { const a = box.width; return [a, box.width]; }],
+  ["Object.assign", box => { const a = box.width; Object.assign(box, { width: "assigned" }); return [a, box.width]; }],
+  ["Object.assign of two sources", box => { const a = box.width; Object.assign(box, { width: "first" }, { width: "second" }); return [a, box.width]; }],
+  ["Object.defineProperty with a value", box => { const a = box.width; Object.defineProperty(box, "width", { value: "defined" }); return [a, box.width]; }],
+  ["Object.defineProperty with a getter", box => { const a = box.width; Object.defineProperty(box, "width", { get: () => "got" }); return [a, box.width]; }],
+  ["Object.defineProperties", box => { const a = box.width; Object.defineProperties(box, { width: { value: "defined" }, height: { value: "too" } }); return [a, box.width, box.height]; }],
+  ["Reflect.set", box => { const a = box.width; Reflect.set(box, "width", "set"); return [a, box.width]; }],
+  ["Reflect.set with another receiver", box => { const a = box.width; Reflect.set({}, "width", "set", box); return [a, box.width]; }],
+  ["Reflect.defineProperty", box => { const a = box.width; Reflect.defineProperty(box, "width", { value: "defined" }); return [a, box.width]; }],
+  ["delete", box => { const a = box.width; delete box.width; return [a, box.width]; }],
+  ["Reflect.deleteProperty", box => { const a = box.width; Reflect.deleteProperty(box, "width"); return [a, box.width]; }],
+  ["delete, then in", box => { const a = "width" in box; delete box.width; return [a, "width" in box]; }],
+  ["delete, then keys", box => { const a = Object.keys(box).join(); delete box.width; return [a, Object.keys(box).join()]; }],
+  ["freeze, then a store", box => { box.width = 1; Object.freeze(box); try { box.width = 2; } catch (error) { return [error.constructor.name, box.width]; } return ["no error", box.width]; }],
+  ["seal, then a delete", box => { Object.seal(box); try { delete box.width; } catch (error) { return [error.constructor.name, box.width]; } return ["no error", box.width]; }],
+  ["preventExtensions, then a new member", box => { Object.preventExtensions(box); try { box.depth = 2; } catch (error) { return [error.constructor.name, box.depth]; } return ["no error", box.depth]; }],
+  ["setPrototypeOf, then a call", box => { const a = box.area(); Object.setPrototypeOf(box, other); return [a, box.area()]; }],
+  ["Reflect.setPrototypeOf, then a call", box => { const a = box.area(); Reflect.setPrototypeOf(box, other); return [a, box.area()]; }],
+  ["a store to __proto__, then a call", box => { const a = box.area(); box.__proto__ = other; return [a, box.area()]; }],
+  ["setPrototypeOf to null, then a call", box => { const a = box.area(); Object.setPrototypeOf(box, null); try { return [a, box.area()]; } catch (error) { return [a, error.constructor.name]; } }],
+  ["delete and setPrototypeOf, then a read", box => { const a = box.width; delete box.width; Object.setPrototypeOf(box, other); return [a, box.width]; }],
+  ["an object pattern that stores", box => { const a = box.width; ({ found: box.width } = { found: "destructured" }); return [a, box.width]; }],
+  ["an array pattern that stores", box => { const a = box.width; [box.width] = ["destructured"]; return [a, box.width]; }],
+  ["a for-of head that stores", box => { const a = box.width; for (box.width of ["looped"]); return [a, box.width]; }],
+  ["a for-in head that stores", box => { const a = box.width; for (box.width in { name: 1 }); return [a, box.width]; }],
+  ["forEach over entries", box => { const a = box.width; Object.entries({ width: "entry" }).forEach(([name, value]) => { box[name] = value; }); return [a, box.width]; }],
+  ["its own method", box => { const a = box.width; box.reset(); return [a, box.width]; }],
+  ["its own setter", box => { const a = box.width; box.both = "both"; return [a, box.width, box.height]; }],
+  ["its own getter", box => { const a = box.width; const b = box.drained; return [a, b, box.width]; }],
+  ["an own method added, then a call", box => { const a = box.area(); box.area = () => "own area"; return [a, box.area()]; }],
+  ["a swap of the two fields", box => { [box.width, box.height] = [box.height, box.width]; return [box.width, box.height]; }],
+  ["a store of another type, then arithmetic", box => { const a = box.width + 1; box.width = "3"; return [a, box.width + 1, box.area()]; }],
+  ["a store of a fraction, then arithmetic", box => { const a = box.width + 1; box.width = 0.5; return [a, box.width + 1, box.area()]; }],
+  ["a store through a second name", box => { const same = box; const a = box.width; same.width = "aliased"; return [a, box.width]; }],
+  ["a store through an array that holds it", box => { const list = [box]; const a = box.width; list[0].width = "through the list"; return [a, box.width]; }],
+  ["a store through a closure", box => { const a = box.width; (() => { box.width = "closure"; })(); return [a, box.width]; }],
+];
+//// arrays/what-the-species-made-is-used-like-an-array.js
+////= describe-11
+
+////= lines-49	Bag	length	this.made	"by Bag"	length	"not a number"
+////= lines-58	Bag	push	"Bag's push"
+////= lines-58	Bag	map	"Bag's map"
+Bag.prototype[Symbol.iterator] = function* () {
+  yield "Bag's iterator";
+};
+
+////= lines-61	ToBag	Array	Bag
+
+class Loud extends Array {
+  push() {
+    return "the subclass's push";
+  }
+  map(callback) {
+    return callback === undefined ? "the subclass's map" : super.map(callback);
+  }
+  *[Symbol.iterator]() {
+    yield "the subclass's iterator";
+  }
+}
+
+////= lines-61	ToTyped	Array	Uint8Array
+
+class ToProxy extends Array {
+  static get [Symbol.species]() {
+    return function (length) {
+      return new Proxy(new Array(length), {});
+    };
+  }
+}
+
+class ToLonger extends Array {
+  static get [Symbol.species]() {
+    return function (length) {
+      return ["already", "here", "and", "longer", "than", "asked"];
+    };
+  }
+}
+
+const makers = {
+  "a species that makes bags": () => ToBag.of(300, 1, 2),
+  "a subclass that overrides": () => Loud.of(300, 1, 2),
+  "a species of Uint8Array": () => ToTyped.of(300, 1, 2),
+  "a species that makes proxies": () => ToProxy.of(300, 1, 2),
+  "a species that makes longer arrays": () => ToLonger.of(300, 1, 2),
+  "a plain array with its own constructor": () => Object.assign([300, 1, 2], { constructor: { [Symbol.species]: Bag } }),
+  "an array": () => [300, 1, 2],
+};
+
+const steps = {
+  map: list => list.map(value => value + 1),
+  filter: list => list.filter(value => value > 0),
+  slice: list => list.slice(0),
+  splice: list => list.splice(0, 3),
+  concat: list => list.concat([7]),
+  flatMap: list => list.flatMap(value => [value]),
+  flat: list => list.flat(),
+};
+
+const then = {
+  lengthOf: result => result.length,
+  first: result => result[0],
+  push: result => result.push(9),
+  sum(result) {
+    let total = 0;
+    for (let i = 0; i < result.length; i++) total += result[i];
+    return total;
+  },
+  walk(result) {
+    const seen = [];
+    for (const value of result) seen.push(value);
+    return seen;
+  },
+  copy: result => [...result],
+  mapAgain: result => result.map(),
+  isArray: result => Array.isArray(result),
+};
+
+function mapThenLength(list) {
+  return list.map(value => value + 1).length;
+}
+
+function filterThenFirst(list) {
+  return list.filter(value => value > 0)[0];
+}
+
+function sliceThenPush(list) {
+  return list.slice().push(9);
+}
+
+function mapThenWalk(list) {
+  const seen = [];
+  for (const value of list.map(value => value + 1)) seen.push(value);
+  return seen;
+}
+
+function concatThenSpread(list) {
+  return [...list.concat([7])];
+}
+
+function mapThenSum(list) {
+  const result = list.map(value => value + 1);
+  let total = 0;
+  for (let i = 0; i < result.length; i++) total += result[i];
+  return total;
+}
+
+const together = { mapThenLength, filterThenFirst, sliceThenPush, mapThenWalk, concatThenSpread, mapThenSum };
+
+for (let i = 0; i < 1000; i++) {
+  for (const step in steps) for (const use in then) if (use !== "mapAgain") then[use](steps[step]([300, 1, 2]));
+  for (const use in together) together[use]([300, 1, 2]);
+}
+
+for (const name in makers) {
+  for (const step in steps) {
+    const answers = [];
+    for (const use in then) {
+      try {
+        answers.push(use + " " + describe(then[use](steps[step](makers[name]()))));
+      } catch (error) {
+        answers.push(use + " threw " + error.constructor.name);
+      }
+    }
+    console.log(name + ", " + step + ": " + answers.join("; "));
+  }
+  for (const use in together) attempt(name + ", " + use, () => together[use](makers[name]()));
+}
+//// arrays/whole-numbers-that-were-computed-as-fractions-are-looked-up.js
+////= describe-11
+
+const computations = {
+  half: value => value / 2,
+  sum: value => value / 4 + value / 4,
+  root: value => Math.sqrt(value * value) / 2,
+  floor: value => Math.floor(value / 2 + 0.25),
+  round: value => Math.round(value / 2 - 0.25),
+  fromAFloatArray: value => new Float64Array([value / 2])[0],
+  parsed: value => parseFloat(String(value / 2) + ".0"),
+  power: value => (value / 2) ** 1,
+  product: value => value * 0.5,
+  minimum: value => Math.min(value / 2, 1e9),
+  remainder: value => (value / 2) % 1e9,
+  negatedTwice: value => -(-value / 2),
+};
+
+const lookups = {
+  indexOf: (list, number) => list.indexOf(number),
+  lastIndexOf: (list, number) => list.lastIndexOf(number),
+  includes: (list, number) => list.includes(number),
+  element: (list, number) => list[number],
+  at: (list, number) => list.at(number),
+  has: (list, number) => number in list,
+  own: (list, number) => Object.hasOwn(list, number),
+  store(list, number) {
+    list[number] = "stored";
+    return Object.keys(list).join();
+  },
+  remove(list, number) {
+    delete list[number];
+    return Object.keys(list).join();
+  },
+  slice: (list, number) => list.slice(number),
+  withCopy: (list, number) => list.with(number, "with"),
+  splice: (list, number) => list.splice(number, 1),
+  fill: (list, number) => list.fill("filled", number),
+  truncate(list, number) {
+    list.length = number;
+    return list;
+  },
+  sized: (list, number) => new Array(number).length,
+  from: (list, number) => Array.from({ length: number }, (_, index) => index),
+  inASet: (list, number) => new Set(list).has(number),
+  inAMap: (list, number) => new Map(list.map(value => [value, "found " + value])).get(number),
+  asASetMember: (list, number) => new Set([number, 2, 0]).size,
+  asAKey: (list, number) => ({ 0: "zero", 2: "two" })[number],
+  character: (list, number) => "abcd"[number] + "abcd".charAt(number),
+  typedElement: (list, number) => new Uint8Array([9, 8, 7, 6])[number],
+  findIndex: (list, number) => list.findIndex(value => value === number),
+  switched(list, number) {
+    switch (number) {
+      case 0:
+        return "zero";
+      case 2:
+        return "two";
+      default:
+        return "neither";
+    }
+  },
+  same: (list, number) => [number === list[1], Object.is(number, list[1]), number == list[1]],
+  text: (list, number) => String(number) + "|" + JSON.stringify([number]) + "|" + `${number}`,
+};
+
+for (const lookup in lookups) for (let i = 0; i < 1000; i++) lookups[lookup]([1, 2, 3, 0], i & 3);
+
+for (const lookup in lookups) {
+  for (const input of [4, 0, -0]) {
+    const answers = [];
+    for (const computation in computations) {
+      let answer;
+      try {
+        answer = describe(lookups[lookup]([1, 2, 3, 0], computations[computation](input)));
+      } catch (error) {
+        answer = error.constructor.name;
+      }
+      if (!answers.includes(answer)) answers.push(answer);
+    }
+    console.log(lookup + ", from " + describe(input) + ": " + answers.join(" | "));
+  }
+}
+
+function inOneFunction(list, value) {
+  const number = value / 2;
+  return [list.indexOf(number), list.includes(number), list[number], list.lastIndexOf(number), number in list, new Set(list).has(number)];
+}
+
+function withANegativeZero(list, value) {
+  const number = value * -1;
+  return [list.indexOf(number), list.includes(number), list[number], list.lastIndexOf(number), number in list, new Set(list).has(number), Object.is(number, -0)];
+}
+
+function countingByHalves(list) {
+  const seen = [];
+  for (let i = 0; i < list.length; i += 0.5) seen.push(list[i]);
+  return seen;
+}
+
+function countingDownByDivision(list) {
+  const seen = [];
+  for (let i = 8; i >= 1; i /= 2) seen.push(list[i]);
+  return seen;
+}
+
+for (let i = 0; i < 1000; i++) {
+  inOneFunction([1, 2, 3, 0], 2);
+  withANegativeZero([1, 2, 3, 0], 1);
+}
+attempt("in one function, 4", () => inOneFunction([1, 2, 3, 0], 4));
+attempt("in one function, 3", () => inOneFunction([1, 2, 3, 0], 3));
+attempt("in one function, 0", () => inOneFunction([1, 2, 3, 0], 0));
+attempt("in one function, doubles", () => inOneFunction([1.5, 2, 3.5, 0], 4));
+attempt("a negative zero", () => withANegativeZero([1, 2, 3, 0], 0));
+attempt("a negative zero among doubles", () => withANegativeZero([1.5, 2, 3.5, 0], 0));
+attempt("a negative zero among strings", () => withANegativeZero(["a", 0], 0));
+attempt("counting by halves", () => countingByHalves([1, 2, 3]));
+attempt("counting down by division", () => countingDownByDivision([0, 1, 2, 3, 4, 5, 6, 7, 8]));
+//// arrays/yield-star-delegates-to-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+////= Loud-8
+
+////= makers-2
+
+////= lines-239	all	list
+
+function* framed(list) {
+  yield "before";
+  const answer = yield* list;
+  yield answer;
+}
+
+////= lines-20	collect	iterable	seen	value	of
+
+const uses = {
+  "all": list => collect(all(list)),
+  "framed": list => collect(framed(list)),
+  "one step": list => all(list).next(),
+};
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// async-functions-and-generators-get-values-that-are-not-strings.js
+////= show-26
+
+async function lengthAfterAwait(promise) {
+  const text = await promise;
+  return text.length;
+}
+
+async function upperAfterAwait(promise) {
+  return (await promise).toUpperCase();
+}
+
+async function usedBeforeAndAfter(text, pause) {
+  const before = text.charCodeAt(0);
+  await pause;
+  return [before, text.charCodeAt(1), text.length];
+}
+
+async function joinAwaited(promises) {
+  let text = "";
+  for (const promise of promises) text += await promise;
+  return text;
+}
+
+async function keyAfterAwait(table, promise) {
+  return table[await promise];
+}
+
+function* upperOfWhatIsSent() {
+  let sent = yield "ready";
+  while (true) sent = yield sent.toUpperCase();
+}
+
+function* lengthsOfWhatIsSent() {
+  let total = 0;
+  while (true) {
+    const sent = yield total;
+    total += sent.length;
+  }
+}
+
+function* charactersOf(text) {
+  for (let i = 0; i < text.length; i++) yield text[i];
+}
+
+////= lines-239	delegated	text
+
+async function* asyncCharacters(text) {
+  for (const character of text) yield character;
+}
+
+////= lines-242	collect	seen	value
+
+async function attemptAsync(label, run) {
+  let line;
+  try {
+    line = show(await run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + " -> " + line);
+}
+
+const values = [
+  "'hello'",
+  "new String('hello')",
+  "['h', 'e']",
+  "{ length: 2, toUpperCase() { return 'LOOK ALIKE'; }, charCodeAt(i) { return -i; }, toString() { return 'alike'; } }",
+  "5",
+  "null",
+  "undefined",
+  "Symbol('s')",
+  "Buffer.from('he')",
+  "{ then(resolve) { resolve('from a thenable'); } }",
+  "{ then(resolve) { resolve(['from', 'a', 'thenable']); } }",
+  "{ then: 5, length: 1 }",
+  "Promise.resolve('from a promise')",
+  "Promise.resolve(7)",
+];
+
+async function main() {
+  for (let i = 0; i < 500; i++) {
+    await lengthAfterAwait("hello");
+    await upperAfterAwait(Promise.resolve("hello"));
+    await usedBeforeAndAfter("hello", null);
+    await joinAwaited(["a", Promise.resolve("b")]);
+    await keyAfterAwait({ a: 1 }, "a");
+  }
+  const warm = upperOfWhatIsSent();
+  warm.next();
+  const warmLengths = lengthsOfWhatIsSent();
+  warmLengths.next();
+  for (let i = 0; i < 2000; i++) {
+    warm.next("hello");
+    warmLengths.next("hello");
+    [...charactersOf("ab")];
+    [...delegated("ab")];
+  }
+
+  for (const text of values) {
+    await attemptAsync("length after await " + text, () => lengthAfterAwait(make(text)));
+    await attemptAsync("upper after await " + text, () => upperAfterAwait(make(text)));
+    await attemptAsync("used before and after " + text, () => usedBeforeAndAfter(make(text), null));
+    await attemptAsync("joined " + text, () => joinAwaited(["<", make(text), ">"]));
+    await attemptAsync("key " + text, () => keyAfterAwait({ hello: "by hello", 5: "by five", null: "by null", undefined: "by undefined", "h,e": "by a list", alike: "by the look-alike", "from a thenable": "by a thenable", 7: "by seven", "from a promise": "by a promise" }, make(text)));
+    attempt("sent to a warm generator " + text, () => warm.next(make(text)).value);
+    attempt("sent to a fresh generator " + text, () => {
+      const fresh = upperOfWhatIsSent();
+      fresh.next();
+      return fresh.next(make(text)).value;
+    });
+    attempt("lengths sent " + text, () => {
+      const fresh = lengthsOfWhatIsSent();
+      fresh.next();
+      fresh.next("ab");
+      return fresh.next(make(text)).value;
+    });
+    attempt("characters of " + text, () => [...charactersOf(make(text))]);
+    attempt("delegated " + text, () => [...delegated(make(text))]);
+    await attemptAsync("async characters of " + text, () => collect(asyncCharacters(make(text))));
+    await attemptAsync("for await over " + text, () => collect(make(text)));
+  }
+  attempt("the warm generator is finished by the first throw", () => warm.next("hello"));
+}
+
+await main();
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// await-of-a-promise-hands-over-the-value.cjs
+const log = [];
+
+////= show-28
+
+////= pushes-13	a = await Promise.resolve(given)
+
+////= iterates-15	given	a = await Promise.resolve(given)
+
+////= readsCharCode-12	s = await Promise.resolve(given)
+
+////= truncates-9	n = await Promise.resolve(given)
+
+////= addsOne-8	n = await Promise.resolve(given)
+
+////= calls-10	f = await Promise.resolve(given)
+
+////= addsMembers-11	o = await Promise.resolve(given)
+
+////= storesMember-13	o = await Promise.resolve(given)
+
+////= table-8
+
+main();
+//// await-of-a-thenable-that-rejects-with-the-value.js
+"use strict";
+
+const log = [];
+
+////= show-28
+
+async function pushes(given) {
+  try {
+    await { then(resolve, reject) { reject(given); } };
+  } catch (a) {
+    a.push(1);
+    return [a.length];
+  }
+}
+
+async function iterates(given) {
+  try {
+    await { then(resolve, reject) { reject(given); } };
+  } catch (a) {
+    const seen = [];
+    for (const x of a) seen.push(x);
+    return [seen];
+  }
+}
+
+async function readsCharCode(given) {
+  try {
+    await { then(resolve, reject) { reject(given); } };
+  } catch (s) {
+    return [s.charCodeAt(0)];
+  }
+}
+
+async function truncates(given) {
+  try {
+    await { then(resolve, reject) { reject(given); } };
+  } catch (n) {
+    return [n | 0];
+  }
+}
+
+async function addsOne(given) {
+  try {
+    await { then(resolve, reject) { reject(given); } };
+  } catch (n) {
+    return [n + 1];
+  }
+}
+
+async function calls(given) {
+  try {
+    await { then(resolve, reject) { reject(given); } };
+  } catch (f) {
+    return [f(1)];
+  }
+}
+
+async function addsMembers(given) {
+  try {
+    await { then(resolve, reject) { reject(given); } };
+  } catch (o) {
+    return [o.x + o.y];
+  }
+}
+
+async function storesMember(given) {
+  try {
+    await { then(resolve, reject) { reject(given); } };
+  } catch (o) {
+    o.x = 1;
+    return [o];
+  }
+}
+
+////= table-8
+
+main();
+//// await-of-a-thenable-whose-then-hands-over-the-value.cjs
+const log = [];
+
+////= show-28
+
+////= pushes-13	a = await { then(resolve) { resolve(given); } }
+
+////= iterates-15	given	a = await { then(resolve) { resolve(given); } }
+
+////= readsCharCode-12	s = await { then(resolve) { resolve(given); } }
+
+////= truncates-9	n = await { then(resolve) { resolve(given); } }
+
+////= addsOne-8	n = await { then(resolve) { resolve(given); } }
+
+////= calls-10	f = await { then(resolve) { resolve(given); } }
+
+////= addsMembers-11	o = await { then(resolve) { resolve(given); } }
+
+////= storesMember-13	o = await { then(resolve) { resolve(given); } }
+
+////= table-8
+
+main();
+//// await-of-the-value-itself.js
+"use strict";
+
+const log = [];
+
+////= show-28
+
+////= pushes-13	a = await given
+
+////= iterates-15	given	a = await given
+
+////= readsCharCode-12	s = await given
+
+////= truncates-9	n = await given
+
+////= addsOne-8	n = await given
+
+////= calls-10	f = await given
+
+////= addsMembers-11	o = await given
+
+////= storesMember-13	o = await given
+
+////= table-8
+
+main();
+//// await-of-thenables-that-do-not-keep-to-the-rules.js
+"use strict";
+
+const log = [];
+
+////= show-32
+
+console.log("strict:", (function () { return this === undefined; })());
+
+async function addsOne(thenable) {
+  const n = await thenable;
+  return [n + 1];
+}
+async function addsMembers(thenable) {
+  const o = await thenable;
+  return [o.x + o.y];
+}
+
+const thenables = [
+  ["a promise", value => Promise.resolve(value)],
+  ["a thenable", value => ({ then(resolve) { log.push("then"); resolve(value); } })],
+  ["then is a getter", value => ({ get then() { log.push("get then"); return resolve => resolve(value); } })],
+  ["then is a getter that throws", () => ({ get then() { log.push("get then"); throw new EvalError("in the getter"); } })],
+  ["then is no function", value => ({ then: value })],
+  ["then resolves twice", value => ({ then(resolve) { resolve(value); resolve("second"); } })],
+  ["then resolves and rejects", value => ({ then(resolve, reject) { resolve(value); reject(new EvalError("late")); } })],
+  ["then resolves and throws", value => ({ then(resolve) { resolve(value); throw new EvalError("late"); } })],
+  ["then throws", () => ({ then() { throw new EvalError("in then"); } })],
+  ["then resolves with another thenable", value => ({ then(resolve) { log.push("outer then"); resolve({ then(inner) { log.push("inner then"); inner(value); } }); } })],
+  ["then resolves later", value => ({ then(resolve) { setTimeout(resolve, 0, value); } })],
+  ["then is inherited", value => Object.create({ then(resolve) { log.push("inherited then"); resolve(value); } })],
+  ["a proxy of a promise", value => new Proxy(Promise.resolve(value), {})],
+  ["a proxy of a thenable", value => logged({ then(resolve) { resolve(value); } })],
+  ["a function with then", value => Object.assign(() => {}, { then(resolve) { resolve(value); } })],
+  ["a promise with its own then", value => Object.assign(Promise.resolve("ignored"), { then(resolve) { log.push("own then"); resolve(value); } })],
+  ["a promise whose constructor is another", value => Object.assign(Promise.resolve(value), { constructor: Object })],
+  ["an instance of a subclass with its own then", value => new (class extends Promise { then(resolve, reject) { log.push("subclass then"); return super.then(resolve, reject); } })(resolve => resolve(value))],
+];
+const numbers = [["an integer", () => 7], ["a text", () => "3"], ["an object with valueOf", () => ({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; } })], ["undefined", () => undefined]];
+const objects = [["an object", () => ({ x: 1, y: 2 })], ["accessors", () => ({ get x() { log.push("get x"); return 10; }, get y() { log.push("get y"); return 20; } })], ["null", () => null]];
+
+async function main() {
+  for (let i = 0; i < 1000; i++) {
+    await addsOne(Promise.resolve(7));
+    await addsMembers(Promise.resolve({ x: 1, y: 2 }));
+  }
+  for (const [label, wrap] of [...thenables, thenables[0]]) {
+    for (const [kind, make] of numbers) await attempt("addsOne, " + label + " hands over " + kind, () => addsOne(wrap(make())));
+    for (const [kind, make] of objects) await attempt("addsMembers, " + label + " hands over " + kind, () => addsMembers(wrap(make())));
+  }
+}
+main();
+//// babel-class-helpers-with-honest-and-odd-callers.cjs
+"use strict";
+
+function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
+function _classCallCheck(a, n) { if (!(a instanceof n)) throw new TypeError("Cannot call a class as a function"); }
+function _defineProperties(e, r) { for (var t = 0; t < r.length; t++) { var o = r[t]; o.enumerable = o.enumerable || !1, o.configurable = !0, "value" in o && (o.writable = !0), Object.defineProperty(e, _toPropertyKey(o.key), o); } }
+function _createClass(e, r, t) { return r && _defineProperties(e.prototype, r), t && _defineProperties(e, t), Object.defineProperty(e, "prototype", { writable: !1 }), e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
+function _callSuper(t, o, e) { return o = _getPrototypeOf(o), _possibleConstructorReturn(t, _isNativeReflectConstruct() ? Reflect.construct(o, e || [], _getPrototypeOf(t).constructor) : o.apply(t, e)); }
+function _possibleConstructorReturn(t, e) { if (e && ("object" == _typeof(e) || "function" == typeof e)) return e; if (void 0 !== e) throw new TypeError("Derived constructors may only return object or undefined"); return _assertThisInitialized(t); }
+function _assertThisInitialized(e) { if (void 0 === e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); return e; }
+function _isNativeReflectConstruct() { try { var t = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); } catch (t) {} return (_isNativeReflectConstruct = function _isNativeReflectConstruct() { return !!t; })(); }
+function _getPrototypeOf(t) { return _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf.bind() : function (t) { return t.__proto__ || Object.getPrototypeOf(t); }, _getPrototypeOf(t); }
+function _inherits(t, e) { if ("function" != typeof e && null !== e) throw new TypeError("Super expression must either be null or a function"); t.prototype = Object.create(e && e.prototype, { constructor: { value: t, writable: !0, configurable: !0 } }), Object.defineProperty(t, "prototype", { writable: !1 }), e && _setPrototypeOf(t, e); }
+function _setPrototypeOf(t, e) { return _setPrototypeOf = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function (t, e) { return t.__proto__ = e, t; }, _setPrototypeOf(t, e); }
+
+////= show-34
+
+var Reader = function () {
+  function Reader(pages) {
+    _classCallCheck(this, Reader);
+    this.pages = pages;
+  }
+  return _createClass(Reader, [{
+    key: "read",
+    value: function read() {
+      return "read " + this.pages + " pages";
+    }
+  }, {
+    key: "half",
+    get: function get() {
+      return this.pages / 2;
+    },
+    set: function set(value) {
+      this.pages = value * 2;
+    }
+  }], [{
+    key: "open",
+    value: function open(pages) {
+      return new this(pages);
+    }
+  }]);
+}();
+
+var Skimmer = function (_Reader) {
+  function Skimmer(pages, speed) {
+    var _this;
+    _classCallCheck(this, Skimmer);
+    _this = _callSuper(this, Skimmer, [pages]);
+    _this.speed = speed;
+    return _this;
+  }
+  _inherits(Skimmer, _Reader);
+  return _createClass(Skimmer, [{
+    key: "read",
+    value: function read() {
+      return "skimmed " + this.pages + " pages at " + this.speed;
+    }
+  }]);
+}(Reader);
+
+////= lines-5	readOf	reader	reader.read
+
+////= lines-7	halfOf	reader	reader.half
+
+////= lines-93	setHalf	reader	value	reader.half	reader.pages
+
+var length = 0;
+for (var i = 0; i < 2000; i++) {
+  var honest = i % 2 ? new Reader(i % 8) : new Skimmer(i % 8, 2);
+  length += readOf(honest).length + halfOf(honest) + setHalf(honest, 3);
+}
+console.log("2000 honest readers", length);
+
+attempt("a reader", function () { return new Reader(10); });
+attempt("a skimmer", function () { return new Skimmer(10, 2); });
+attempt("keys of the prototype", function () { return Object.keys(Reader.prototype); });
+attempt("own names of the prototype", function () { return Object.getOwnPropertyNames(Reader.prototype); });
+attempt("for-in over a skimmer", function () { var names = []; for (var name in new Skimmer(1, 2)) names.push(name); return names; });
+attempt("a static through the child", function () { return Skimmer.open(6) instanceof Skimmer; });
+attempt("Reader without new", function () { return Reader(1); });
+attempt("Reader.call with a literal", function () { return Reader.call({}, 1); });
+attempt("Reader.call with a reader", function () { var reader = new Reader(1); Reader.call(reader, 2); return reader; });
+attempt("Reader.call with a skimmer", function () { var skimmer = new Skimmer(1, 1); Reader.call(skimmer, 2); return skimmer; });
+attempt("Reader.call with an object made from its prototype", function () { var made = Object.create(Reader.prototype); Reader.call(made, 2); return readOf(made); });
+attempt("Skimmer.call with a reader", function () { return Skimmer.call(new Reader(1), 2, 3); });
+attempt("a store to Reader.prototype", function () { Reader.prototype = {}; return "stored"; });
+attempt("Reflect.construct of Reader for Skimmer", function () { return readOf(Reflect.construct(Reader, [5], Skimmer)); });
+attempt("Reflect.construct of Skimmer for Reader", function () { return readOf(Reflect.construct(Skimmer, [5, 6], Reader)); });
+
+var impostors = [
+  ["a literal with pages", { pages: 10 }],
+  ["a literal with pages and read", { pages: 10, read: function () { return "its own read"; } }],
+  ["a literal with its own half", { pages: 10, half: "own half", read: Reader.prototype.read }],
+  ["a reader whose half was shadowed", Object.defineProperty(new Reader(10), "half", { value: "shadow", writable: true })],
+  ["a frozen reader", Object.freeze(new Reader(10))],
+  ["a reader moved under Skimmer", Object.setPrototypeOf(new Reader(10), Skimmer.prototype)],
+  ["a skimmer moved under Object", Object.setPrototypeOf(new Skimmer(10, 2), Object.prototype)],
+];
+impostors.forEach(function (pair) {
+  attempt(pair[0] + ": read()", function () { return readOf(pair[1]); });
+  attempt(pair[0] + ": half", function () { return halfOf(pair[1]); });
+  attempt(pair[0] + ": half = 7", function () { return setHalf(pair[1], 7); });
+  attempt(pair[0] + ": now", function () { return pair[1]; });
+  attempt("honest again", function () { return [readOf(new Reader(4)), halfOf(new Reader(4)), setHalf(new Reader(4), 1)]; });
+});
+//// built-ins-answer-with-something-else-than-the-usual-kind.js
+"use strict";
+
+const log = [];
+
+////= show-27
+
+console.log("strict:", (function () { return this === undefined; })());
+
+////= lines-343	iterates1(text, separator	const a = text.split(separator)
+function pushes2(text, separator) {
+  const a = text.split(separator);
+  a.push(1);
+  return a.length;
+}
+function reads3(text, pattern) {
+  const s = text.replace(pattern, "x");
+  return s.charCodeAt(0);
+}
+////= lines-124	adds4	text	pattern	text.search
+////= lines-103	iterates5	pattern	x	match
+function iterates6(text, pattern) {
+  const seen = [];
+  for (const x of text.matchAll(pattern)) seen.push(x[0]);
+  return seen;
+}
+for (let i = 0; i < 2000; i++) {
+  iterates1("a,b", ",");
+  pushes2("a,b", ",");
+  reads3("abc", "b");
+  adds4("abc", /b/);
+  iterates5("abc", /b/);
+  iterates6("abc", /b/g);
+}
+const answering = (symbol, answer) => ({ [symbol]: (...list) => (log.push(String(symbol) + " " + list.length), answer) });
+attempt("split", () => iterates1("a,b", ","));
+attempt("split answers with a set", () => iterates1("a,b", answering(Symbol.split, new Set([1, 2]))));
+attempt("split answers with a text", () => iterates1("a,b", answering(Symbol.split, "xy")));
+attempt("split answers with a number", () => iterates1("a,b", answering(Symbol.split, 5)));
+attempt("split, then push", () => pushes2("a,b", ","));
+attempt("split answers with an array-like, then push", () => pushes2("a,b", answering(Symbol.split, { length: 7, push: () => "pushed" })));
+attempt("split answers with a frozen array, then push", () => pushes2("a,b", answering(Symbol.split, Object.freeze(["a"]))));
+attempt("split answers with undefined, then push", () => pushes2("a,b", answering(Symbol.split, undefined)));
+attempt("replace", () => reads3("abc", "b"));
+attempt("replace answers with a number", () => reads3("abc", answering(Symbol.replace, 65)));
+attempt("replace answers with an object", () => reads3("abc", answering(Symbol.replace, { charCodeAt: () => "mine" })));
+attempt("replace answers with an array", () => reads3("abc", answering(Symbol.replace, ["abc"])));
+attempt("search", () => adds4("abc", /b/));
+attempt("search answers with a text", () => adds4("abc", answering(Symbol.search, "3")));
+attempt("search answers with a bigint", () => adds4("abc", answering(Symbol.search, 10n)));
+attempt("search answers with an object", () => adds4("abc", answering(Symbol.search, { valueOf() { log.push("valueOf"); return 2 ** 31; } })));
+attempt("search answers with undefined", () => adds4("abc", answering(Symbol.search, undefined)));
+attempt("match", () => iterates5("abc", /b/));
+attempt("match finds nothing", () => iterates5("abc", /x/));
+attempt("match answers with a text", () => iterates5("abc", answering(Symbol.match, "xy")));
+attempt("matchAll", () => iterates6("abcb", /b/g));
+attempt("matchAll answers with an array of texts", () => iterates6("abc", answering(Symbol.matchAll, ["xy", "z"])));
+attempt("matchAll answers with a number", () => iterates6("abc", answering(Symbol.matchAll, 5)));
+
+////= lines-190	readsAt	s	index	s.at	charCodeAt	0
+function readsByIndex(s, index) {
+  return s[index].charCodeAt(0);
+}
+////= lines-190	readsCharAt	s	index	s.charAt	charCodeAt	0
+////= lines-124	addsToCodePoint	s	index	s.codePointAt
+////= lines-124	addsToCharCode	s	index	s.charCodeAt
+function addsToPopped(a) {
+  const n = a.pop();
+  return [n + 1, n | 0];
+}
+function addsToShifted(a) {
+  const n = a.shift();
+  return [n + 1, n | 0];
+}
+function addsToFound(a, wanted) {
+  const n = a.find(x => x === wanted);
+  return [n + 1, n | 0];
+}
+////= lines-124	addsToMapped	m	key	m.get
+function addsMembersOfFound(a, wanted) {
+  const o = a.find(candidate => candidate.x === wanted);
+  return o.x + o.y;
+}
+function addsToElement(a, index) {
+  const n = a[index];
+  return [n + 1, n | 0];
+}
+function addsToLargest(a) {
+  const n = Math.max(...a);
+  return [n + 1, n | 0];
+}
+function addsToParsed(text) {
+  const n = parseInt(text, 10);
+  return [n + 1, n | 0];
+}
+function addsToIndex(a, wanted) {
+  const n = a.indexOf(wanted);
+  return [n + 1, n | 0, a[n]];
+}
+for (let i = 0; i < 2000; i++) {
+  readsAt("abc", 1);
+  readsByIndex("abc", 1);
+  readsCharAt("abc", 1);
+  addsToCodePoint("abc", 1);
+  addsToCharCode("abc", 1);
+  addsToPopped([1, 2]);
+  addsToShifted([1, 2]);
+  addsToFound([1, 2], 2);
+  addsToMapped(new Map([[1, 2]]), 1);
+  addsMembersOfFound([{ x: 1, y: 2 }], 1);
+  addsToElement([1, 2], 1);
+  addsToLargest([1, 2]);
+  addsToParsed("12");
+  addsToIndex([1, 2], 2);
+}
+for (const index of [1, 3, -1, -4, 1.5, "1", NaN, undefined, 2 ** 31, -0]) {
+  attempt("at " + show(index), () => readsAt("abc", index));
+  attempt("by index " + show(index), () => readsByIndex("abc", index));
+  attempt("charAt " + show(index), () => readsCharAt("abc", index));
+  attempt("codePointAt " + show(index), () => addsToCodePoint("abc", index));
+  attempt("charCodeAt " + show(index), () => addsToCharCode("abc", index));
+  attempt("an element " + show(index), () => addsToElement([1, 2, 3], index));
+}
+attempt("pop of an empty array", () => addsToPopped([]));
+attempt("pop of an array that ends in a hole", () => addsToPopped([1, ,]));
+attempt("pop of an array of texts", () => addsToPopped(["1", "2"]));
+attempt("shift of an empty array", () => addsToShifted([]));
+attempt("find finds nothing", () => addsToFound([1, 2], 3));
+attempt("a key the map does not have", () => addsToMapped(new Map([[1, 2]]), 2));
+attempt("a key whose value is a text", () => addsToMapped(new Map([[1, "2"]]), 1));
+attempt("find finds no object", () => addsMembersOfFound([{ x: 1, y: 2 }], 3));
+attempt("the largest of nothing", () => addsToLargest([]));
+attempt("the largest of a text and a number", () => addsToLargest(["12", 3]));
+attempt("the largest with a hole", () => addsToLargest([1, , 3]));
+attempt("the largest of zeros", () => Math.max(-0, -0));
+attempt("parseInt of no number", () => addsToParsed("ten"));
+attempt("parseInt of a large number", () => addsToParsed("4294967297"));
+attempt("parseInt of minus zero", () => parseInt("-0", 10));
+attempt("indexOf finds nothing", () => addsToIndex([1, 2], 3));
+
+////= lines-228	readsSerialized	value	JSON.stringify	value
+function takesTwo(iterable) {
+  const [first, second] = iterable;
+  return [first + 1, second + 1];
+}
+for (let i = 0; i < 2000; i++) {
+  readsSerialized({ x: 1 });
+  takesTwo([1, 2]);
+}
+attempt("JSON.stringify of an object", () => readsSerialized({ x: 1 }));
+attempt("JSON.stringify of undefined", () => readsSerialized(undefined));
+attempt("JSON.stringify of a function", () => readsSerialized(() => {}));
+attempt("JSON.stringify of a symbol", () => readsSerialized(Symbol("s")));
+attempt("JSON.stringify of an object whose toJSON answers nothing", () => readsSerialized({ toJSON() {} }));
+attempt("a pattern takes more than the array gives", () => takesTwo([1]));
+attempt("a pattern takes more than the set gives", () => takesTwo(new Set([1])));
+attempt("a pattern takes characters", () => takesTwo("12"));
+
+function readsParameter(parameters, name) {
+  const s = parameters.get(name);
+  return s.charCodeAt(0);
+}
+////= lines-124	addsToParameter	parameters	name	parameters.get
+for (let i = 0; i < 2000; i++) {
+  readsParameter(new URLSearchParams("a=1"), "a");
+  addsToParameter(new URLSearchParams("a=1"), "a");
+}
+const holders = [
+  ["URLSearchParams", () => new URLSearchParams("a=1&a=2")],
+  ["Headers", () => new Headers({ a: "1" })],
+  ["FormData", () => { const form = new FormData(); form.append("a", "1"); return form; }],
+  ["a map of numbers", () => new Map([["a", 1]])],
+  ["a map of texts", () => new Map([["a", "1"]])],
+  ["an object with get", () => ({ get: name => ({ charCodeAt: () => "own " + name, valueOf: () => 41 }) })],
+  ["the searchParams of a URL", () => new URL("http://localhost/?a=1").searchParams],
+];
+for (const [label, make] of [...holders, holders[0]]) {
+  attempt(label + ": a name that is there, read", () => readsParameter(make(), "a"));
+  attempt(label + ": a name that is there, added to", () => addsToParameter(make(), "a"));
+  attempt(label + ": a name that is missing, read", () => readsParameter(make(), "b"));
+  attempt(label + ": a name that is missing, added to", () => addsToParameter(make(), "b"));
+}
+//// built-ins-change-an-object-between-two-reads-in-plain-sight-sloppy.cjs
+////= show-10
+
+console.log("strict code:", (function () { return this === undefined; })());
+
+////= Box-4
+
+////= OldBox
+////= OldBox-prototype-area
+OldBox.prototype.reset = function () {
+  this.width = "reset";
+};
+Object.defineProperty(OldBox.prototype, "both", { set(value) { this.width = value; this.height = value; } });
+Object.defineProperty(OldBox.prototype, "drained", { get() { delete this.width; return true; } });
+
+const other = { area: () => "another area", width: "inherited" };
+
+////= steps
+
+////= kinds-3
+
+for (let i = 0; i < 2000; i++) for (const [, make] of kinds) for (const [, step] of steps) step(make());
+
+////= for-56
+//// built-ins-change-an-object-between-two-reads-in-plain-sight-strict.mjs
+////= show-10
+
+console.log("strict code:", (function () { return this === undefined; })());
+
+////= Box-4
+
+////= OldBox
+////= OldBox-prototype-area
+OldBox.prototype.reset = function () {
+  this.width = "reset";
+};
+Object.defineProperty(OldBox.prototype, "both", { set(value) { this.width = value; this.height = value; } });
+Object.defineProperty(OldBox.prototype, "drained", { get() { delete this.width; return true; } });
+
+const other = { area: () => "another area", width: "inherited" };
+
+////= steps
+
+////= kinds-3
+
+for (let i = 0; i < 2000; i++) for (const [, make] of kinds) for (const [, step] of steps) step(make());
+
+////= for-56
+
+export {};
+//// built-ins-hand-something-else-later-to-a-function-whose-visible-callers-pass-a-plain-object.cjs
+const log = [];
+
+////= show-32
+
+const results = [];
+////= observe-3
+
+////= lines-8	addsMembers1
+
+////= lines-8	addsMembers2
+
+////= lines-8	addsMembers3
+
+////= lines-8	addsMembers4
+
+////= lines-8	addsMembers5
+
+////= lines-8	addsMembers6
+
+////= lines-8	addsMembers7
+
+////= lines-8	addsMembers8
+
+////= lines-8	addsMembers9
+
+////= lines-8	addsMembers10
+
+////= lines-8	addsMembers11
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+
+  addsMembers1(({ x: 1, y: 2 }));
+  addsMembers1(({ x: 1, y: 2 }));
+  await observe("then: an object", () => Promise.resolve((({ x: 1, y: 2 }))).then(addsMembers1));
+  await observe("then: accessors", () => Promise.resolve((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))).then(addsMembers1));
+  await observe("then: a proxy", () => Promise.resolve((logged({ y: 2, x: 1 }))).then(addsMembers1));
+  await observe("then: an object again", () => Promise.resolve((({ x: 1, y: 2 }))).then(addsMembers1));
+
+  addsMembers2(({ x: 1, y: 2 }));
+  addsMembers2(({ x: 1, y: 2 }));
+  await observe("catch: an object", () => Promise.reject((({ x: 1, y: 2 }))).catch(addsMembers2));
+  await observe("catch: accessors", () => Promise.reject((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))).catch(addsMembers2));
+  await observe("catch: a proxy", () => Promise.reject((logged({ y: 2, x: 1 }))).catch(addsMembers2));
+  await observe("catch: an object again", () => Promise.reject((({ x: 1, y: 2 }))).catch(addsMembers2));
+
+  addsMembers3(({ x: 1, y: 2 }));
+  addsMembers3(({ x: 1, y: 2 }));
+  await observe("the second function of then: an object", () => Promise.reject((({ x: 1, y: 2 }))).then(undefined, addsMembers3));
+  await observe("the second function of then: accessors", () => Promise.reject((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))).then(undefined, addsMembers3));
+  await observe("the second function of then: a proxy", () => Promise.reject((logged({ y: 2, x: 1 }))).then(undefined, addsMembers3));
+  await observe("the second function of then: an object again", () => Promise.reject((({ x: 1, y: 2 }))).then(undefined, addsMembers3));
+
+  addsMembers4(({ x: 1, y: 2 }));
+  addsMembers4(({ x: 1, y: 2 }));
+  await observe("then of a promise resolved later: an object", () => new Promise(resolve => setTimeout(resolve, 0, (({ x: 1, y: 2 })))).then(addsMembers4));
+  await observe("then of a promise resolved later: accessors", () => new Promise(resolve => setTimeout(resolve, 0, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })))).then(addsMembers4));
+  await observe("then of a promise resolved later: a proxy", () => new Promise(resolve => setTimeout(resolve, 0, (logged({ y: 2, x: 1 })))).then(addsMembers4));
+  await observe("then of a promise resolved later: an object again", () => new Promise(resolve => setTimeout(resolve, 0, (({ x: 1, y: 2 })))).then(addsMembers4));
+
+  addsMembers5(({ x: 1, y: 2 }));
+  addsMembers5(({ x: 1, y: 2 }));
+  await observe("then of a thenable's value: an object", () => Promise.resolve({ then(resolve) { resolve((({ x: 1, y: 2 }))); } }).then(addsMembers5));
+  await observe("then of a thenable's value: accessors", () => Promise.resolve({ then(resolve) { resolve((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))); } }).then(addsMembers5));
+  await observe("then of a thenable's value: a proxy", () => Promise.resolve({ then(resolve) { resolve((logged({ y: 2, x: 1 }))); } }).then(addsMembers5));
+  await observe("then of a thenable's value: an object again", () => Promise.resolve({ then(resolve) { resolve((({ x: 1, y: 2 }))); } }).then(addsMembers5));
+
+  addsMembers6(({ x: 1, y: 2 }));
+  addsMembers6(({ x: 1, y: 2 }));
+  await observe("Promise.try: an object", () => Promise.try(addsMembers6, (({ x: 1, y: 2 }))));
+  await observe("Promise.try: accessors", () => Promise.try(addsMembers6, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+  await observe("Promise.try: a proxy", () => Promise.try(addsMembers6, (logged({ y: 2, x: 1 }))));
+  await observe("Promise.try: an object again", () => Promise.try(addsMembers6, (({ x: 1, y: 2 }))));
+
+  addsMembers7(({ x: 1, y: 2 }));
+  addsMembers7(({ x: 1, y: 2 }));
+  await observe("Array.fromAsync: an object", () => Array.fromAsync([(({ x: 1, y: 2 }))], addsMembers7));
+  await observe("Array.fromAsync: accessors", () => Array.fromAsync([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))], addsMembers7));
+  await observe("Array.fromAsync: a proxy", () => Array.fromAsync([(logged({ y: 2, x: 1 }))], addsMembers7));
+  await observe("Array.fromAsync: an object again", () => Array.fromAsync([(({ x: 1, y: 2 }))], addsMembers7));
+
+  addsMembers8(({ x: 1, y: 2 }));
+  addsMembers8(({ x: 1, y: 2 }));
+  await observe("setTimeout: an object", () => new Promise(resolve => { setTimeout(addsMembers8, 0, (({ x: 1, y: 2 }))); setTimeout(resolve, 1); }));
+  await observe("setTimeout: accessors", () => new Promise(resolve => { setTimeout(addsMembers8, 0, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))); setTimeout(resolve, 1); }));
+  await observe("setTimeout: a proxy", () => new Promise(resolve => { setTimeout(addsMembers8, 0, (logged({ y: 2, x: 1 }))); setTimeout(resolve, 1); }));
+  await observe("setTimeout: an object again", () => new Promise(resolve => { setTimeout(addsMembers8, 0, (({ x: 1, y: 2 }))); setTimeout(resolve, 1); }));
+
+  addsMembers9(({ x: 1, y: 2 }));
+  addsMembers9(({ x: 1, y: 2 }));
+  await observe("setImmediate: an object", () => new Promise(resolve => { setImmediate(addsMembers9, (({ x: 1, y: 2 }))); setImmediate(resolve); }));
+  await observe("setImmediate: accessors", () => new Promise(resolve => { setImmediate(addsMembers9, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))); setImmediate(resolve); }));
+  await observe("setImmediate: a proxy", () => new Promise(resolve => { setImmediate(addsMembers9, (logged({ y: 2, x: 1 }))); setImmediate(resolve); }));
+  await observe("setImmediate: an object again", () => new Promise(resolve => { setImmediate(addsMembers9, (({ x: 1, y: 2 }))); setImmediate(resolve); }));
+
+  addsMembers10(({ x: 1, y: 2 }));
+  addsMembers10(({ x: 1, y: 2 }));
+  await observe("process.nextTick: an object", () => new Promise(resolve => { process.nextTick(addsMembers10, (({ x: 1, y: 2 }))); process.nextTick(resolve); }));
+  await observe("process.nextTick: accessors", () => new Promise(resolve => { process.nextTick(addsMembers10, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))); process.nextTick(resolve); }));
+  await observe("process.nextTick: a proxy", () => new Promise(resolve => { process.nextTick(addsMembers10, (logged({ y: 2, x: 1 }))); process.nextTick(resolve); }));
+  await observe("process.nextTick: an object again", () => new Promise(resolve => { process.nextTick(addsMembers10, (({ x: 1, y: 2 }))); process.nextTick(resolve); }));
+
+  addsMembers11(({ x: 1, y: 2 }));
+  addsMembers11(({ x: 1, y: 2 }));
+  await observe("queueMicrotask through bind: an object", () => new Promise(resolve => { queueMicrotask(addsMembers11.bind(undefined, (({ x: 1, y: 2 })))); queueMicrotask(resolve); }));
+  await observe("queueMicrotask through bind: accessors", () => new Promise(resolve => { queueMicrotask(addsMembers11.bind(undefined, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })))); queueMicrotask(resolve); }));
+  await observe("queueMicrotask through bind: a proxy", () => new Promise(resolve => { queueMicrotask(addsMembers11.bind(undefined, (logged({ y: 2, x: 1 })))); queueMicrotask(resolve); }));
+  await observe("queueMicrotask through bind: an object again", () => new Promise(resolve => { queueMicrotask(addsMembers11.bind(undefined, (({ x: 1, y: 2 })))); queueMicrotask(resolve); }));
+}
+
+main();
+//// built-ins-hand-something-else-later-to-a-function-whose-visible-callers-pass-an-array.cjs
+const log = [];
+
+////= show-32
+
+const results = [];
+////= observe-3
+
+////= pushes1-2
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+
+  pushes1([5, 6]);
+  pushes1([5, 6]);
+  await observe("then: an array", () => Promise.resolve(([5, 6])).then(pushes1));
+  await observe("then: an array-like", () => Promise.resolve((({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } }))).then(pushes1));
+  await observe("then: a subclass", () => Promise.resolve((Odd.of(5, 6))).then(pushes1));
+  await observe("then: an array again", () => Promise.resolve(([5, 6])).then(pushes1));
+
+  pushes2([5, 6]);
+  pushes2([5, 6]);
+  await observe("catch: an array", () => Promise.reject(([5, 6])).catch(pushes2));
+  await observe("catch: an array-like", () => Promise.reject((({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } }))).catch(pushes2));
+  await observe("catch: a subclass", () => Promise.reject((Odd.of(5, 6))).catch(pushes2));
+  await observe("catch: an array again", () => Promise.reject(([5, 6])).catch(pushes2));
+
+  pushes3([5, 6]);
+  pushes3([5, 6]);
+  await observe("the second function of then: an array", () => Promise.reject(([5, 6])).then(undefined, pushes3));
+  await observe("the second function of then: an array-like", () => Promise.reject((({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } }))).then(undefined, pushes3));
+  await observe("the second function of then: a subclass", () => Promise.reject((Odd.of(5, 6))).then(undefined, pushes3));
+  await observe("the second function of then: an array again", () => Promise.reject(([5, 6])).then(undefined, pushes3));
+
+  pushes4([5, 6]);
+  pushes4([5, 6]);
+  await observe("then of a promise resolved later: an array", () => new Promise(resolve => setTimeout(resolve, 0, ([5, 6]))).then(pushes4));
+  await observe("then of a promise resolved later: an array-like", () => new Promise(resolve => setTimeout(resolve, 0, (({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } })))).then(pushes4));
+  await observe("then of a promise resolved later: a subclass", () => new Promise(resolve => setTimeout(resolve, 0, (Odd.of(5, 6)))).then(pushes4));
+  await observe("then of a promise resolved later: an array again", () => new Promise(resolve => setTimeout(resolve, 0, ([5, 6]))).then(pushes4));
+
+  pushes5([5, 6]);
+  pushes5([5, 6]);
+  await observe("then of a thenable's value: an array", () => Promise.resolve({ then(resolve) { resolve(([5, 6])); } }).then(pushes5));
+  await observe("then of a thenable's value: an array-like", () => Promise.resolve({ then(resolve) { resolve((({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } }))); } }).then(pushes5));
+  await observe("then of a thenable's value: a subclass", () => Promise.resolve({ then(resolve) { resolve((Odd.of(5, 6))); } }).then(pushes5));
+  await observe("then of a thenable's value: an array again", () => Promise.resolve({ then(resolve) { resolve(([5, 6])); } }).then(pushes5));
+
+  pushes6([5, 6]);
+  pushes6([5, 6]);
+  await observe("Promise.try: an array", () => Promise.try(pushes6, ([5, 6])));
+  await observe("Promise.try: an array-like", () => Promise.try(pushes6, (({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } }))));
+  await observe("Promise.try: a subclass", () => Promise.try(pushes6, (Odd.of(5, 6))));
+  await observe("Promise.try: an array again", () => Promise.try(pushes6, ([5, 6])));
+
+  pushes7([5, 6]);
+  pushes7([5, 6]);
+  await observe("Array.fromAsync: an array", () => Array.fromAsync([([5, 6])], pushes7));
+  await observe("Array.fromAsync: an array-like", () => Array.fromAsync([(({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } }))], pushes7));
+  await observe("Array.fromAsync: a subclass", () => Array.fromAsync([(Odd.of(5, 6))], pushes7));
+  await observe("Array.fromAsync: an array again", () => Array.fromAsync([([5, 6])], pushes7));
+
+  pushes8([5, 6]);
+  pushes8([5, 6]);
+  await observe("setTimeout: an array", () => new Promise(resolve => { setTimeout(pushes8, 0, ([5, 6])); setTimeout(resolve, 1); }));
+  await observe("setTimeout: an array-like", () => new Promise(resolve => { setTimeout(pushes8, 0, (({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } }))); setTimeout(resolve, 1); }));
+  await observe("setTimeout: a subclass", () => new Promise(resolve => { setTimeout(pushes8, 0, (Odd.of(5, 6))); setTimeout(resolve, 1); }));
+  await observe("setTimeout: an array again", () => new Promise(resolve => { setTimeout(pushes8, 0, ([5, 6])); setTimeout(resolve, 1); }));
+
+  pushes9([5, 6]);
+  pushes9([5, 6]);
+  await observe("setImmediate: an array", () => new Promise(resolve => { setImmediate(pushes9, ([5, 6])); setImmediate(resolve); }));
+  await observe("setImmediate: an array-like", () => new Promise(resolve => { setImmediate(pushes9, (({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } }))); setImmediate(resolve); }));
+  await observe("setImmediate: a subclass", () => new Promise(resolve => { setImmediate(pushes9, (Odd.of(5, 6))); setImmediate(resolve); }));
+  await observe("setImmediate: an array again", () => new Promise(resolve => { setImmediate(pushes9, ([5, 6])); setImmediate(resolve); }));
+
+  pushes10([5, 6]);
+  pushes10([5, 6]);
+  await observe("process.nextTick: an array", () => new Promise(resolve => { process.nextTick(pushes10, ([5, 6])); process.nextTick(resolve); }));
+  await observe("process.nextTick: an array-like", () => new Promise(resolve => { process.nextTick(pushes10, (({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } }))); process.nextTick(resolve); }));
+  await observe("process.nextTick: a subclass", () => new Promise(resolve => { process.nextTick(pushes10, (Odd.of(5, 6))); process.nextTick(resolve); }));
+  await observe("process.nextTick: an array again", () => new Promise(resolve => { process.nextTick(pushes10, ([5, 6])); process.nextTick(resolve); }));
+
+  pushes11([5, 6]);
+  pushes11([5, 6]);
+  await observe("queueMicrotask through bind: an array", () => new Promise(resolve => { queueMicrotask(pushes11.bind(undefined, ([5, 6]))); queueMicrotask(resolve); }));
+  await observe("queueMicrotask through bind: an array-like", () => new Promise(resolve => { queueMicrotask(pushes11.bind(undefined, (({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } })))); queueMicrotask(resolve); }));
+  await observe("queueMicrotask through bind: a subclass", () => new Promise(resolve => { queueMicrotask(pushes11.bind(undefined, (Odd.of(5, 6)))); queueMicrotask(resolve); }));
+  await observe("queueMicrotask through bind: an array again", () => new Promise(resolve => { queueMicrotask(pushes11.bind(undefined, ([5, 6]))); queueMicrotask(resolve); }));
+}
+
+main();
+//// built-ins-hand-something-else-later-to-a-function-whose-visible-callers-pass-an-integer.cjs
+const log = [];
+
+////= show-32
+
+const results = [];
+////= observe-3
+
+////= lines-9	addsOne1
+
+////= lines-9	addsOne2
+
+////= lines-9	addsOne3
+
+////= lines-9	addsOne4
+
+////= lines-9	addsOne5
+
+////= lines-9	addsOne6
+
+////= lines-9	addsOne7
+
+////= lines-9	addsOne8
+
+////= lines-9	addsOne9
+
+////= lines-9	addsOne10
+
+////= lines-9	addsOne11
+
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+
+  addsOne1(7);
+  addsOne1(7);
+  await observe("then: an integer", () => Promise.resolve((7)).then(addsOne1));
+  await observe("then: an object with valueOf", () => Promise.resolve((({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } }))).then(addsOne1));
+  await observe("then: a string", () => Promise.resolve(("3")).then(addsOne1));
+  await observe("then: an integer again", () => Promise.resolve((7)).then(addsOne1));
+
+  addsOne2(7);
+  addsOne2(7);
+  await observe("catch: an integer", () => Promise.reject((7)).catch(addsOne2));
+  await observe("catch: an object with valueOf", () => Promise.reject((({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } }))).catch(addsOne2));
+  await observe("catch: a string", () => Promise.reject(("3")).catch(addsOne2));
+  await observe("catch: an integer again", () => Promise.reject((7)).catch(addsOne2));
+
+  addsOne3(7);
+  addsOne3(7);
+  await observe("the second function of then: an integer", () => Promise.reject((7)).then(undefined, addsOne3));
+  await observe("the second function of then: an object with valueOf", () => Promise.reject((({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } }))).then(undefined, addsOne3));
+  await observe("the second function of then: a string", () => Promise.reject(("3")).then(undefined, addsOne3));
+  await observe("the second function of then: an integer again", () => Promise.reject((7)).then(undefined, addsOne3));
+
+  addsOne4(7);
+  addsOne4(7);
+  await observe("then of a promise resolved later: an integer", () => new Promise(resolve => setTimeout(resolve, 0, (7))).then(addsOne4));
+  await observe("then of a promise resolved later: an object with valueOf", () => new Promise(resolve => setTimeout(resolve, 0, (({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } })))).then(addsOne4));
+  await observe("then of a promise resolved later: a string", () => new Promise(resolve => setTimeout(resolve, 0, ("3"))).then(addsOne4));
+  await observe("then of a promise resolved later: an integer again", () => new Promise(resolve => setTimeout(resolve, 0, (7))).then(addsOne4));
+
+  addsOne5(7);
+  addsOne5(7);
+  await observe("then of a thenable's value: an integer", () => Promise.resolve({ then(resolve) { resolve((7)); } }).then(addsOne5));
+  await observe("then of a thenable's value: an object with valueOf", () => Promise.resolve({ then(resolve) { resolve((({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } }))); } }).then(addsOne5));
+  await observe("then of a thenable's value: a string", () => Promise.resolve({ then(resolve) { resolve(("3")); } }).then(addsOne5));
+  await observe("then of a thenable's value: an integer again", () => Promise.resolve({ then(resolve) { resolve((7)); } }).then(addsOne5));
+
+  addsOne6(7);
+  addsOne6(7);
+  await observe("Promise.try: an integer", () => Promise.try(addsOne6, (7)));
+  await observe("Promise.try: an object with valueOf", () => Promise.try(addsOne6, (({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } }))));
+  await observe("Promise.try: a string", () => Promise.try(addsOne6, ("3")));
+  await observe("Promise.try: an integer again", () => Promise.try(addsOne6, (7)));
+
+  addsOne7(7);
+  addsOne7(7);
+  await observe("Array.fromAsync: an integer", () => Array.fromAsync([(7)], addsOne7));
+  await observe("Array.fromAsync: an object with valueOf", () => Array.fromAsync([(({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } }))], addsOne7));
+  await observe("Array.fromAsync: a string", () => Array.fromAsync([("3")], addsOne7));
+  await observe("Array.fromAsync: an integer again", () => Array.fromAsync([(7)], addsOne7));
+
+  addsOne8(7);
+  addsOne8(7);
+  await observe("setTimeout: an integer", () => new Promise(resolve => { setTimeout(addsOne8, 0, (7)); setTimeout(resolve, 1); }));
+  await observe("setTimeout: an object with valueOf", () => new Promise(resolve => { setTimeout(addsOne8, 0, (({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } }))); setTimeout(resolve, 1); }));
+  await observe("setTimeout: a string", () => new Promise(resolve => { setTimeout(addsOne8, 0, ("3")); setTimeout(resolve, 1); }));
+  await observe("setTimeout: an integer again", () => new Promise(resolve => { setTimeout(addsOne8, 0, (7)); setTimeout(resolve, 1); }));
+
+  addsOne9(7);
+  addsOne9(7);
+  await observe("setImmediate: an integer", () => new Promise(resolve => { setImmediate(addsOne9, (7)); setImmediate(resolve); }));
+  await observe("setImmediate: an object with valueOf", () => new Promise(resolve => { setImmediate(addsOne9, (({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } }))); setImmediate(resolve); }));
+  await observe("setImmediate: a string", () => new Promise(resolve => { setImmediate(addsOne9, ("3")); setImmediate(resolve); }));
+  await observe("setImmediate: an integer again", () => new Promise(resolve => { setImmediate(addsOne9, (7)); setImmediate(resolve); }));
+
+  addsOne10(7);
+  addsOne10(7);
+  await observe("process.nextTick: an integer", () => new Promise(resolve => { process.nextTick(addsOne10, (7)); process.nextTick(resolve); }));
+  await observe("process.nextTick: an object with valueOf", () => new Promise(resolve => { process.nextTick(addsOne10, (({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } }))); process.nextTick(resolve); }));
+  await observe("process.nextTick: a string", () => new Promise(resolve => { process.nextTick(addsOne10, ("3")); process.nextTick(resolve); }));
+  await observe("process.nextTick: an integer again", () => new Promise(resolve => { process.nextTick(addsOne10, (7)); process.nextTick(resolve); }));
+
+  addsOne11(7);
+  addsOne11(7);
+  await observe("queueMicrotask through bind: an integer", () => new Promise(resolve => { queueMicrotask(addsOne11.bind(undefined, (7))); queueMicrotask(resolve); }));
+  await observe("queueMicrotask through bind: an object with valueOf", () => new Promise(resolve => { queueMicrotask(addsOne11.bind(undefined, (({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } })))); queueMicrotask(resolve); }));
+  await observe("queueMicrotask through bind: a string", () => new Promise(resolve => { queueMicrotask(addsOne11.bind(undefined, ("3"))); queueMicrotask(resolve); }));
+  await observe("queueMicrotask through bind: an integer again", () => new Promise(resolve => { queueMicrotask(addsOne11.bind(undefined, (7))); queueMicrotask(resolve); }));
+}
+
+main();
+//// built-ins-hand-something-else-to-a-function-whose-visible-callers-pass-a-function.cjs
+const log = [];
+
+////= show-29
+
+const results = [];
+////= observe-2
+
+////= lines-10	calls1
+
+////= lines-10	calls2
+
+////= lines-10	calls3
+
+////= lines-10	calls4
+
+////= lines-10	calls5
+
+////= lines-10	calls6
+
+////= lines-10	calls7
+
+////= lines-10	calls8
+
+////= lines-10	calls9
+
+////= lines-10	calls10
+
+////= lines-10	calls11
+
+////= lines-10	calls12
+
+////= lines-10	calls13
+
+////= lines-10	calls14
+
+////= lines-10	calls15
+
+////= lines-10	calls16
+
+////= lines-10	calls17
+
+////= lines-10	calls18
+
+////= lines-10	calls19
+
+////= lines-10	calls20
+
+////= lines-10	calls21
+
+////= lines-10	calls22
+
+////= lines-10	calls23
+
+////= lines-10	calls24
+
+////= lines-10	calls25
+
+////= lines-10	calls26
+
+////= lines-10	calls27
+
+////= lines-10	calls28
+
+////= lines-10	calls29
+
+////= lines-10	calls30
+
+////= lines-10	calls31
+
+////= lines-10	calls32
+
+////= lines-10	calls33
+
+////= lines-10	calls34
+
+////= lines-10	calls35
+
+////= lines-10	calls36
+
+////= lines-10	calls37
+
+////= lines-10	calls38
+
+////= lines-10	calls39
+
+////= lines-10	calls40
+
+////= lines-10	calls41
+
+////= lines-10	calls42
+
+////= lines-10	calls43
+
+function calls44(ignored, f) {
+  const result = f(1);
+  results.push(result);
+  return result;
+}
+
+function calls45(ignored, f) {
+  const result = f(1);
+  results.push(result);
+  return result;
+}
+
+////= lines-10	calls46
+
+console.log("strict:", (function () { return this === undefined; })());
+
+calls1(x => x + 1);
+calls1(x => x + 1);
+observe("forEach: a function", () => [(x => x + 1)].forEach(calls1));
+observe("forEach: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].forEach(calls1));
+observe("forEach: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].forEach(calls1));
+observe("forEach: a function again", () => [(x => x + 1)].forEach(calls1));
+
+calls2(x => x + 1);
+calls2(x => x + 1);
+observe("map: a function", () => [(x => x + 1)].map(calls2));
+observe("map: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].map(calls2));
+observe("map: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].map(calls2));
+observe("map: a function again", () => [(x => x + 1)].map(calls2));
+
+calls3(x => x + 1);
+calls3(x => x + 1);
+observe("filter: a function", () => [(x => x + 1)].filter(calls3));
+observe("filter: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].filter(calls3));
+observe("filter: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].filter(calls3));
+observe("filter: a function again", () => [(x => x + 1)].filter(calls3));
+
+calls4(x => x + 1);
+calls4(x => x + 1);
+observe("some: a function", () => [(x => x + 1)].some(calls4));
+observe("some: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].some(calls4));
+observe("some: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].some(calls4));
+observe("some: a function again", () => [(x => x + 1)].some(calls4));
+
+calls5(x => x + 1);
+calls5(x => x + 1);
+observe("every: a function", () => [(x => x + 1)].every(calls5));
+observe("every: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].every(calls5));
+observe("every: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].every(calls5));
+observe("every: a function again", () => [(x => x + 1)].every(calls5));
+
+calls6(x => x + 1);
+calls6(x => x + 1);
+observe("find: a function", () => [(x => x + 1)].find(calls6));
+observe("find: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].find(calls6));
+observe("find: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].find(calls6));
+observe("find: a function again", () => [(x => x + 1)].find(calls6));
+
+calls7(x => x + 1);
+calls7(x => x + 1);
+observe("findIndex: a function", () => [(x => x + 1)].findIndex(calls7));
+observe("findIndex: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].findIndex(calls7));
+observe("findIndex: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].findIndex(calls7));
+observe("findIndex: a function again", () => [(x => x + 1)].findIndex(calls7));
+
+calls8(x => x + 1);
+calls8(x => x + 1);
+observe("findLast: a function", () => [(x => x + 1)].findLast(calls8));
+observe("findLast: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].findLast(calls8));
+observe("findLast: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].findLast(calls8));
+observe("findLast: a function again", () => [(x => x + 1)].findLast(calls8));
+
+calls9(x => x + 1);
+calls9(x => x + 1);
+observe("flatMap: a function", () => [(x => x + 1)].flatMap(calls9));
+observe("flatMap: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].flatMap(calls9));
+observe("flatMap: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].flatMap(calls9));
+observe("flatMap: a function again", () => [(x => x + 1)].flatMap(calls9));
+
+calls10(x => x + 1);
+calls10(x => x + 1);
+observe("sort: a function", () => [(x => x + 1), (x => x + 1)].sort(calls10));
+observe("sort: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } }), (class Made { constructor(x) { log.push("constructed " + x); } })].sort(calls10));
+observe("sort: an object with call", () => [(({ call() { log.push("call"); return "called"; } })), (({ call() { log.push("call"); return "called"; } }))].sort(calls10));
+observe("sort: a function again", () => [(x => x + 1), (x => x + 1)].sort(calls10));
+
+calls11(x => x + 1);
+calls11(x => x + 1);
+observe("toSorted: a function", () => [(x => x + 1), (x => x + 1)].toSorted(calls11));
+observe("toSorted: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } }), (class Made { constructor(x) { log.push("constructed " + x); } })].toSorted(calls11));
+observe("toSorted: an object with call", () => [(({ call() { log.push("call"); return "called"; } })), (({ call() { log.push("call"); return "called"; } }))].toSorted(calls11));
+observe("toSorted: a function again", () => [(x => x + 1), (x => x + 1)].toSorted(calls11));
+
+calls12(x => x + 1);
+calls12(x => x + 1);
+observe("reduce with a first value: a function", () => [0].reduce(calls12, (x => x + 1)));
+observe("reduce with a first value: a class", () => [0].reduce(calls12, (class Made { constructor(x) { log.push("constructed " + x); } })));
+observe("reduce with a first value: an object with call", () => [0].reduce(calls12, (({ call() { log.push("call"); return "called"; } }))));
+observe("reduce with a first value: a function again", () => [0].reduce(calls12, (x => x + 1)));
+
+calls13(x => x + 1);
+calls13(x => x + 1);
+observe("reduce without a first value: a function", () => [(x => x + 1), 0].reduce(calls13));
+observe("reduce without a first value: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } }), 0].reduce(calls13));
+observe("reduce without a first value: an object with call", () => [(({ call() { log.push("call"); return "called"; } })), 0].reduce(calls13));
+observe("reduce without a first value: a function again", () => [(x => x + 1), 0].reduce(calls13));
+
+calls14(x => x + 1);
+calls14(x => x + 1);
+observe("reduceRight: a function", () => [0].reduceRight(calls14, (x => x + 1)));
+observe("reduceRight: a class", () => [0].reduceRight(calls14, (class Made { constructor(x) { log.push("constructed " + x); } })));
+observe("reduceRight: an object with call", () => [0].reduceRight(calls14, (({ call() { log.push("call"); return "called"; } }))));
+observe("reduceRight: a function again", () => [0].reduceRight(calls14, (x => x + 1)));
+
+calls15(x => x + 1);
+calls15(x => x + 1);
+observe("Array.from of an array: a function", () => Array.from([(x => x + 1)], calls15));
+observe("Array.from of an array: a class", () => Array.from([(class Made { constructor(x) { log.push("constructed " + x); } })], calls15));
+observe("Array.from of an array: an object with call", () => Array.from([(({ call() { log.push("call"); return "called"; } }))], calls15));
+observe("Array.from of an array: a function again", () => Array.from([(x => x + 1)], calls15));
+
+calls16(x => x + 1);
+calls16(x => x + 1);
+observe("Array.from of an array-like: a function", () => Array.from({ length: 1, 0: (x => x + 1) }, calls16));
+observe("Array.from of an array-like: a class", () => Array.from({ length: 1, 0: (class Made { constructor(x) { log.push("constructed " + x); } }) }, calls16));
+observe("Array.from of an array-like: an object with call", () => Array.from({ length: 1, 0: (({ call() { log.push("call"); return "called"; } })) }, calls16));
+observe("Array.from of an array-like: a function again", () => Array.from({ length: 1, 0: (x => x + 1) }, calls16));
+
+calls17(x => x + 1);
+calls17(x => x + 1);
+observe("Array.from of a set: a function", () => Array.from(new Set([(x => x + 1)]), calls17));
+observe("Array.from of a set: a class", () => Array.from(new Set([(class Made { constructor(x) { log.push("constructed " + x); } })]), calls17));
+observe("Array.from of a set: an object with call", () => Array.from(new Set([(({ call() { log.push("call"); return "called"; } }))]), calls17));
+observe("Array.from of a set: a function again", () => Array.from(new Set([(x => x + 1)]), calls17));
+
+calls18(x => x + 1);
+calls18(x => x + 1);
+observe("forEach of an array-like: a function", () => Array.prototype.forEach.call({ length: 1, 0: (x => x + 1) }, calls18));
+observe("forEach of an array-like: a class", () => Array.prototype.forEach.call({ length: 1, 0: (class Made { constructor(x) { log.push("constructed " + x); } }) }, calls18));
+observe("forEach of an array-like: an object with call", () => Array.prototype.forEach.call({ length: 1, 0: (({ call() { log.push("call"); return "called"; } })) }, calls18));
+observe("forEach of an array-like: a function again", () => Array.prototype.forEach.call({ length: 1, 0: (x => x + 1) }, calls18));
+
+calls19(x => x + 1);
+calls19(x => x + 1);
+observe("forEach of a set: a function", () => new Set([(x => x + 1)]).forEach(calls19));
+observe("forEach of a set: a class", () => new Set([(class Made { constructor(x) { log.push("constructed " + x); } })]).forEach(calls19));
+observe("forEach of a set: an object with call", () => new Set([(({ call() { log.push("call"); return "called"; } }))]).forEach(calls19));
+observe("forEach of a set: a function again", () => new Set([(x => x + 1)]).forEach(calls19));
+
+calls20(x => x + 1);
+calls20(x => x + 1);
+observe("forEach of a map: a function", () => new Map([[0, (x => x + 1)]]).forEach(calls20));
+observe("forEach of a map: a class", () => new Map([[0, (class Made { constructor(x) { log.push("constructed " + x); } })]]).forEach(calls20));
+observe("forEach of a map: an object with call", () => new Map([[0, (({ call() { log.push("call"); return "called"; } }))]]).forEach(calls20));
+observe("forEach of a map: a function again", () => new Map([[0, (x => x + 1)]]).forEach(calls20));
+
+calls21(x => x + 1);
+calls21(x => x + 1);
+observe("map of an iterator: a function", () => [(x => x + 1)].values().map(calls21).toArray());
+observe("map of an iterator: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].values().map(calls21).toArray());
+observe("map of an iterator: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].values().map(calls21).toArray());
+observe("map of an iterator: a function again", () => [(x => x + 1)].values().map(calls21).toArray());
+
+calls22(x => x + 1);
+calls22(x => x + 1);
+observe("forEach of an iterator: a function", () => [(x => x + 1)].values().forEach(calls22));
+observe("forEach of an iterator: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].values().forEach(calls22));
+observe("forEach of an iterator: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].values().forEach(calls22));
+observe("forEach of an iterator: a function again", () => [(x => x + 1)].values().forEach(calls22));
+
+calls23(x => x + 1);
+calls23(x => x + 1);
+observe("reduce of an iterator: a function", () => [0].values().reduce(calls23, (x => x + 1)));
+observe("reduce of an iterator: a class", () => [0].values().reduce(calls23, (class Made { constructor(x) { log.push("constructed " + x); } })));
+observe("reduce of an iterator: an object with call", () => [0].values().reduce(calls23, (({ call() { log.push("call"); return "called"; } }))));
+observe("reduce of an iterator: a function again", () => [0].values().reduce(calls23, (x => x + 1)));
+
+calls24(x => x + 1);
+calls24(x => x + 1);
+observe("filter of an iterator: a function", () => [(x => x + 1)].values().filter(calls24).toArray());
+observe("filter of an iterator: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].values().filter(calls24).toArray());
+observe("filter of an iterator: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].values().filter(calls24).toArray());
+observe("filter of an iterator: a function again", () => [(x => x + 1)].values().filter(calls24).toArray());
+
+calls25(x => x + 1);
+calls25(x => x + 1);
+observe("find of an iterator: a function", () => [(x => x + 1)].values().find(calls25));
+observe("find of an iterator: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].values().find(calls25));
+observe("find of an iterator: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].values().find(calls25));
+observe("find of an iterator: a function again", () => [(x => x + 1)].values().find(calls25));
+
+calls26(x => x + 1);
+calls26(x => x + 1);
+observe("some of an iterator: a function", () => [(x => x + 1)].values().some(calls26));
+observe("some of an iterator: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].values().some(calls26));
+observe("some of an iterator: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].values().some(calls26));
+observe("some of an iterator: a function again", () => [(x => x + 1)].values().some(calls26));
+
+calls27(x => x + 1);
+calls27(x => x + 1);
+observe("every of an iterator: a function", () => [(x => x + 1)].values().every(calls27));
+observe("every of an iterator: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].values().every(calls27));
+observe("every of an iterator: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].values().every(calls27));
+observe("every of an iterator: a function again", () => [(x => x + 1)].values().every(calls27));
+
+calls28(x => x + 1);
+calls28(x => x + 1);
+observe("findLastIndex: a function", () => [(x => x + 1)].findLastIndex(calls28));
+observe("findLastIndex: a class", () => [(class Made { constructor(x) { log.push("constructed " + x); } })].findLastIndex(calls28));
+observe("findLastIndex: an object with call", () => [(({ call() { log.push("call"); return "called"; } }))].findLastIndex(calls28));
+observe("findLastIndex: a function again", () => [(x => x + 1)].findLastIndex(calls28));
+
+calls29(x => x + 1);
+calls29(x => x + 1);
+observe("a typed array made from a list: a function", () => Uint8Array.from([(x => x + 1)], calls29));
+observe("a typed array made from a list: a class", () => Uint8Array.from([(class Made { constructor(x) { log.push("constructed " + x); } })], calls29));
+observe("a typed array made from a list: an object with call", () => Uint8Array.from([(({ call() { log.push("call"); return "called"; } }))], calls29));
+observe("a typed array made from a list: a function again", () => Uint8Array.from([(x => x + 1)], calls29));
+
+calls30(x => x + 1);
+calls30(x => x + 1);
+observe("adopt of a disposable stack: a function", () => (stack => (stack.adopt((x => x + 1), calls30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: a class", () => (stack => (stack.adopt((class Made { constructor(x) { log.push("constructed " + x); } }), calls30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: an object with call", () => (stack => (stack.adopt((({ call() { log.push("call"); return "called"; } })), calls30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: a function again", () => (stack => (stack.adopt((x => x + 1), calls30), stack.dispose()))(new DisposableStack()));
+
+calls31(x => x + 1);
+calls31(x => x + 1);
+observe("getOrInsertComputed of a map: a function", () => new Map().getOrInsertComputed((x => x + 1), calls31));
+observe("getOrInsertComputed of a map: a class", () => new Map().getOrInsertComputed((class Made { constructor(x) { log.push("constructed " + x); } }), calls31));
+observe("getOrInsertComputed of a map: an object with call", () => new Map().getOrInsertComputed((({ call() { log.push("call"); return "called"; } })), calls31));
+observe("getOrInsertComputed of a map: a function again", () => new Map().getOrInsertComputed((x => x + 1), calls31));
+
+calls32(x => x + 1);
+calls32(x => x + 1);
+observe("Object.groupBy: a function", () => Object.groupBy([(x => x + 1)], calls32));
+observe("Object.groupBy: a class", () => Object.groupBy([(class Made { constructor(x) { log.push("constructed " + x); } })], calls32));
+observe("Object.groupBy: an object with call", () => Object.groupBy([(({ call() { log.push("call"); return "called"; } }))], calls32));
+observe("Object.groupBy: a function again", () => Object.groupBy([(x => x + 1)], calls32));
+
+calls33(x => x + 1);
+calls33(x => x + 1);
+observe("Map.groupBy: a function", () => Map.groupBy([(x => x + 1)], calls33));
+observe("Map.groupBy: a class", () => Map.groupBy([(class Made { constructor(x) { log.push("constructed " + x); } })], calls33));
+observe("Map.groupBy: an object with call", () => Map.groupBy([(({ call() { log.push("call"); return "called"; } }))], calls33));
+observe("Map.groupBy: a function again", () => Map.groupBy([(x => x + 1)], calls33));
+
+calls34(x => x + 1);
+calls34(x => x + 1);
+observe("Reflect.apply: a function", () => Reflect.apply(calls34, undefined, [(x => x + 1)]));
+observe("Reflect.apply: a class", () => Reflect.apply(calls34, undefined, [(class Made { constructor(x) { log.push("constructed " + x); } })]));
+observe("Reflect.apply: an object with call", () => Reflect.apply(calls34, undefined, [(({ call() { log.push("call"); return "called"; } }))]));
+observe("Reflect.apply: a function again", () => Reflect.apply(calls34, undefined, [(x => x + 1)]));
+
+calls35(x => x + 1);
+calls35(x => x + 1);
+observe("Reflect.apply with an array-like: a function", () => Reflect.apply(calls35, undefined, { length: 1, 0: (x => x + 1) }));
+observe("Reflect.apply with an array-like: a class", () => Reflect.apply(calls35, undefined, { length: 1, 0: (class Made { constructor(x) { log.push("constructed " + x); } }) }));
+observe("Reflect.apply with an array-like: an object with call", () => Reflect.apply(calls35, undefined, { length: 1, 0: (({ call() { log.push("call"); return "called"; } })) }));
+observe("Reflect.apply with an array-like: a function again", () => Reflect.apply(calls35, undefined, { length: 1, 0: (x => x + 1) }));
+
+calls36(x => x + 1);
+calls36(x => x + 1);
+observe("Reflect.construct: a function", () => Reflect.construct(calls36, [(x => x + 1)]));
+observe("Reflect.construct: a class", () => Reflect.construct(calls36, [(class Made { constructor(x) { log.push("constructed " + x); } })]));
+observe("Reflect.construct: an object with call", () => Reflect.construct(calls36, [(({ call() { log.push("call"); return "called"; } }))]));
+observe("Reflect.construct: a function again", () => Reflect.construct(calls36, [(x => x + 1)]));
+
+calls37(x => x + 1);
+calls37(x => x + 1);
+observe("call: a function", () => calls37.call(undefined, (x => x + 1)));
+observe("call: a class", () => calls37.call(undefined, (class Made { constructor(x) { log.push("constructed " + x); } })));
+observe("call: an object with call", () => calls37.call(undefined, (({ call() { log.push("call"); return "called"; } }))));
+observe("call: a function again", () => calls37.call(undefined, (x => x + 1)));
+
+calls38(x => x + 1);
+calls38(x => x + 1);
+observe("apply: a function", () => calls38.apply(undefined, [(x => x + 1)]));
+observe("apply: a class", () => calls38.apply(undefined, [(class Made { constructor(x) { log.push("constructed " + x); } })]));
+observe("apply: an object with call", () => calls38.apply(undefined, [(({ call() { log.push("call"); return "called"; } }))]));
+observe("apply: a function again", () => calls38.apply(undefined, [(x => x + 1)]));
+
+calls39(x => x + 1);
+calls39(x => x + 1);
+observe("bind: a function", () => calls39.bind(undefined, (x => x + 1))());
+observe("bind: a class", () => calls39.bind(undefined, (class Made { constructor(x) { log.push("constructed " + x); } }))());
+observe("bind: an object with call", () => calls39.bind(undefined, (({ call() { log.push("call"); return "called"; } })))());
+observe("bind: a function again", () => calls39.bind(undefined, (x => x + 1))());
+
+calls40(x => x + 1);
+calls40(x => x + 1);
+observe("a setter: a function", () => Object.defineProperty({}, "key", { set: calls40 }).key = (x => x + 1));
+observe("a setter: a class", () => Object.defineProperty({}, "key", { set: calls40 }).key = (class Made { constructor(x) { log.push("constructed " + x); } }));
+observe("a setter: an object with call", () => Object.defineProperty({}, "key", { set: calls40 }).key = (({ call() { log.push("call"); return "called"; } })));
+observe("a setter: a function again", () => Object.defineProperty({}, "key", { set: calls40 }).key = (x => x + 1));
+
+calls41(x => x + 1);
+calls41(x => x + 1);
+observe("Symbol.hasInstance: a function", () => (x => x + 1) instanceof { [Symbol.hasInstance]: calls41 });
+observe("Symbol.hasInstance: a class", () => (class Made { constructor(x) { log.push("constructed " + x); } }) instanceof { [Symbol.hasInstance]: calls41 });
+observe("Symbol.hasInstance: an object with call", () => (({ call() { log.push("call"); return "called"; } })) instanceof { [Symbol.hasInstance]: calls41 });
+observe("Symbol.hasInstance: a function again", () => (x => x + 1) instanceof { [Symbol.hasInstance]: calls41 });
+
+calls42(x => x + 1);
+calls42(x => x + 1);
+observe("the set trap of a proxy: a function", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(calls42, undefined, [value]), true) }).key = (x => x + 1));
+observe("the set trap of a proxy: a class", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(calls42, undefined, [value]), true) }).key = (class Made { constructor(x) { log.push("constructed " + x); } }));
+observe("the set trap of a proxy: an object with call", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(calls42, undefined, [value]), true) }).key = (({ call() { log.push("call"); return "called"; } })));
+observe("the set trap of a proxy: a function again", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(calls42, undefined, [value]), true) }).key = (x => x + 1));
+
+calls43(x => x + 1);
+calls43(x => x + 1);
+observe("a replacer of JSON.stringify: a function", () => JSON.stringify(0, () => void [(x => x + 1)].forEach(calls43)));
+observe("a replacer of JSON.stringify: a class", () => JSON.stringify(0, () => void [(class Made { constructor(x) { log.push("constructed " + x); } })].forEach(calls43)));
+observe("a replacer of JSON.stringify: an object with call", () => JSON.stringify(0, () => void [(({ call() { log.push("call"); return "called"; } }))].forEach(calls43)));
+observe("a replacer of JSON.stringify: a function again", () => JSON.stringify(0, () => void [(x => x + 1)].forEach(calls43)));
+
+calls44(0, x => x + 1);
+calls44(0, x => x + 1);
+observe("a tagged template: a function", () => calls44.bind(undefined)`${(x => x + 1)}`);
+observe("a tagged template: a class", () => calls44.bind(undefined)`${(class Made { constructor(x) { log.push("constructed " + x); } })}`);
+observe("a tagged template: an object with call", () => calls44.bind(undefined)`${(({ call() { log.push("call"); return "called"; } }))}`);
+observe("a tagged template: a function again", () => calls44.bind(undefined)`${(x => x + 1)}`);
+
+calls45(0, x => x + 1);
+calls45(0, x => x + 1);
+observe("a replacer of JSON.stringify, second parameter: a function", () => JSON.stringify((x => x + 1), calls45));
+observe("a replacer of JSON.stringify, second parameter: a class", () => JSON.stringify((class Made { constructor(x) { log.push("constructed " + x); } }), calls45));
+observe("a replacer of JSON.stringify, second parameter: an object with call", () => JSON.stringify((({ call() { log.push("call"); return "called"; } })), calls45));
+observe("a replacer of JSON.stringify, second parameter: a function again", () => JSON.stringify((x => x + 1), calls45));
+
+calls46(x => x + 1);
+calls46(x => x + 1);
+observe("a listener of an event emitter: a function", () => new (require("node:events").EventEmitter)().once("value", calls46).emit("value", (x => x + 1)));
+observe("a listener of an event emitter: a class", () => new (require("node:events").EventEmitter)().once("value", calls46).emit("value", (class Made { constructor(x) { log.push("constructed " + x); } })));
+observe("a listener of an event emitter: an object with call", () => new (require("node:events").EventEmitter)().once("value", calls46).emit("value", (({ call() { log.push("call"); return "called"; } }))));
+observe("a listener of an event emitter: a function again", () => new (require("node:events").EventEmitter)().once("value", calls46).emit("value", (x => x + 1)));
+//// built-ins-hand-something-else-to-a-function-whose-visible-callers-pass-a-plain-object.cjs
+const log = [];
+
+////= show-29
+
+const results = [];
+////= observe-2
+
+////= lines-8	addsMembers1
+
+////= lines-8	addsMembers2
+
+////= lines-8	addsMembers3
+
+////= lines-8	addsMembers4
+
+////= lines-8	addsMembers5
+
+////= lines-8	addsMembers6
+
+////= lines-8	addsMembers7
+
+////= lines-8	addsMembers8
+
+////= lines-8	addsMembers9
+
+////= lines-8	addsMembers10
+
+////= lines-8	addsMembers11
+
+////= lines-8	addsMembers12
+
+////= lines-8	addsMembers13
+
+////= lines-8	addsMembers14
+
+////= lines-8	addsMembers15
+
+////= lines-8	addsMembers16
+
+////= lines-8	addsMembers17
+
+////= lines-8	addsMembers18
+
+////= lines-8	addsMembers19
+
+////= lines-8	addsMembers20
+
+////= lines-8	addsMembers21
+
+////= lines-8	addsMembers22
+
+////= lines-8	addsMembers23
+
+////= lines-8	addsMembers24
+
+////= lines-8	addsMembers25
+
+////= lines-8	addsMembers26
+
+////= lines-8	addsMembers27
+
+////= lines-8	addsMembers28
+
+////= lines-8	addsMembers29
+
+////= lines-8	addsMembers30
+
+////= lines-8	addsMembers31
+
+////= lines-8	addsMembers32
+
+////= lines-8	addsMembers33
+
+////= lines-8	addsMembers34
+
+////= lines-8	addsMembers35
+
+////= lines-8	addsMembers36
+
+////= lines-8	addsMembers37
+
+////= lines-8	addsMembers38
+
+////= lines-8	addsMembers39
+
+////= lines-8	addsMembers40
+
+////= lines-8	addsMembers41
+
+////= lines-8	addsMembers42
+
+////= lines-8	addsMembers43
+
+function addsMembers44(ignored, o) {
+  const result = o.x + o.y;
+  results.push(result);
+  return result;
+}
+
+function addsMembers45(ignored, o) {
+  const result = o.x + o.y;
+  results.push(result);
+  return result;
+}
+
+////= lines-8	addsMembers46
+
+console.log("strict:", (function () { return this === undefined; })());
+
+addsMembers1(({ x: 1, y: 2 }));
+addsMembers1(({ x: 1, y: 2 }));
+observe("forEach: an object", () => [(({ x: 1, y: 2 }))].forEach(addsMembers1));
+observe("forEach: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].forEach(addsMembers1));
+observe("forEach: a proxy", () => [(logged({ y: 2, x: 1 }))].forEach(addsMembers1));
+observe("forEach: an object again", () => [(({ x: 1, y: 2 }))].forEach(addsMembers1));
+
+addsMembers2(({ x: 1, y: 2 }));
+addsMembers2(({ x: 1, y: 2 }));
+observe("map: an object", () => [(({ x: 1, y: 2 }))].map(addsMembers2));
+observe("map: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].map(addsMembers2));
+observe("map: a proxy", () => [(logged({ y: 2, x: 1 }))].map(addsMembers2));
+observe("map: an object again", () => [(({ x: 1, y: 2 }))].map(addsMembers2));
+
+addsMembers3(({ x: 1, y: 2 }));
+addsMembers3(({ x: 1, y: 2 }));
+observe("filter: an object", () => [(({ x: 1, y: 2 }))].filter(addsMembers3));
+observe("filter: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].filter(addsMembers3));
+observe("filter: a proxy", () => [(logged({ y: 2, x: 1 }))].filter(addsMembers3));
+observe("filter: an object again", () => [(({ x: 1, y: 2 }))].filter(addsMembers3));
+
+addsMembers4(({ x: 1, y: 2 }));
+addsMembers4(({ x: 1, y: 2 }));
+observe("some: an object", () => [(({ x: 1, y: 2 }))].some(addsMembers4));
+observe("some: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].some(addsMembers4));
+observe("some: a proxy", () => [(logged({ y: 2, x: 1 }))].some(addsMembers4));
+observe("some: an object again", () => [(({ x: 1, y: 2 }))].some(addsMembers4));
+
+addsMembers5(({ x: 1, y: 2 }));
+addsMembers5(({ x: 1, y: 2 }));
+observe("every: an object", () => [(({ x: 1, y: 2 }))].every(addsMembers5));
+observe("every: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].every(addsMembers5));
+observe("every: a proxy", () => [(logged({ y: 2, x: 1 }))].every(addsMembers5));
+observe("every: an object again", () => [(({ x: 1, y: 2 }))].every(addsMembers5));
+
+addsMembers6(({ x: 1, y: 2 }));
+addsMembers6(({ x: 1, y: 2 }));
+observe("find: an object", () => [(({ x: 1, y: 2 }))].find(addsMembers6));
+observe("find: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].find(addsMembers6));
+observe("find: a proxy", () => [(logged({ y: 2, x: 1 }))].find(addsMembers6));
+observe("find: an object again", () => [(({ x: 1, y: 2 }))].find(addsMembers6));
+
+addsMembers7(({ x: 1, y: 2 }));
+addsMembers7(({ x: 1, y: 2 }));
+observe("findIndex: an object", () => [(({ x: 1, y: 2 }))].findIndex(addsMembers7));
+observe("findIndex: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].findIndex(addsMembers7));
+observe("findIndex: a proxy", () => [(logged({ y: 2, x: 1 }))].findIndex(addsMembers7));
+observe("findIndex: an object again", () => [(({ x: 1, y: 2 }))].findIndex(addsMembers7));
+
+addsMembers8(({ x: 1, y: 2 }));
+addsMembers8(({ x: 1, y: 2 }));
+observe("findLast: an object", () => [(({ x: 1, y: 2 }))].findLast(addsMembers8));
+observe("findLast: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].findLast(addsMembers8));
+observe("findLast: a proxy", () => [(logged({ y: 2, x: 1 }))].findLast(addsMembers8));
+observe("findLast: an object again", () => [(({ x: 1, y: 2 }))].findLast(addsMembers8));
+
+addsMembers9(({ x: 1, y: 2 }));
+addsMembers9(({ x: 1, y: 2 }));
+observe("flatMap: an object", () => [(({ x: 1, y: 2 }))].flatMap(addsMembers9));
+observe("flatMap: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].flatMap(addsMembers9));
+observe("flatMap: a proxy", () => [(logged({ y: 2, x: 1 }))].flatMap(addsMembers9));
+observe("flatMap: an object again", () => [(({ x: 1, y: 2 }))].flatMap(addsMembers9));
+
+addsMembers10(({ x: 1, y: 2 }));
+addsMembers10(({ x: 1, y: 2 }));
+observe("sort: an object", () => [(({ x: 1, y: 2 })), (({ x: 1, y: 2 }))].sort(addsMembers10));
+observe("sort: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].sort(addsMembers10));
+observe("sort: a proxy", () => [(logged({ y: 2, x: 1 })), (logged({ y: 2, x: 1 }))].sort(addsMembers10));
+observe("sort: an object again", () => [(({ x: 1, y: 2 })), (({ x: 1, y: 2 }))].sort(addsMembers10));
+
+addsMembers11(({ x: 1, y: 2 }));
+addsMembers11(({ x: 1, y: 2 }));
+observe("toSorted: an object", () => [(({ x: 1, y: 2 })), (({ x: 1, y: 2 }))].toSorted(addsMembers11));
+observe("toSorted: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].toSorted(addsMembers11));
+observe("toSorted: a proxy", () => [(logged({ y: 2, x: 1 })), (logged({ y: 2, x: 1 }))].toSorted(addsMembers11));
+observe("toSorted: an object again", () => [(({ x: 1, y: 2 })), (({ x: 1, y: 2 }))].toSorted(addsMembers11));
+
+addsMembers12(({ x: 1, y: 2 }));
+addsMembers12(({ x: 1, y: 2 }));
+observe("reduce with a first value: an object", () => [0].reduce(addsMembers12, (({ x: 1, y: 2 }))));
+observe("reduce with a first value: accessors", () => [0].reduce(addsMembers12, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("reduce with a first value: a proxy", () => [0].reduce(addsMembers12, (logged({ y: 2, x: 1 }))));
+observe("reduce with a first value: an object again", () => [0].reduce(addsMembers12, (({ x: 1, y: 2 }))));
+
+addsMembers13(({ x: 1, y: 2 }));
+addsMembers13(({ x: 1, y: 2 }));
+observe("reduce without a first value: an object", () => [(({ x: 1, y: 2 })), 0].reduce(addsMembers13));
+observe("reduce without a first value: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), 0].reduce(addsMembers13));
+observe("reduce without a first value: a proxy", () => [(logged({ y: 2, x: 1 })), 0].reduce(addsMembers13));
+observe("reduce without a first value: an object again", () => [(({ x: 1, y: 2 })), 0].reduce(addsMembers13));
+
+addsMembers14(({ x: 1, y: 2 }));
+addsMembers14(({ x: 1, y: 2 }));
+observe("reduceRight: an object", () => [0].reduceRight(addsMembers14, (({ x: 1, y: 2 }))));
+observe("reduceRight: accessors", () => [0].reduceRight(addsMembers14, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("reduceRight: a proxy", () => [0].reduceRight(addsMembers14, (logged({ y: 2, x: 1 }))));
+observe("reduceRight: an object again", () => [0].reduceRight(addsMembers14, (({ x: 1, y: 2 }))));
+
+addsMembers15(({ x: 1, y: 2 }));
+addsMembers15(({ x: 1, y: 2 }));
+observe("Array.from of an array: an object", () => Array.from([(({ x: 1, y: 2 }))], addsMembers15));
+observe("Array.from of an array: accessors", () => Array.from([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))], addsMembers15));
+observe("Array.from of an array: a proxy", () => Array.from([(logged({ y: 2, x: 1 }))], addsMembers15));
+observe("Array.from of an array: an object again", () => Array.from([(({ x: 1, y: 2 }))], addsMembers15));
+
+addsMembers16(({ x: 1, y: 2 }));
+addsMembers16(({ x: 1, y: 2 }));
+observe("Array.from of an array-like: an object", () => Array.from({ length: 1, 0: (({ x: 1, y: 2 })) }, addsMembers16));
+observe("Array.from of an array-like: accessors", () => Array.from({ length: 1, 0: (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })) }, addsMembers16));
+observe("Array.from of an array-like: a proxy", () => Array.from({ length: 1, 0: (logged({ y: 2, x: 1 })) }, addsMembers16));
+observe("Array.from of an array-like: an object again", () => Array.from({ length: 1, 0: (({ x: 1, y: 2 })) }, addsMembers16));
+
+addsMembers17(({ x: 1, y: 2 }));
+addsMembers17(({ x: 1, y: 2 }));
+observe("Array.from of a set: an object", () => Array.from(new Set([(({ x: 1, y: 2 }))]), addsMembers17));
+observe("Array.from of a set: accessors", () => Array.from(new Set([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]), addsMembers17));
+observe("Array.from of a set: a proxy", () => Array.from(new Set([(logged({ y: 2, x: 1 }))]), addsMembers17));
+observe("Array.from of a set: an object again", () => Array.from(new Set([(({ x: 1, y: 2 }))]), addsMembers17));
+
+addsMembers18(({ x: 1, y: 2 }));
+addsMembers18(({ x: 1, y: 2 }));
+observe("forEach of an array-like: an object", () => Array.prototype.forEach.call({ length: 1, 0: (({ x: 1, y: 2 })) }, addsMembers18));
+observe("forEach of an array-like: accessors", () => Array.prototype.forEach.call({ length: 1, 0: (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })) }, addsMembers18));
+observe("forEach of an array-like: a proxy", () => Array.prototype.forEach.call({ length: 1, 0: (logged({ y: 2, x: 1 })) }, addsMembers18));
+observe("forEach of an array-like: an object again", () => Array.prototype.forEach.call({ length: 1, 0: (({ x: 1, y: 2 })) }, addsMembers18));
+
+addsMembers19(({ x: 1, y: 2 }));
+addsMembers19(({ x: 1, y: 2 }));
+observe("forEach of a set: an object", () => new Set([(({ x: 1, y: 2 }))]).forEach(addsMembers19));
+observe("forEach of a set: accessors", () => new Set([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]).forEach(addsMembers19));
+observe("forEach of a set: a proxy", () => new Set([(logged({ y: 2, x: 1 }))]).forEach(addsMembers19));
+observe("forEach of a set: an object again", () => new Set([(({ x: 1, y: 2 }))]).forEach(addsMembers19));
+
+addsMembers20(({ x: 1, y: 2 }));
+addsMembers20(({ x: 1, y: 2 }));
+observe("forEach of a map: an object", () => new Map([[0, (({ x: 1, y: 2 }))]]).forEach(addsMembers20));
+observe("forEach of a map: accessors", () => new Map([[0, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]]).forEach(addsMembers20));
+observe("forEach of a map: a proxy", () => new Map([[0, (logged({ y: 2, x: 1 }))]]).forEach(addsMembers20));
+observe("forEach of a map: an object again", () => new Map([[0, (({ x: 1, y: 2 }))]]).forEach(addsMembers20));
+
+addsMembers21(({ x: 1, y: 2 }));
+addsMembers21(({ x: 1, y: 2 }));
+observe("map of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().map(addsMembers21).toArray());
+observe("map of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().map(addsMembers21).toArray());
+observe("map of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().map(addsMembers21).toArray());
+observe("map of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().map(addsMembers21).toArray());
+
+addsMembers22(({ x: 1, y: 2 }));
+addsMembers22(({ x: 1, y: 2 }));
+observe("forEach of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().forEach(addsMembers22));
+observe("forEach of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().forEach(addsMembers22));
+observe("forEach of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().forEach(addsMembers22));
+observe("forEach of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().forEach(addsMembers22));
+
+addsMembers23(({ x: 1, y: 2 }));
+addsMembers23(({ x: 1, y: 2 }));
+observe("reduce of an iterator: an object", () => [0].values().reduce(addsMembers23, (({ x: 1, y: 2 }))));
+observe("reduce of an iterator: accessors", () => [0].values().reduce(addsMembers23, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("reduce of an iterator: a proxy", () => [0].values().reduce(addsMembers23, (logged({ y: 2, x: 1 }))));
+observe("reduce of an iterator: an object again", () => [0].values().reduce(addsMembers23, (({ x: 1, y: 2 }))));
+
+addsMembers24(({ x: 1, y: 2 }));
+addsMembers24(({ x: 1, y: 2 }));
+observe("filter of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().filter(addsMembers24).toArray());
+observe("filter of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().filter(addsMembers24).toArray());
+observe("filter of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().filter(addsMembers24).toArray());
+observe("filter of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().filter(addsMembers24).toArray());
+
+addsMembers25(({ x: 1, y: 2 }));
+addsMembers25(({ x: 1, y: 2 }));
+observe("find of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().find(addsMembers25));
+observe("find of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().find(addsMembers25));
+observe("find of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().find(addsMembers25));
+observe("find of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().find(addsMembers25));
+
+addsMembers26(({ x: 1, y: 2 }));
+addsMembers26(({ x: 1, y: 2 }));
+observe("some of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().some(addsMembers26));
+observe("some of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().some(addsMembers26));
+observe("some of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().some(addsMembers26));
+observe("some of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().some(addsMembers26));
+
+addsMembers27(({ x: 1, y: 2 }));
+addsMembers27(({ x: 1, y: 2 }));
+observe("every of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().every(addsMembers27));
+observe("every of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().every(addsMembers27));
+observe("every of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().every(addsMembers27));
+observe("every of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().every(addsMembers27));
+
+addsMembers28(({ x: 1, y: 2 }));
+addsMembers28(({ x: 1, y: 2 }));
+observe("findLastIndex: an object", () => [(({ x: 1, y: 2 }))].findLastIndex(addsMembers28));
+observe("findLastIndex: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].findLastIndex(addsMembers28));
+observe("findLastIndex: a proxy", () => [(logged({ y: 2, x: 1 }))].findLastIndex(addsMembers28));
+observe("findLastIndex: an object again", () => [(({ x: 1, y: 2 }))].findLastIndex(addsMembers28));
+
+addsMembers29(({ x: 1, y: 2 }));
+addsMembers29(({ x: 1, y: 2 }));
+observe("a typed array made from a list: an object", () => Uint8Array.from([(({ x: 1, y: 2 }))], addsMembers29));
+observe("a typed array made from a list: accessors", () => Uint8Array.from([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))], addsMembers29));
+observe("a typed array made from a list: a proxy", () => Uint8Array.from([(logged({ y: 2, x: 1 }))], addsMembers29));
+observe("a typed array made from a list: an object again", () => Uint8Array.from([(({ x: 1, y: 2 }))], addsMembers29));
+
+addsMembers30(({ x: 1, y: 2 }));
+addsMembers30(({ x: 1, y: 2 }));
+observe("adopt of a disposable stack: an object", () => (stack => (stack.adopt((({ x: 1, y: 2 })), addsMembers30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: accessors", () => (stack => (stack.adopt((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), addsMembers30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: a proxy", () => (stack => (stack.adopt((logged({ y: 2, x: 1 })), addsMembers30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: an object again", () => (stack => (stack.adopt((({ x: 1, y: 2 })), addsMembers30), stack.dispose()))(new DisposableStack()));
+
+addsMembers31(({ x: 1, y: 2 }));
+addsMembers31(({ x: 1, y: 2 }));
+observe("getOrInsertComputed of a map: an object", () => new Map().getOrInsertComputed((({ x: 1, y: 2 })), addsMembers31));
+observe("getOrInsertComputed of a map: accessors", () => new Map().getOrInsertComputed((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), addsMembers31));
+observe("getOrInsertComputed of a map: a proxy", () => new Map().getOrInsertComputed((logged({ y: 2, x: 1 })), addsMembers31));
+observe("getOrInsertComputed of a map: an object again", () => new Map().getOrInsertComputed((({ x: 1, y: 2 })), addsMembers31));
+
+addsMembers32(({ x: 1, y: 2 }));
+addsMembers32(({ x: 1, y: 2 }));
+observe("Object.groupBy: an object", () => Object.groupBy([(({ x: 1, y: 2 }))], addsMembers32));
+observe("Object.groupBy: accessors", () => Object.groupBy([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))], addsMembers32));
+observe("Object.groupBy: a proxy", () => Object.groupBy([(logged({ y: 2, x: 1 }))], addsMembers32));
+observe("Object.groupBy: an object again", () => Object.groupBy([(({ x: 1, y: 2 }))], addsMembers32));
+
+addsMembers33(({ x: 1, y: 2 }));
+addsMembers33(({ x: 1, y: 2 }));
+observe("Map.groupBy: an object", () => Map.groupBy([(({ x: 1, y: 2 }))], addsMembers33));
+observe("Map.groupBy: accessors", () => Map.groupBy([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))], addsMembers33));
+observe("Map.groupBy: a proxy", () => Map.groupBy([(logged({ y: 2, x: 1 }))], addsMembers33));
+observe("Map.groupBy: an object again", () => Map.groupBy([(({ x: 1, y: 2 }))], addsMembers33));
+
+addsMembers34(({ x: 1, y: 2 }));
+addsMembers34(({ x: 1, y: 2 }));
+observe("Reflect.apply: an object", () => Reflect.apply(addsMembers34, undefined, [(({ x: 1, y: 2 }))]));
+observe("Reflect.apply: accessors", () => Reflect.apply(addsMembers34, undefined, [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]));
+observe("Reflect.apply: a proxy", () => Reflect.apply(addsMembers34, undefined, [(logged({ y: 2, x: 1 }))]));
+observe("Reflect.apply: an object again", () => Reflect.apply(addsMembers34, undefined, [(({ x: 1, y: 2 }))]));
+
+addsMembers35(({ x: 1, y: 2 }));
+addsMembers35(({ x: 1, y: 2 }));
+observe("Reflect.apply with an array-like: an object", () => Reflect.apply(addsMembers35, undefined, { length: 1, 0: (({ x: 1, y: 2 })) }));
+observe("Reflect.apply with an array-like: accessors", () => Reflect.apply(addsMembers35, undefined, { length: 1, 0: (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })) }));
+observe("Reflect.apply with an array-like: a proxy", () => Reflect.apply(addsMembers35, undefined, { length: 1, 0: (logged({ y: 2, x: 1 })) }));
+observe("Reflect.apply with an array-like: an object again", () => Reflect.apply(addsMembers35, undefined, { length: 1, 0: (({ x: 1, y: 2 })) }));
+
+addsMembers36(({ x: 1, y: 2 }));
+addsMembers36(({ x: 1, y: 2 }));
+observe("Reflect.construct: an object", () => Reflect.construct(addsMembers36, [(({ x: 1, y: 2 }))]));
+observe("Reflect.construct: accessors", () => Reflect.construct(addsMembers36, [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]));
+observe("Reflect.construct: a proxy", () => Reflect.construct(addsMembers36, [(logged({ y: 2, x: 1 }))]));
+observe("Reflect.construct: an object again", () => Reflect.construct(addsMembers36, [(({ x: 1, y: 2 }))]));
+
+addsMembers37(({ x: 1, y: 2 }));
+addsMembers37(({ x: 1, y: 2 }));
+observe("call: an object", () => addsMembers37.call(undefined, (({ x: 1, y: 2 }))));
+observe("call: accessors", () => addsMembers37.call(undefined, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("call: a proxy", () => addsMembers37.call(undefined, (logged({ y: 2, x: 1 }))));
+observe("call: an object again", () => addsMembers37.call(undefined, (({ x: 1, y: 2 }))));
+
+addsMembers38(({ x: 1, y: 2 }));
+addsMembers38(({ x: 1, y: 2 }));
+observe("apply: an object", () => addsMembers38.apply(undefined, [(({ x: 1, y: 2 }))]));
+observe("apply: accessors", () => addsMembers38.apply(undefined, [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]));
+observe("apply: a proxy", () => addsMembers38.apply(undefined, [(logged({ y: 2, x: 1 }))]));
+observe("apply: an object again", () => addsMembers38.apply(undefined, [(({ x: 1, y: 2 }))]));
+
+addsMembers39(({ x: 1, y: 2 }));
+addsMembers39(({ x: 1, y: 2 }));
+observe("bind: an object", () => addsMembers39.bind(undefined, (({ x: 1, y: 2 })))());
+observe("bind: accessors", () => addsMembers39.bind(undefined, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })))());
+observe("bind: a proxy", () => addsMembers39.bind(undefined, (logged({ y: 2, x: 1 })))());
+observe("bind: an object again", () => addsMembers39.bind(undefined, (({ x: 1, y: 2 })))());
+
+addsMembers40(({ x: 1, y: 2 }));
+addsMembers40(({ x: 1, y: 2 }));
+observe("a setter: an object", () => Object.defineProperty({}, "key", { set: addsMembers40 }).key = (({ x: 1, y: 2 })));
+observe("a setter: accessors", () => Object.defineProperty({}, "key", { set: addsMembers40 }).key = (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+observe("a setter: a proxy", () => Object.defineProperty({}, "key", { set: addsMembers40 }).key = (logged({ y: 2, x: 1 })));
+observe("a setter: an object again", () => Object.defineProperty({}, "key", { set: addsMembers40 }).key = (({ x: 1, y: 2 })));
+
+addsMembers41(({ x: 1, y: 2 }));
+addsMembers41(({ x: 1, y: 2 }));
+observe("Symbol.hasInstance: an object", () => (({ x: 1, y: 2 })) instanceof { [Symbol.hasInstance]: addsMembers41 });
+observe("Symbol.hasInstance: accessors", () => (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })) instanceof { [Symbol.hasInstance]: addsMembers41 });
+observe("Symbol.hasInstance: a proxy", () => (logged({ y: 2, x: 1 })) instanceof { [Symbol.hasInstance]: addsMembers41 });
+observe("Symbol.hasInstance: an object again", () => (({ x: 1, y: 2 })) instanceof { [Symbol.hasInstance]: addsMembers41 });
+
+addsMembers42(({ x: 1, y: 2 }));
+addsMembers42(({ x: 1, y: 2 }));
+observe("the set trap of a proxy: an object", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(addsMembers42, undefined, [value]), true) }).key = (({ x: 1, y: 2 })));
+observe("the set trap of a proxy: accessors", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(addsMembers42, undefined, [value]), true) }).key = (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+observe("the set trap of a proxy: a proxy", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(addsMembers42, undefined, [value]), true) }).key = (logged({ y: 2, x: 1 })));
+observe("the set trap of a proxy: an object again", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(addsMembers42, undefined, [value]), true) }).key = (({ x: 1, y: 2 })));
+
+addsMembers43(({ x: 1, y: 2 }));
+addsMembers43(({ x: 1, y: 2 }));
+observe("a replacer of JSON.stringify: an object", () => JSON.stringify(0, () => void [(({ x: 1, y: 2 }))].forEach(addsMembers43)));
+observe("a replacer of JSON.stringify: accessors", () => JSON.stringify(0, () => void [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].forEach(addsMembers43)));
+observe("a replacer of JSON.stringify: a proxy", () => JSON.stringify(0, () => void [(logged({ y: 2, x: 1 }))].forEach(addsMembers43)));
+observe("a replacer of JSON.stringify: an object again", () => JSON.stringify(0, () => void [(({ x: 1, y: 2 }))].forEach(addsMembers43)));
+
+addsMembers44(0, ({ x: 1, y: 2 }));
+addsMembers44(0, ({ x: 1, y: 2 }));
+observe("a tagged template: an object", () => addsMembers44.bind(undefined)`${(({ x: 1, y: 2 }))}`);
+observe("a tagged template: accessors", () => addsMembers44.bind(undefined)`${(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))}`);
+observe("a tagged template: a proxy", () => addsMembers44.bind(undefined)`${(logged({ y: 2, x: 1 }))}`);
+observe("a tagged template: an object again", () => addsMembers44.bind(undefined)`${(({ x: 1, y: 2 }))}`);
+
+addsMembers45(0, ({ x: 1, y: 2 }));
+addsMembers45(0, ({ x: 1, y: 2 }));
+observe("a replacer of JSON.stringify, second parameter: an object", () => JSON.stringify((({ x: 1, y: 2 })), addsMembers45));
+observe("a replacer of JSON.stringify, second parameter: accessors", () => JSON.stringify((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), addsMembers45));
+observe("a replacer of JSON.stringify, second parameter: a proxy", () => JSON.stringify((logged({ y: 2, x: 1 })), addsMembers45));
+observe("a replacer of JSON.stringify, second parameter: an object again", () => JSON.stringify((({ x: 1, y: 2 })), addsMembers45));
+
+addsMembers46(({ x: 1, y: 2 }));
+addsMembers46(({ x: 1, y: 2 }));
+observe("a listener of an event emitter: an object", () => new (require("node:events").EventEmitter)().once("value", addsMembers46).emit("value", (({ x: 1, y: 2 }))));
+observe("a listener of an event emitter: accessors", () => new (require("node:events").EventEmitter)().once("value", addsMembers46).emit("value", (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("a listener of an event emitter: a proxy", () => new (require("node:events").EventEmitter)().once("value", addsMembers46).emit("value", (logged({ y: 2, x: 1 }))));
+observe("a listener of an event emitter: an object again", () => new (require("node:events").EventEmitter)().once("value", addsMembers46).emit("value", (({ x: 1, y: 2 }))));
+//// built-ins-hand-something-else-to-a-function-whose-visible-callers-pass-a-plain-object-to-store-to.cjs
+const log = [];
+
+////= show-29
+
+const results = [];
+////= observe-2
+
+////= lines-6	storesMember1
+
+////= lines-6	storesMember2
+
+////= lines-6	storesMember3
+
+////= lines-6	storesMember4
+
+////= lines-6	storesMember5
+
+////= lines-6	storesMember6
+
+////= lines-6	storesMember7
+
+////= lines-6	storesMember8
+
+////= lines-6	storesMember9
+
+////= lines-6	storesMember10
+
+////= lines-6	storesMember11
+
+////= lines-6	storesMember12
+
+////= lines-6	storesMember13
+
+////= lines-6	storesMember14
+
+////= lines-6	storesMember15
+
+////= lines-6	storesMember16
+
+////= lines-6	storesMember17
+
+////= lines-6	storesMember18
+
+////= lines-6	storesMember19
+
+////= lines-6	storesMember20
+
+////= lines-6	storesMember21
+
+////= lines-6	storesMember22
+
+////= lines-6	storesMember23
+
+////= lines-6	storesMember24
+
+////= lines-6	storesMember25
+
+////= lines-6	storesMember26
+
+////= lines-6	storesMember27
+
+////= lines-6	storesMember28
+
+////= lines-6	storesMember29
+
+////= lines-6	storesMember30
+
+////= lines-6	storesMember31
+
+////= lines-6	storesMember32
+
+////= lines-6	storesMember33
+
+////= lines-6	storesMember34
+
+////= lines-6	storesMember35
+
+////= lines-6	storesMember36
+
+////= lines-6	storesMember37
+
+////= lines-6	storesMember38
+
+////= lines-6	storesMember39
+
+////= lines-6	storesMember40
+
+////= lines-6	storesMember41
+
+////= lines-6	storesMember42
+
+////= lines-6	storesMember43
+
+function storesMember44(ignored, o) {
+  o.x = 1;
+  const result = o;
+  results.push(result);
+  return result;
+}
+
+function storesMember45(ignored, o) {
+  o.x = 1;
+  const result = o;
+  results.push(result);
+  return result;
+}
+
+////= lines-6	storesMember46
+
+console.log("strict:", (function () { return this === undefined; })());
+
+storesMember1(({ x: 1, y: 2 }));
+storesMember1(({ x: 1, y: 2 }));
+observe("forEach: an object", () => [(({ x: 1, y: 2 }))].forEach(storesMember1));
+observe("forEach: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].forEach(storesMember1));
+observe("forEach: a proxy", () => [(logged({ y: 2, x: 1 }))].forEach(storesMember1));
+observe("forEach: an object again", () => [(({ x: 1, y: 2 }))].forEach(storesMember1));
+
+storesMember2(({ x: 1, y: 2 }));
+storesMember2(({ x: 1, y: 2 }));
+observe("map: an object", () => [(({ x: 1, y: 2 }))].map(storesMember2));
+observe("map: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].map(storesMember2));
+observe("map: a proxy", () => [(logged({ y: 2, x: 1 }))].map(storesMember2));
+observe("map: an object again", () => [(({ x: 1, y: 2 }))].map(storesMember2));
+
+storesMember3(({ x: 1, y: 2 }));
+storesMember3(({ x: 1, y: 2 }));
+observe("filter: an object", () => [(({ x: 1, y: 2 }))].filter(storesMember3));
+observe("filter: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].filter(storesMember3));
+observe("filter: a proxy", () => [(logged({ y: 2, x: 1 }))].filter(storesMember3));
+observe("filter: an object again", () => [(({ x: 1, y: 2 }))].filter(storesMember3));
+
+storesMember4(({ x: 1, y: 2 }));
+storesMember4(({ x: 1, y: 2 }));
+observe("some: an object", () => [(({ x: 1, y: 2 }))].some(storesMember4));
+observe("some: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].some(storesMember4));
+observe("some: a proxy", () => [(logged({ y: 2, x: 1 }))].some(storesMember4));
+observe("some: an object again", () => [(({ x: 1, y: 2 }))].some(storesMember4));
+
+storesMember5(({ x: 1, y: 2 }));
+storesMember5(({ x: 1, y: 2 }));
+observe("every: an object", () => [(({ x: 1, y: 2 }))].every(storesMember5));
+observe("every: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].every(storesMember5));
+observe("every: a proxy", () => [(logged({ y: 2, x: 1 }))].every(storesMember5));
+observe("every: an object again", () => [(({ x: 1, y: 2 }))].every(storesMember5));
+
+storesMember6(({ x: 1, y: 2 }));
+storesMember6(({ x: 1, y: 2 }));
+observe("find: an object", () => [(({ x: 1, y: 2 }))].find(storesMember6));
+observe("find: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].find(storesMember6));
+observe("find: a proxy", () => [(logged({ y: 2, x: 1 }))].find(storesMember6));
+observe("find: an object again", () => [(({ x: 1, y: 2 }))].find(storesMember6));
+
+storesMember7(({ x: 1, y: 2 }));
+storesMember7(({ x: 1, y: 2 }));
+observe("findIndex: an object", () => [(({ x: 1, y: 2 }))].findIndex(storesMember7));
+observe("findIndex: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].findIndex(storesMember7));
+observe("findIndex: a proxy", () => [(logged({ y: 2, x: 1 }))].findIndex(storesMember7));
+observe("findIndex: an object again", () => [(({ x: 1, y: 2 }))].findIndex(storesMember7));
+
+storesMember8(({ x: 1, y: 2 }));
+storesMember8(({ x: 1, y: 2 }));
+observe("findLast: an object", () => [(({ x: 1, y: 2 }))].findLast(storesMember8));
+observe("findLast: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].findLast(storesMember8));
+observe("findLast: a proxy", () => [(logged({ y: 2, x: 1 }))].findLast(storesMember8));
+observe("findLast: an object again", () => [(({ x: 1, y: 2 }))].findLast(storesMember8));
+
+storesMember9(({ x: 1, y: 2 }));
+storesMember9(({ x: 1, y: 2 }));
+observe("flatMap: an object", () => [(({ x: 1, y: 2 }))].flatMap(storesMember9));
+observe("flatMap: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].flatMap(storesMember9));
+observe("flatMap: a proxy", () => [(logged({ y: 2, x: 1 }))].flatMap(storesMember9));
+observe("flatMap: an object again", () => [(({ x: 1, y: 2 }))].flatMap(storesMember9));
+
+storesMember10(({ x: 1, y: 2 }));
+storesMember10(({ x: 1, y: 2 }));
+observe("sort: an object", () => [(({ x: 1, y: 2 })), (({ x: 1, y: 2 }))].sort(storesMember10));
+observe("sort: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].sort(storesMember10));
+observe("sort: a proxy", () => [(logged({ y: 2, x: 1 })), (logged({ y: 2, x: 1 }))].sort(storesMember10));
+observe("sort: an object again", () => [(({ x: 1, y: 2 })), (({ x: 1, y: 2 }))].sort(storesMember10));
+
+storesMember11(({ x: 1, y: 2 }));
+storesMember11(({ x: 1, y: 2 }));
+observe("toSorted: an object", () => [(({ x: 1, y: 2 })), (({ x: 1, y: 2 }))].toSorted(storesMember11));
+observe("toSorted: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].toSorted(storesMember11));
+observe("toSorted: a proxy", () => [(logged({ y: 2, x: 1 })), (logged({ y: 2, x: 1 }))].toSorted(storesMember11));
+observe("toSorted: an object again", () => [(({ x: 1, y: 2 })), (({ x: 1, y: 2 }))].toSorted(storesMember11));
+
+storesMember12(({ x: 1, y: 2 }));
+storesMember12(({ x: 1, y: 2 }));
+observe("reduce with a first value: an object", () => [0].reduce(storesMember12, (({ x: 1, y: 2 }))));
+observe("reduce with a first value: accessors", () => [0].reduce(storesMember12, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("reduce with a first value: a proxy", () => [0].reduce(storesMember12, (logged({ y: 2, x: 1 }))));
+observe("reduce with a first value: an object again", () => [0].reduce(storesMember12, (({ x: 1, y: 2 }))));
+
+storesMember13(({ x: 1, y: 2 }));
+storesMember13(({ x: 1, y: 2 }));
+observe("reduce without a first value: an object", () => [(({ x: 1, y: 2 })), 0].reduce(storesMember13));
+observe("reduce without a first value: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), 0].reduce(storesMember13));
+observe("reduce without a first value: a proxy", () => [(logged({ y: 2, x: 1 })), 0].reduce(storesMember13));
+observe("reduce without a first value: an object again", () => [(({ x: 1, y: 2 })), 0].reduce(storesMember13));
+
+storesMember14(({ x: 1, y: 2 }));
+storesMember14(({ x: 1, y: 2 }));
+observe("reduceRight: an object", () => [0].reduceRight(storesMember14, (({ x: 1, y: 2 }))));
+observe("reduceRight: accessors", () => [0].reduceRight(storesMember14, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("reduceRight: a proxy", () => [0].reduceRight(storesMember14, (logged({ y: 2, x: 1 }))));
+observe("reduceRight: an object again", () => [0].reduceRight(storesMember14, (({ x: 1, y: 2 }))));
+
+storesMember15(({ x: 1, y: 2 }));
+storesMember15(({ x: 1, y: 2 }));
+observe("Array.from of an array: an object", () => Array.from([(({ x: 1, y: 2 }))], storesMember15));
+observe("Array.from of an array: accessors", () => Array.from([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))], storesMember15));
+observe("Array.from of an array: a proxy", () => Array.from([(logged({ y: 2, x: 1 }))], storesMember15));
+observe("Array.from of an array: an object again", () => Array.from([(({ x: 1, y: 2 }))], storesMember15));
+
+storesMember16(({ x: 1, y: 2 }));
+storesMember16(({ x: 1, y: 2 }));
+observe("Array.from of an array-like: an object", () => Array.from({ length: 1, 0: (({ x: 1, y: 2 })) }, storesMember16));
+observe("Array.from of an array-like: accessors", () => Array.from({ length: 1, 0: (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })) }, storesMember16));
+observe("Array.from of an array-like: a proxy", () => Array.from({ length: 1, 0: (logged({ y: 2, x: 1 })) }, storesMember16));
+observe("Array.from of an array-like: an object again", () => Array.from({ length: 1, 0: (({ x: 1, y: 2 })) }, storesMember16));
+
+storesMember17(({ x: 1, y: 2 }));
+storesMember17(({ x: 1, y: 2 }));
+observe("Array.from of a set: an object", () => Array.from(new Set([(({ x: 1, y: 2 }))]), storesMember17));
+observe("Array.from of a set: accessors", () => Array.from(new Set([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]), storesMember17));
+observe("Array.from of a set: a proxy", () => Array.from(new Set([(logged({ y: 2, x: 1 }))]), storesMember17));
+observe("Array.from of a set: an object again", () => Array.from(new Set([(({ x: 1, y: 2 }))]), storesMember17));
+
+storesMember18(({ x: 1, y: 2 }));
+storesMember18(({ x: 1, y: 2 }));
+observe("forEach of an array-like: an object", () => Array.prototype.forEach.call({ length: 1, 0: (({ x: 1, y: 2 })) }, storesMember18));
+observe("forEach of an array-like: accessors", () => Array.prototype.forEach.call({ length: 1, 0: (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })) }, storesMember18));
+observe("forEach of an array-like: a proxy", () => Array.prototype.forEach.call({ length: 1, 0: (logged({ y: 2, x: 1 })) }, storesMember18));
+observe("forEach of an array-like: an object again", () => Array.prototype.forEach.call({ length: 1, 0: (({ x: 1, y: 2 })) }, storesMember18));
+
+storesMember19(({ x: 1, y: 2 }));
+storesMember19(({ x: 1, y: 2 }));
+observe("forEach of a set: an object", () => new Set([(({ x: 1, y: 2 }))]).forEach(storesMember19));
+observe("forEach of a set: accessors", () => new Set([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]).forEach(storesMember19));
+observe("forEach of a set: a proxy", () => new Set([(logged({ y: 2, x: 1 }))]).forEach(storesMember19));
+observe("forEach of a set: an object again", () => new Set([(({ x: 1, y: 2 }))]).forEach(storesMember19));
+
+storesMember20(({ x: 1, y: 2 }));
+storesMember20(({ x: 1, y: 2 }));
+observe("forEach of a map: an object", () => new Map([[0, (({ x: 1, y: 2 }))]]).forEach(storesMember20));
+observe("forEach of a map: accessors", () => new Map([[0, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]]).forEach(storesMember20));
+observe("forEach of a map: a proxy", () => new Map([[0, (logged({ y: 2, x: 1 }))]]).forEach(storesMember20));
+observe("forEach of a map: an object again", () => new Map([[0, (({ x: 1, y: 2 }))]]).forEach(storesMember20));
+
+storesMember21(({ x: 1, y: 2 }));
+storesMember21(({ x: 1, y: 2 }));
+observe("map of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().map(storesMember21).toArray());
+observe("map of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().map(storesMember21).toArray());
+observe("map of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().map(storesMember21).toArray());
+observe("map of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().map(storesMember21).toArray());
+
+storesMember22(({ x: 1, y: 2 }));
+storesMember22(({ x: 1, y: 2 }));
+observe("forEach of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().forEach(storesMember22));
+observe("forEach of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().forEach(storesMember22));
+observe("forEach of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().forEach(storesMember22));
+observe("forEach of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().forEach(storesMember22));
+
+storesMember23(({ x: 1, y: 2 }));
+storesMember23(({ x: 1, y: 2 }));
+observe("reduce of an iterator: an object", () => [0].values().reduce(storesMember23, (({ x: 1, y: 2 }))));
+observe("reduce of an iterator: accessors", () => [0].values().reduce(storesMember23, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("reduce of an iterator: a proxy", () => [0].values().reduce(storesMember23, (logged({ y: 2, x: 1 }))));
+observe("reduce of an iterator: an object again", () => [0].values().reduce(storesMember23, (({ x: 1, y: 2 }))));
+
+storesMember24(({ x: 1, y: 2 }));
+storesMember24(({ x: 1, y: 2 }));
+observe("filter of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().filter(storesMember24).toArray());
+observe("filter of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().filter(storesMember24).toArray());
+observe("filter of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().filter(storesMember24).toArray());
+observe("filter of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().filter(storesMember24).toArray());
+
+storesMember25(({ x: 1, y: 2 }));
+storesMember25(({ x: 1, y: 2 }));
+observe("find of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().find(storesMember25));
+observe("find of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().find(storesMember25));
+observe("find of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().find(storesMember25));
+observe("find of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().find(storesMember25));
+
+storesMember26(({ x: 1, y: 2 }));
+storesMember26(({ x: 1, y: 2 }));
+observe("some of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().some(storesMember26));
+observe("some of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().some(storesMember26));
+observe("some of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().some(storesMember26));
+observe("some of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().some(storesMember26));
+
+storesMember27(({ x: 1, y: 2 }));
+storesMember27(({ x: 1, y: 2 }));
+observe("every of an iterator: an object", () => [(({ x: 1, y: 2 }))].values().every(storesMember27));
+observe("every of an iterator: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].values().every(storesMember27));
+observe("every of an iterator: a proxy", () => [(logged({ y: 2, x: 1 }))].values().every(storesMember27));
+observe("every of an iterator: an object again", () => [(({ x: 1, y: 2 }))].values().every(storesMember27));
+
+storesMember28(({ x: 1, y: 2 }));
+storesMember28(({ x: 1, y: 2 }));
+observe("findLastIndex: an object", () => [(({ x: 1, y: 2 }))].findLastIndex(storesMember28));
+observe("findLastIndex: accessors", () => [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].findLastIndex(storesMember28));
+observe("findLastIndex: a proxy", () => [(logged({ y: 2, x: 1 }))].findLastIndex(storesMember28));
+observe("findLastIndex: an object again", () => [(({ x: 1, y: 2 }))].findLastIndex(storesMember28));
+
+storesMember29(({ x: 1, y: 2 }));
+storesMember29(({ x: 1, y: 2 }));
+observe("a typed array made from a list: an object", () => Uint8Array.from([(({ x: 1, y: 2 }))], storesMember29));
+observe("a typed array made from a list: accessors", () => Uint8Array.from([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))], storesMember29));
+observe("a typed array made from a list: a proxy", () => Uint8Array.from([(logged({ y: 2, x: 1 }))], storesMember29));
+observe("a typed array made from a list: an object again", () => Uint8Array.from([(({ x: 1, y: 2 }))], storesMember29));
+
+storesMember30(({ x: 1, y: 2 }));
+storesMember30(({ x: 1, y: 2 }));
+observe("adopt of a disposable stack: an object", () => (stack => (stack.adopt((({ x: 1, y: 2 })), storesMember30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: accessors", () => (stack => (stack.adopt((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), storesMember30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: a proxy", () => (stack => (stack.adopt((logged({ y: 2, x: 1 })), storesMember30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: an object again", () => (stack => (stack.adopt((({ x: 1, y: 2 })), storesMember30), stack.dispose()))(new DisposableStack()));
+
+storesMember31(({ x: 1, y: 2 }));
+storesMember31(({ x: 1, y: 2 }));
+observe("getOrInsertComputed of a map: an object", () => new Map().getOrInsertComputed((({ x: 1, y: 2 })), storesMember31));
+observe("getOrInsertComputed of a map: accessors", () => new Map().getOrInsertComputed((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), storesMember31));
+observe("getOrInsertComputed of a map: a proxy", () => new Map().getOrInsertComputed((logged({ y: 2, x: 1 })), storesMember31));
+observe("getOrInsertComputed of a map: an object again", () => new Map().getOrInsertComputed((({ x: 1, y: 2 })), storesMember31));
+
+storesMember32(({ x: 1, y: 2 }));
+storesMember32(({ x: 1, y: 2 }));
+observe("Object.groupBy: an object", () => Object.groupBy([(({ x: 1, y: 2 }))], storesMember32));
+observe("Object.groupBy: accessors", () => Object.groupBy([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))], storesMember32));
+observe("Object.groupBy: a proxy", () => Object.groupBy([(logged({ y: 2, x: 1 }))], storesMember32));
+observe("Object.groupBy: an object again", () => Object.groupBy([(({ x: 1, y: 2 }))], storesMember32));
+
+storesMember33(({ x: 1, y: 2 }));
+storesMember33(({ x: 1, y: 2 }));
+observe("Map.groupBy: an object", () => Map.groupBy([(({ x: 1, y: 2 }))], storesMember33));
+observe("Map.groupBy: accessors", () => Map.groupBy([(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))], storesMember33));
+observe("Map.groupBy: a proxy", () => Map.groupBy([(logged({ y: 2, x: 1 }))], storesMember33));
+observe("Map.groupBy: an object again", () => Map.groupBy([(({ x: 1, y: 2 }))], storesMember33));
+
+storesMember34(({ x: 1, y: 2 }));
+storesMember34(({ x: 1, y: 2 }));
+observe("Reflect.apply: an object", () => Reflect.apply(storesMember34, undefined, [(({ x: 1, y: 2 }))]));
+observe("Reflect.apply: accessors", () => Reflect.apply(storesMember34, undefined, [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]));
+observe("Reflect.apply: a proxy", () => Reflect.apply(storesMember34, undefined, [(logged({ y: 2, x: 1 }))]));
+observe("Reflect.apply: an object again", () => Reflect.apply(storesMember34, undefined, [(({ x: 1, y: 2 }))]));
+
+storesMember35(({ x: 1, y: 2 }));
+storesMember35(({ x: 1, y: 2 }));
+observe("Reflect.apply with an array-like: an object", () => Reflect.apply(storesMember35, undefined, { length: 1, 0: (({ x: 1, y: 2 })) }));
+observe("Reflect.apply with an array-like: accessors", () => Reflect.apply(storesMember35, undefined, { length: 1, 0: (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })) }));
+observe("Reflect.apply with an array-like: a proxy", () => Reflect.apply(storesMember35, undefined, { length: 1, 0: (logged({ y: 2, x: 1 })) }));
+observe("Reflect.apply with an array-like: an object again", () => Reflect.apply(storesMember35, undefined, { length: 1, 0: (({ x: 1, y: 2 })) }));
+
+storesMember36(({ x: 1, y: 2 }));
+storesMember36(({ x: 1, y: 2 }));
+observe("Reflect.construct: an object", () => Reflect.construct(storesMember36, [(({ x: 1, y: 2 }))]));
+observe("Reflect.construct: accessors", () => Reflect.construct(storesMember36, [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]));
+observe("Reflect.construct: a proxy", () => Reflect.construct(storesMember36, [(logged({ y: 2, x: 1 }))]));
+observe("Reflect.construct: an object again", () => Reflect.construct(storesMember36, [(({ x: 1, y: 2 }))]));
+
+storesMember37(({ x: 1, y: 2 }));
+storesMember37(({ x: 1, y: 2 }));
+observe("call: an object", () => storesMember37.call(undefined, (({ x: 1, y: 2 }))));
+observe("call: accessors", () => storesMember37.call(undefined, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("call: a proxy", () => storesMember37.call(undefined, (logged({ y: 2, x: 1 }))));
+observe("call: an object again", () => storesMember37.call(undefined, (({ x: 1, y: 2 }))));
+
+storesMember38(({ x: 1, y: 2 }));
+storesMember38(({ x: 1, y: 2 }));
+observe("apply: an object", () => storesMember38.apply(undefined, [(({ x: 1, y: 2 }))]));
+observe("apply: accessors", () => storesMember38.apply(undefined, [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))]));
+observe("apply: a proxy", () => storesMember38.apply(undefined, [(logged({ y: 2, x: 1 }))]));
+observe("apply: an object again", () => storesMember38.apply(undefined, [(({ x: 1, y: 2 }))]));
+
+storesMember39(({ x: 1, y: 2 }));
+storesMember39(({ x: 1, y: 2 }));
+observe("bind: an object", () => storesMember39.bind(undefined, (({ x: 1, y: 2 })))());
+observe("bind: accessors", () => storesMember39.bind(undefined, (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })))());
+observe("bind: a proxy", () => storesMember39.bind(undefined, (logged({ y: 2, x: 1 })))());
+observe("bind: an object again", () => storesMember39.bind(undefined, (({ x: 1, y: 2 })))());
+
+storesMember40(({ x: 1, y: 2 }));
+storesMember40(({ x: 1, y: 2 }));
+observe("a setter: an object", () => Object.defineProperty({}, "key", { set: storesMember40 }).key = (({ x: 1, y: 2 })));
+observe("a setter: accessors", () => Object.defineProperty({}, "key", { set: storesMember40 }).key = (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+observe("a setter: a proxy", () => Object.defineProperty({}, "key", { set: storesMember40 }).key = (logged({ y: 2, x: 1 })));
+observe("a setter: an object again", () => Object.defineProperty({}, "key", { set: storesMember40 }).key = (({ x: 1, y: 2 })));
+
+storesMember41(({ x: 1, y: 2 }));
+storesMember41(({ x: 1, y: 2 }));
+observe("Symbol.hasInstance: an object", () => (({ x: 1, y: 2 })) instanceof { [Symbol.hasInstance]: storesMember41 });
+observe("Symbol.hasInstance: accessors", () => (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })) instanceof { [Symbol.hasInstance]: storesMember41 });
+observe("Symbol.hasInstance: a proxy", () => (logged({ y: 2, x: 1 })) instanceof { [Symbol.hasInstance]: storesMember41 });
+observe("Symbol.hasInstance: an object again", () => (({ x: 1, y: 2 })) instanceof { [Symbol.hasInstance]: storesMember41 });
+
+storesMember42(({ x: 1, y: 2 }));
+storesMember42(({ x: 1, y: 2 }));
+observe("the set trap of a proxy: an object", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(storesMember42, undefined, [value]), true) }).key = (({ x: 1, y: 2 })));
+observe("the set trap of a proxy: accessors", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(storesMember42, undefined, [value]), true) }).key = (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })));
+observe("the set trap of a proxy: a proxy", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(storesMember42, undefined, [value]), true) }).key = (logged({ y: 2, x: 1 })));
+observe("the set trap of a proxy: an object again", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(storesMember42, undefined, [value]), true) }).key = (({ x: 1, y: 2 })));
+
+storesMember43(({ x: 1, y: 2 }));
+storesMember43(({ x: 1, y: 2 }));
+observe("a replacer of JSON.stringify: an object", () => JSON.stringify(0, () => void [(({ x: 1, y: 2 }))].forEach(storesMember43)));
+observe("a replacer of JSON.stringify: accessors", () => JSON.stringify(0, () => void [(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))].forEach(storesMember43)));
+observe("a replacer of JSON.stringify: a proxy", () => JSON.stringify(0, () => void [(logged({ y: 2, x: 1 }))].forEach(storesMember43)));
+observe("a replacer of JSON.stringify: an object again", () => JSON.stringify(0, () => void [(({ x: 1, y: 2 }))].forEach(storesMember43)));
+
+storesMember44(0, ({ x: 1, y: 2 }));
+storesMember44(0, ({ x: 1, y: 2 }));
+observe("a tagged template: an object", () => storesMember44.bind(undefined)`${(({ x: 1, y: 2 }))}`);
+observe("a tagged template: accessors", () => storesMember44.bind(undefined)`${(({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))}`);
+observe("a tagged template: a proxy", () => storesMember44.bind(undefined)`${(logged({ y: 2, x: 1 }))}`);
+observe("a tagged template: an object again", () => storesMember44.bind(undefined)`${(({ x: 1, y: 2 }))}`);
+
+storesMember45(0, ({ x: 1, y: 2 }));
+storesMember45(0, ({ x: 1, y: 2 }));
+observe("a replacer of JSON.stringify, second parameter: an object", () => JSON.stringify((({ x: 1, y: 2 })), storesMember45));
+observe("a replacer of JSON.stringify, second parameter: accessors", () => JSON.stringify((({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })), storesMember45));
+observe("a replacer of JSON.stringify, second parameter: a proxy", () => JSON.stringify((logged({ y: 2, x: 1 })), storesMember45));
+observe("a replacer of JSON.stringify, second parameter: an object again", () => JSON.stringify((({ x: 1, y: 2 })), storesMember45));
+
+storesMember46(({ x: 1, y: 2 }));
+storesMember46(({ x: 1, y: 2 }));
+observe("a listener of an event emitter: an object", () => new (require("node:events").EventEmitter)().once("value", storesMember46).emit("value", (({ x: 1, y: 2 }))));
+observe("a listener of an event emitter: accessors", () => new (require("node:events").EventEmitter)().once("value", storesMember46).emit("value", (({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } }))));
+observe("a listener of an event emitter: a proxy", () => new (require("node:events").EventEmitter)().once("value", storesMember46).emit("value", (logged({ y: 2, x: 1 }))));
+observe("a listener of an event emitter: an object again", () => new (require("node:events").EventEmitter)().once("value", storesMember46).emit("value", (({ x: 1, y: 2 }))));
+//// built-ins-hand-something-else-to-a-function-whose-visible-callers-pass-a-string.cjs
+const log = [];
+
+////= show-29
+
+const results = [];
+////= observe-2
+
+////= lines-11	readsCharCode1
+
+////= lines-11	readsCharCode2
+
+////= lines-11	readsCharCode3
+
+////= lines-11	readsCharCode4
+
+////= lines-11	readsCharCode5
+
+////= lines-11	readsCharCode6
+
+////= lines-11	readsCharCode7
+
+////= lines-11	readsCharCode8
+
+////= lines-11	readsCharCode9
+
+////= lines-11	readsCharCode10
+
+////= lines-11	readsCharCode11
+
+////= lines-11	readsCharCode12
+
+////= lines-11	readsCharCode13
+
+////= lines-11	readsCharCode14
+
+////= lines-11	readsCharCode15
+
+////= lines-11	readsCharCode16
+
+////= lines-11	readsCharCode17
+
+////= lines-11	readsCharCode18
+
+////= lines-11	readsCharCode19
+
+////= lines-11	readsCharCode20
+
+////= lines-11	readsCharCode21
+
+////= lines-11	readsCharCode22
+
+////= lines-11	readsCharCode23
+
+////= lines-11	readsCharCode24
+
+////= lines-11	readsCharCode25
+
+////= lines-11	readsCharCode26
+
+////= lines-11	readsCharCode27
+
+////= lines-11	readsCharCode28
+
+////= lines-11	readsCharCode29
+
+////= lines-11	readsCharCode30
+
+////= lines-11	readsCharCode31
+
+////= lines-11	readsCharCode32
+
+////= lines-11	readsCharCode33
+
+////= lines-11	readsCharCode34
+
+////= lines-11	readsCharCode35
+
+////= lines-11	readsCharCode36
+
+////= lines-11	readsCharCode37
+
+////= lines-11	readsCharCode38
+
+////= lines-11	readsCharCode39
+
+////= lines-11	readsCharCode40
+
+////= lines-11	readsCharCode41
+
+////= lines-11	readsCharCode42
+
+////= lines-11	readsCharCode43
+
+function readsCharCode44(ignored, s) {
+  const result = s.charCodeAt(0);
+  results.push(result);
+  return result;
+}
+
+function readsCharCode45(ignored, s) {
+  const result = s.charCodeAt(0);
+  results.push(result);
+  return result;
+}
+
+////= lines-11	readsCharCode46
+
+console.log("strict:", (function () { return this === undefined; })());
+
+readsCharCode1("abc");
+readsCharCode1("abc");
+observe("forEach: a string", () => [("abc")].forEach(readsCharCode1));
+observe("forEach: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].forEach(readsCharCode1));
+observe("forEach: an array", () => [(["abc"])].forEach(readsCharCode1));
+observe("forEach: a string again", () => [("abc")].forEach(readsCharCode1));
+
+readsCharCode2("abc");
+readsCharCode2("abc");
+observe("map: a string", () => [("abc")].map(readsCharCode2));
+observe("map: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].map(readsCharCode2));
+observe("map: an array", () => [(["abc"])].map(readsCharCode2));
+observe("map: a string again", () => [("abc")].map(readsCharCode2));
+
+readsCharCode3("abc");
+readsCharCode3("abc");
+observe("filter: a string", () => [("abc")].filter(readsCharCode3));
+observe("filter: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].filter(readsCharCode3));
+observe("filter: an array", () => [(["abc"])].filter(readsCharCode3));
+observe("filter: a string again", () => [("abc")].filter(readsCharCode3));
+
+readsCharCode4("abc");
+readsCharCode4("abc");
+observe("some: a string", () => [("abc")].some(readsCharCode4));
+observe("some: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].some(readsCharCode4));
+observe("some: an array", () => [(["abc"])].some(readsCharCode4));
+observe("some: a string again", () => [("abc")].some(readsCharCode4));
+
+readsCharCode5("abc");
+readsCharCode5("abc");
+observe("every: a string", () => [("abc")].every(readsCharCode5));
+observe("every: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].every(readsCharCode5));
+observe("every: an array", () => [(["abc"])].every(readsCharCode5));
+observe("every: a string again", () => [("abc")].every(readsCharCode5));
+
+readsCharCode6("abc");
+readsCharCode6("abc");
+observe("find: a string", () => [("abc")].find(readsCharCode6));
+observe("find: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].find(readsCharCode6));
+observe("find: an array", () => [(["abc"])].find(readsCharCode6));
+observe("find: a string again", () => [("abc")].find(readsCharCode6));
+
+readsCharCode7("abc");
+readsCharCode7("abc");
+observe("findIndex: a string", () => [("abc")].findIndex(readsCharCode7));
+observe("findIndex: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].findIndex(readsCharCode7));
+observe("findIndex: an array", () => [(["abc"])].findIndex(readsCharCode7));
+observe("findIndex: a string again", () => [("abc")].findIndex(readsCharCode7));
+
+readsCharCode8("abc");
+readsCharCode8("abc");
+observe("findLast: a string", () => [("abc")].findLast(readsCharCode8));
+observe("findLast: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].findLast(readsCharCode8));
+observe("findLast: an array", () => [(["abc"])].findLast(readsCharCode8));
+observe("findLast: a string again", () => [("abc")].findLast(readsCharCode8));
+
+readsCharCode9("abc");
+readsCharCode9("abc");
+observe("flatMap: a string", () => [("abc")].flatMap(readsCharCode9));
+observe("flatMap: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].flatMap(readsCharCode9));
+observe("flatMap: an array", () => [(["abc"])].flatMap(readsCharCode9));
+observe("flatMap: a string again", () => [("abc")].flatMap(readsCharCode9));
+
+readsCharCode10("abc");
+readsCharCode10("abc");
+observe("sort: a string", () => [("abc"), ("abc")].sort(readsCharCode10));
+observe("sort: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })), (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].sort(readsCharCode10));
+observe("sort: an array", () => [(["abc"]), (["abc"])].sort(readsCharCode10));
+observe("sort: a string again", () => [("abc"), ("abc")].sort(readsCharCode10));
+
+readsCharCode11("abc");
+readsCharCode11("abc");
+observe("toSorted: a string", () => [("abc"), ("abc")].toSorted(readsCharCode11));
+observe("toSorted: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })), (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].toSorted(readsCharCode11));
+observe("toSorted: an array", () => [(["abc"]), (["abc"])].toSorted(readsCharCode11));
+observe("toSorted: a string again", () => [("abc"), ("abc")].toSorted(readsCharCode11));
+
+readsCharCode12("abc");
+readsCharCode12("abc");
+observe("reduce with a first value: a string", () => [0].reduce(readsCharCode12, ("abc")));
+observe("reduce with a first value: an object with charCodeAt", () => [0].reduce(readsCharCode12, (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))));
+observe("reduce with a first value: an array", () => [0].reduce(readsCharCode12, (["abc"])));
+observe("reduce with a first value: a string again", () => [0].reduce(readsCharCode12, ("abc")));
+
+readsCharCode13("abc");
+readsCharCode13("abc");
+observe("reduce without a first value: a string", () => [("abc"), 0].reduce(readsCharCode13));
+observe("reduce without a first value: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })), 0].reduce(readsCharCode13));
+observe("reduce without a first value: an array", () => [(["abc"]), 0].reduce(readsCharCode13));
+observe("reduce without a first value: a string again", () => [("abc"), 0].reduce(readsCharCode13));
+
+readsCharCode14("abc");
+readsCharCode14("abc");
+observe("reduceRight: a string", () => [0].reduceRight(readsCharCode14, ("abc")));
+observe("reduceRight: an object with charCodeAt", () => [0].reduceRight(readsCharCode14, (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))));
+observe("reduceRight: an array", () => [0].reduceRight(readsCharCode14, (["abc"])));
+observe("reduceRight: a string again", () => [0].reduceRight(readsCharCode14, ("abc")));
+
+readsCharCode15("abc");
+readsCharCode15("abc");
+observe("Array.from of an array: a string", () => Array.from([("abc")], readsCharCode15));
+observe("Array.from of an array: an object with charCodeAt", () => Array.from([(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))], readsCharCode15));
+observe("Array.from of an array: an array", () => Array.from([(["abc"])], readsCharCode15));
+observe("Array.from of an array: a string again", () => Array.from([("abc")], readsCharCode15));
+
+readsCharCode16("abc");
+readsCharCode16("abc");
+observe("Array.from of an array-like: a string", () => Array.from({ length: 1, 0: ("abc") }, readsCharCode16));
+observe("Array.from of an array-like: an object with charCodeAt", () => Array.from({ length: 1, 0: (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })) }, readsCharCode16));
+observe("Array.from of an array-like: an array", () => Array.from({ length: 1, 0: (["abc"]) }, readsCharCode16));
+observe("Array.from of an array-like: a string again", () => Array.from({ length: 1, 0: ("abc") }, readsCharCode16));
+
+readsCharCode17("abc");
+readsCharCode17("abc");
+observe("Array.from of a set: a string", () => Array.from(new Set([("abc")]), readsCharCode17));
+observe("Array.from of a set: an object with charCodeAt", () => Array.from(new Set([(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))]), readsCharCode17));
+observe("Array.from of a set: an array", () => Array.from(new Set([(["abc"])]), readsCharCode17));
+observe("Array.from of a set: a string again", () => Array.from(new Set([("abc")]), readsCharCode17));
+
+readsCharCode18("abc");
+readsCharCode18("abc");
+observe("forEach of an array-like: a string", () => Array.prototype.forEach.call({ length: 1, 0: ("abc") }, readsCharCode18));
+observe("forEach of an array-like: an object with charCodeAt", () => Array.prototype.forEach.call({ length: 1, 0: (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })) }, readsCharCode18));
+observe("forEach of an array-like: an array", () => Array.prototype.forEach.call({ length: 1, 0: (["abc"]) }, readsCharCode18));
+observe("forEach of an array-like: a string again", () => Array.prototype.forEach.call({ length: 1, 0: ("abc") }, readsCharCode18));
+
+readsCharCode19("abc");
+readsCharCode19("abc");
+observe("forEach of a set: a string", () => new Set([("abc")]).forEach(readsCharCode19));
+observe("forEach of a set: an object with charCodeAt", () => new Set([(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))]).forEach(readsCharCode19));
+observe("forEach of a set: an array", () => new Set([(["abc"])]).forEach(readsCharCode19));
+observe("forEach of a set: a string again", () => new Set([("abc")]).forEach(readsCharCode19));
+
+readsCharCode20("abc");
+readsCharCode20("abc");
+observe("forEach of a map: a string", () => new Map([[0, ("abc")]]).forEach(readsCharCode20));
+observe("forEach of a map: an object with charCodeAt", () => new Map([[0, (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))]]).forEach(readsCharCode20));
+observe("forEach of a map: an array", () => new Map([[0, (["abc"])]]).forEach(readsCharCode20));
+observe("forEach of a map: a string again", () => new Map([[0, ("abc")]]).forEach(readsCharCode20));
+
+readsCharCode21("abc");
+readsCharCode21("abc");
+observe("map of an iterator: a string", () => [("abc")].values().map(readsCharCode21).toArray());
+observe("map of an iterator: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].values().map(readsCharCode21).toArray());
+observe("map of an iterator: an array", () => [(["abc"])].values().map(readsCharCode21).toArray());
+observe("map of an iterator: a string again", () => [("abc")].values().map(readsCharCode21).toArray());
+
+readsCharCode22("abc");
+readsCharCode22("abc");
+observe("forEach of an iterator: a string", () => [("abc")].values().forEach(readsCharCode22));
+observe("forEach of an iterator: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].values().forEach(readsCharCode22));
+observe("forEach of an iterator: an array", () => [(["abc"])].values().forEach(readsCharCode22));
+observe("forEach of an iterator: a string again", () => [("abc")].values().forEach(readsCharCode22));
+
+readsCharCode23("abc");
+readsCharCode23("abc");
+observe("reduce of an iterator: a string", () => [0].values().reduce(readsCharCode23, ("abc")));
+observe("reduce of an iterator: an object with charCodeAt", () => [0].values().reduce(readsCharCode23, (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))));
+observe("reduce of an iterator: an array", () => [0].values().reduce(readsCharCode23, (["abc"])));
+observe("reduce of an iterator: a string again", () => [0].values().reduce(readsCharCode23, ("abc")));
+
+readsCharCode24("abc");
+readsCharCode24("abc");
+observe("filter of an iterator: a string", () => [("abc")].values().filter(readsCharCode24).toArray());
+observe("filter of an iterator: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].values().filter(readsCharCode24).toArray());
+observe("filter of an iterator: an array", () => [(["abc"])].values().filter(readsCharCode24).toArray());
+observe("filter of an iterator: a string again", () => [("abc")].values().filter(readsCharCode24).toArray());
+
+readsCharCode25("abc");
+readsCharCode25("abc");
+observe("find of an iterator: a string", () => [("abc")].values().find(readsCharCode25));
+observe("find of an iterator: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].values().find(readsCharCode25));
+observe("find of an iterator: an array", () => [(["abc"])].values().find(readsCharCode25));
+observe("find of an iterator: a string again", () => [("abc")].values().find(readsCharCode25));
+
+readsCharCode26("abc");
+readsCharCode26("abc");
+observe("some of an iterator: a string", () => [("abc")].values().some(readsCharCode26));
+observe("some of an iterator: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].values().some(readsCharCode26));
+observe("some of an iterator: an array", () => [(["abc"])].values().some(readsCharCode26));
+observe("some of an iterator: a string again", () => [("abc")].values().some(readsCharCode26));
+
+readsCharCode27("abc");
+readsCharCode27("abc");
+observe("every of an iterator: a string", () => [("abc")].values().every(readsCharCode27));
+observe("every of an iterator: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].values().every(readsCharCode27));
+observe("every of an iterator: an array", () => [(["abc"])].values().every(readsCharCode27));
+observe("every of an iterator: a string again", () => [("abc")].values().every(readsCharCode27));
+
+readsCharCode28("abc");
+readsCharCode28("abc");
+observe("findLastIndex: a string", () => [("abc")].findLastIndex(readsCharCode28));
+observe("findLastIndex: an object with charCodeAt", () => [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].findLastIndex(readsCharCode28));
+observe("findLastIndex: an array", () => [(["abc"])].findLastIndex(readsCharCode28));
+observe("findLastIndex: a string again", () => [("abc")].findLastIndex(readsCharCode28));
+
+readsCharCode29("abc");
+readsCharCode29("abc");
+observe("a typed array made from a list: a string", () => Uint8Array.from([("abc")], readsCharCode29));
+observe("a typed array made from a list: an object with charCodeAt", () => Uint8Array.from([(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))], readsCharCode29));
+observe("a typed array made from a list: an array", () => Uint8Array.from([(["abc"])], readsCharCode29));
+observe("a typed array made from a list: a string again", () => Uint8Array.from([("abc")], readsCharCode29));
+
+readsCharCode30("abc");
+readsCharCode30("abc");
+observe("adopt of a disposable stack: a string", () => (stack => (stack.adopt(("abc"), readsCharCode30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: an object with charCodeAt", () => (stack => (stack.adopt((({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })), readsCharCode30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: an array", () => (stack => (stack.adopt((["abc"]), readsCharCode30), stack.dispose()))(new DisposableStack()));
+observe("adopt of a disposable stack: a string again", () => (stack => (stack.adopt(("abc"), readsCharCode30), stack.dispose()))(new DisposableStack()));
+
+readsCharCode31("abc");
+readsCharCode31("abc");
+observe("getOrInsertComputed of a map: a string", () => new Map().getOrInsertComputed(("abc"), readsCharCode31));
+observe("getOrInsertComputed of a map: an object with charCodeAt", () => new Map().getOrInsertComputed((({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })), readsCharCode31));
+observe("getOrInsertComputed of a map: an array", () => new Map().getOrInsertComputed((["abc"]), readsCharCode31));
+observe("getOrInsertComputed of a map: a string again", () => new Map().getOrInsertComputed(("abc"), readsCharCode31));
+
+readsCharCode32("abc");
+readsCharCode32("abc");
+observe("Object.groupBy: a string", () => Object.groupBy([("abc")], readsCharCode32));
+observe("Object.groupBy: an object with charCodeAt", () => Object.groupBy([(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))], readsCharCode32));
+observe("Object.groupBy: an array", () => Object.groupBy([(["abc"])], readsCharCode32));
+observe("Object.groupBy: a string again", () => Object.groupBy([("abc")], readsCharCode32));
+
+readsCharCode33("abc");
+readsCharCode33("abc");
+observe("Map.groupBy: a string", () => Map.groupBy([("abc")], readsCharCode33));
+observe("Map.groupBy: an object with charCodeAt", () => Map.groupBy([(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))], readsCharCode33));
+observe("Map.groupBy: an array", () => Map.groupBy([(["abc"])], readsCharCode33));
+observe("Map.groupBy: a string again", () => Map.groupBy([("abc")], readsCharCode33));
+
+readsCharCode34("abc");
+readsCharCode34("abc");
+observe("Reflect.apply: a string", () => Reflect.apply(readsCharCode34, undefined, [("abc")]));
+observe("Reflect.apply: an object with charCodeAt", () => Reflect.apply(readsCharCode34, undefined, [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))]));
+observe("Reflect.apply: an array", () => Reflect.apply(readsCharCode34, undefined, [(["abc"])]));
+observe("Reflect.apply: a string again", () => Reflect.apply(readsCharCode34, undefined, [("abc")]));
+
+readsCharCode35("abc");
+readsCharCode35("abc");
+observe("Reflect.apply with an array-like: a string", () => Reflect.apply(readsCharCode35, undefined, { length: 1, 0: ("abc") }));
+observe("Reflect.apply with an array-like: an object with charCodeAt", () => Reflect.apply(readsCharCode35, undefined, { length: 1, 0: (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })) }));
+observe("Reflect.apply with an array-like: an array", () => Reflect.apply(readsCharCode35, undefined, { length: 1, 0: (["abc"]) }));
+observe("Reflect.apply with an array-like: a string again", () => Reflect.apply(readsCharCode35, undefined, { length: 1, 0: ("abc") }));
+
+readsCharCode36("abc");
+readsCharCode36("abc");
+observe("Reflect.construct: a string", () => Reflect.construct(readsCharCode36, [("abc")]));
+observe("Reflect.construct: an object with charCodeAt", () => Reflect.construct(readsCharCode36, [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))]));
+observe("Reflect.construct: an array", () => Reflect.construct(readsCharCode36, [(["abc"])]));
+observe("Reflect.construct: a string again", () => Reflect.construct(readsCharCode36, [("abc")]));
+
+readsCharCode37("abc");
+readsCharCode37("abc");
+observe("call: a string", () => readsCharCode37.call(undefined, ("abc")));
+observe("call: an object with charCodeAt", () => readsCharCode37.call(undefined, (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))));
+observe("call: an array", () => readsCharCode37.call(undefined, (["abc"])));
+observe("call: a string again", () => readsCharCode37.call(undefined, ("abc")));
+
+readsCharCode38("abc");
+readsCharCode38("abc");
+observe("apply: a string", () => readsCharCode38.apply(undefined, [("abc")]));
+observe("apply: an object with charCodeAt", () => readsCharCode38.apply(undefined, [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))]));
+observe("apply: an array", () => readsCharCode38.apply(undefined, [(["abc"])]));
+observe("apply: a string again", () => readsCharCode38.apply(undefined, [("abc")]));
+
+readsCharCode39("abc");
+readsCharCode39("abc");
+observe("bind: a string", () => readsCharCode39.bind(undefined, ("abc"))());
+observe("bind: an object with charCodeAt", () => readsCharCode39.bind(undefined, (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })))());
+observe("bind: an array", () => readsCharCode39.bind(undefined, (["abc"]))());
+observe("bind: a string again", () => readsCharCode39.bind(undefined, ("abc"))());
+
+readsCharCode40("abc");
+readsCharCode40("abc");
+observe("a setter: a string", () => Object.defineProperty({}, "key", { set: readsCharCode40 }).key = ("abc"));
+observe("a setter: an object with charCodeAt", () => Object.defineProperty({}, "key", { set: readsCharCode40 }).key = (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })));
+observe("a setter: an array", () => Object.defineProperty({}, "key", { set: readsCharCode40 }).key = (["abc"]));
+observe("a setter: a string again", () => Object.defineProperty({}, "key", { set: readsCharCode40 }).key = ("abc"));
+
+readsCharCode41("abc");
+readsCharCode41("abc");
+observe("Symbol.hasInstance: a string", () => ("abc") instanceof { [Symbol.hasInstance]: readsCharCode41 });
+observe("Symbol.hasInstance: an object with charCodeAt", () => (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })) instanceof { [Symbol.hasInstance]: readsCharCode41 });
+observe("Symbol.hasInstance: an array", () => (["abc"]) instanceof { [Symbol.hasInstance]: readsCharCode41 });
+observe("Symbol.hasInstance: a string again", () => ("abc") instanceof { [Symbol.hasInstance]: readsCharCode41 });
+
+readsCharCode42("abc");
+readsCharCode42("abc");
+observe("the set trap of a proxy: a string", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(readsCharCode42, undefined, [value]), true) }).key = ("abc"));
+observe("the set trap of a proxy: an object with charCodeAt", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(readsCharCode42, undefined, [value]), true) }).key = (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })));
+observe("the set trap of a proxy: an array", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(readsCharCode42, undefined, [value]), true) }).key = (["abc"]));
+observe("the set trap of a proxy: a string again", () => new Proxy({}, { set: (target, key, value) => (Reflect.apply(readsCharCode42, undefined, [value]), true) }).key = ("abc"));
+
+readsCharCode43("abc");
+readsCharCode43("abc");
+observe("a replacer of JSON.stringify: a string", () => JSON.stringify(0, () => void [("abc")].forEach(readsCharCode43)));
+observe("a replacer of JSON.stringify: an object with charCodeAt", () => JSON.stringify(0, () => void [(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))].forEach(readsCharCode43)));
+observe("a replacer of JSON.stringify: an array", () => JSON.stringify(0, () => void [(["abc"])].forEach(readsCharCode43)));
+observe("a replacer of JSON.stringify: a string again", () => JSON.stringify(0, () => void [("abc")].forEach(readsCharCode43)));
+
+readsCharCode44(0, "abc");
+readsCharCode44(0, "abc");
+observe("a tagged template: a string", () => readsCharCode44.bind(undefined)`${("abc")}`);
+observe("a tagged template: an object with charCodeAt", () => readsCharCode44.bind(undefined)`${(({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))}`);
+observe("a tagged template: an array", () => readsCharCode44.bind(undefined)`${(["abc"])}`);
+observe("a tagged template: a string again", () => readsCharCode44.bind(undefined)`${("abc")}`);
+
+readsCharCode45(0, "abc");
+readsCharCode45(0, "abc");
+observe("a replacer of JSON.stringify, second parameter: a string", () => JSON.stringify(("abc"), readsCharCode45));
+observe("a replacer of JSON.stringify, second parameter: an object with charCodeAt", () => JSON.stringify((({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })), readsCharCode45));
+observe("a replacer of JSON.stringify, second parameter: an array", () => JSON.stringify((["abc"]), readsCharCode45));
+observe("a replacer of JSON.stringify, second parameter: a string again", () => JSON.stringify(("abc"), readsCharCode45));
+
+readsCharCode46("abc");
+readsCharCode46("abc");
+observe("a listener of an event emitter: a string", () => new (require("node:events").EventEmitter)().once("value", readsCharCode46).emit("value", ("abc")));
+observe("a listener of an event emitter: an object with charCodeAt", () => new (require("node:events").EventEmitter)().once("value", readsCharCode46).emit("value", (({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } }))));
+observe("a listener of an event emitter: an array", () => new (require("node:events").EventEmitter)().once("value", readsCharCode46).emit("value", (["abc"])));
+observe("a listener of an event emitter: a string again", () => new (require("node:events").EventEmitter)().once("value", readsCharCode46).emit("value", ("abc")));

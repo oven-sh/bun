@@ -23,6 +23,15 @@
 #if OS(DARWIN)
 #include <mach-o/loader.h>
 #endif
+#if defined(BUN_SAFE_STACK)
+#include <climits>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#if ENABLE(AOT_GUARDED_PAGES)
+#include <wtf/WTFConfig.h>
+#endif
+#endif
 #else
 #include <uv.h>
 #include <windows.h>
@@ -98,13 +107,6 @@ extern "C" bool is_executable_file(const char* path)
 }
 #endif
 
-extern "C" void bun_ignore_sigpipe()
-{
-#if !OS(WINDOWS)
-    // ignore SIGPIPE
-    signal(SIGPIPE, SIG_IGN);
-#endif
-}
 extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 {
 #ifdef __APPLE__
@@ -382,7 +384,33 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
-extern "C" void on_before_reload_process_posix()
+#if OS(LINUX)
+#include <dirent.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/Vector.h>
+
+static WTF::Vector<int>& inheritedFileDescriptors()
+{
+    static NeverDestroyed<WTF::Vector<int>> descriptors;
+    return descriptors.get();
+}
+
+extern "C" void bun_remember_inherited_file_descriptors()
+{
+    DIR* directory = opendir("/proc/self/fd");
+    if (!directory)
+        return;
+    while (struct dirent* entry = readdir(directory)) {
+        char* end = nullptr;
+        long fd = strtol(entry->d_name, &end, 10);
+        if (end != entry->d_name && *end == '\0' && fd >= 3 && fd <= INT_MAX && fd != dirfd(directory))
+            inheritedFileDescriptors().append(static_cast<int>(fd));
+    }
+    closedir(directory);
+}
+#endif
+
+extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheritedFileDescriptors)
 {
     unset_cloexec(STDIN_FILENO);
     unset_cloexec(STDOUT_FILENO);
@@ -392,7 +420,14 @@ extern "C" void on_before_reload_process_posix()
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
-    bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+    if (closeInheritedFileDescriptors)
+        bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
+#if OS(LINUX)
+    if (!closeInheritedFileDescriptors) {
+        for (int fd : inheritedFileDescriptors())
+            unset_cloexec(fd);
+    }
 #endif
 
     // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in
@@ -453,6 +488,179 @@ static pid_t execve_counting_pid = 0;
 extern "C" int __real_execve(const char*, char* const[], char* const[]);
 extern "C" int __real_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
 
+#if defined(BUN_SAFE_STACK)
+extern "C" __attribute__((visibility("default"))) thread_local void* __safestack_unsafe_stack_ptr = nullptr;
+
+namespace {
+
+constexpr size_t unsafeStackGuardSize = 256 * 1024;
+constexpr size_t unsafeStackDefaultSize = 8 * 1024 * 1024;
+constexpr size_t unsafeStackPageSize = 4096;
+
+struct UnsafeStack {
+    void* mapping;
+    size_t mappingSize;
+    void* (*routine)(void*);
+    void* argument;
+    pid_t process;
+    pid_t thread;
+    int destructorRoundsLeft;
+    UnsafeStack* next;
+};
+
+pthread_key_t unsafeStackKey;
+pthread_mutex_t retiredUnsafeStacksLock = PTHREAD_MUTEX_INITIALIZER;
+UnsafeStack* retiredUnsafeStacks = nullptr;
+
+#if ENABLE(AOT_GUARDED_PAGES)
+// What the system places by itself shares one random base: an address of an array on this stack would give away the stack with the return addresses and the C library.
+// Runs before the C library's own initializers too: it asks the kernel itself for the random number.
+void* mapAtRandomAddress(size_t mappingSize)
+{
+    constexpr uintptr_t lowestRandomAddress = 64ull << 30;
+    constexpr uintptr_t highestRandomAddress = 124ull << 40;
+    constexpr unsigned maxDraws = 16;
+    if (WTF::isAddressRandomizationDisabled())
+        return MAP_FAILED;
+    uintptr_t numberOfSlots = (highestRandomAddress - lowestRandomAddress - mappingSize) / unsafeStackPageSize;
+    for (unsigned draw = 0; draw < maxDraws; ++draw) {
+        uint64_t random;
+        if (syscall(SYS_getrandom, &random, sizeof(random), 0) != sizeof(random))
+            break;
+        void* requestedAddress = reinterpret_cast<void*>(lowestRandomAddress + random % numberOfSlots * unsafeStackPageSize);
+        void* mapping = mmap(requestedAddress, mappingSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (mapping == MAP_FAILED || mapping == requestedAddress)
+            return mapping;
+        munmap(mapping, mappingSize);
+    }
+    return MAP_FAILED;
+}
+#endif
+
+void* mapUnsafeStack(size_t size, size_t& mappingSize)
+{
+    size = (size + unsafeStackPageSize - 1) & ~(unsafeStackPageSize - 1);
+    mappingSize = size + 2 * unsafeStackGuardSize;
+    void* mapping = MAP_FAILED;
+#if ENABLE(AOT_GUARDED_PAGES)
+    mapping = mapAtRandomAddress(mappingSize);
+#endif
+    if (mapping == MAP_FAILED)
+        mapping = mmap(nullptr, mappingSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (mapping == MAP_FAILED)
+        return nullptr;
+    if (mprotect(static_cast<char*>(mapping) + unsafeStackGuardSize, size, PROT_READ | PROT_WRITE)) {
+        munmap(mapping, mappingSize);
+        return nullptr;
+    }
+    return mapping;
+}
+
+void* topOfUnsafeStack(void* mapping, size_t mappingSize)
+{
+    return static_cast<char*>(mapping) + mappingSize - unsafeStackGuardSize;
+}
+
+void releaseUnsafeStack(UnsafeStack* stack)
+{
+    munmap(stack->mapping, stack->mappingSize);
+    free(stack);
+}
+
+bool threadIsGone(const UnsafeStack* stack)
+{
+    return stack->process != getpid() || (syscall(SYS_tgkill, stack->process, stack->thread, 0) == -1 && errno == ESRCH);
+}
+
+void retireUnsafeStack(void* value)
+{
+    auto* stack = static_cast<UnsafeStack*>(value);
+    if (--stack->destructorRoundsLeft > 0) {
+        pthread_setspecific(unsafeStackKey, stack);
+        return;
+    }
+    pthread_mutex_lock(&retiredUnsafeStacksLock);
+    UnsafeStack** link = &retiredUnsafeStacks;
+    while (UnsafeStack* each = *link) {
+        if (threadIsGone(each)) {
+            *link = each->next;
+            releaseUnsafeStack(each);
+        } else
+            link = &each->next;
+    }
+    stack->next = retiredUnsafeStacks;
+    retiredUnsafeStacks = stack;
+    pthread_mutex_unlock(&retiredUnsafeStacksLock);
+}
+
+void* startWithUnsafeStack(void* value)
+{
+    auto* stack = static_cast<UnsafeStack*>(value);
+    stack->process = getpid();
+    stack->thread = static_cast<pid_t>(syscall(SYS_gettid));
+    __safestack_unsafe_stack_ptr = topOfUnsafeStack(stack->mapping, stack->mappingSize);
+    pthread_setspecific(unsafeStackKey, stack);
+    return stack->routine(stack->argument);
+}
+
+UnsafeStack* makeUnsafeStack(const pthread_attr_t* attributes, void* (*routine)(void*), void* argument)
+{
+    size_t size = 0;
+    pthread_attr_t defaults;
+    if (attributes)
+        pthread_attr_getstacksize(attributes, &size);
+    else if (!pthread_attr_init(&defaults)) {
+        pthread_attr_getstacksize(&defaults, &size);
+        pthread_attr_destroy(&defaults);
+    }
+    auto* stack = static_cast<UnsafeStack*>(malloc(sizeof(UnsafeStack)));
+    if (!stack)
+        return nullptr;
+    *stack = { nullptr, 0, routine, argument, 0, 0, PTHREAD_DESTRUCTOR_ITERATIONS, nullptr };
+    stack->mapping = mapUnsafeStack(size ? size : unsafeStackDefaultSize, stack->mappingSize);
+    if (!stack->mapping) {
+        free(stack);
+        return nullptr;
+    }
+    return stack;
+}
+
+// Runs before the C library's own initializers: it formats nothing.
+[[noreturn]] void abortBecauseOf(const char* call, int error)
+{
+    char digits[12];
+    char* first = digits + sizeof(digits);
+    for (unsigned rest = static_cast<unsigned>(error); first == digits + sizeof(digits) || rest; rest /= 10)
+        *--first = static_cast<char>('0' + rest % 10);
+    const struct iovec sentence[] = {
+        { const_cast<char*>("error: the main thread got no second stack: "), 44 },
+        { const_cast<char*>(call), strlen(call) },
+        { const_cast<char*>(" failed with errno "), 19 },
+        { first, static_cast<size_t>(digits + sizeof(digits) - first) },
+        { const_cast<char*>("\n"), 1 },
+    };
+    [[maybe_unused]] ssize_t written = writev(STDERR_FILENO, sentence, 5);
+    abort();
+}
+
+void giveMainThreadItsUnsafeStack()
+{
+    struct rlimit limit;
+    size_t size = !getrlimit(RLIMIT_STACK, &limit) && limit.rlim_cur != RLIM_INFINITY ? limit.rlim_cur : unsafeStackDefaultSize;
+    size_t mappingSize;
+    void* mapping = mapUnsafeStack(size, mappingSize);
+    if (!mapping)
+        abortBecauseOf("mmap or mprotect", errno);
+    if (int error = pthread_key_create(&unsafeStackKey, retireUnsafeStack))
+        abortBecauseOf("pthread_key_create", error);
+    __safestack_unsafe_stack_ptr = topOfUnsafeStack(mapping, mappingSize);
+}
+
+__attribute__((section(".preinit_array"), used)) void (*unsafeStackInitializer)() = giveMainThreadItsUnsafeStack;
+
+} // namespace
+#endif
+
 extern "C" int __wrap_execve(const char* path, char* const argv[], char* const envp[])
 {
     if (getpid() != execve_counting_pid)
@@ -466,7 +674,7 @@ extern "C" int __wrap_execve(const char* path, char* const argv[], char* const e
 }
 
 // The attempt bound keeps a real limit, hit while an exec never completes, from looping forever.
-extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
+static int createThreadUnlessExecIsInFlight(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
 {
     for (int attempt = 0;; attempt++) {
         unsigned generation = execve_generation.load(std::memory_order_seq_cst);
@@ -481,6 +689,21 @@ extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* at
         }
         usleep(1000);
     }
+}
+
+extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
+{
+#if defined(BUN_SAFE_STACK)
+    UnsafeStack* stack = makeUnsafeStack(attr, start_routine, arg);
+    if (!stack)
+        return EAGAIN;
+    int rc = createThreadUnlessExecIsInFlight(thread, attr, startWithUnsafeStack, stack);
+    if (rc)
+        releaseUnsafeStack(stack);
+    return rc;
+#else
+    return createThreadUnlessExecIsInFlight(thread, attr, start_routine, arg);
+#endif
 }
 #endif // OS(LINUX)
 
@@ -532,7 +755,6 @@ typedef struct {
     const char* value;
     size_t value_len;
     bool never_index;
-    uint16_t hpack_index;
 } lshpack_header;
 
 lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapper_free free, unsigned max_capacity)
@@ -549,29 +771,39 @@ lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapp
     return coders;
 }
 
-size_t lshpack_wrapper_encode(lshpack_wrapper* self,
-    const unsigned char* name, size_t name_len,
-    const unsigned char* val, size_t val_len,
-    int never_index,
-    unsigned char* buffer, size_t buffer_len, size_t buffer_offset)
+// Returns the bytes written, 0 if the block is refused (encoder untouched), or SIZE_MAX if lshpack ran out of memory mid-block.
+size_t lshpack_wrapper_encode_block(lshpack_wrapper* self,
+    const unsigned char* bytes, const uint32_t* fields, size_t field_count,
+    unsigned char* dst, size_t dst_len)
 {
-    if (name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
+    size_t needed = 0;
+    for (size_t i = 0; i < field_count; i++) {
+        size_t name_len = fields[i * 2] & 0x7fffffffu;
+        size_t val_len = fields[i * 2 + 1];
+        if (name_len > LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN || name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
+            return 0;
+        needed += name_len + val_len + 32;
+    }
+    if (dst_len < needed)
         return 0;
 
-    char* shared_header_buffer = shared_header_buffer_get();
-    lsxpack_header_t hdr;
-    memset(&hdr, 0, sizeof(lsxpack_header_t));
-    memcpy(&shared_header_buffer[0], name, name_len);
-    memcpy(&shared_header_buffer[name_len], val, val_len);
-    lsxpack_header_set_offset2(&hdr, &shared_header_buffer[0], 0, name_len, name_len, val_len);
-    if (never_index) {
-        hdr.indexed_type = 2;
+    unsigned char* cursor = dst;
+    unsigned char* const end = dst + dst_len;
+    for (size_t i = 0; i < field_count; i++) {
+        size_t name_len = fields[i * 2] & 0x7fffffffu;
+        size_t val_len = fields[i * 2 + 1];
+        lsxpack_header_t hdr;
+        lsxpack_header_set_offset2(&hdr, reinterpret_cast<const char*>(bytes), 0, name_len, name_len, val_len);
+        if (fields[i * 2] >> 31) {
+            hdr.indexed_type = 2;
+        }
+        auto* next = lshpack_enc_encode(&self->enc, cursor, end, &hdr);
+        if (next == cursor)
+            return SIZE_MAX;
+        cursor = next;
+        bytes += name_len + val_len;
     }
-    auto* start = buffer + buffer_offset;
-    auto* ptr = lshpack_enc_encode(&self->enc, start, buffer + buffer_len, &hdr);
-    if (!ptr)
-        return 0;
-    return ptr - start;
+    return cursor - dst;
 }
 
 size_t lshpack_wrapper_decode(lshpack_wrapper* self,
@@ -593,17 +825,17 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     output->value = lsxpack_header_get_value(&hdr);
     output->value_len = hdr.val_len;
     output->never_index = (hdr.flags & LSXPACK_NEVER_INDEX) != 0;
-    if (hdr.hpack_index != LSHPACK_HDR_UNKNOWN && hdr.hpack_index <= LSHPACK_HDR_WWW_AUTHENTICATE) {
-        output->hpack_index = hdr.hpack_index - 1;
-    } else {
-        output->hpack_index = 255;
-    }
     return s - src;
 }
 
 void lshpack_wrapper_enc_set_max_capacity(lshpack_wrapper* self, unsigned max_capacity)
 {
     lshpack_enc_set_max_capacity(&self->enc, max_capacity);
+}
+
+void lshpack_wrapper_dec_set_max_capacity(lshpack_wrapper* self, unsigned max_capacity)
+{
+    lshpack_dec_set_max_capacity(&self->dec, max_capacity);
 }
 
 void lshpack_wrapper_deinit(lshpack_wrapper* self)
@@ -796,6 +1028,11 @@ static NEVER_INLINE void openDevNullIfStdioIsClosed(int fd)
 
 extern "C" void bun_initialize_process()
 {
+#if OS(DARWIN)
+    if (JSC::Bun__removableFeatureState.isTrimmed || JSC::Bun__removableFeatureState.removedRangeCount) [[unlikely]]
+        Bun__prepareTrimmedExecutable();
+#endif
+
     // Disable printf() buffering. We buffer it ourselves.
     setvbuf(stdout, nullptr, _IONBF, 0);
     setvbuf(stderr, nullptr, _IONBF, 0);
@@ -951,26 +1188,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] size_t Bun__ramSize()
     // This value is cached internally.
     return WTF::ramSize();
 }
-
-#if !OS(WINDOWS)
-
-extern "C" void Bun__disableSOLinger(int fd)
-{
-    struct linger l = { 1, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l));
-}
-
-#else
-
-#include <winsock2.h>
-
-extern "C" void Bun__disableSOLinger(SOCKET fd)
-{
-    struct linger l = { 1, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_LINGER, (char*)&l, sizeof(l));
-}
-
-#endif
 
 extern "C" int ffi_vprintf(const char* fmt, va_list ap)
 {

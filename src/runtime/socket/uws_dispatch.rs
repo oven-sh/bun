@@ -39,36 +39,59 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
     std::sync::LazyLock::new(|| {
         let mut t: [Option<&'static VTable>; SOCKET_KIND_COUNT] = [None; SOCKET_KIND_COUNT];
 
+        use bun_removable_features::removable_body;
+
         // Bun.connect / Bun.listen
-        t[SocketKind::BunSocketTcp as usize] = Some(vtable::make::<handlers::BunSocket<false>>());
-        t[SocketKind::BunSocketTls as usize] = Some(vtable::make::<handlers::BunSocket<true>>());
-        t[SocketKind::BunListenerTcp as usize] =
-            Some(vtable::make::<handlers::BunListener<false>>());
-        t[SocketKind::BunListenerTls as usize] =
-            Some(vtable::make::<handlers::BunListener<true>>());
+        removable_body!(Sockets, ReturnDefault, {
+            t[SocketKind::BunSocketTcp as usize] =
+                Some(vtable::make::<handlers::BunSocket<false>>());
+            t[SocketKind::BunListenerTcp as usize] =
+                Some(vtable::make::<handlers::BunListener<false>>());
+        });
+        removable_body!(TlsSockets, ReturnDefault, {
+            t[SocketKind::BunSocketTls as usize] =
+                Some(vtable::make::<handlers::BunSocket<true>>());
+            t[SocketKind::BunListenerTls as usize] =
+                Some(vtable::make::<handlers::BunListener<true>>());
+        });
 
         // HTTP client thread
-        t[SocketKind::HttpClient as usize] = Some(vtable::make::<handlers::HTTPClient<false>>());
-        t[SocketKind::HttpClientTls as usize] = Some(vtable::make::<handlers::HTTPClient<true>>());
+        removable_body!(HttpClient, ReturnDefault, {
+            t[SocketKind::HttpClient as usize] =
+                Some(vtable::make::<handlers::HTTPClient<false>>());
+            t[SocketKind::HttpClientTls as usize] =
+                Some(vtable::make::<handlers::HTTPClient<true>>());
+        });
 
         // WebSocket client
-        t[SocketKind::WsClientUpgrade as usize] =
-            Some(vtable::make::<handlers::WSUpgrade<false>>());
-        t[SocketKind::WsClientUpgradeTls as usize] =
-            Some(vtable::make::<handlers::WSUpgrade<true>>());
-        t[SocketKind::WsClient as usize] = Some(vtable::make::<handlers::WSClient<false>>());
-        t[SocketKind::WsClientTls as usize] = Some(vtable::make::<handlers::WSClient<true>>());
+        removable_body!(WebSocket, ReturnDefault, {
+            t[SocketKind::WsClientUpgrade as usize] =
+                Some(vtable::make::<handlers::WSUpgrade<false>>());
+            t[SocketKind::WsClientUpgradeTls as usize] =
+                Some(vtable::make::<handlers::WSUpgrade<true>>());
+            t[SocketKind::WsClient as usize] = Some(vtable::make::<handlers::WSClient<false>>());
+            t[SocketKind::WsClientTls as usize] = Some(vtable::make::<handlers::WSClient<true>>());
+        });
 
         // SQL drivers
-        t[SocketKind::Postgres as usize] = Some(vtable::make::<handlers::Postgres<false>>());
-        t[SocketKind::PostgresTls as usize] = Some(vtable::make::<handlers::Postgres<true>>());
-        t[SocketKind::Mysql as usize] = Some(vtable::make::<handlers::MySQL<false>>());
-        t[SocketKind::MysqlTls as usize] = Some(vtable::make::<handlers::MySQL<true>>());
-        t[SocketKind::Valkey as usize] = Some(vtable::make::<handlers::Valkey<false>>());
-        t[SocketKind::ValkeyTls as usize] = Some(vtable::make::<handlers::Valkey<true>>());
+        removable_body!(Sql, ReturnDefault, {
+            t[SocketKind::Postgres as usize] = Some(vtable::make::<handlers::Postgres<false>>());
+            t[SocketKind::PostgresTls as usize] = Some(vtable::make::<handlers::Postgres<true>>());
+            t[SocketKind::Mysql as usize] = Some(vtable::make::<handlers::MySQL<false>>());
+            t[SocketKind::MysqlTls as usize] = Some(vtable::make::<handlers::MySQL<true>>());
+        });
+        removable_body!(Valkey, ReturnDefault, {
+            t[SocketKind::Valkey as usize] = Some(vtable::make::<handlers::Valkey<false>>());
+            t[SocketKind::ValkeyTls as usize] = Some(vtable::make::<handlers::Valkey<true>>());
+        });
 
         // IPC
-        t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+        removable_body!(Ipc, ReturnDefault, {
+            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+        });
+        removable_body!(Spawn, ReturnDefault, {
+            t[SocketKind::SpawnIpc as usize] = Some(vtable::make::<handlers::SpawnIPC>());
+        });
 
         t
     });
@@ -160,8 +183,6 @@ us_dispatch_shims! {
         = vt.on_close(s, code, reason) or s;
     fn us_dispatch_timeout(s: *mut us_socket_t) -> *mut us_socket_t
         = vt.on_timeout(s) or s;
-    fn us_dispatch_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t
-        = vt.on_long_timeout(s) or s;
     fn us_dispatch_end(s: *mut us_socket_t) -> *mut us_socket_t
         = vt.on_end(s) or s;
     fn us_dispatch_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t
@@ -219,38 +240,41 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s
 }
 
-/// A new (resumable) TLS session is ready. BoringSSL's new-session callback
-/// parks the serialized session while `SSL_read`/`SSL_do_handshake` runs;
-/// `ssl_flush_pending_session()` dispatches it here once that stack has
-/// unwound. Mirrors Node's `NewSessionCallback` → `onnewsession` flow. Only
-/// `bun_socket_tls` sockets reach this.
+/// A session or a keylog line that BoringSSL delivered inside `SSL_read` / `SSL_do_handshake`, for either TLS engine. Returns 0 once the socket has closed.
 ///
 /// # Safety
-/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
-/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
+/// `bun_socket` is the live `TLSSocket` its `on_open` gave to `us_ssl_set_bun_socket`, and `data` points to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn us_dispatch_session(
-    s: *mut us_socket_t,
+pub(crate) unsafe extern "C" fn us_dispatch_tls_event(
+    bun_socket: *mut c_void,
+    is_keylog: c_int,
     data: *const u8,
-    len: c_int,
-) {
-    let s_ref = us_socket_t::opaque_mut(s);
-    if s_ref.kind() != SocketKind::BunSocketTls {
-        return;
-    }
+    len: core::ffi::c_uint,
+) -> c_int {
     type TLSSocket = super::NewSocket<true>;
-    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
-        return;
-    };
-    // A negative length from the C side means there is nothing to deliver;
-    // never panic across the `extern "C"` boundary.
-    let Ok(len) = usize::try_from(len) else {
-        return;
-    };
-    // SAFETY: `data` points to `len` readable bytes owned by the caller for the
-    // duration of this call.
-    let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    crate::dispatch::fold(TLSSocket::on_session(tls, slice));
+    // SAFETY: fn contract.
+    let tls = unsafe { bun_ptr::ThisPtr::new(bun_socket.cast::<TLSSocket>()) };
+    // The handler can close the socket, which drops the connection's ref.
+    let _guard = bun_ptr::RefPtr::from_this(tls);
+    // SAFETY: fn contract.
+    let slice = unsafe { core::slice::from_raw_parts(data, len as usize) };
+    crate::dispatch::fold(if is_keylog != 0 {
+        TLSSocket::on_keylog(tls, slice)
+    } else {
+        TLSSocket::on_session(tls, slice)
+    });
+    c_int::from(!tls.socket.get().is_detached())
+}
+
+/// The name check of the verify step for a Bun socket, over either TLS engine: a `US_IDENTITY_*` verdict.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn us_dispatch_bun_socket_identity(
+    bun_socket: *mut c_void,
+    ssl: *mut bun_boringssl_sys::SSL,
+) -> c_int {
+    // SAFETY: openssl.c passes the live `TLSSocket` whose `on_open` called `us_ssl_set_bun_socket`.
+    let tls = unsafe { &*bun_socket.cast::<super::NewSocket<true>>() };
+    tls.server_identity(bun_boringssl_sys::SSL::opaque_mut(ssl)) as c_int
 }
 
 /// The name check of the verify step, routed to the owner of the socket in the handshake: a `US_IDENTITY_*` verdict.
@@ -264,9 +288,6 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
     let s_ref = us_socket_t::opaque_mut(s);
     let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
     let verdict = match s_ref.kind() {
-        SocketKind::BunSocketTls => s_ref
-            .ext::<Option<bun_ptr::ThisPtr<super::NewSocket<true>>>>()
-            .map_or(Unchecked, |tls| tls.server_identity(ssl)),
         SocketKind::HttpClientTls => s_ref
             .ext::<Option<core::ptr::NonNull<c_void>>>()
             .map_or(Unchecked, |ext| {
@@ -292,59 +313,4 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
         _ => Unchecked,
     };
     verdict as c_int
-}
-
-/// BoringSSL's new-session callback, routed to the owner of the socket in `SSL_read`: 1 asks for `us_dispatch_session`.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn us_dispatch_new_session(
-    s: *mut us_socket_t,
-    session: *mut bun_boringssl_sys::SSL_SESSION,
-) -> c_int {
-    let s_ref = us_socket_t::opaque_mut(s);
-    match s_ref.kind() {
-        SocketKind::HttpClientTls => {
-            bun_http::session_cache::on_new_session(s_ref, session);
-            0
-        }
-        SocketKind::BunSocketTls => {
-            type TLSSocket = super::NewSocket<true>;
-            let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
-                return 0;
-            };
-            tls.set_latest_session(session);
-            1
-        }
-        _ => 0,
-    }
-}
-
-/// Hands an NSS key-log line parked by the keylog callback to the JS
-/// `keylog` handler.
-///
-/// # Safety
-/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
-/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn us_dispatch_keylog(
-    s: *mut us_socket_t,
-    data: *const u8,
-    len: c_int,
-) {
-    let s_ref = us_socket_t::opaque_mut(s);
-    if s_ref.kind() != SocketKind::BunSocketTls {
-        return;
-    }
-    type TLSSocket = super::NewSocket<true>;
-    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
-        return;
-    };
-    // A negative length from the C side means there is nothing to deliver;
-    // never panic across the `extern "C"` boundary.
-    let Ok(len) = usize::try_from(len) else {
-        return;
-    };
-    // SAFETY: `data` points to `len` readable bytes owned by the caller for the
-    // duration of this call.
-    let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    crate::dispatch::fold(TLSSocket::on_keylog(tls, slice));
 }

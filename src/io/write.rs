@@ -82,18 +82,6 @@ impl<B> FixedBufferStream<B> {
     pub fn new(buffer: B) -> Self {
         Self { buffer, pos: 0 }
     }
-
-    /// Seek to absolute position `p`.
-    #[inline]
-    pub fn seek_to(&mut self, p: usize) {
-        self.pos = p;
-    }
-
-    /// Rewind to position 0.
-    #[inline]
-    pub fn reset(&mut self) {
-        self.pos = 0;
-    }
 }
 
 impl<'a> FixedBufferStream<&'a mut [u8]> {
@@ -155,25 +143,10 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
     }
 
     /// Read a POD struct.
-    ///
-    /// SAFETY: caller is responsible for `T` being `#[repr(C)]` POD with no
-    /// padding-sensitive invariants.
-    pub fn read_struct<T: Copy>(&mut self) -> Result<T> {
-        let buf = self.buffer.as_ref();
-        let n = core::mem::size_of::<T>();
-        let end = self
-            .pos
-            .checked_add(n)
-            .ok_or(bun_core::Error::EndOfStream)?;
-        if end > buf.len() {
-            return Err(bun_core::Error::EndOfStream);
-        }
-        // SAFETY: `buf[pos..end]` is exactly `size_of::<T>()` initialized
-        // bytes from the safe slice borrow; caller contract guarantees `T` is
-        // `#[repr(C)]` POD where every byte pattern is valid.
-        // `read_unaligned` tolerates any source alignment.
-        let out = unsafe { core::ptr::read_unaligned(buf[self.pos..end].as_ptr().cast::<T>()) };
-        self.pos = end;
+    pub fn read_struct<T: bun_core::AnyBitPattern>(&mut self) -> Result<T> {
+        let rest = self.buffer.as_ref().get(self.pos..).unwrap_or_default();
+        let out = bun_core::read_prefix(rest).ok_or(bun_core::Error::EndOfStream)?;
+        self.pos += core::mem::size_of::<T>();
         Ok(out)
     }
 }

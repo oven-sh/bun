@@ -8,11 +8,7 @@ const ArrayIsArray = Array.isArray;
 // Matches Node's sensitiveHeaders marker used by node:http2.
 const kSensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 
-// Verbatim from Node lib/internal/http.js (checkIsHttpToken).
-const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
-function checkIsHttpToken(val) {
-  return tokenRegExp.test(val);
-}
+const { checkIsHttpToken } = require("internal/validators");
 
 const kValidPseudoHeaders = new Set([":status", ":method", ":authority", ":scheme", ":path", ":protocol"]);
 
@@ -92,7 +88,7 @@ const kNeverIndexFlag = String.fromCharCode(1);
 const kNoHeaderFlags = String.fromCharCode(0);
 
 // RFC 9114 §4.2 forbids NUL in field values.
-function assertNoNulInValue(key, value) {
+function assertNoNulInValue(key: string, value: string) {
   if (value.indexOf("\0") !== -1) {
     throw $ERR_INVALID_CHAR("header content", key);
   }
@@ -109,16 +105,20 @@ function assertNoNulInValue(key, value) {
  * header validation.
  * @returns {[string, number]}
  */
-function buildNgHeaderString(arrayOrMap, validatePseudoHeaderValue, strictSingleValueFields?: boolean) {
+function buildNgHeaderString(
+  arrayOrMap,
+  validatePseudoHeaderValue: (key: string) => Error | undefined | void,
+  strictSingleValueFields?: boolean,
+) {
   let headers = "";
   let pseudoHeaders = "";
   let count = 0;
 
   const singles = new Set();
-  const sensitiveHeaders = arrayOrMap[kSensitiveHeaders] || emptyArray;
+  const sensitiveHeaders: string[] = arrayOrMap[kSensitiveHeaders] || emptyArray;
   const neverIndex = sensitiveHeaders.map(v => v.toLowerCase());
 
-  function processHeader(key, value) {
+  function processHeader(key: string, value) {
     key = key.toLowerCase();
     const isStrictSingleValueField = strictSingleValueFields && kSingleValueFields.has(key);
     let isArray = ArrayIsArray(value);
@@ -191,6 +191,8 @@ function buildNgHeaderString(arrayOrMap, validatePseudoHeaderValue, strictSingle
 }
 
 export default {
+  kValidPseudoHeaders,
+  kSingleValueFields,
   assertValidPseudoHeader,
   assertValidPseudoHeaderTrailer,
   buildNgHeaderString,

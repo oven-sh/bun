@@ -188,6 +188,48 @@ impl StreamResult {
     }
 }
 
+/// One sink chunk in its source encoding, so whoever buffers it transcodes straight into its own buffer.
+#[derive(Clone, Copy)]
+pub(crate) enum EncodedChunk<'a> {
+    Bytes(&'a [u8]),
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+impl<'a> EncodedChunk<'a> {
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        match *self {
+            Self::Bytes(b) | Self::Latin1(b) => b.is_empty(),
+            Self::Utf16(u) => u.is_empty(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn utf8_len(&self) -> usize {
+        match *self {
+            Self::Bytes(b) => b.len(),
+            Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
+            Self::Utf16(u) => {
+                bun_simdutf_sys::simdutf::length::utf8::from::utf16::le_with_replacement(u)
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn append_utf8_into(&self, out: &mut Vec<u8>) {
+        match *self {
+            Self::Bytes(b) => out.extend_from_slice(b),
+            Self::Latin1(b) => {
+                let _ = out.write_latin1(b);
+            }
+            Self::Utf16(u) => {
+                let _ = out.write_utf16(u);
+            }
+        }
+    }
+}
+
 pub enum StreamError {
     Error(SysError),
     AbortReason(CommonAbortReason),
@@ -205,12 +247,6 @@ impl StreamError {
 }
 
 impl StreamResult {
-    pub(crate) fn slice16(&self) -> &[u16] {
-        // Caller guarantees bytes are u16-aligned and even length;
-        // bytemuck checks both at runtime.
-        bytemuck::cast_slice(self.slice())
-    }
-
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             StreamResult::Owned(owned) => owned.slice(),
@@ -889,13 +925,29 @@ impl SourceHandle {
             }
             SourceHandle::ByteStream(p) => p.on_close(err),
             SourceHandle::FileReader(p) => p.on_close(err),
-            SourceHandle::Subprocess(p) => p.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
-            SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
-            SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
+            SourceHandle::Subprocess(p) => {
+                bun_removable_features::removable_body!(Spawn, Abort, { p.on_close(err) })
+            }
+            SourceHandle::ShellWritable(mut p) => {
+                bun_removable_features::removable_body!(Shell, Abort, {
+                    // SAFETY: live backref; cleared before the pointee is freed.
+                    unsafe { p.get_mut() }.on_close(err)
+                })
+            }
+            SourceHandle::FetchResponseBody(p) => {
+                bun_removable_features::removable_body!(HttpClient, Abort, {
+                    p.on_stream_cancelled()
+                })
+            }
+            SourceHandle::S3DownloadBody(p) => {
+                bun_removable_features::removable_body!(S3Client, Abort, {
+                    p.on_stream_cancelled()
+                })
+            }
             SourceHandle::ServerRequestBody(_) => {}
-            SourceHandle::HTMLRewriter(p) => p.on_close(err),
+            SourceHandle::HTMLRewriter(p) => {
+                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_close(err) })
+            }
             SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
@@ -944,10 +996,20 @@ impl SourceHandle {
             }
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
-            SourceHandle::FetchResponseBody(p) => p.on_ready(),
-            SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
-            SourceHandle::HTMLRewriter(p) => p.on_ready(),
-            SourceHandle::S3DownloadBody(p) => p.on_stream_drained(),
+            SourceHandle::FetchResponseBody(p) => {
+                bun_removable_features::removable_body!(HttpClient, Abort, { p.on_ready() })
+            }
+            SourceHandle::ServerRequestBody(any) => {
+                bun_removable_features::removable_body!(Serve, Abort, {
+                    any.on_request_body_stream_drained()
+                })
+            }
+            SourceHandle::HTMLRewriter(p) => {
+                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_ready() })
+            }
+            SourceHandle::S3DownloadBody(p) => {
+                bun_removable_features::removable_body!(S3Client, Abort, { p.on_stream_drained() })
+            }
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
             }
@@ -1670,7 +1732,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.writable_result(len)
     }
 
-    pub(crate) fn write_utf16(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
         if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
@@ -1681,15 +1743,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return Writable::Done;
         }
 
-        let bytes = data.slice();
-
-        bun_core::scoped_log!(HTTPServerWritableLog, "writeUTF16({})", bytes.len());
+        bun_core::scoped_log!(HTTPServerWritableLog, "writeUTF16({})", size_of_val(text));
 
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        // bytes are u16-aligned per Result.slice16 invariant; bytemuck checks at runtime.
-        let utf16: &[u16] = bytemuck::cast_slice(bytes);
-        let written = match self.buffer.write_utf16(utf16) {
+        let written = match self.buffer.write_utf16(text) {
             Ok(n) => n,
             Err(_) => return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
         };
@@ -1787,7 +1845,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     ///
     /// # Safety
     /// `this` must point at the live sink owned by the `RequestContext`.
-    pub(crate) unsafe fn abort(this: *mut Self) {
+    pub(crate) unsafe fn abort(this: *mut Self, reason: CommonAbortReason) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
         // SAFETY: caller contract — `this` is live, and every access here is scoped
         // so no borrow spans the signal close below, which may free `*this`.
@@ -1803,7 +1861,14 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // no reference into the allocation may be live across the call.
         // SAFETY: as above; `source` is copied out before the close.
         let mut source = unsafe { (*this).source };
-        source.abort(CommonAbortReason::ConnectionClosed);
+        source.abort(reason);
+    }
+
+    /// Returns true if the sink ended the response, parked an `end()` or queued a flush. Each completes the head.
+    pub(crate) fn sends_head_itself(&self) -> bool {
+        self.ended_response
+            || self.requested_end
+            || (self.auto_flusher.registered.get() && !self.readable_slice().is_empty())
     }
 
     fn unregister_auto_flusher(&mut self) {
@@ -2293,17 +2358,16 @@ impl NetworkSink {
         }
     }
 
-    pub(crate) fn write_utf16(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
-        let bytes = data.slice();
-        let len = bytes.len() as BlobSizeType;
+        let len = size_of_val(text) as BlobSizeType;
         let has_source = !matches!(self.source, SourceHandle::None);
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
         let result = match self.task_ref() {
-            Some(task) => task.write_utf16(bytes, false),
+            Some(task) => task.write_utf16(text, false),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2525,6 +2589,8 @@ pub enum BufferActionTag {
     Blob,
     Bytes,
     Json,
+    /// [`AnyBlob::to_json_source`].
+    JsonSource,
 }
 
 impl BufferAction {

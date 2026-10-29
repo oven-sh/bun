@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import {
   blackholePortSource,
   bunEnv,
@@ -10,16 +10,19 @@ import {
   gc,
   isASAN,
   isDebug,
+  isLinux,
   isMusl,
   isWindows,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
 } from "harness";
-import { execFileSync } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
+import { request } from "node:http";
 import {
   BlockList,
   connect,
@@ -36,8 +39,11 @@ import {
   // @ts-expect-error legacy alias
   Stream,
 } from "node:net";
+import os from "node:os";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { Duplex, duplexPair } from "node:stream";
+import { createServer as createTLSServer, connect as tlsConnect, TLSSocket } from "node:tls";
+import { getSystemErrorMap } from "node:util";
 
 const socket_domain = tmpdirSync();
 
@@ -202,7 +208,7 @@ describe("net.Socket read", () => {
                 },
               })
             : Bun.listen({
-                hostname: "localhost",
+                hostname: "127.0.0.1",
                 port: 0,
                 socket: {
                   open(socket) {
@@ -534,7 +540,8 @@ describe("net.Socket write", () => {
         socket.once("connect", (...args) => {
           socket.write("script\n", err => {
             if (err) return reject(err);
-            socket.end(() => setTimeout(resolve, 3));
+            socket.once("close", resolve);
+            socket.end();
           });
         });
         socket.connect(port, "127.0.0.1");
@@ -554,7 +561,7 @@ describe("net.Socket write", () => {
   // path) then called `deinit()`/`destroy()` on freed memory, and
   // `getListener` read `handlers.mode` through the same dangling pointer.
   // These only fault under ASAN/debug-poison, so they are gated accordingly.
-  it.skipIf(!isDebug && !isASAN)(
+  it.concurrent.skipIf(!isDebug && !isASAN)(
     "native handle does not retain a dangling handlers pointer after connectError (scope.exit path)",
     async () => {
       const fixture = `
@@ -591,7 +598,7 @@ describe("net.Socket write", () => {
     },
   );
 
-  it.skipIf(!isDebug && !isASAN)(
+  it.concurrent.skipIf(!isDebug && !isASAN)(
     "native handle does not retain a dangling handlers pointer after close (getListener)",
     async () => {
       const fixture = `
@@ -631,7 +638,7 @@ describe("net.Socket write", () => {
     },
   );
 
-  it.skipIf(!isDebug && !isASAN)(
+  it.concurrent.skipIf(!isDebug && !isASAN)(
     "reconnecting through a native handle whose handlers were freed does not double-free (connectInner)",
     async () => {
       const fixture = `
@@ -678,34 +685,47 @@ describe("net.Socket write", () => {
   );
 });
 
-it("should handle connection error", done => {
-  let errored = false;
+it("should handle connection error", async () => {
+  // Bind a port and release it so connecting to it is refused.
+  const probe = createServer();
+  await once(probe.listen(0, "127.0.0.1"), "listening");
+  const { port } = probe.address() as import("node:net").AddressInfo;
+  await new Promise(resolve => probe.close(resolve));
 
-  // @ts-ignore
-  const socket = connect(55555, "127.0.0.1", () => {
-    done(new Error("Should not have connected"));
+  const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+  const events: unknown[] = [];
+  const socket = connect(port, "127.0.0.1", () => reject(new Error("Should not have connected")));
+  socket.on("error", (e: any) =>
+    events.push({ message: e.message, code: e.code, syscall: e.syscall, address: e.address, port: e.port }),
+  );
+  socket.on("connect", () => reject(new Error("Should not have connected")));
+  socket.on("close", hadError => {
+    events.push(`close hadError=${hadError}`);
+    resolve();
   });
+  await closed;
 
-  socket.on("error", error => {
-    if (errored) {
-      return done(new Error("Should not have errored twice"));
-    }
-    errored = true;
-    expect(error).toBeDefined();
-    expect(error.message).toBe("connect ECONNREFUSED 127.0.0.1:55555");
-    expect((error as any).code).toBe("ECONNREFUSED");
-    expect((error as any).syscall).toBe("connect");
-    expect((error as any).address).toBe("127.0.0.1");
-    expect((error as any).port).toBe(55555);
-  });
+  // Exactly one 'error', then 'close'.
+  expect(events).toEqual([
+    {
+      message: `connect ECONNREFUSED 127.0.0.1:${port}`,
+      code: "ECONNREFUSED",
+      syscall: "connect",
+      address: "127.0.0.1",
+      port,
+    },
+    "close hadError=true",
+  ]);
+});
 
-  socket.on("connect", () => {
-    done(new Error("Should not have connected"));
-  });
-
-  socket.on("close", () => {
-    expect(errored).toBe(true);
-    done();
+// Linux fails a TCP connect() to a multicast address with ENETUNREACH, with or without a route.
+it.skipIf(!isLinux)("reports ENETUNREACH, not ECONNREFUSED, when connect() finds no route", async () => {
+  const socket = connect(1, "224.0.0.1");
+  const [error] = await once(socket, "error");
+  expect({ message: error.message, code: error.code, syscall: error.syscall }).toEqual({
+    message: "connect ENETUNREACH 224.0.0.1:1",
+    code: "ENETUNREACH",
+    syscall: "connect",
   });
 });
 
@@ -744,14 +764,33 @@ it("Socket has a prototype", () => {
   function Connection2() {}
   require("util").inherits(Connection, Socket);
   require("util").inherits(Connection2, require("tls").TLSSocket);
+  expect(Object.getPrototypeOf(Connection.prototype)).toBe(Socket.prototype);
+  expect(Object.getPrototypeOf(Connection2.prototype)).toBe(TLSSocket.prototype);
 });
 
-it("unref should exit when no more work pending", async () => {
-  const process = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "node-unref-fixture.js")],
-    env: bunEnv,
+// node-unref-fixture.js and node-ref-default-fixture.js send a request to this TLS server.
+function replyingTLSServer() {
+  return Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: tlsCert,
+    socket: {
+      data(socket) {
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+      },
+      // The unref fixture exits mid-handshake.
+      error() {},
+    },
   });
-  expect(await process.exited).toBe(0);
+}
+
+it.concurrent("unref should exit when no more work pending", async () => {
+  using server = replyingTLSServer();
+  const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-unref-fixture.js"), {
+    PORT: String(server.port),
+  });
+  // The fixture prints "Received data. FAIL" and exits 1 if the unref'd socket kept the loop alive until the reply.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
 });
 
 // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; the call runs mid-lookup
@@ -786,6 +825,46 @@ it.concurrent.each(["s.unref()", "s.pause()"])("%s survives an autoSelectFamily 
     server.close();
   }
 });
+
+it.concurrent.each([false, true])(
+  "destroy() in a 'connectionAttempt' listener cancels the connect (autoSelectFamily: %p)",
+  async autoSelectFamily => {
+    const accepted: string[] = [];
+    const server = createServer(socket => {
+      accepted.push(`${socket.remoteAddress}:${socket.remotePort}`);
+      socket.on("error", () => {});
+      socket.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const port = server.address().port;
+      // Two addresses, so autoSelectFamily doesn't fall back to the single-address path.
+      const addresses = [
+        { address: "127.0.0.1", family: 4 },
+        { address: "::1", family: 6 },
+      ];
+      const lookup = (_host, opts, cb) => process.nextTick(cb, null, opts.all ? addresses : "127.0.0.1", 4);
+      const socket = connect({ host: "localhost", port, lookup, autoSelectFamily });
+      let attempts = 0;
+      socket.on("connectionAttempt", () => {
+        attempts++;
+        socket.destroy();
+      });
+      await once(socket, "close");
+
+      // Loopback connects are accepted in order, so an earlier connect would show up before this one.
+      const control = connect(port, "127.0.0.1");
+      await once(control, "connect");
+      const controlKey = `${control.localAddress}:${control.localPort}`;
+      while (!accepted.includes(controlKey)) await once(server, "connection");
+      control.destroy();
+
+      expect({ attempts, accepted }).toEqual({ attempts: 1, accepted: [controlKey] });
+    } finally {
+      server.close();
+    }
+  },
+);
 
 // https://github.com/oven-sh/bun/issues/37086 — node's pending uv_connect_t keeps the loop alive even on an
 // unref'd/non-reading handle, so unref()/pause() issued before or while connecting only take effect once connected.
@@ -834,6 +913,7 @@ describe.concurrent("unref()/pause() around connect()", () => {
   });
 
   it.each([
+    ["before connect()", `s.unref(); s.ref(); s.resume(); s.connect(port, "127.0.0.1");`],
     ["right after connect()", `s.connect(port, "127.0.0.1"); s.unref(); s.ref(); s.resume();`],
     ["while the connect is in flight", `s.connect(port, "127.0.0.1"); ${inFlight("s.unref(); s.ref(); s.resume();")}`],
   ])("ref() after unref() %s keeps holding the loop", async (_, client) => {
@@ -887,18 +967,19 @@ describe.concurrent("unref()/pause() around connect()", () => {
   });
 });
 
-it("socket should keep process alive if unref is not called", async () => {
-  const process = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],
-    env: bunEnv,
+it.concurrent("socket should keep process alive if unref is not called", async () => {
+  using server = replyingTLSServer();
+  const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-ref-default-fixture.js"), {
+    PORT: String(server.port),
   });
-  expect(await process.exited).toBe(1);
+  // The fixture exits 1 from its 'data' listener. It exits 0 if the socket didn't keep the loop alive until the reply.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Received data.", stderr: "", exitCode: 1 });
 });
 
 // Node never resumes a socket on the user's behalf: afterConnect only calls
 // read(0) (lib/net.js), so bytes that arrive before a 'data' listener is
 // attached stay buffered instead of being emitted to nobody and lost.
-it("a connected socket is not flowing until the user reads from it", async () => {
+it.concurrent("a connected socket is not flowing until the user reads from it", async () => {
   const { promise: received, resolve: onClose, reject } = Promise.withResolvers<string>();
   const server = createServer(c => {
     c.on("error", reject);
@@ -923,79 +1004,50 @@ it("a connected socket is not flowing until the user reads from it", async () =>
   }
 });
 
-it("should not hang after FIN", async () => {
-  const net = require("node:net");
-  const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
-  const server = net.createServer(c => {
+it.concurrent("should not hang after FIN", async () => {
+  const server = createServer(c => {
     c.write("Hello client");
     c.end();
   });
   try {
-    server.on("error", reject);
-    server.listen(0, () => {
-      resolveListening(server.address().port);
+    await once(server.listen(0), "listening");
+    const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-fin-fixture.js"), {
+      PORT: String((server.address() as import("node:net").AddressInfo).port),
     });
-    const process = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "node-fin-fixture.js")],
-      stderr: "inherit",
-      stdin: "ignore",
-      stdout: "inherit",
-      env: {
-        ...bunEnv,
-        PORT: ((await listening) as number).toString(),
-      },
-    });
-    const timeout = setTimeout(() => {
-      process.kill();
-      reject(new Error("Timeout"));
-    }, 60_000);
-    expect(await process.exited).toBe(0);
-    clearTimeout(timeout);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   } finally {
     server.close();
   }
-}, 120_000);
+});
 
-it("should not hang after destroy", async () => {
-  const net = require("node:net");
-  const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
-  const server = net.createServer(c => {
+it.concurrent("should not hang after destroy", async () => {
+  const server = createServer(c => {
     // The client destroys without reading; the resulting RST surfaces as
     // ECONNRESET here (Node behaves identically) — handle it.
     c.on("error", () => {});
     c.write("Hello client");
   });
   try {
-    server.on("error", reject);
-    server.listen(0, () => {
-      resolveListening(server.address().port);
+    await once(server.listen(0), "listening");
+    const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-destroy-fixture.js"), {
+      PORT: String((server.address() as import("node:net").AddressInfo).port),
     });
-    const process = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "node-destroy-fixture.js")],
-      stderr: "inherit",
-      stdin: "ignore",
-      stdout: "inherit",
-      env: {
-        ...bunEnv,
-        PORT: ((await listening) as number).toString(),
-      },
-    });
-    const timeout = setTimeout(() => {
-      process.kill();
-      reject(new Error("Timeout"));
-    }, 60_000);
-    expect(await process.exited).toBe(0);
-    clearTimeout(timeout);
+    // The fixture prints any 'error' event to stderr.
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   } finally {
     server.close();
   }
-}, 120_000);
+});
+
+// Never calls back, so the connection attempt stays pending and never dials.
+const pendingLookup = () => {};
 
 it("should trigger error when aborted even if connection failed #13126", async () => {
   const signal = AbortSignal.timeout(100);
   const socket = createConnection({
-    host: "example.com",
+    host: "pending.test",
     port: 999,
+    lookup: pendingLookup,
     signal: signal,
   });
   const { promise, resolve, reject } = Promise.withResolvers();
@@ -1008,14 +1060,56 @@ it("should trigger error when aborted even if connection failed #13126", async (
   expect(err.name).toBe("AbortError");
   expect(err.code).toBe("ABORT_ERR");
   expect(err.cause?.name).toBe("TimeoutError");
+});
+
+// Aborts a TCP connect that's already in flight. blackholePortSource doesn't work on Windows or musl.
+it.skipIf(isWindows || isMusl).each([
+  ["an address", `{ host: "127.0.0.1" }`],
+  [
+    "several addresses",
+    `{
+      host: "blackhole.test",
+      autoSelectFamily: true,
+      lookup: (hostname, options, callback) =>
+        process.nextTick(callback, null, [{ address: "127.0.0.1", family: 4 }, { address: "127.0.0.2", family: 4 }]),
+    }`,
+  ],
+])("should trigger error when aborted while connecting to %s #13126", async (_, options) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      ${blackholePortSource}
+      const events = [];
+      const socket = net.createConnection({ ...${options}, port, signal: AbortSignal.timeout(100) });
+      for (const name of ["connectionAttempt", "connect"]) socket.on(name, () => events.push(name));
+      socket.on("error", error => events.push([error.name, error.code, error.cause?.name].join(" ")));
+      socket.on("close", () => {
+        console.log(events.join(","));
+        filler.destroy();
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "connectionAttempt,AbortError ABORT_ERR TimeoutError\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
   const signal = AbortSignal.timeout(1);
-  await Bun.sleep(10);
+  if (!signal.aborted) await once(signal, "abort");
   const socket = createConnection({
-    host: "example.com",
+    host: "pending.test",
     port: 999,
+    lookup: pendingLookup,
     signal: signal,
   });
   const { promise, resolve, reject } = Promise.withResolvers();
@@ -1029,6 +1123,51 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.code).toBe("ABORT_ERR");
   expect(err.cause?.name).toBe("TimeoutError");
 });
+
+it.each([false, true])(
+  "doesn't connect when the lookup answers after the abort (autoSelectFamily: %p) #13126",
+  async autoSelectFamily => {
+    let accepted = 0;
+    await using server = createServer(connection => {
+      accepted++;
+      connection.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const controller = new AbortController();
+    const reason = new Error("lookup aborted");
+    const events: unknown[] = [];
+    const socket = new Socket({ signal: controller.signal });
+    for (const name of ["connectionAttempt", "connect", "close"]) socket.on(name, () => events.push(name));
+    socket.on("error", (error: NodeJS.ErrnoException) =>
+      events.push({ name: error.name, code: error.code, sameCause: error.cause === reason }),
+    );
+
+    const lookupStarted = Promise.withResolvers<() => void>();
+    socket.connect({
+      host: "held-lookup.test",
+      port: (server.address() as import("node:net").AddressInfo).port,
+      autoSelectFamily,
+      lookup(_hostname, options, callback) {
+        lookupStarted.resolve(() =>
+          options.all ? callback(null, [{ address: "127.0.0.1", family: 4 }]) : callback(null, "127.0.0.1", 4),
+        );
+      },
+    });
+    const answerLookup = await lookupStarted.promise;
+    const closed = new Promise(resolve => socket.once("close", resolve));
+    controller.abort(reason);
+    await closed;
+
+    answerLookup();
+    await new Promise(resolve => setImmediate(resolve));
+    expect({ events, accepted, destroyed: socket.destroyed }).toEqual({
+      events: [{ name: "AbortError", code: "ABORT_ERR", sameCause: true }, "close"],
+      accepted: 0,
+      destroyed: true,
+    });
+  },
+);
 
 // Regression test for #30697: net.connect({ localPort, lookup }) on the
 // happy-eyeballs path must not throw a ReferenceError before the socket
@@ -1232,81 +1371,6 @@ it.if(isWindows)("should not leak when connect({path}) fails asynchronously whil
   });
 });
 
-// On Windows, unix paths route through the named-pipe codepath which reports
-// failure asynchronously; this test targets the synchronous-failure branch in
-// Listener.connectInner.
-it.skipIf(isWindows)(
-  "should not leak when connect({path}) fails synchronously on a reused handle",
-  async () => {
-    // node:net creates a detached native socket (`_handle`) and passes it as
-    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
-    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
-    // synchronously while the socket is still `.detached`, so
-    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
-    // fire — the ref taken here must be released by the caller for reused
-    // sockets too, not only freshly-allocated ones. Without that, every
-    // failed reconnect leaks one native TCPSocket struct + its connection
-    // string.
-    const script = `
-      const net = require("node:net");
-      const { heapStats } = require("bun:jsc");
-      const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
-
-      function once() {
-        return new Promise(resolve => {
-          const s = new net.Socket();
-          s.on("error", () => {});
-          s.on("close", resolve);
-          s.connect({ path });
-        });
-      }
-      async function run(n) {
-        for (let i = 0; i < n; i += 100) {
-          const batch = [];
-          for (let j = 0; j < 100; j++) batch.push(once());
-          await Promise.all(batch);
-        }
-        Bun.gc(true);
-        await Bun.sleep(20);
-        Bun.gc(true);
-      }
-
-      // Count live mimalloc pages across all size bins. Each leaked
-      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
-      // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
-      // allocator's own bookkeeping, so it's independent of OS page
-      // reclamation.
-      function pageCount() {
-        return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
-      }
-
-      // Warm up with the SAME workload as the measured run: on builds where
-      // JSC shares mimalloc, its heap keeps growing until the first full-size
-      // batch, so equal batches make the delta isolate the per-run leak.
-      await run(8000);
-      const before = pageCount();
-      await run(8000);
-      const after = pageCount();
-      console.log(JSON.stringify({ before, after, delta: after - before }));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref: +25 pages (release) / +163 (debug+ASAN).
-    // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
-    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
-    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
-
 // node only reaches readStart() from _read(), and read(0) never calls _read once
 // the readable side has ended, so a `readable: false` client leaves the peer's
 // bytes unread. Bun's handle reads unless stopped, and pushing those bytes into
@@ -1409,11 +1473,11 @@ describe("Socket fd adoption", () => {
   // A named pipe with both ends open in this process: the non-blocking read end
   // is opened first so opening the write end does not block. The other fd kind
   // node's `new Socket({ fd })` accepts besides TCP sockets is a pipe.
-  function openFifo(name: string) {
+  function openFifo(name: string, writeFlags: string | number = "w") {
     const path = join(tmpdirSync(), name);
     execFileSync("mkfifo", [path]);
     const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-    const wfd = fs.openSync(path, "w");
+    const wfd = fs.openSync(path, writeFlags);
     return { rfd, wfd };
   }
   // Everything the (non-blocking) read end has right now; "" at EOF or when empty.
@@ -1452,7 +1516,7 @@ describe("Socket fd adoption", () => {
         socket.end("hello");
       });
       expect(drain(rfd)).toBe("hello");
-      // Sync fd writes must feed the byte counters (no native handle to do it).
+      // The handle of an adopted pipe feeds the byte counters like any other.
       expect((socket as any)._bytesDispatched).toBe(5);
       // The adopted fd must be released on destroy (node closes the wrapping
       // libuv handle in the equivalent path).
@@ -1460,6 +1524,191 @@ describe("Socket fd adoption", () => {
     } finally {
       fs.closeSync(rfd);
     }
+  });
+
+  // Other platforms still fail the write with EAGAIN.
+  describe.skipIf(!isLinux)("over a non-blocking pipe", () => {
+    const nonBlocking = fs.constants.O_WRONLY | fs.constants.O_NONBLOCK;
+
+    it("delivers writes bigger than the pipe's buffer", async () => {
+      const { rfd, wfd } = openFifo("full.fifo", nonBlocking);
+      try {
+        const received = new Response(Bun.file(rfd).stream()).bytes();
+        const socket = new Socket({ fd: wfd, readable: false, writable: true });
+        const chunks = [
+          Buffer.alloc(300_000, "a"),
+          Buffer.alloc(10, "b"),
+          Buffer.alloc(200_000, "c"),
+          Buffer.from("d"),
+        ];
+        socket.write(chunks[0]);
+        socket.cork();
+        for (const chunk of chunks.slice(1)) socket.write(chunk);
+        socket.uncork();
+        socket.end();
+        await once(socket, "close");
+        expect(Buffer.from(await received).equals(Buffer.concat(chunks))).toBe(true);
+        expect(socket.bytesWritten).toBe(500_011);
+      } finally {
+        fs.closeSync(rfd);
+      }
+    });
+
+    it("destroy() cancels a write the pipe had no room for", async () => {
+      const { rfd, wfd } = openFifo("cancel.fifo", nonBlocking);
+      try {
+        const socket = new Socket({ fd: wfd, readable: false, writable: true });
+        const events: string[] = [];
+        socket.write(Buffer.alloc(300_000), (err: any) => events.push(`write ${err?.code}`));
+        socket.destroy();
+        await once(socket, "close");
+        expect(events).toEqual(["write ECANCELED"]);
+        // Like Node, the reader gets what the pipe had taken and nothing of what was still queued.
+        expect(drain(rfd).length).toBe(65_536);
+      } finally {
+        fs.closeSync(rfd);
+      }
+    });
+
+    it("fails a queued write with EPIPE when the reader goes away", async () => {
+      const { rfd, wfd } = openFifo("reader-gone.fifo", nonBlocking);
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      const events: string[] = [];
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.message}`));
+      socket.write(Buffer.alloc(300_000), (err: any) => events.push(`write ${err?.code} ${err?.syscall}`));
+      fs.closeSync(rfd);
+      await new Promise(resolve => socket.on("close", resolve));
+      expect({ events, fd: fstatCode(wfd) }).toEqual({
+        events: ["write EPIPE write", "error write EPIPE"],
+        fd: "EBADF",
+      });
+    });
+  });
+
+  it.skipIf(isWindows)("fails a write to a pipe without a reader the way node does", async () => {
+    const { rfd, wfd } = openFifo("no-reader.fifo");
+    fs.closeSync(rfd);
+    const socket = new Socket({ fd: wfd, readable: false, writable: true });
+    const [error] = (await Promise.all([once(socket, "error"), socket.write("x")]))[0] as [NodeJS.ErrnoException];
+    expect({ message: error.message, code: error.code, syscall: error.syscall, errno: error.errno }).toEqual({
+      message: "write EPIPE",
+      code: "EPIPE",
+      syscall: "write",
+      errno: -os.constants.errno.EPIPE,
+    });
+  });
+
+  // Whoever adopts a descriptor closes it, so a descriptor has one owner.
+  describe.skipIf(isWindows)("a descriptor that a socket of this process owns", () => {
+    const refusal = (fd: number) => {
+      try {
+        new Socket({ fd, readable: false, writable: true });
+      } catch (e) {
+        const { message, code, syscall } = e as NodeJS.ErrnoException;
+        return { message, code, syscall, fd: fstatCode(fd) };
+      }
+    };
+    const refused = { message: "open EEXIST", code: "EEXIST", syscall: "open", fd: "open" };
+
+    it("is refused for a connected socket, which keeps working", async () => {
+      const server = createServer(socket => socket.pipe(socket));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      try {
+        await once(client, "connect");
+        expect(refusal((client as any)._handle.fd)).toEqual(refused);
+        client.write("ping");
+        expect(String((await once(client, "data"))[0])).toBe("ping");
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    it("is refused for a second socket over the same pipe", async () => {
+      const { rfd, wfd } = openFifo("one-owner.fifo");
+      const owner = new Socket({ fd: wfd, readable: false, writable: true });
+      try {
+        expect(refusal(wfd)).toEqual(refused);
+        await new Promise<void>((resolve, reject) => owner.write("mine", err => (err ? reject(err) : resolve())));
+        expect(drain(rfd)).toBe("mine");
+        owner.destroy();
+        await once(owner, "close");
+        expect(fstatCode(wfd)).toBe("EBADF");
+      } finally {
+        owner.destroy();
+        fs.closeSync(rfd);
+      }
+    });
+  });
+
+  // stdin, stdout and stderr are never closed, so they have no owner.
+  it("two sockets can write to stdout", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          const sockets = [1, 2].map(() => new net.Socket({ fd: 1, readable: false, writable: true }));
+          for (const socket of sockets) socket.on("error", err => console.error(err.code));
+          sockets[0].write("a");
+          sockets[1].write("b");
+          sockets[0].destroy();
+          sockets[1].write("c");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "abc", stderr: "", exitCode: 0 });
+  });
+
+  // A write to a blocking descriptor returns once the kernel has every byte, so nothing is left to lose.
+  it("what was written before process.exit() reaches the reader", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          new net.Socket({ fd: 1, readable: false, writable: true }).write(Buffer.alloc(1_000_000, "x"));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ bytes: stdout.length, exitCode }).toEqual({ bytes: 1_000_000, exitCode: 0 });
+  });
+
+  // Nothing is read from it, so only a pending write may keep the process alive.
+  it("an open write-only socket doesn't keep the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          const socket = new net.Socket({ fd: 1, readable: false, writable: true });
+          socket.write("done");
+          process.on("exit", () => console.error(JSON.stringify({ destroyed: socket.destroyed })));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "done",
+      stderr: '{"destroyed":false}',
+      exitCode: 0,
+    });
   });
 
   // Node's createHandle() wraps PIPE and TCP fds only; a regular file is
@@ -1503,8 +1752,8 @@ describe("Socket fd adoption", () => {
         events,
         destroyed: socket.destroyed,
         fd: fstatCode(wfd),
-        flags: [socket.readable, socket.readableEnded, socket.writable],
-      }).toEqual({ events: [], destroyed: false, fd: "open", flags: [false, true, true] });
+        flags: [socket.readable, socket.readableEnded, socket.writable, socket.pending],
+      }).toEqual({ events: [], destroyed: false, fd: "open", flags: [false, true, true, false] });
 
       await new Promise<void>((resolve, reject) => socket.write("late", err => (err ? reject(err) : resolve())));
       expect(drain(rfd)).toBe("late");
@@ -1563,19 +1812,109 @@ describe("Socket fd adoption", () => {
     expect(error?.message).toBe("Unsupported fd type: UNKNOWN");
   });
 
-  it("a bare { fd } does not throw so connect({ fd }) can attach a native handle", () => {
-    // No explicit writable: true -> no adoption, no fstat. child_process
-    // extra stdio relies on this path (connect({ fd }) attaches natively).
-    expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
+  it.skipIf(isWindows)("checks the fd type before typeOfService and doesn't close the fd when it throws", async () => {
+    const { rfd, wfd } = openFifo("invalid-tos.fifo");
+    const file = fs.openSync(join(tmpdirSync(), "invalid-tos.txt"), "w");
+    const codeFor = (fd: number) => {
+      try {
+        new Socket({ fd, writable: true, typeOfService: 999 } as import("node:net").SocketConstructorOpts);
+      } catch (e) {
+        return (e as NodeJS.ErrnoException).code;
+      }
+    };
+    try {
+      const codes = { file: codeFor(file), fifo: codeFor(wfd) };
+      // A socket that adopted the fd would end and close it on the next tick.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect({ ...codes, fifoFd: fstatCode(wfd) }).toEqual({
+        file: "ERR_INVALID_FD_TYPE",
+        fifo: "ERR_OUT_OF_RANGE",
+        fifoFd: "open",
+      });
+    } finally {
+      fs.closeSync(wfd);
+      fs.closeSync(rfd);
+      fs.closeSync(file);
+    }
   });
 
-  // node's _writeGeneric restarts the idle timer before every write; the
-  // synchronous fd write path has no handle doing that for it.
-  it.skipIf(isWindows)("writes to an adopted fd restart the setTimeout() idle timer", async () => {
+  // spawn() makes "pipe" stdio slots out of socketpairs, so this is what a child sees on fd 3 and up.
+  it.skipIf(isWindows)("reads from and writes to a socket fd as soon as it's constructed", async () => {
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `
+          const net = require("node:net");
+          const fs = require("node:fs");
+          const options = {
+            bare: { fd: 3 },
+            duplex: { fd: 4, readable: true, writable: true },
+            readOnly: { fd: 5, readable: true, writable: false },
+          };
+          const report = {};
+          let open = 3;
+          for (const name in options) {
+            const fd = options[name].fd;
+            const socket = new net.Socket(options[name]);
+            const events = (report[name] = ["pending=" + socket.pending + " connecting=" + socket.connecting]);
+            socket.setEncoding("utf8");
+            socket.on("connect", () => events.push("connect"));
+            socket.on("data", data => {
+              events.push("data:" + data);
+              if (socket.writable) socket.end("echo:" + data);
+              else socket.destroy();
+            });
+            socket.on("end", () => events.push("end"));
+            socket.on("error", err => events.push("error:" + err.code));
+            socket.on("close", () => {
+              try {
+                fs.fstatSync(fd);
+                events.push("close, fd still open");
+              } catch (err) {
+                events.push("close, fd " + err.code);
+              }
+              if (--open === 0) console.log(JSON.stringify(report));
+            });
+          }
+        `,
+      ],
+      { env: bunEnv, stdio: ["ignore", "pipe", "inherit", "pipe", "pipe", "pipe"] },
+    );
+    const text = async (stream: NodeJS.ReadableStream) => Buffer.concat(await Array.fromAsync(stream)).toString();
+    const [, stdout, , bare, duplex, readOnly] = child.stdio as Socket[];
+    readOnly.on("error", () => {});
+    for (const pipe of [bare, duplex, readOnly]) pipe.write("ping");
+    const [report, fromBare, fromDuplex, [exitCode]] = await Promise.all([
+      text(stdout),
+      text(bare),
+      text(duplex),
+      once(child, "exit"),
+    ]);
+    const echoed = ["pending=false connecting=false", "data:ping", "end", "close, fd EBADF"];
+    expect({ report: JSON.parse(report), fromBare, fromDuplex, exitCode }).toEqual({
+      report: {
+        bare: echoed,
+        duplex: echoed,
+        readOnly: ["pending=false connecting=false", "data:ping", "close, fd EBADF"],
+      },
+      fromBare: "echo:ping",
+      fromDuplex: "echo:ping",
+      exitCode: 0,
+    });
+  });
+
+  it("a bare { fd } that can't be fstat'ed does not throw", () => {
+    const socket = new Socket({ fd: 0x7ffff });
+    expect({ destroyed: socket.destroyed, pending: socket.pending }).toEqual({ destroyed: false, pending: true });
+  });
+
+  // node's _writeGeneric restarts the idle timer before every write.
+  it.concurrent.skipIf(isWindows)("writes to an adopted fd restart the setTimeout() idle timer", async () => {
     const { rfd, wfd } = openFifo("timeout.fifo");
     const socket = new Socket({ fd: wfd, readable: false, writable: true });
     try {
-      const idle = 500;
+      const idle = 200;
       const writes: number[] = [];
       const timeouts: number[] = [];
       socket.on("timeout", () => timeouts.push(performance.now()));
@@ -1584,13 +1923,13 @@ describe("Socket fd adoption", () => {
       for (let i = 0; i < 20; i++) {
         writes.push(performance.now());
         socket.write("x");
-        await Bun.sleep(50);
+        await Bun.sleep(idle / 10);
       }
       if (timeouts.length === 0) await once(socket, "timeout");
       // Whenever 'timeout' fired, a full idle period had passed since the last
       // write before it: each write restarted the timer. (A scheduler stall
       // longer than `idle` between two writes is then a legitimate timeout, not
-      // a failure.) Without the restart the first one lands ~50ms after a write.
+      // a failure.) Without the restart the first one lands ~20ms after a write.
       const gaps = timeouts.map(at => at - Math.max(...writes.filter(w => w <= at)));
       expect(gaps.filter(gap => gap < idle * 0.9)).toEqual([]);
       expect(drain(rfd)).toBe(Buffer.alloc(20, "x").toString());
@@ -1604,7 +1943,7 @@ describe("Socket fd adoption", () => {
   // writable, so inherited properties never adopt anything (an own file fd
   // would throw ERR_INVALID_FD_TYPE); the Duplex flags and the adoption
   // decision must come from the same view.
-  it("ignores fd / readable / writable that are not own properties of the options", async () => {
+  it.concurrent("ignores fd / readable / writable that are not own properties of the options", async () => {
     const path = join(tmpdirSync(), "inherited-fd.txt");
     const fd = fs.openSync(path, "w");
     try {
@@ -1691,13 +2030,13 @@ describe.concurrent("socket that already sent FIN and is paused with unread data
           const d = process.cpuUsage(before);
           console.log("cpu", d.user + d.system);
           conn.resume();
-        }, 1000);
+        }, 500);
       });
     `);
-    // A level-triggered hangup left registered would have burned the whole 1s of
-    // wall time as CPU; 500ms leaves room over the debug+ASAN idle baseline.
+    // A level-triggered hangup that stays registered spins for the whole 500ms.
+    // An idle debug+ASAN build uses about 30ms.
     const cpuMicros = Number((result.lines.find(l => l.startsWith("cpu ")) ?? "cpu -1").slice(4));
-    expect({ ...result, cpuIdle: cpuMicros >= 0 && cpuMicros < 500_000 }).toEqual({
+    expect({ ...result, cpuIdle: cpuMicros >= 0 && cpuMicros < 250_000 }).toEqual({
       lines: ["close 65536", `cpu ${cpuMicros}`],
       stderr: "",
       exitCode: 0,
@@ -1957,6 +2296,143 @@ describe.concurrent("backpressure-paused socket does not keep the process alive"
     });
   });
 });
+
+// The event loop registers a socket's descriptor before it initializes the socket. What a fresh block of memory holds depends
+// on the heap, hence a few counts. A sanitizer fills it with one pattern, which hides a read of it.
+it.skipIf(!isLinux || isASAN || isDebug).each([200, 288, 352])(
+  "%d sockets that start paused leave the event loop idle after their peers end",
+  async count => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const net = require("node:net");
+        const count = ${count};
+        const accepted = [];
+        const server = net.createServer({ pauseOnConnect: true }, socket => accepted.push(socket));
+        await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+        const sent = [];
+        for (let i = 0; i < count; i++) {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          sent.push(new Promise((resolve, reject) => client.on("error", reject).end("hello", resolve)));
+        }
+        await Promise.all(sent);
+        while (accepted.length < count) await new Promise(resolve => setImmediate(resolve));
+        // A loop that spins burns every window. A garbage collection, or what is left of 200 accepts, burns a few.
+        let idle = false;
+        for (let i = 0; i < 10 && !idle; i++) {
+          const before = process.cpuUsage(), start = performance.now();
+          await new Promise(resolve => setTimeout(resolve, 200));
+          const { user, system } = process.cpuUsage(before);
+          idle = (user + system) / 1000 / (performance.now() - start) < 0.5;
+        }
+        let bytes = 0, ends = 0;
+        for (const socket of accepted) socket.on("data", chunk => (bytes += chunk.length)).on("end", () => ends++).resume();
+        while (ends < count) await new Promise(resolve => setImmediate(resolve));
+        console.log(JSON.stringify({ idle, bytes, ends }));
+        process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify({ idle: true, bytes: count * 5, ends: count }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// On Windows, unix paths route through the named-pipe codepath which reports
+// failure asynchronously; this test targets the synchronous-failure branch in
+// Listener.connectInner.
+it.concurrent.skipIf(isWindows)(
+  "should not leak when connect({path}) fails synchronously on a reused handle",
+  async () => {
+    // node:net creates a detached native socket (`_handle`) and passes it as
+    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
+    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
+    // synchronously while the socket is still `.detached`, so
+    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
+    // fire. The ref taken here must be released by the caller for reused
+    // sockets too, not only freshly-allocated ones. Without that, every
+    // failed reconnect leaks one native TCPSocket struct + its connection
+    // string.
+    //
+    // ASAN builds allocate that struct from the system allocator, so the mimalloc
+    // page count below can't see the leak. LeakSanitizer reports it at exit instead.
+    const iterations = isASAN ? 100 : 8000;
+    const script = `
+      const net = require("node:net");
+      const { heapStats } = require("bun:jsc");
+      const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
+
+      function once() {
+        return new Promise(resolve => {
+          const s = new net.Socket();
+          s.on("error", () => {});
+          s.on("close", resolve);
+          s.connect({ path });
+        });
+      }
+      async function run(n) {
+        for (let i = 0; i < n; i += 100) {
+          const batch = [];
+          for (let j = 0; j < 100; j++) batch.push(once());
+          await Promise.all(batch);
+        }
+        Bun.gc(true);
+        await Bun.sleep(20);
+        Bun.gc(true);
+      }
+
+      // Count live mimalloc pages across all size bins. Each leaked
+      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
+      // (release). Unlike RSS this is the allocator's own bookkeeping, so
+      // it's independent of OS page reclamation.
+      function pageCount() {
+        return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
+      }
+
+      // Warm up with the SAME workload as the measured run: on builds where
+      // JSC shares mimalloc, its heap keeps growing until the first full-size
+      // batch, so equal batches make the delta isolate the per-run leak.
+      await run(${iterations});
+      const before = pageCount();
+      await run(${iterations});
+      const after = pageCount();
+      console.log(JSON.stringify({ before, after, delta: after - before }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        ...(isASAN && {
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+        }),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // LeakSanitizer reports to stderr.
+    expect(stderr).toBe("");
+    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+    // Without the balancing deref: +25 pages (release).
+    // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
+    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
+    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
 
 describe("paused socket whose peer sends RST", () => {
   // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
@@ -2819,7 +3295,7 @@ it("onread: `false` from a callback holding the `true` sentinel still pauses unt
 // onStreamRead calls the user callback bare, so the process dies rather than
 // the socket being failed closed.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L179
-it("onread: a callback that throws is an uncaught exception", async () => {
+it.concurrent("onread: a callback that throws is an uncaught exception", async () => {
   // 12 bytes through a 4-byte buffer; the callback throws on the first slice.
   const fixture = /* js */ `
     const net = require("net");
@@ -2839,6 +3315,8 @@ it("onread: a callback that throws is an uncaught exception", async () => {
         },
       });
       client.on("error", () => console.log("socket-error"));
+      // The listening server keeps the process alive if the throw doesn't end it.
+      setTimeout(() => process.exit(2), 10_000).unref();
     });
   `;
   await using proc = Bun.spawn({
@@ -2858,14 +3336,14 @@ it("onread: a callback that throws is an uncaught exception", async () => {
   expect(lines[0]).toBe("calls:abcd");
   expect(lines).not.toContain("socket-error");
   expect(["calls:abcd", "calls:abcd,efgh", "calls:abcd,efgh,ijkl"]).toEqual(expect.arrayContaining(lines));
-  expect(exitCode).not.toBe(0);
+  expect(exitCode).toBe(1);
 });
 
 // Node bounds each kernel read to the onread buffer's size, so a throw that is
 // swallowed by a process.on('uncaughtException') handler loses no bytes (the
 // next slice is a separate onStreamRead call). Bun slices one larger native
 // read in JS, so the catch is per-slice to preserve that.
-it("onread: a swallowed throw does not drop the rest of the current native read", async () => {
+it.concurrent("onread: a swallowed throw does not drop the rest of the current native read", async () => {
   const fixture = /* js */ `
     process.on("uncaughtException", e => console.log("uncaught:" + e.message));
     const net = require("net");
@@ -2934,6 +3412,34 @@ it.skipIf(isWindows)("a write after the peer reset the connection fails with a w
     const err = await promise;
     expect(["EPIPE", "ECONNRESET", "ENOTCONN"]).toContain(err.code!);
     expect(typeof err.errno).toBe("number");
+  } finally {
+    server.close();
+  }
+});
+
+it("a plain socket has none of TLSSocket's property names", async () => {
+  const tlsOnly = [
+    "encrypted",
+    "authorized",
+    "authorizationError",
+    "servername",
+    "_requestCert",
+    "_rejectUnauthorized",
+  ];
+  const accepted = Promise.withResolvers<string[]>();
+  const server = createServer(socket => {
+    accepted.resolve(tlsOnly.filter(name => name in socket));
+    socket.end();
+  });
+  try {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", servername: "example.com" });
+    const closed = once(client.resume(), "close");
+    await once(client, "connect");
+    const connected = tlsOnly.filter(name => name in client);
+    expect({ connected, accepted: await accepted.promise }).toEqual({ connected: [], accepted: [] });
+    await closed;
   } finally {
     server.close();
   }
@@ -3064,6 +3570,171 @@ describe("a write that fails at once", () => {
   });
 });
 
+describe("writes under cork()", () => {
+  type Chunk = [chunk: string | Uint8Array, encoding?: BufferEncoding];
+  const backing = new Uint8Array(64).map((_, i) => 65 + (i % 26)).buffer;
+  const nonEmpty: Record<string, Chunk> = {
+    utf8: ["h\u00e9llo \u20ac \ud834\udd1e", "utf8"],
+    "no encoding": ["h\u00e9llo \u20ac"],
+    latin1: ["h\u00e9llo\u00ff", "latin1"],
+    "latin1 with a wider character": ["h\u20acllo", "latin1"],
+    ascii: ["h\u00e9llo", "ascii"],
+    hex: ["68656c6c6f", "hex"],
+    "hex of odd length": ["68656c6c6", "hex"],
+    base64: ["aGVsbG8gd29ybGQ=", "base64"],
+    base64url: ["aGVsbG8_d29ybGQ-", "base64url"],
+    ucs2: ["h\u00e9\u20ac", "ucs2"],
+    "a lone surrogate": ["a\ud834b", "utf8"],
+    "a rope": ["abc".repeat(5) + String(Math.PI) + Buffer.alloc(40, "x"), "utf8"],
+    Buffer: [Buffer.from("buffer bytes")],
+    Uint8Array: [new Uint8Array([1, 2, 3, 250, 255])],
+    "a Buffer inside a larger ArrayBuffer": [Buffer.from(backing, 3, 7)],
+    "a Uint8Array inside a larger ArrayBuffer": [new Uint8Array(backing, 11, 9)],
+  };
+  const emptyString: Chunk = ["", "latin1"];
+  const emptyBuffer: Chunk = [Buffer.alloc(0)];
+  const shapes: [string, Chunk[]][] = [
+    ...Object.entries(nonEmpty).flatMap(([name, chunk]): [string, Chunk[]][] => [
+      [`${name} alone`, [chunk]],
+      [`${name}, empty string`, [chunk, emptyString]],
+      [`empty string, ${name}`, [emptyString, chunk]],
+      [`empty Buffer, ${name}, empty string, empty Buffer`, [emptyBuffer, chunk, emptyString, emptyBuffer]],
+      [`${name}, latin1`, [chunk, nonEmpty.latin1]],
+      [`Buffer, empty string, ${name}`, [nonEmpty.Buffer, emptyString, chunk]],
+    ]),
+    ["empty string alone", [emptyString]],
+    ["empty Buffer alone", [emptyBuffer]],
+    ["empty string, empty Buffer, empty string", [emptyString, emptyBuffer, emptyString]],
+  ];
+
+  async function connectedPair(kind: "tcp" | "unix" | "tls") {
+    const server = kind === "tls" ? createTLSServer(tlsCert) : createServer();
+    await once(
+      server.listen(kind === "unix" ? { path: join(socket_domain, "corked.sock") } : { port: 0, host: "127.0.0.1" }),
+      "listening",
+    );
+    const address = server.address() as string | import("node:net").AddressInfo;
+    const accepted = once(server, kind === "tls" ? "secureConnection" : "connection") as Promise<[Socket]>;
+    const writer =
+      typeof address === "string"
+        ? connect(address)
+        : kind === "tls"
+          ? tlsConnect({ port: address.port, host: address.address, ca: tlsCert.cert, servername: "localhost" })
+          : connect(address.port, address.address);
+    const [[peer]] = await Promise.all([accepted, once(writer, kind === "tls" ? "secureConnect" : "connect")]);
+    return {
+      writer,
+      peer,
+      [Symbol.dispose]() {
+        writer.destroy();
+        peer.destroy();
+        server.close();
+      },
+    };
+  }
+
+  it.each(isWindows ? (["tcp", "tls"] as const) : (["tcp", "unix", "tls"] as const))(
+    "reach the peer of a %s socket as Buffer.from() encodes them, and every callback runs once, in order",
+    async kind => {
+      using pair = await connectedPair(kind);
+      const { writer, peer } = pair;
+      let received = Buffer.alloc(0);
+      let wake: (() => void) | undefined;
+      peer.on("data", (chunk: Buffer) => {
+        received = Buffer.concat([received, chunk]);
+        wake?.();
+      });
+      for (const [name, chunks] of shapes) {
+        const expected = Buffer.concat(
+          chunks.map(([chunk, encoding]) => (typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk)),
+        );
+        const bytesWritten = writer.bytesWritten;
+        const callbacks: (number | Error)[] = [];
+        const { promise: written, resolve } = Promise.withResolvers<void>();
+        writer.cork();
+        const returned = chunks.map(([chunk, encoding], i) =>
+          writer.write(chunk as string, encoding, error => {
+            callbacks.push(error ?? i);
+            if (callbacks.length === chunks.length) resolve();
+          }),
+        );
+        writer.uncork();
+        await written;
+        while (received.length < expected.length) await new Promise<void>(resolve => (wake = resolve));
+        expect({
+          name,
+          returned,
+          callbacks,
+          bytesWritten: writer.bytesWritten - bytesWritten,
+          writableLength: writer.writableLength,
+          received: received.toString("hex"),
+        }).toEqual({
+          name,
+          returned: chunks.map(() => true),
+          callbacks: chunks.map((_, i) => i),
+          bytesWritten: expected.length,
+          writableLength: 0,
+          received: expected.toString("hex"),
+        });
+        received = Buffer.alloc(0);
+      }
+    },
+  );
+
+  describe.each([
+    ["behind", (chunk: Buffer): Chunk[] => [[chunk], emptyString]],
+    ["ahead of", (chunk: Buffer): Chunk[] => [emptyString, [chunk]]],
+  ])("a Buffer with an empty chunk %s it can be reused as soon as uncork() has returned", (_, chunksOf) => {
+    async function writeThenReuse(writer: Socket, peer: Promise<Socket> | Socket) {
+      const chunk = Buffer.alloc(1 << 20, "a");
+      const events: string[] = [];
+      writer.on("drain", () => events.push("drain"));
+      writer.cork();
+      const returned = chunksOf(chunk).map(([chunk, encoding], i) =>
+        writer.write(chunk as string, encoding, error => events.push(`callback ${i} ${error?.message ?? "ok"}`)),
+      );
+      writer.uncork();
+      const waiting = writer.writableLength;
+      chunk.fill("Z");
+      let received = Buffer.alloc(0);
+      const { promise: all, resolve } = Promise.withResolvers<void>();
+      const drained = once(writer, "drain");
+      (await peer).on("data", (data: Buffer) => {
+        received = Buffer.concat([received, data]);
+        if (received.length >= chunk.length) resolve();
+      });
+      await Promise.all([all, drained]);
+      expect({ last: returned.at(-1), waiting, events, intact: received.equals(Buffer.alloc(1 << 20, "a")) }).toEqual({
+        last: false,
+        waiting: chunk.length,
+        events: ["drain", "callback 0 ok", "callback 1 ok"],
+        intact: true,
+      });
+    }
+
+    // Windows takes a send whole, whatever the size of the send buffer, so nothing is left to send there.
+    it.skipIf(isWindows)("with part of it still to send", async () => {
+      using pair = await connectedPair("tcp");
+      require("bun:internal-for-testing").setSocketOptions(pair.writer, 1, 4096);
+      await writeThenReuse(pair.writer, pair.peer);
+    });
+
+    it("on a socket that is still connecting", async () => {
+      const server = createServer();
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const accepted = once(server, "connection").then(([peer]) => peer as Socket);
+      const writer = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      try {
+        await writeThenReuse(writer, accepted);
+      } finally {
+        writer.destroy();
+        (await accepted).destroy();
+        server.close();
+      }
+    });
+  });
+});
+
 // libuv's uv__tcp_bind always sets SO_REUSEADDR on Unix, so Node can bind a
 // client localPort that still has earlier connections in TIME_WAIT. Bun used
 // to call bind() bare here and fail with EADDRINUSE, which made
@@ -3131,14 +3802,22 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
 // The writev fast path is `#[cfg(unix)]`, and on Windows the amount a send
 // accepts is machine dependent, so the buffered precondition cannot be built there.
 describe.skipIf(isWindows)("socket write while data is buffered natively", () => {
-  // Counts received bytes per fill value. STALL_ON_ACCEPT=1 blocks the loop on
-  // accept so the kernel buffers stay full while the client writes.
+  // Counts received bytes per fill value. pauseOnConnect keeps the kernel buffers
+  // full until the client writes a byte count to the file "submitted". The server
+  // creates the file "drained" once it has received that many bytes.
   const serverFixture = /* js */ `
+    import fs from "node:fs";
     import net from "node:net";
     const KNOWN = [0x61, 0x69, 0x73]; // 'a', 'i', 's'
     const counts = { a: 0, i: 0, s: 0, other: 0 };
     const runs = [];
     let total = 0;
+    let drainTo = Infinity;
+    function reportDrained() {
+      if (total < drainTo) return;
+      drainTo = Infinity;
+      fs.writeFileSync("drained", "");
+    }
     function scan(d) {
       total += d.length;
       let pos = 0;
@@ -3161,12 +3840,16 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
         pos = end;
       }
     }
-    const server = net.createServer(c => {
-      c.on("data", scan);
+    const server = net.createServer({ pauseOnConnect: true }, c => {
+      c.on("data", d => {
+        scan(d);
+        reportDrained();
+      });
       let printed = false;
       const done = () => {
         if (printed) return;
         printed = true;
+        clearInterval(poll);
         console.log(JSON.stringify({ total, counts, runs }));
         c.destroy();
         server.close();
@@ -3174,9 +3857,13 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       c.on("end", done);
       c.on("close", done);
       c.on("error", done);
-      if (process.env.STALL_ON_ACCEPT === "1") {
-        Bun.sleepSync(1500);
-      }
+      const poll = setInterval(() => {
+        if (!fs.existsSync("submitted")) return;
+        clearInterval(poll);
+        drainTo = Number(fs.readFileSync("submitted", "utf8"));
+        c.resume();
+        reportDrained();
+      }, 1);
     });
     server.listen(0, "127.0.0.1", () => {
       console.log(JSON.stringify({ port: server.address().port }));
@@ -3187,9 +3874,15 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
   // layer while data is still buffered. A _write callback that does not fire
   // synchronously means the chunk is now buffered natively.
   const clientFixture = /* js */ `
+    import fs from "node:fs";
     import net from "node:net";
     const phase = process.argv[2]; // "loss" | "dup"
     const port = Number(process.argv[3]);
+    // Tells the peer to start reading and to create "drained" after drainTo bytes.
+    function submitted(drainTo) {
+      fs.writeFileSync("submitted.tmp", String(drainTo));
+      fs.renameSync("submitted.tmp", "submitted");
+    }
     const sock = net.connect(port, "127.0.0.1", () => {
       sock.setNoDelay(true);
       const writeDirect = chunk => {
@@ -3213,15 +3906,34 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
         finalChunk = Buffer.alloc(64 * 1024, 0x73);
         sent.s = finalChunk.length;
       } else {
-        // Leave a small (< 1MB) native remainder...
-        for (let attempt = 0; attempt < 64 && !sawPartial; attempt++) {
-          const C = Buffer.alloc(1024 * 1024, 0x61);
+        // Leave a small (< 64KB) native remainder...
+        const size = 64 * 1024;
+        for (let attempt = 0; attempt < 1024 && !sawPartial; attempt++) {
+          const C = Buffer.alloc(size, 0x61);
           sawPartial = !writeDirect(C);
           sent.a += C.length;
         }
-        // ...then block the loop while the peer drains, so the next writev takes
-        // the whole remainder plus a prefix of the new chunk (written > buffered.len).
-        if (sawPartial) Bun.sleepSync(1500);
+        // ...then block the loop so no writable event flushes the remainder while the
+        // peer reads all but the last chunk. The kernel buffers are nearly empty by then,
+        // so the next writev sends the whole remainder plus a prefix of the new chunk
+        // (written > buffered.len).
+        if (sawPartial) {
+          // sent.a includes the partial chunk, so this means the very first write was partial.
+          if (sent.a === size) {
+            console.error("precondition failed: the first write was partial, so the peer has nothing to drain first");
+            sock.destroy();
+            process.exit(3);
+          }
+          submitted(sent.a - size);
+          const deadline = Date.now() + 60_000;
+          while (!fs.existsSync("drained")) {
+            if (Date.now() > deadline) {
+              console.error("the peer did not drain the connection");
+              process.exit(4);
+            }
+            Bun.sleepSync(1);
+          }
+        }
         finalChunk = Buffer.alloc(32 * 1024 * 1024, 0x69);
         sent.i = finalChunk.length;
       }
@@ -3236,6 +3948,12 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       sock._write(finalChunk, "buffer", () => resolve());
       // bytesWritten counts flushed plus still-buffered bytes.
       sent.bw = sock.bytesWritten;
+      if (phase === "loss") submitted(sent.a + sent.s);
+      // The test runner doesn't kill a concurrent test's children when it times out.
+      setTimeout(() => {
+        console.error("the final write did not drain");
+        process.exit(5);
+      }, 60_000).unref();
       flushed.then(() => {
         console.log(JSON.stringify(sent));
         sock.end();
@@ -3264,7 +3982,7 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
   // "loss": the writev stops inside the old buffered data, the new chunk must be kept.
   // "dup": the writev consumes the old data plus a prefix of the new chunk,
   // that prefix must not be resent.
-  describe.each(["loss", "dup"] as const)("%s", phase => {
+  describe.concurrent.each(["loss", "dup"] as const)("%s", phase => {
     it("a partial writev keeps exactly the unsent suffix", async () => {
       using dir = tempDir("writev-remainder", {
         "server-fixture.mjs": serverFixture,
@@ -3273,7 +3991,7 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
 
       await using server = Bun.spawn({
         cmd: [bunExe(), "server-fixture.mjs"],
-        env: phase === "loss" ? { ...bunEnv, STALL_ON_ACCEPT: "1" } : bunEnv,
+        env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
@@ -3400,7 +4118,7 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
 describe("net.Server.listen({ fd })", () => {
   // node's createServerHandle only accepts TCP / pipe descriptors and reports anything else as EINVAL;
   // the raw listen(2) failure for a datagram socket is EOPNOTSUPP.
-  it.skipIf(isWindows)("reports a datagram descriptor as EINVAL, like node", async () => {
+  it.concurrent.skipIf(isWindows)("reports a datagram descriptor as EINVAL, like node", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -3425,6 +4143,79 @@ describe("net.Server.listen({ fd })", () => {
     expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "EINVAL", stderr: "" });
     expect(exitCode).toBe(0);
   });
+
+  it.skipIf(isWindows)(
+    "every way to adopt a descriptor reports one that's in use as EEXIST and leaves it alone",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--no-deprecation",
+          "-e",
+          `
+        const dgram = require("dgram"), net = require("net"), { once } = require("events");
+        const server = net.createServer(socket => socket.on("data", () => socket.write("owner"))).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const client = net.connect(server.address().port, "127.0.0.1");
+        await once(client, "connect");
+        const udp = dgram.createSocket("udp4").bind(0, "127.0.0.1");
+        await once(udp, "listening");
+
+        const ask = async socket => (socket.write("x"), String((await once(socket, "data"))[0]));
+        const codeOf = async adopt => {
+          try {
+            const adopted = await adopt();
+            return adopted instanceof net.Socket ? (await once(adopted, "error"))[0].code : "adopted";
+          } catch (err) {
+            return err.code;
+          }
+        };
+        const socket = { data() {} };
+        for (const [owner, fd] of [["listener", server._handle.fd], ["connection", client._handle.fd]]) {
+          const second = net.createServer().listen({ fd });
+          console.log(owner, "net.Server:", (await once(second, "error"))[0].code);
+          console.log(owner, "Bun.listen:", await codeOf(() => Bun.listen({ fd, socket })));
+          console.log(owner, "Bun.connect:", await codeOf(() => Bun.connect({ fd, socket })));
+          console.log(owner, "net.Socket:", await codeOf(() => new net.Socket({ fd })));
+        }
+        console.log("datagram socket dgram.Socket:", await codeOf(() => dgram.createSocket("udp4").bind({ fd: udp._handle.fd })));
+        console.log("datagram socket Bun.udpSocket:", await codeOf(() => Bun.udpSocket({ fd: udp._handle.fd })));
+
+        console.log("the connection answers:", await ask(client));
+        const later = net.connect(server.address().port, "127.0.0.1");
+        await once(later, "connect");
+        console.log("the listener accepts:", await ask(later));
+        dgram.createSocket("udp4").send("owner", udp.address().port, "127.0.0.1");
+        console.log("the datagram socket receives:", String((await once(udp, "message"))[0]));
+        process.exit(0);
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
+        stdout: [
+          "listener net.Server: EEXIST",
+          "listener Bun.listen: EEXIST",
+          "listener Bun.connect: EEXIST",
+          "listener net.Socket: EEXIST",
+          "connection net.Server: EEXIST",
+          "connection Bun.listen: EEXIST",
+          "connection Bun.connect: EEXIST",
+          "connection net.Socket: EEXIST",
+          "datagram socket dgram.Socket: EEXIST",
+          "datagram socket Bun.udpSocket: EEXIST",
+          "the connection answers: owner",
+          "the listener accepts: owner",
+          "the datagram socket receives: owner",
+        ],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // A throw from a user listener invoked synchronously from a native socket
@@ -3457,6 +4248,20 @@ describe.concurrent("uncaughtException from socket listeners", () => {
   it("'connection' listener throw reaches uncaughtException and the accepted socket keeps reading", async () => {
     expect(await runFixture("connection")).toEqual({
       stdout: JSON.stringify(["connection", "uncaught:conn-boom", "data:A", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("client 'connect' listener throw reaches uncaughtException and the socket stays connected", async () => {
+    expect(await runFixture("connect", { THROW_FROM: "connect" })).toEqual({
+      stdout: JSON.stringify(["connect", "uncaught:connect-boom", "server-data:A", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("client 'ready' listener throw reaches uncaughtException and the socket stays connected", async () => {
+    expect(await runFixture("connect", { THROW_FROM: "ready" })).toEqual({
+      stdout: JSON.stringify(["connect", "ready", "uncaught:ready-boom", "server-data:A", "close:false"]),
       exitCode: 0,
     });
   });
@@ -3604,3 +4409,877 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
     expect(thrown).toEqual(thrownBy(() => set(undefined)));
   },
 );
+
+it("setTimeout() fires while connecting with a write queued", async () => {
+  // A lookup that never answers keeps the socket connecting.
+  const socket = connect({ host: "stalled.invalid", port: 80, lookup: () => {} });
+  try {
+    socket.setTimeout(1);
+    socket.write("hello");
+    await once(socket, "timeout");
+    expect(socket.connecting).toBe(true);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// Returns a connected client and a server that never reads.
+async function connectToPausedPeer() {
+  const peers: Socket[] = [];
+  const server = createServer({ pauseOnConnect: true }, peer => void peers.push(peer.on("error", () => {})));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as any).port as number;
+  const socket = connect(port, "127.0.0.1");
+  await Promise.all([once(socket, "connect"), once(server, "connection")]);
+  return {
+    socket,
+    peer: peers[0],
+    port,
+    [Symbol.dispose]() {
+      socket.destroy();
+      for (const peer of peers) peer.destroy();
+      server.close();
+    },
+  };
+}
+// Writes until a write has to wait for the peer. One big write isn't enough: Winsock accepts a first send of any size.
+function writeUntilQueued(stream: { write(chunk: Buffer, cb: (err?: any) => void): boolean }, events: string[] = []) {
+  const chunk = Buffer.alloc(1 << 20);
+  while (stream.write(chunk, err => err && events.push(`write ${err.code}`))) {}
+}
+
+it("resume() and pause() in one tick read nothing more into a full buffer", async () => {
+  using pair = await connectToPausedPeer();
+  const { peer } = pair;
+  writeUntilQueued(pair.socket);
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+  // The first pair starts the reads, which stop at the high water mark.
+  peer.resume();
+  peer.pause();
+  while (peer.readableLength < peer.readableHighWaterMark) await turn();
+  const full = peer.readableLength;
+  peer.resume();
+  peer.pause();
+  // The kernel holds more, so a read that started would deliver it in the next turn.
+  for (let i = 0; i < 5; i++) await turn();
+  expect(peer.readableLength).toBe(full);
+});
+
+describe("setTimeout() with a queued write", () => {
+  it("fires when the peer stops reading", async () => {
+    using pair = await connectToPausedPeer();
+    writeUntilQueued(pair.socket);
+    // More than the kernel's buffers grow by, on macOS and Windows, while the peer reads nothing.
+    pair.socket.write(Buffer.alloc(64 << 20));
+    pair.socket.setTimeout(10);
+    await once(pair.socket, "timeout");
+    expect(pair.socket.writableLength).toBeGreaterThan(0);
+  });
+
+  it("finds the size of the queue in _handle.writeQueueSize, like Node", async () => {
+    using pair = await connectToPausedPeer();
+    const handle = (pair.socket as any)._handle;
+    const idle = handle.writeQueueSize;
+    writeUntilQueued(pair.socket);
+    expect({ idle, queued: handle.writeQueueSize > 0 }).toEqual({ idle: 0, queued: true });
+  });
+
+  // Windows takes a send whole, whatever the size of the send buffer, so nothing is left to send there.
+  it.skipIf(isWindows)("doesn't fire on a TLS socket whose peer takes the last records of the write", async () => {
+    const server = createTLSServer(tlsCert);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const accepted = once(server, "secureConnection") as Promise<[Socket]>;
+    const peer = tlsConnect({
+      port: (server.address() as any).port,
+      host: "127.0.0.1",
+      ca: tlsCert.cert,
+      servername: "localhost",
+    });
+    const [socket] = await accepted;
+    try {
+      const { setSocketOptions } = require("bun:internal-for-testing");
+      setSocketOptions(socket, 1, 65536);
+      setSocketOptions(peer, 2, 65536);
+      peer.on("data", () => void peer.pause());
+      let timeouts = 0;
+      let written = false;
+      socket.on("timeout", () => timeouts++);
+      socket.write(Buffer.alloc(2 << 20, "x"), () => void (written = true));
+      const handle = (socket as any)._handle;
+      const sent = () => handle.bytesWritten - handle.writeQueueSize;
+      let looks = 0;
+      while (!written) {
+        const before = sent();
+        while (!written && sent() <= before) {
+          peer.resume();
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        // What the timer does when it fires.
+        if (!written) ((socket as any)._onTimeout(), looks++);
+      }
+      expect({ timeouts, looked: looks > 0 }).toEqual({ timeouts: 0, looked: true });
+    } finally {
+      peer.destroy();
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("restarts the timer when the write completes", async () => {
+    using pair = await connectToPausedPeer();
+    const { socket, peer } = pair;
+    writeUntilQueued(socket);
+    let restarts = 0;
+    // @ts-expect-error
+    socket._unrefTimer = () => void restarts++;
+    peer.resume();
+    await once(socket, "drain");
+    expect(restarts).toBe(1);
+  });
+});
+
+it("emits 'close' after the program replaced setImmediate", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      globalThis.setImmediate = require("node:timers").setImmediate = () => {};
+      const net = require("node:net");
+      const server = net.createServer(socket => socket.end()).listen(0, "127.0.0.1", () => {
+        const client = net.connect(server.address().port, "127.0.0.1").resume();
+        client.on("close", () => console.log("close"));
+      });
+      server.unref();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "close\n", stderr: "", exitCode: 0 });
+});
+
+// https://github.com/oven-sh/bun/issues/44551
+describe("connect() replaced on the handle", () => {
+  it.each([
+    ["connect", { host: "127.0.0.1", port: 1 }, ["127.0.0.1", 1]],
+    ["connect6", { host: "::1", port: 1 }, ["::1", 1]],
+    ["connect", { path: join(socket_domain, "replaced.sock") }, [join(socket_domain, "replaced.sock")]],
+  ])("%s %o takes over the connection", async (method, options, expected) => {
+    const socket = new Socket();
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{ thisValue: unknown; req: any; args: unknown[] }>();
+      socket.on("error", reject);
+      socket.once("connectionAttempt", () => {
+        // @ts-expect-error
+        socket._handle[method] = function (req, ...args) {
+          resolve({ thisValue: this, req, args });
+        };
+      });
+      socket.connect(options);
+      const { thisValue, req, args } = await promise;
+      // @ts-expect-error
+      expect(thisValue).toBe(socket._handle);
+      expect(args).toEqual(expected);
+      expect(socket.connecting).toBe(true);
+
+      const connected = once(socket, "connect");
+      // @ts-expect-error
+      req.oncomplete(0, socket._handle, req, true, true);
+      await connected;
+      expect(socket.connecting).toBe(false);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("destroys the socket with the errno it returns", async () => {
+    // libuv's UV_EACCES is -13 on POSIX and -4092 on Windows.
+    const [errno] = [...getSystemErrorMap()].find(([, [name]]) => name === "EACCES")!;
+    const socket = new Socket();
+    try {
+      socket.once("connectionAttempt", () => {
+        // @ts-expect-error
+        socket._handle.connect = () => errno;
+      });
+      socket.connect({ host: "127.0.0.1", port: 1 });
+      const [error] = await once(socket, "error");
+      expect(error).toMatchObject({ code: "EACCES", errno, syscall: "connect", address: "127.0.0.1", port: 1 });
+    } finally {
+      socket.destroy();
+    }
+  });
+});
+
+describe("bytesWritten", () => {
+  it("counts bytes an http2 session writes through the socket", async () => {
+    const http2 = require("node:http2");
+    const server = http2.createServer((req, res) => res.end("ok")).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address();
+    const socket = connect(port, "127.0.0.1");
+    const client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => socket });
+    try {
+      await once(client.request({ ":path": "/" }).resume(), "close");
+      const written = client.socket.bytesWritten;
+      expect(written).toBeGreaterThan(0);
+      // @ts-expect-error
+      expect([socket.bytesWritten, socket._bytesDispatched]).toEqual([written, written]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("counts a write during which the transport destroys the socket", async () => {
+    let onClientWrite: (() => void) | undefined;
+    const side = (peer: () => any, onWrite?: () => void) =>
+      new Duplex({
+        read() {},
+        write(chunk: Buffer, encoding: string, callback: () => void) {
+          onWrite?.();
+          peer().push(chunk);
+          callback();
+        },
+      });
+    const clientSide = side(
+      () => serverSide,
+      () => onClientWrite?.(),
+    );
+    const serverSide = side(() => clientSide);
+    const server = new TLSSocket(serverSide, { isServer: true, ...tlsCert }).on("error", () => {});
+    const client = tlsConnect({ socket: clientSide, ca: tlsCert.cert, servername: "localhost" });
+    try {
+      await once(client, "secureConnect");
+      onClientWrite = () => client.destroy();
+      client.write("hello");
+      await once(client, "close");
+      expect(client.bytesWritten).toBe(5);
+    } finally {
+      client.destroy();
+      server.destroy();
+    }
+  });
+
+  // A unix socket, because there the first send after the peer closed already fails.
+  it.skipIf(isWindows)("counts a write the kernel refused", async () => {
+    const closed = Promise.withResolvers<[string | undefined, number]>();
+    const server = createServer({ allowHalfOpen: true }, socket => {
+      let code: string | undefined;
+      socket.on("error", () => {});
+      socket.on("close", () => closed.resolve([code, socket.bytesWritten]));
+      socket.on("end", () => socket.write(Buffer.alloc(82), (err: any) => (code = err?.code)));
+      socket.resume();
+    });
+    const path = join(socket_domain, "refused.sock");
+    await once(server.listen(path), "listening");
+    try {
+      connect(path).on("connect", function (this: Socket) {
+        this.destroy();
+      });
+      expect(await closed.promise).toEqual(["EPIPE", 82]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it.each([
+    ["client", "destroy"],
+    ["client", "resetAndDestroy"],
+    ["accepted", "destroy"],
+    ["accepted", "resetAndDestroy"],
+  ] as const)("counts bytes still queued when the %s socket calls %s()", async (side, method) => {
+    using pair = await connectToPausedPeer();
+    const socket = side === "client" ? pair.socket : pair.peer;
+    writeUntilQueued(socket);
+    const written = socket.bytesWritten;
+    socket[method]();
+    await once(socket, "close");
+    expect(socket.bytesWritten).toBe(written);
+  });
+
+  it("still reports the count after the peer resets the connection", async () => {
+    const closed = Promise.withResolvers<Socket>();
+    const server = createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("close", () => closed.resolve(socket));
+      socket.write("hello");
+    }).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const client = connect((server.address() as any).port, "127.0.0.1");
+      client.on("data", () => client.resetAndDestroy());
+      expect((await closed.promise).bytesWritten).toBe(5);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe("bytesRead", () => {
+  async function listen(server: Server) {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return (server.address() as any).port as number;
+  }
+
+  it("restarts at 0 when the socket connects again", async () => {
+    const server = createServer(socket => socket.end("hello!"));
+    const port = await listen(server);
+    try {
+      const socket = new Socket();
+      const counts: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        socket.connect(port, "127.0.0.1").resume();
+        await once(socket, "close");
+        counts.push(socket.bytesRead);
+      }
+      expect(counts).toEqual([6, 6, 6]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("counts the bytes an onread callback got, not the ones it declined", async () => {
+    const server = createServer(socket => socket.end("hello!"));
+    const port = await listen(server);
+    try {
+      const declined = Promise.withResolvers<void>();
+      let calls = 0;
+      const socket = connect({
+        port,
+        host: "127.0.0.1",
+        // Returning false stops the reads, with "o!" left over.
+        onread: { buffer: Buffer.alloc(4), callback: () => (declined.resolve(), ++calls > 1) },
+      });
+      await declined.promise;
+      expect(socket.bytesRead).toBe(4);
+      socket.resume();
+      await once(socket, "close");
+      expect(socket.bytesRead).toBe(6);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("counts bytes an http2 session reads from the socket", async () => {
+    const http2 = require("node:http2");
+    const server = http2.createServer((req, res) => res.end("ok"));
+    const accepted = once(server, "connection");
+    const port = await listen(server);
+    const socket = connect(port, "127.0.0.1");
+    const client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => socket });
+    try {
+      await once(client.request({ ":path": "/" }).resume(), "close");
+      expect(socket.bytesRead).toBeGreaterThan(0);
+      expect(client.socket.bytesRead).toBe(socket.bytesRead);
+      expect((await accepted)[0].bytesRead).toBeGreaterThan(0);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
+describe.skipIf(isWindows)("connect() to a unix socket path with no listener", () => {
+  const path = join(socket_domain, "no-listener.sock");
+
+  it("stays connecting until the event loop reports the failure", async () => {
+    const socket = connect(path);
+    try {
+      expect({ connecting: socket.connecting, destroyed: socket.destroyed }).toEqual({
+        connecting: true,
+        destroyed: false,
+      });
+      const events: string[] = [];
+      socket.on("connectionAttemptFailed", () => events.push("connectionAttemptFailed"));
+      socket.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code}`));
+      await new Promise(resolve => socket.on("close", resolve));
+      expect(events).toEqual(["connectionAttemptFailed", "error ENOENT"]);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("only emits 'close' when the socket is destroyed first", async () => {
+    const socket = connect(path);
+    const events: string[] = [];
+    socket.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code}`));
+    socket.destroy();
+    await once(socket, "close");
+    await new Promise(resolve => setImmediate(resolve));
+    expect(events).toEqual([]);
+  });
+
+  it("reports the latest connect() when the socket connects again before the failure", async () => {
+    await using server = createServer(peer => peer.end()).listen(join(socket_domain, "second-connect.sock"));
+    await once(server, "listening");
+    const socket = connect(path);
+    try {
+      socket.connect(server.address() as string);
+      await once(socket, "connect");
+      await once(socket, "close");
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("fails an http request's write callback", async () => {
+    const req = request({ socketPath: path, method: "POST" });
+    const failed = once(req, "error");
+    const { promise, resolve } = Promise.withResolvers<Error | null | undefined>();
+    req.write("hello", resolve);
+    expect(await promise).toMatchObject({ code: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION" });
+    expect((await failed)[0]).toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails every request queued on an http.Agent once", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const agent = new http.Agent({ maxSockets: 1 });
+        for (let i = 0; i < 3; i++) {
+          http
+            .request({ socketPath: process.argv[1], agent, path: "/" + i })
+            .on("error", error => console.log(i, error.code))
+            .end();
+        }
+        `,
+        path,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("0 ENOENT\n1 ENOENT\n2 ENOENT\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+it("onread doesn't replay bytes it declined on the previous connection after reconnecting", async () => {
+  let connections = 0;
+  await using server = createServer(peer => {
+    peer.on("error", () => {});
+    peer.end(++connections === 1 ? "AAAABBBBCCCC" : "xxxxyyyy");
+  }).listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as import("node:net").AddressInfo;
+
+  const received = ["", ""];
+  const declined = Promise.withResolvers<void>();
+  const socket = connect({
+    port,
+    host: "127.0.0.1",
+    onread: {
+      buffer: Buffer.alloc(4),
+      callback(size, buffer) {
+        received[connections - 1] += buffer.toString("latin1", 0, size);
+        if (connections === 1) declined.resolve();
+        return connections !== 1;
+      },
+    },
+  });
+  try {
+    await declined.promise;
+    socket.destroy();
+    await once(socket, "close");
+
+    socket.connect({ port, host: "127.0.0.1" });
+    socket.resume();
+    await once(socket, "close");
+    expect(received).toEqual(["AAAA", "xxxxyyyy"]);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// Linux only: a loopback RST lands before the close() that sends it returns. Elsewhere the kernel can take the rest of the write first.
+it.concurrent.skipIf(!isLinux).each(["client", "accepted"])(
+  "a peer reset with a write in flight and no 'error' listener throws the read error (%s socket)",
+  async side => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("node:net");
+        const events = [];
+        process.on("uncaughtException", err => events.push("uncaught " + err.message));
+        function writer(socket) {
+          socket.on("end", () => events.push("end"));
+          socket.on("close", () => {
+            console.log(events.join(", "));
+            process.exit(0);
+          });
+          const chunk = Buffer.alloc(1 << 20);
+          while (socket.write(chunk, err => err && events.push("write " + err.code))) {}
+        }
+        function resetter(socket) {
+          socket.on("error", () => {});
+          socket.once("data", () => socket.resetAndDestroy());
+        }
+        const server = net.createServer(${side === "accepted" ? "writer" : "resetter"}).listen(0, "127.0.0.1", () => {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          client.on("connect", () => ${side === "accepted" ? "resetter" : "writer"}(client));
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "uncaught read ECONNRESET, write ECANCELED\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// Linux only: elsewhere the peer's reset can reach the client as a read error before a send fails.
+describe.skipIf(!isLinux)("a peer that replied and closed mid-upload", () => {
+  const reply = Buffer.alloc(59642, "r");
+  async function listen() {
+    const server = createServer(socket => {
+      socket.on("error", () => {});
+      socket.end(reply, () => socket.destroy());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return { port: (server.address() as any).port as number, [Symbol.dispose]: () => void server.close() };
+  }
+
+  it("gets its reply delivered before the write fails", async () => {
+    using server = await listen();
+    const client = connect(server.port, "127.0.0.1");
+    const events: string[] = [];
+    let received = 0;
+    client.on("data", chunk => {
+      if (received === 0) events.push("data");
+      received += chunk.length;
+    });
+    client.on("error", (err: any) => events.push(`error ${err.code} ${err.syscall}`));
+    client.write(Buffer.alloc(8 << 20), (err: any) => events.push(`write ${err?.code}`));
+    const hadError = await new Promise(resolve => client.once("close", resolve));
+    expect({ received, events, hadError }).toEqual({
+      received: reply.length,
+      events: ["data", "write EPIPE", "error EPIPE write"],
+      hadError: true,
+    });
+  });
+
+  it.each(["nothing", "terminate", "end"] as const)(
+    "Bun.connect: close() reports the failed send when data() calls %s",
+    async method => {
+      using server = await listen();
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open: socket => void socket.end(Buffer.alloc(8 << 20)),
+          data(socket) {
+            if (!events.includes("data")) events.push("data");
+            if (method !== "nothing") socket[method]();
+          },
+          error: (socket, err: any) => void events.push(`error ${err.code}`),
+          close(socket, err: any) {
+            events.push(err ? `close ${err.code} ${err.syscall}` : "close");
+            closed.resolve();
+          },
+        },
+      });
+      await closed.promise;
+      expect(events).toEqual(["data", "close EPIPE write"]);
+    },
+  );
+});
+
+it("runs a queued write's callback and the 'drain' after it in the async context of write()", async () => {
+  using pair = await connectToPausedPeer();
+  const store = new AsyncLocalStorage<string>();
+  const seen: string[] = [];
+  const written = Promise.withResolvers<void>();
+  store.run("write", () => {
+    pair.socket.on("drain", () => seen.push(`drain ${store.getStore()}`));
+    while (pair.socket.write(Buffer.alloc(1 << 20))) {}
+    pair.socket.write("tail", () => {
+      seen.push(`callback ${store.getStore()}`);
+      written.resolve();
+    });
+  });
+  pair.peer.resume();
+  await written.promise;
+  expect(seen).toEqual(["drain write", "callback write"]);
+});
+
+it.each(["accepted", "client"] as const)(
+  "closes a half-open %s socket with no 'error' listener when the peer resets",
+  async side => {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer({ allowHalfOpen: true }, accepted.resolve);
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = connect({ port: (server.address() as any).port, host: "127.0.0.1", allowHalfOpen: true });
+      const [theAccepted] = await Promise.all([accepted.promise, once(client, "connect")]);
+      const [socket, peer] = side === "accepted" ? [theAccepted, client] : [client, theAccepted];
+      peer.on("error", () => {});
+      const events: string[] = [];
+      for (const event of ["end", "finish", "close"]) socket.on(event, () => events.push(event));
+      socket.resume();
+      peer.resetAndDestroy();
+      // Not events.once(), which adds an 'error' listener.
+      await new Promise(resolve => socket.once("close", resolve));
+      expect(events).toEqual(["end", "finish", "close"]);
+    } finally {
+      server.close();
+    }
+  },
+);
+
+describe.each(["tcp", "unix"] as const)("a half-open socket over %s whose peer closed both directions", transport => {
+  it.skipIf(isWindows && transport === "unix").each(["accepted", "client"] as const)(
+    "stays open until the program ends it (%s)",
+    async side => {
+      const accepted = Promise.withResolvers<Socket>();
+      const server = createServer({ allowHalfOpen: true }, accepted.resolve);
+      try {
+        if (transport === "unix") server.listen(join(tmpdirSync(), "half-open.sock"));
+        else server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const address = server.address() as any;
+        const client = connect({
+          ...(transport === "unix" ? { path: address } : { port: address.port, host: "127.0.0.1" }),
+          allowHalfOpen: true,
+        });
+        const [theAccepted] = await Promise.all([accepted.promise, once(client, "connect")]);
+        const [socket, peer] = side === "accepted" ? [theAccepted, client] : [client, theAccepted];
+        const events: string[] = [];
+        for (const event of ["end", "finish", "close"]) socket.on(event, () => events.push(event));
+        socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.syscall} ${err.code}`));
+        socket.resume();
+        peer.destroy();
+        await once(socket, "end");
+        // A close that followed 'end' by itself would come within a turn or two.
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        expect(events).toEqual(["end"]);
+        socket.end();
+        await once(socket, "close");
+        expect(events).toEqual(["end", "finish", "close"]);
+      } finally {
+        server.close();
+      }
+    },
+  );
+
+  // Over TCP the kernel takes the write, and what the peer's reset is reported as depends on the platform.
+  it.skipIf(isWindows || transport !== "unix").each(["accepted", "client"] as const)(
+    "fails with EPIPE and closes when the program writes to it (%s)",
+    async side => {
+      const accepted = Promise.withResolvers<Socket>();
+      const server = createServer({ allowHalfOpen: true }, accepted.resolve);
+      try {
+        await once(server.listen(join(tmpdirSync(), "half-open.sock")), "listening");
+        const client = connect({ path: server.address() as string, allowHalfOpen: true });
+        const [theAccepted] = await Promise.all([accepted.promise, once(client, "connect")]);
+        const [socket, peer] = side === "accepted" ? [theAccepted, client] : [client, theAccepted];
+        const events: string[] = [];
+        for (const event of ["end", "finish", "close"]) socket.on(event, () => events.push(event));
+        socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.syscall} ${err.code}`));
+        const closed = new Promise(resolve => socket.on("close", resolve));
+        socket.resume();
+        peer.destroy();
+        await new Promise(resolve => socket.on("end", resolve));
+        // By then the loop has closed the descriptor of a socket whose peer hung up.
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        socket.write("x", err => events.push(`write ${(err as NodeJS.ErrnoException | undefined)?.code ?? "ok"}`));
+        await closed;
+        expect(events).toEqual(["end", "write EPIPE", "error write EPIPE", "close"]);
+      } finally {
+        server.close();
+      }
+    },
+  );
+
+  it.skipIf(isWindows || transport !== "unix").each(["accepted", "client"] as const)(
+    "fails with EPIPE too while what the peer sent is still unread (%s)",
+    async side => {
+      const accepted = Promise.withResolvers<Socket>();
+      const server = createServer({ allowHalfOpen: true }, accepted.resolve);
+      try {
+        await once(server.listen(join(tmpdirSync(), "half-open.sock")), "listening");
+        const client = connect({ path: server.address() as string, allowHalfOpen: true });
+        const [theAccepted] = await Promise.all([accepted.promise, once(client, "connect")]);
+        const [socket, peer] = side === "accepted" ? [theAccepted, client] : [client, theAccepted];
+        const events: string[] = [];
+        for (const event of ["end", "finish", "close"]) socket.on(event, () => events.push(event));
+        socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.syscall} ${err.code}`));
+        const closed = new Promise(resolve => socket.on("close", resolve));
+        peer.write("unread", () => peer.destroy());
+        await once(peer, "close");
+        // By then the loop has closed the descriptor of a socket whose peer hung up.
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        socket.write("x", err => events.push(`write ${(err as NodeJS.ErrnoException | undefined)?.code ?? "ok"}`));
+        await closed;
+        expect(events).toEqual(["write EPIPE", "error write EPIPE", "close"]);
+      } finally {
+        server.close();
+      }
+    },
+  );
+});
+
+describe("destroy()", () => {
+  const code = (name: string, events: string[]) => (err?: any) => void events.push(`${name} ${err?.code}`);
+
+  it("emits 'close' without 'end'", async () => {
+    using pair = await connectToPausedPeer();
+    const events: string[] = [];
+    pair.socket.on("end", () => events.push("end"));
+    const finished = (async () => {
+      for await (const _ of pair.socket);
+    })();
+    const closed = once(pair.socket, "close");
+    pair.socket.destroy();
+    await expect(finished).rejects.toMatchObject({ code: "ERR_STREAM_PREMATURE_CLOSE" });
+    await closed;
+    expect(events).toEqual([]);
+  });
+
+  it("makes a later resume() a no-op", async () => {
+    using pair = await connectToPausedPeer();
+    const resumed = jest.fn();
+    pair.socket.pause();
+    pair.socket.destroy();
+    await once(pair.socket, "close");
+    pair.socket.on("resume", resumed).resume();
+    // 'resume' would come on the next tick.
+    await new Promise(resolve => setImmediate(resolve));
+    expect([resumed.mock.calls.length, pair.socket.readableFlowing]).toEqual([0, false]);
+  });
+
+  it("cancels the write in flight after 'error'", async () => {
+    using pair = await connectToPausedPeer();
+    const events: string[] = [];
+    pair.socket.on("error", code("error", events));
+    writeUntilQueued(pair.socket, events);
+    pair.socket.write("queued", code("queued", events));
+    pair.socket.destroy(Object.assign(new Error("boom"), { code: "EBOOM" }));
+    // Not events.once(), which rejects on 'error'.
+    await new Promise(resolve => pair.socket.once("close", resolve));
+    expect(events).toEqual(["error EBOOM", "write ECANCELED", "queued EBOOM"]);
+  });
+
+  it("doesn't fail a connect() made right after it with the canceled write", async () => {
+    using pair = await connectToPausedPeer();
+    const events: string[] = [];
+    pair.socket.on("error", code("error", events));
+    writeUntilQueued(pair.socket, events);
+    pair.socket.destroy();
+    pair.socket.connect(pair.port, "127.0.0.1");
+    await once(pair.socket, "connect");
+    expect(events).toEqual(["write ECANCELED"]);
+  });
+});
+
+describe("typeOfService", () => {
+  // [value before, value after setTypeOfService(value)], or what was thrown.
+  const setAndGet = (socket: Socket, value: number) => {
+    try {
+      return [socket.getTypeOfService(), socket.setTypeOfService(value).getTypeOfService()];
+    } catch (e) {
+      const { code, syscall } = e as NodeJS.ErrnoException;
+      return `${code} (${syscall})`;
+    }
+  };
+
+  it("validates the option in the Socket constructor", () => {
+    const codeFor = (typeOfService: unknown) => {
+      try {
+        return new Socket({ typeOfService } as import("node:net").SocketConstructorOpts).getTypeOfService();
+      } catch (e) {
+        return (e as NodeJS.ErrnoException).code;
+      }
+    };
+    expect([0x10, undefined, 256, -1, 1.5, "16", null].map(codeFor)).toEqual([
+      0x10,
+      0,
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_INVALID_ARG_TYPE",
+      "ERR_INVALID_ARG_TYPE",
+    ]);
+  });
+
+  it("TLSSocket ignores the option", () => {
+    const socket = new TLSSocket(undefined, { typeOfService: 999 } as import("node:tls").TLSSocketOptions);
+    expect(socket.getTypeOfService()).toBe(0);
+  });
+
+  // Windows often ignores IP_TOS.
+  it.skipIf(isWindows)("applies the option to a TCP connection", async () => {
+    const server = createServer(socket => socket.on("error", () => {}).resume());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", typeOfService: 0x10 });
+    try {
+      await once(client, "connect");
+      expect(client.getTypeOfService() & 0xfc).toBe(0x10);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it.skipIf(isWindows)("caches the value on a unix socket", async () => {
+    const accepted = Promise.withResolvers<unknown>();
+    const server = createServer(socket =>
+      accepted.resolve(
+        setAndGet(
+          socket.on("error", () => {}),
+          0x30,
+        ),
+      ),
+    );
+    const path = join(socket_domain, "tos.sock");
+    await once(server.listen(path), "listening");
+    const client = connect(path);
+    try {
+      const connecting = setAndGet(client, 0x10);
+      await once(client, "connect");
+      expect({ connecting, connected: setAndGet(client, 0x20), accepted: await accepted.promise }).toEqual({
+        connecting: [0, 0x10],
+        connected: [0x10, 0x20],
+        accepted: [0, 0x30],
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  // undici sets the value before each request, and through an https proxy the request socket is TLS inside TLS.
+  it("caches the value on a TLS socket over a Duplex", async () => {
+    const [clientSide, serverSide] = duplexPair();
+    const server = new TLSSocket(serverSide, { isServer: true, ...tlsCert });
+    const client = tlsConnect({ socket: clientSide, ca: tlsCert.cert, servername: "localhost" });
+    try {
+      const beforeHandshake = setAndGet(client, 1);
+      await once(client, "secureConnect");
+      expect({ beforeHandshake, connected: setAndGet(client, 2) }).toEqual({
+        beforeHandshake: [0, 1],
+        connected: [1, 2],
+      });
+    } finally {
+      client.destroy();
+      server.destroy();
+    }
+  });
+});

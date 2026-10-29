@@ -615,13 +615,11 @@ declare module "bun" {
   namespace Serve {
     type ExtractRouteParams<T> = string extends T
       ? Record<string, string>
-      : T extends `${string}:${infer Param}/${infer Rest}`
-        ? { [K in Param]: string } & ExtractRouteParams<Rest>
-        : T extends `${string}:${infer Param}`
+      : T extends `${string}/:${infer Param}/${infer Rest}`
+        ? { [K in Param]: string } & ExtractRouteParams<`/${Rest}`>
+        : T extends `${string}/:${infer Param}`
           ? { [K in Param]: string }
-          : T extends `${string}*`
-            ? {}
-            : {};
+          : {};
 
     /**
      * Development configuration for {@link Bun.serve}
@@ -677,14 +675,18 @@ declare module "bun" {
      *
      * The route path **must** end in `/*`. The part of the request URL after
      * the prefix is percent-decoded once and opened relative to `dir`.
-     * Non-canonical paths (containing `.`, `..`, empty segments, `%2F`, or a
-     * `%XX` sequence encoding a character that may appear literally in a path
-     * segment) are rejected with `404` so the served path is always the path
-     * the router matched. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`,
-     * so symlinks that would escape `dir` are clamped by the kernel. Routing
-     * is case-sensitive but filesystems on macOS and Windows are not by
-     * default: do not place access-controlled content inside `dir` and rely
-     * on an overlapping route to gate it.
+     * Non-canonical paths (a segment that is exactly `.` or `..`, an empty
+     * segment, `%2F`, or a `%XX` sequence encoding a character that may appear
+     * literally in a path segment) are rejected with `404` so the served path
+     * is always the path the router matched. A symlink never leads out of
+     * `dir`: symlinks resolve as if `dir` were the root directory, so a `..`
+     * stops at `dir` and an absolute target starts from it. Windows follows
+     * symlinks wherever they lead. Dotfiles aren't filtered: any regular file
+     * under `dir` is served, including `.env` or the contents of `.git/`, so
+     * `dir` should only contain public files. Routing is case-sensitive but
+     * filesystems on macOS and Windows are not by default: do not place
+     * access-controlled content inside `dir` and rely on an overlapping route
+     * to gate it.
      *
      * Responses carry `Content-Type` (from the file extension),
      * `Last-Modified`, a weak `ETag`, and support single-range `Range`
@@ -713,13 +715,24 @@ declare module "bun" {
       statCache?: boolean;
     }
 
-    type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions;
+    /**
+     * `Bun.file(path)` is read from disk on each request. Any other `Blob`
+     * (`new Blob()`, a file embedded in a compiled executable, a
+     * {@link Bun.embeddedFiles} entry) is served from memory, like
+     * `new Response(blob)`. An {@link S3File} is rejected.
+     */
+    type BaseRouteValue = Response | false | HTMLBundle | Blob | DirectoryRouteOptions;
 
     type Routes<WebSocketData, R extends string> = {
       [Path in R]:
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response>
-        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response> | Response>>;
+        | Partial<
+            Record<
+              HTTPMethod,
+              Handler<BunRequest<Path>, Server<WebSocketData>, Response> | Exclude<BaseRouteValue, false>
+            >
+          >;
     };
 
     type RoutesWithUpgrade<WebSocketData, R extends string> = {
@@ -727,7 +740,11 @@ declare module "bun" {
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
         | Partial<
-            Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void> | Response>
+            Record<
+              HTTPMethod,
+              | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
+              | Exclude<BaseRouteValue, false>
+            >
           >;
     };
 
@@ -840,9 +857,27 @@ declare module "bun" {
 
       /**
        * The maximum size of a request body, in bytes
+       *
+       * A request with a larger `Content-Length` gets a `413` before its
+       * handler runs. A body without a declared length is counted as it
+       * arrives. When it passes the limit, Bun aborts the request the way it
+       * does when the client disconnects: `request.signal` aborts and reads of
+       * the body reject. The client gets a `413`, or a connection reset if the
+       * response has already started.
+       *
        * @default 1024 * 1024 * 128 // 128MB
        */
       maxRequestBodySize?: number;
+
+      /**
+       * Sets the number of seconds to wait before timing out a connection
+       * due to inactivity. `0` disables the timeout. The maximum is `255`.
+       *
+       * This is also how long an idle keep-alive connection stays open between requests.
+       *
+       * @default 10
+       */
+      idleTimeout?: number;
 
       /**
        * Whether to render contextual errors with Bun's error page
@@ -948,14 +983,6 @@ declare module "bun" {
        * @experimental
        */
       http1?: boolean;
-
-      /**
-       * Sets the number of seconds to wait before timing out a connection
-       * due to inactivity.
-       *
-       * @default 10
-       */
-      idleTimeout?: number;
     }
 
     interface UnixServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {
@@ -1062,13 +1089,16 @@ declare module "bun" {
     reload<R extends string>(options: Serve.Options<WebSocketData, R>): Server<WebSocketData>;
 
     /**
-     * Mock the fetch handler for a running server.
+     * Mock the fetch handler for a running server. The handler receives
+     * `(request, server)`, as it does for a request from a socket.
+     *
+     * `init` applies to a string or a `URL`. It is ignored for a `Request`.
      *
      * This feature is not fully implemented: it doesn't normalize URLs
      * consistently in all cases and it doesn't always call the `error`
      * handler.
      */
-    fetch(request: Request | string): Response | Promise<Response>;
+    fetch(request: Request | string | URL, init?: RequestInit): Response | Promise<Response>;
 
     /**
      * Upgrade a {@link Request} to a {@link ServerWebSocket}
@@ -1221,6 +1251,7 @@ declare module "bun" {
 
     /**
      * Reset the idle timeout of the given Request to the given number of seconds. `0` means no timeout.
+     * The maximum is `255`, and larger values are clamped to it.
      *
      * @example
      * ```js

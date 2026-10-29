@@ -1,0 +1,1 @@
+{ "build": ["--aot-limit=MaxHotCodeValues:1"] }

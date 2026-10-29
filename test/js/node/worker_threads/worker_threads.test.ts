@@ -363,6 +363,51 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
+test("node:net autoSelectFamily defaults are per thread", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const net = require("node:net");
+      const { once } = require("node:events");
+      const { Worker } = require("node:worker_threads");
+      const read = "[net.getDefaultAutoSelectFamily(), net.getDefaultAutoSelectFamilyAttemptTimeout()]";
+      const set = "net.setDefaultAutoSelectFamily(false); net.setDefaultAutoSelectFamilyAttemptTimeout(1234);";
+      async function inWorker(code, options) {
+        const worker = new Worker(
+          'const net = require("node:net");' + code + 'require("node:worker_threads").parentPort.postMessage(' + read + ")",
+          { eval: true, ...options },
+        );
+        return (await once(worker, "message"))[0];
+      }
+      (async () => {
+        const workerThatSets = await inWorker(set);
+        const mainAfterWorkerSet = eval(read);
+        const workerWithFlag = await inWorker("", { execArgv: ["--no-network-family-autoselection"] });
+        const mainAfterWorkerFlag = eval(read);
+        eval(set);
+        const workerAfterMainSet = await inWorker("");
+        console.log(JSON.stringify({ workerThatSets, mainAfterWorkerSet, workerWithFlag, mainAfterWorkerFlag, workerAfterMainSet }));
+      })();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    workerThatSets: [false, 1234],
+    mainAfterWorkerSet: [true, 500],
+    workerWithFlag: [false, 500],
+    mainAfterWorkerFlag: [true, 500],
+    workerAfterMainSet: [true, 500],
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
@@ -2600,7 +2645,7 @@ describe("terminate with work in flight", () => {
     }
   });
 
-  test("a fetch whose body is still streaming at terminate(), then process exit", async () => {
+  async function terminateWhileFetchBodyStreams(env: typeof bunEnv) {
     // Subprocess: the exiting main thread must not touch the dead worker's fetch.
     await using proc = Bun.spawn({
       cmd: [
@@ -2626,13 +2671,21 @@ describe("terminate with work in flight", () => {
            process.exit(0);
          });`,
       ],
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("exiting\n");
     expect(exitCode).toBe(0);
+  }
+
+  test("a fetch whose body is still streaming at terminate(), then process exit", async () => {
+    await terminateWhileFetchBodyStreams(bunEnv);
+  });
+
+  test("a fetch whose body is still streaming at terminate(), then process exit, with useZombieMode", async () => {
+    await terminateWhileFetchBodyStreams({ ...bunEnv, BUN_JSC_useZombieMode: "1" });
   });
 
   test("the main thread exits while a worker is mid-way through sqlite statements", async () => {

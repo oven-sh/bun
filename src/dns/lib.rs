@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_int;
+use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
 use bun_core::String as BunString;
@@ -394,11 +395,7 @@ pub fn address_to_string(address: &Address) -> BunString {
             // included), so no cfg.
             // SAFETY: family() == AF_UNIX; sockaddr_storage is >= sizeof(sockaddr_un).
             let un = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_un>() };
-            // SAFETY: reinterpreting [c_char; N] as [u8; N] (same size/align).
-            let path: &[u8] = unsafe {
-                core::slice::from_raw_parts(un.sun_path.as_ptr().cast::<u8>(), un.sun_path.len())
-            };
-            BunString::clone_latin1(path)
+            BunString::clone_latin1(bun_core::slice_as_bytes(&un.sun_path))
         }
         _ => BunString::EMPTY,
     }
@@ -460,7 +457,22 @@ impl Order {
             bun_core::Global::exit(1)
         })
     }
+
+    /// The address family `fetch()` and `Bun.connect()` dial first. Process-wide, like the DNS cache they share, and set only by the CLI flag and the main thread.
+    pub fn for_connect() -> Order {
+        match CONNECT_ORDER.load(Ordering::SeqCst) {
+            4 => Order::Ipv4first,
+            6 => Order::Ipv6first,
+            _ => Order::Verbatim,
+        }
+    }
+
+    pub fn set_for_connect(order: Order) {
+        CONNECT_ORDER.store(order as u8, Ordering::SeqCst);
+    }
 }
+
+static CONNECT_ORDER: AtomicU8 = AtomicU8::new(Order::Verbatim as u8);
 
 /// A numeric address, or a host name within the RFC 1035 limits made of the bytes
 /// c-ares allows in one (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names).

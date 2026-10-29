@@ -1,0 +1,151 @@
+--- who looks first
+1 "one"
+1 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+1 one="one" two="two" three="three"
+2 undefined
+2 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+2 one="one" two="two" three="three"
+3 true
+3 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+3 one="one" two="two" three="three"
+4 true
+4 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+4 one="one" two="two" three="three"
+5 "one,two,three"
+5 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+5 one="one" two="two" three="three"
+6 "one,two,three"
+6 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+6 one="one" two="two" three="three"
+7 "one=\"one\" two=\"two\" three=\"three\""
+7 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+7 one="one" two="two" three="three"
+8 "{\"one\":\"one\",\"two\":\"two\",\"three\":\"three\"}"
+8 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+8 one="one" two="two" three="three"
+9 "one=\"one\" two=\"two\" three=\"three\""
+9 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+9 one="one" two="two" three="three"
+10 "one=\"one\" two=\"two\" three=\"three\" extra=\"extra\""
+10 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} extra{value="extra" writable=true enumerable=true configurable=true}
+10 one="one" two="two" three="three" extra="extra"
+11 "__esModule,one,two,three"
+11 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+11 one="one" two="two" three="three"
+12 "get,set,enumerable,configurable"
+12 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+12 one="one" two="two" three="three"
+13 ",,false,,"
+13 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+13 one="one" two="two" three="three"
+14 "0,__esModule,one,two,three"
+14 0{value="zero" writable=true enumerable=true configurable=true} __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+14 0="zero" one="one" two="two" three="three"
+15 threw TypeError: Attempted to assign to readonly property.
+15 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+15 one="one" two="two" three="three"
+16 threw TypeError: Unable to delete property.
+16 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+16 one="one" two="two" three="three"
+17 threw TypeError: Attempting to change access mechanism for an unconfigurable property.
+17 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+17 one="one" two="two" three="three"
+18 "true,true,true,false"
+18 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+18 one="one" two="two" three="three"
+19 "true,true,true,false"
+19 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+19 one="one" two="two" three="three"
+20 "true,true,true,threw TypeError: Attempting to define property on object that is not extensible."
+20 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+20 one="one" two="two" three="three"
+21 "two true one,two,three"
+21 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+21 one="one" two="two" three="three"
+22 "inherited one one,two,three,inherited"
+22 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+22 one="one" two="two" three="three"
+23 "true added one,two,three,added"
+23 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} added{value="added" writable=true enumerable=true configurable=true}
+23 one="one" two="two" three="three" added="added"
+24 "one,one|two,two|three,three one|two|three"
+24 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+24 one="one" two="two" three="three"
+25 "false,false,true"
+25 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+25 one="one" two="two" three="three"
+26 "true,true,[object Object]"
+26 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+26 one="one" two="two" three="three"
+27 "function,,"
+27 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+27 one="one" two="two" three="three"
+28 "one two=\"two\" three=\"three\""
+28 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+28 one="one" two="two" three="three"
+29 true
+29 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} fresh{value="fresh" writable=false enumerable=true configurable=false}
+29 one="one" two="two" three="three" fresh="fresh"
+30 "two,false,false,false"
+30 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+30 one="one" two="two" three="three"
+--- the source changes between the star and the first look
+__esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+one="one, changed" two=undefined three="three, hidden" false
+one="one, changed" two="two, back" three="three, hidden" one,four,two
+--- stars of stars, the outermost first
+middle="middle" deep="deep" deeper="deeper" one="one" two="two" three="three"
+__esModule{value=true writable=false enumerable=false configurable=false} middle{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} deep{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} deeper{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+deep true true function undefined
+deeper true true function undefined
+middle true false undefined undefined
+one true false undefined undefined
+__esModule{value=true writable=false enumerable=false configurable=false} middle{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} deep{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} deeper{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+__esModule{value=true writable=false enumerable=false configurable=false} middle{value="middle" writable=true enumerable=true configurable=true} deep{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} deeper{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+middle="middle, changed" deep="deep, changed" deeper="deeper" one="one" two="two" three="three" middle="middle, changed" deep="deep, changed" deeper="deeper"
+--- stars of stars, the innermost first
+__esModule{value=true writable=false enumerable=false configurable=false} deep{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} deeper{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+true true false
+__esModule{value=true writable=false enumerable=false configurable=false} deep{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} deeper{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+--- the module in the middle says that it is no ES module
+false deep deep false true
+__esModule{value=true writable=false enumerable=false configurable=false} deep{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+--- the module in the middle says nothing
+false deep middle undefined
+__esModule{value=true writable=false enumerable=false configurable=false} middle{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} deep{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+middle{value="middle" writable=true enumerable=true configurable=true} deep{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+--- the helpers of TypeScript before 4.6
+false deep deep
+__esModule{value=true writable=false enumerable=false configurable=false} deep{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+--- names that the target has
+__esModule{value=true writable=false enumerable=false configurable=false} two{value="my own two" writable=true enumerable=true configurable=true} last{value="last" writable=true enumerable=true configurable=true} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+true false undefined
+__esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+__esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{value="two again" writable=true enumerable=true configurable=true}
+__esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} late{value="late" writable=true enumerable=true configurable=true} default{value="my default" writable=true enumerable=true configurable=true}
+one="one" two="two" three="three" four="four" false
+two="two" four="four" one="one" three="three"
+one="one" two="two" three="three" four="four"
+two="two of the other leaf" four="four" one="one" three="three"
+__esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+--- frozen and sealed
+__esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} true
+__esModule{value=true writable=false enumerable=false configurable=false} one{value="one" writable=false enumerable=true configurable=false} two{value="two" writable=false enumerable=true configurable=false}
+__esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+the star threw TypeError Attempting to define property on object that is not extensible.
+__esModule{value=true writable=false enumerable=false configurable=false}
+--- modules that require each other
+__esModule{value=true writable=false enumerable=false configurable=false} mine{value="mine of b" writable=true enumerable=true configurable=true} early{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} four{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+__esModule{value=true writable=false enumerable=false configurable=false} early{value="early of a" writable=true enumerable=true configurable=true} mine{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} four{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} three{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+early "early of a" "early of a" false
+mine "mine of b" "mine of b" false
+two "two of the other leaf" "two of the other leaf" true
+four "four" "four" true
+one "one" undefined false
+--- sources with more than plain properties
+true 1 2 3
+__esModule{value=true writable=false enumerable=false configurable=false} plain{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} counted{get=function () { return ++reads; } set=undefined enumerable=true configurable=false} fixed{value="fixed" writable=false enumerable=true configurable=false}
+__esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} computed{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+--- a collection between the star and the first look
+20000 __esModule{value=true writable=false enumerable=false configurable=false} one{get=function() { return m[k]; } set=undefined enumerable=true configurable=false} two{get=function() { return m[k]; } set=undefined enumerable=true configurable=false}
+one="one" two="two"

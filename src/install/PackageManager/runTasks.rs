@@ -866,7 +866,9 @@ fn run_tasks_erased(
                     // The HTTP request was cached
                     if let Some(mut manifest) = loaded_manifest.take() {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
-                        debug_assert!(!is_extended_manifest || manifest.pkg.has_extended_manifest);
+                        debug_assert!(
+                            !is_extended_manifest || manifest.pkg.has_extended_manifest()
+                        );
 
                         manifest.pkg.public_max_age =
                             npm::Registry::manifest_expiry(&response.headers);
@@ -1190,8 +1192,7 @@ fn run_tasks_erased(
                 if task.status == Task::Status::Fail {
                     let log_mark = manager.log_mut().msgs.len();
                     if holds_log {
-                        task.log.append_to_with_recycled(manager.log_mut(), false);
-                        task.log.reset();
+                        task.log.append_to(manager.log_mut());
                     }
                     let req = task.request_package_manifest();
                     let name = req.name.slice();
@@ -1728,14 +1729,8 @@ pub(crate) fn download_outcome(
                 | http::Error::TooManyRedirects
         )
     );
-    // `connect_errno` is a Winsock code on Windows: WSAETIMEDOUT.
-    const CONNECT_TIMED_OUT: i32 = if cfg!(windows) {
-        10060
-    } else {
-        bun_errno::SystemErrno::ETIMEDOUT as i32
-    };
     let silence = matches!(response.fail, Some(http::Error::Timeout))
-        || response.connect_errno == CONNECT_TIMED_OUT;
+        || response.connect_errno == Some(bun_errno::SystemErrno::ETIMEDOUT);
     let retry = !is_final
         && !(blocking && (silence || status == Some(501)))
         && (failed || status.is_some_and(|status| status > 499 || status == 429 || status == 408));

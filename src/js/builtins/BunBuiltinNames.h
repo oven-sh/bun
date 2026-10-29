@@ -62,6 +62,7 @@ using namespace JSC;
     macro(ctimeMs) \
     macro(data) \
     macro(decode) \
+    macro(defaultTimeout) \
     macro(dest) \
     macro(detail) \
     macro(dirname) \
@@ -77,6 +78,7 @@ using namespace JSC;
     macro(esmRegistryHasEvaluated) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
+    macro(exchange) \
     macro(expires) \
     macro(exports) \
     macro(extname) \
@@ -98,12 +100,15 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(initialExports) \
     macro(internal) \
     macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isOpen) \
+    macro(isPrepared) \
     macro(isUncloneable) \
     macro(isUntransferable) \
     macro(join) \
@@ -136,6 +141,7 @@ using namespace JSC;
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
+    macro(ownReadableState) \
     macro(parse) \
     macro(partitioned) \
     macro(path) \
@@ -158,11 +164,14 @@ using namespace JSC;
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
+    macro(requireCacheWillSet) \
+    macro(isHiddenFromRequireCache) \
     macro(requireCommonJS) \
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
+    macro(resumeUnlessFlowing) \
     macro(runTail) \
     macro(sameSite) \
     macro(secure) \
@@ -200,6 +209,15 @@ using namespace JSC;
     macro(written) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
+
+// Among the names above: those that only src/js reads and writes, never native code. A property under one of them is an
+// ordinary property that nothing lists: a Proxy reads and writes it on its target, without a trap. Keep this list sorted.
+#define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
+    macro(exchange) \
+    macro(isOpen) \
+    macro(isPrepared) \
+    macro(ownReadableState) \
+    macro(resumeUnlessFlowing)
 
 class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);

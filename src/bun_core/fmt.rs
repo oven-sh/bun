@@ -1307,16 +1307,23 @@ pub enum URLProto {
 
 impl Display for URLFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}://",
-            match self.proto {
-                URLProto::Http => "http",
-                URLProto::Https => "https",
-                URLProto::Unix => "unix",
-                URLProto::Abstract => "abstract",
+        match self.proto {
+            URLProto::Http => f.write_str("http://")?,
+            URLProto::Https => f.write_str("https://")?,
+            URLProto::Unix => {
+                let path = self.hostname.unwrap_or(b"");
+                // Without a leading `/`, the URL parser reads the first segment as the host.
+                let host_len = strings::index_of_char_usize(path, b'/').unwrap_or(path.len());
+                f.write_str("unix://")?;
+                write_socket_path(f, &path[..host_len], true)?;
+                return write_socket_path(f, &path[host_len..], false);
             }
-        )?;
+            URLProto::Abstract => {
+                f.write_str("abstract://")?;
+                write_socket_path(f, self.hostname.unwrap_or(b""), true)?;
+                return f.write_str("/");
+            }
+        }
 
         if let Some(hostname) = self.hostname {
             let needs_brackets =
@@ -1330,10 +1337,6 @@ impl Display for URLFormatter<'_> {
             f.write_str("localhost")?;
         }
 
-        if self.proto == URLProto::Unix {
-            return Ok(());
-        }
-
         let is_port_optional = self.port.is_none()
             || (self.proto == URLProto::Https && self.port == Some(443))
             || (self.proto == URLProto::Http && self.port == Some(80));
@@ -1343,6 +1346,26 @@ impl Display for URLFormatter<'_> {
             write!(f, ":{}/", self.port.unwrap())
         }
     }
+}
+
+/// Percent-encodes `%` and every byte the URL parser rejects, strips, encodes or reads as a delimiter.
+fn write_socket_path(f: &mut Formatter<'_>, bytes: &[u8], is_host: bool) -> fmt::Result {
+    for &b in bytes {
+        let encode = match b {
+            0..=b' ' | 0x7F.. | b'#' | b'%' | b'<' | b'>' | b'?' | b'^' => true,
+            // Forbidden host code points.
+            b'/' | b':' | b'@' | b'[' | b'\\' | b']' | b'|' => is_host,
+            // The rest of the path percent-encode set.
+            b'"' | b'`' | b'{' | b'}' => !is_host,
+            _ => false,
+        };
+        if encode {
+            write!(f, "%{b:02X}")?;
+        } else {
+            f.write_char(b as char)?;
+        }
+    }
+    Ok(())
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2990,26 +3013,18 @@ pub fn parse_hex_prefix(input: &[u8], max_digits: usize) -> (u32, usize) {
     (value, n)
 }
 
-/// Decode a `2 * size_of::<T>()`-char ASCII hex slice into `T` via native-endian
-/// byte reinterpretation — i.e. pairwise hex-decode then `from_ne_bytes`,
-/// **not** a big-endian numeric accumulator.
-/// `"0100000000000000"` → `1u64` on little-endian.
-///
-/// Returns `None` if `slice.len() != 2 * size_of::<T>()` or any byte is not
-/// `[0-9a-fA-F]`. `T` is capped at 16 bytes (u128) since stable Rust can't size
-/// a stack array by a generic without `generic_const_exprs`.
+/// Pairwise hex-decode of exactly 16 chars, then `from_ne_bytes`: `"0100000000000000"` is 1 on little-endian.
 #[inline]
-pub fn parse_hex_to_int<T: bytemuck::Pod>(slice: &[u8]) -> Option<T> {
-    let n = core::mem::size_of::<T>();
-    debug_assert!(n <= 16);
-    if slice.len() != n * 2 {
+pub fn parse_hex_to_u64(slice: &[u8]) -> Option<u64> {
+    let (pairs, []) = slice.as_chunks::<2>() else {
         return None;
+    };
+    let pairs: &[[u8; 2]; 8] = pairs.try_into().ok()?;
+    let mut bytes = [0u8; 8];
+    for (byte, &[hi, lo]) in bytes.iter_mut().zip(pairs) {
+        *byte = hex_pair_value(hi, lo)?;
     }
-    let mut buf = [0u8; 16];
-    for i in 0..n {
-        buf[i] = hex_pair_value(slice[i * 2], slice[i * 2 + 1])?;
-    }
-    Some(bytemuck::pod_read_unaligned(&buf[..n]))
+    Some(u64::from_ne_bytes(bytes))
 }
 
 /// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).
@@ -3595,6 +3610,28 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
+/// `parts` joined into one POSIX shell word: `'...'`, with each `'` written as `'\''`.
+pub struct QuotePosixShell<'a>(pub(crate) &'a [&'a [u8]]);
+
+pub fn quote_posix_shell<'a>(parts: &'a [&'a [u8]]) -> QuotePosixShell<'a> {
+    QuotePosixShell(parts)
+}
+
+impl Display for QuotePosixShell<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("'")?;
+        for part in self.0 {
+            let mut remain = *part;
+            while let Some(i) = crate::strings::index_of_char_usize(remain, b'\'') {
+                write!(f, "{}'\\''", bstr::BStr::new(&remain[..i]))?;
+                remain = &remain[i + 1..];
+            }
+            write!(f, "{}", bstr::BStr::new(remain))?;
+        }
+        f.write_str("'")
+    }
+}
+
 /// Escapes C0/C1 control characters, DEL, U+2028-U+202E (line separators, bidirectional overrides)
 /// and U+2066-U+2069 (bidirectional isolates), so that untrusted text cannot alter our output.
 pub struct EscapeControlChars<T>(pub T);
@@ -3693,6 +3730,38 @@ pub trait OutOfRangeValue {
 impl OutOfRangeValue for f64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", double(*self))
+    }
+    fn type_name() -> &'static str {
+        "f64"
+    }
+}
+/// A number as Node's `ERR_OUT_OF_RANGE` prints it: `-0`, and an integer beyond 2 ** 32 with `addNumericalSeparator`.
+pub struct NodeNumber(pub f64);
+impl Display for NodeNumber {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let Self(number) = *self;
+        if number == 0.0 && number.is_sign_negative() {
+            return f.write_str("-0");
+        }
+        let digits = double(number).to_string();
+        let sign = usize::from(number < 0.0);
+        let is_large = number.is_finite() && number.fract() == 0.0 && number.abs() > 4294967296.0;
+        let ungrouped = if is_large {
+            sign + (digits.len() - sign - 1) % 3 + 1
+        } else {
+            digits.len()
+        };
+        f.write_str(&digits[..ungrouped])?;
+        for group in digits.as_bytes()[ungrouped..].chunks(3) {
+            f.write_char('_')?;
+            write_bytes(f, group)?;
+        }
+        Ok(())
+    }
+}
+impl OutOfRangeValue for NodeNumber {
+    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, " Received {self}")
     }
     fn type_name() -> &'static str {
         "f64"

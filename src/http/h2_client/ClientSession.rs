@@ -9,11 +9,15 @@ use std::time::{Duration, Instant};
 use crate::Error;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::strings;
+use bun_http_types::h2::flow_control::{DEFAULT_WINDOW_SIZE, RecvWindow, SendWindow};
+use bun_http_types::h2::frame::{ErrorCode, FrameHeader, FrameType, MAX_STREAM_ID};
+use bun_http_types::h2::header_block::HeaderBlockAssembler;
+use bun_http_types::h2::settings::DEFAULT_MAX_FRAME_SIZE;
+use bun_http_types::h2::stream::State as StreamState;
 use bun_ptr::RefPtr;
 
-use super::stream::{State as StreamState, Stream};
+use super::stream::Stream;
 use super::{dispatch, encode};
-use crate::h2_frame_parser as wire;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
 use crate::http_thread::WriteMessageType;
@@ -21,7 +25,7 @@ use crate::internal_state::HTTPStage;
 use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
-use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol};
+use crate::{Carrier, HTTPClient, HTTPVerboseLevel, NewHTTPContext, Protocol, StreamProgress};
 
 /// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
 pub type Socket = HTTPSocket<true>;
@@ -32,7 +36,7 @@ const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
 const LIVENESS_GRACE: Duration = Duration::from_secs(1);
 /// Cap on the idle timer while a liveness PING is unanswered, unless
 /// `BUN_CONFIG_HTTP_IDLE_TIMEOUT` is shorter. Go's default `PingTimeout`.
-const PING_ACK_TIMEOUT_SECONDS: u64 = 15;
+const PING_ACK_TIMEOUT_SECONDS: core::ffi::c_uint = 15;
 
 // 31-/24-bit wire fields stored as u32; range asserts at use sites.
 #[allow(non_camel_case_types)]
@@ -57,7 +61,7 @@ pub struct ClientSession {
     /// (see [`ClientSession::enter`]).
     socket_ref_owed: Cell<bool>,
 
-    pub(crate) hpack: lshpack::HpackHandle, // RAII owner; Deref/DerefMut to lshpack::HPACK
+    pub(crate) hpack: lshpack::Coder,
     pub(crate) socket: Socket,
     pub(crate) ctx: *mut NewHTTPContext<true>, // BACKREF: context outlives and registers this session
 
@@ -82,17 +86,9 @@ pub struct ClientSession {
     pub(crate) read_buffer: Vec<u8>,
 
     pub(crate) streams: ArrayHashMap<u31, *mut Stream>,
-    /// Secondary index over `streams` keyed by the owning client's
-    /// `async_http_id`, so the per-chunk wakeups from the JS thread
-    /// (`stream_body_by_http_id` / `resume_receive_by_http_id` /
-    /// `drain_response_body_by_http_id` / `abort_by_http_id`) resolve in O(1)
-    /// instead of scanning every live stream on the session.
-    pub(crate) by_http_id: ArrayHashMap<u32, *mut Stream>,
     pub(crate) next_stream_id: u31,
-    /// Stream id whose CONTINUATION sequence is in progress; 0 = none.
-    pub(crate) expecting_continuation: u31,
-    /// CONTINUATION frames seen so far in the current header block.
-    pub(crate) continuation_count: u8,
+    /// The inbound HEADERS + CONTINUATION sequence in progress.
+    pub(crate) header_block: HeaderBlockAssembler,
 
     /// Cold-start coalesced requests parked until the server's first SETTINGS
     /// frame arrives so the real MAX_CONCURRENT_STREAMS cap can be honoured.
@@ -101,11 +97,6 @@ pub struct ClientSession {
     pub(crate) preface_sent: bool,
     pub(crate) settings_received: bool,
     pub(crate) goaway_received: bool,
-    /// Set when the HPACK encoder's dynamic table has diverged from the
-    /// server's view (writeRequest failed mid-encode). Existing siblings whose
-    /// HEADERS already went out are unaffected, but no new stream may be
-    /// opened on this connection.
-    pub(crate) encoder_poisoned: bool,
     /// True while onData's deliver loop is running. retryFromH2/doRedirect
     /// re-dispatch may try to adopt back onto this same session; blocking
     /// that during delivery prevents `streams` mutation under iteration and
@@ -127,31 +118,18 @@ pub struct ClientSession {
     /// close a connection that sends several PINGs with neither in between:
     /// https://github.com/golang/go/issues/70575
     pub(crate) liveness_ping_spent: bool,
-    pub(crate) goaway_last_stream_id: u31,
     pub(crate) fatal_error: Option<Error>,
-    /// HEADERS/CONTINUATION fragments for a stream we no longer track (e.g.
-    /// in flight when we RST'd it). RFC 9113 §4.3 still requires the block be
-    /// fed to the HPACK decoder so the connection-level dynamic table stays
-    /// in sync.
-    pub(crate) orphan_header_block: Vec<u8>,
-    /// Reused HPACK-encode scratch for `writeRequest` so each request doesn't
-    /// alloc/free its own header-block buffer.
+    /// Reused by `write_request`: a request's fields, and their HPACK encoding.
+    pub(crate) request_fields: lshpack::HeaderBlock,
     pub(crate) encode_scratch: Vec<u8>,
 
     pub(crate) remote_max_frame_size: u24,
     pub(crate) remote_max_concurrent_streams: u32,
     pub(crate) remote_initial_window_size: u32,
-    /// SETTINGS_HEADER_TABLE_SIZE received from the peer that hasn't yet been
-    /// acknowledged with a Dynamic Table Size Update (RFC 7541 §6.3) at the
-    /// start of a header block. lshpack's encoder doesn't emit that opcode
-    /// itself, so writeRequest must prepend it before the first encode call.
-    pub(crate) pending_hpack_enc_capacity: Option<u32>,
     /// Connection-level send window. Starts at the spec default regardless of
     /// SETTINGS; only WINDOW_UPDATE on stream 0 grows it.
-    pub(crate) conn_send_window: i32,
-
-    /// DATA bytes consumed since the last connection-level WINDOW_UPDATE.
-    pub(crate) conn_unacked_bytes: u32,
+    pub(crate) conn_send_window: SendWindow,
+    pub(crate) conn_recv_window: RecvWindow,
 
     /// Index in the context's active-session list while reachable for
     /// concurrent attachment; maxInt when not listed.
@@ -301,8 +279,10 @@ impl ClientSession {
 
     /// Multiplex `client` onto an established (registered or pool-resumed)
     /// session; see [`Self::adopt_client`].
-    pub(crate) fn adopt(this: SessionPtr, client: &mut HTTPClient) {
-        Self::enter(this, |s| s.adopt_client(client));
+    pub(crate) fn adopt(this: SessionPtr, client: &mut HTTPClient) -> bool {
+        let mut adopted = false;
+        Self::enter(this, |s| adopted = s.adopt_client(client));
+        adopted
     }
 
     /// Open the first stream on a session `create` just returned, for the
@@ -312,31 +292,57 @@ impl ClientSession {
         Self::enter(this, |s| s.attach(client));
     }
 
-    /// Called from the HTTP thread's shutdown queue when a fetch on this
-    /// session is aborted; see [`Self::abort_request`].
-    pub(crate) fn abort_by_http_id(this: SessionPtr, async_http_id: u32) {
-        Self::enter(this, |s| s.abort_request(async_http_id));
+    /// The session of a stream that a request's `Carrier::H2` names.
+    fn of_stream(stream: NonNull<Stream>) -> SessionPtr {
+        Self::this_ptr(stream_ref(stream.as_ptr()).session)
     }
 
-    /// HTTP-thread wake-up from `scheduleRequestWrite`; see
-    /// [`Self::stream_request_body`].
-    pub(crate) fn stream_body_by_http_id(
-        this: SessionPtr,
-        async_http_id: u32,
-        message: WriteMessageType,
+    /// The request on `stream` was aborted.
+    pub(crate) fn abort_stream(stream: NonNull<Stream>) {
+        Self::enter(Self::of_stream(stream), |s| {
+            let opened_at = stream_ref(stream.as_ptr()).opened_at;
+            s.detach_with_failure(stream.as_ptr(), crate::Error::Aborted);
+            s.after_abort(s.last_read.max(opened_at));
+        });
+    }
+
+    /// A request in `pending_attach` was aborted.
+    pub(crate) fn abort_parked(
+        session: NonNull<ClientSession>,
+        client: NonNull<HTTPClient<'static>>,
     ) {
-        Self::enter(this, |s| s.stream_request_body(async_http_id, message));
+        Self::enter(Self::this_ptr(session), |s| {
+            s.pending_attach.retain(|&parked| parked != client.as_ptr());
+            pending_client_mut(client.as_ptr()).fail(crate::Error::Aborted);
+            s.after_abort(s.last_read);
+        });
     }
 
-    /// HTTP-thread wake-up from `resumeReceive`; see [`Self::resume_receive`].
-    pub(crate) fn resume_receive_by_http_id(this: SessionPtr, async_http_id: u32) {
-        Self::enter(this, |s| s.resume_receive(async_http_id));
+    /// HTTP-thread wake-up from `scheduleRequestWrite`; see [`Self::on_request_body`].
+    pub(crate) fn stream_request_body(stream: NonNull<Stream>, message: WriteMessageType) {
+        Self::enter(Self::of_stream(stream), |s| {
+            s.on_request_body(stream.as_ptr(), message)
+        });
     }
 
-    /// HTTP-thread wake-up from `scheduleResponseBodyDrain`; see
-    /// [`Self::drain_response_body`].
-    pub(crate) fn drain_response_body_by_http_id(this: SessionPtr, async_http_id: u32) {
-        Self::enter(this, |s| s.drain_response_body(async_http_id));
+    /// The consumer of the stream's response body takes bytes again.
+    pub(crate) fn resume_receive(stream: NonNull<Stream>) {
+        Self::enter(Self::of_stream(stream), |s| {
+            s.replenish_window();
+            if s.write_buffer.is_not_empty() {
+                if let Err(err) = s.flush() {
+                    return s.fail_all(err);
+                }
+            }
+            let Some(client) = stream_mut(stream.as_ptr()).client_mut() else {
+                return;
+            };
+            if let Err(err) = client.send_held_body() {
+                s.detach_with_failure(stream.as_ptr(), err);
+                s.rearm_timeout();
+                s.maybe_release();
+            }
+        });
     }
 
     #[inline]
@@ -353,14 +359,14 @@ impl ClientSession {
     /// `session` backref is not dereferenced while `&mut self` is already
     /// live on the stack — re-entering via the raw backref would form a
     /// second aliased `&mut ClientSession` (Stacked-Borrows UB).
-    pub(crate) fn rst_stream(&mut self, stream: &mut Stream, code: wire::ErrorCode) {
+    pub(crate) fn rst_stream(&mut self, stream: &mut Stream, code: ErrorCode) {
         if stream.rst_done || stream.state == StreamState::Closed {
             return;
         }
         stream.rst_done = true;
         stream.state = StreamState::Closed;
         let value: [u8; 4] = code.0.to_be_bytes();
-        self.write_frame(wire::FrameType::HTTP_FRAME_RST_STREAM, 0, stream.id, &value);
+        self.write_frame(FrameType::RstStream, 0, stream.id, &value);
     }
 
     /// Allocate a session for a socket whose ALPN just selected h2 and list it
@@ -375,7 +381,7 @@ impl ClientSession {
         let this = bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
             socket_ref_owed: Cell::new(false),
-            hpack: lshpack::HpackHandle::new(4096),
+            hpack: lshpack::Coder::default(),
             socket,
             ctx,
             hostname: Box::<[u8]>::from(client.connected_url.hostname),
@@ -387,48 +393,42 @@ impl ClientSession {
             write_buffer: bun_io::StreamBuffer::default(),
             read_buffer: Vec::new(),
             streams: ArrayHashMap::default(),
-            by_http_id: ArrayHashMap::default(),
             next_stream_id: 1,
-            expecting_continuation: 0,
-            continuation_count: 0,
+            header_block: HeaderBlockAssembler::default(),
             pending_attach: Vec::new(),
             preface_sent: false,
             settings_received: false,
             goaway_received: false,
-            encoder_poisoned: false,
             delivering: false,
             stream_progressed: false,
             last_read: Instant::now(),
             awaiting_ping_ack: false,
             ping_cap_armed: false,
             liveness_ping_spent: false,
-            goaway_last_stream_id: 0,
             fatal_error: None,
-            orphan_header_block: Vec::new(),
+            request_fields: lshpack::HeaderBlock::default(),
             encode_scratch: Vec::new(),
-            remote_max_frame_size: wire::DEFAULT_MAX_FRAME_SIZE,
+            remote_max_frame_size: DEFAULT_MAX_FRAME_SIZE,
             remote_max_concurrent_streams: 100,
-            remote_initial_window_size: wire::DEFAULT_WINDOW_SIZE,
-            pending_hpack_enc_capacity: None,
-            conn_send_window: wire::DEFAULT_WINDOW_SIZE as i32,
-            conn_unacked_bytes: 0,
+            remote_initial_window_size: DEFAULT_WINDOW_SIZE,
+            conn_send_window: SendWindow::new(DEFAULT_WINDOW_SIZE),
+            conn_recv_window: RecvWindow::new(LOCAL_INITIAL_WINDOW_SIZE),
             registry_index: Cell::new(u32::MAX),
         }));
         super::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `ctx` is a live back-ref to the owning context (set-once,
         // HTTP-thread-only, no ancestor `&mut HTTPContext` on this path) —
         // route through the centralised [`HTTPClient::ssl_ctx_mut`] accessor.
-        HTTPClient::ssl_ctx_mut(ctx).h2_register(this);
+        HTTPClient::ssl_ctx_mut(ctx).register_h2(this);
         Self::this_ptr(NonNull::new(this).expect("heap::into_raw is non-null"))
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
         !self.goaway_received
-            && !self.encoder_poisoned
             && !self.awaiting_ping_ack
             && self.fatal_error.is_none()
             && self.streams.count() < self.remote_max_concurrent_streams as usize
-            && self.next_stream_id < wire::MAX_STREAM_ID
+            && self.next_stream_id < MAX_STREAM_ID
     }
 
     pub(crate) fn matches(
@@ -448,8 +448,8 @@ impl ClientSession {
             && strings::eql_long(&self.hostname, hostname, true)
     }
 
-    fn adopt_client(&mut self, client: &mut HTTPClient) {
-        client.h2_register_abort_tracker(self.socket);
+    /// Returns false if the session has no room for `client`, which `connect()` then places elsewhere.
+    fn adopt_client(&mut self, client: &mut HTTPClient) -> bool {
         // Park instead of attaching when (a) we're inside onData's deliver
         // loop — attach() mustn't mutate `streams` under iteration — or (b)
         // the server's first SETTINGS hasn't arrived yet, so the real
@@ -457,26 +457,24 @@ impl ClientSession {
         // shouldn't risk a REFUSED_STREAM. The leader bypasses adopt() and
         // attaches directly so the preface still goes out.
         if self.delivering || !self.settings_received {
-            self.pending_attach.push(client.as_erased_ptr().as_ptr());
-            self.rearm_timeout();
-            return;
+            self.park(client);
+            return true;
         }
         // Belt-and-suspenders: callers gate on hasHeadroom(), but a session
         // pulled from the keep-alive pool (HTTPContext.existingSocket) may have
         // remote_max_concurrent_streams == 0 if a mid-connection SETTINGS
-        // dropped it. Re-dispatch instead of asserting in attach().
+        // dropped it.
         if !self.has_headroom() {
-            client.h2_retry_after_coalesce();
             self.maybe_release();
-            return;
+            return false;
         }
         self.attach(client);
-        // If attach() poisoned the encoder and left the session empty, release
-        // it now — adopt() callers (keep-alive resume, active-session match)
-        // have no tail maybeRelease of their own.
-        if self.encoder_poisoned {
+        if self.streams.count() == 0 {
+            // The request couldn't be encoded. `connect()` is on the stack and borrows the pool, so close instead of parking.
+            self.goaway_received = true;
             self.maybe_release();
         }
+        true
     }
 
     /// Park a request that was coalesced onto this session's connect until the
@@ -485,10 +483,9 @@ impl ClientSession {
         Self::enter(this, |s| s.park(client));
     }
 
-    /// Park a coalesced request until the server's SETTINGS arrive. Abort
-    /// is routed via the session socket so `abortByHttpId` can find it.
+    /// Park a coalesced request until the server's SETTINGS arrive.
     fn park(&mut self, client: &mut HTTPClient<'_>) {
-        client.h2_register_abort_tracker(self.socket);
+        client.carrier = Carrier::H2Parked(NonNull::from(&mut *self));
         self.pending_attach.push(client.as_erased_ptr().as_ptr());
         self.rearm_timeout();
     }
@@ -501,13 +498,13 @@ impl ClientSession {
         for client_ptr in waiters {
             let client = pending_client_mut(client_ptr);
             if let Some(err) = self.fatal_error {
-                client.h2_fail(err);
+                client.fail(err);
             } else if client.signals.get(signals::Field::Aborted) {
-                client.h2_fail(crate::Error::Aborted);
+                client.fail(crate::Error::Aborted);
             } else if self.has_headroom() {
                 self.attach(client);
             } else {
-                client.h2_retry_after_coalesce();
+                client.retry_after_h2_coalesce();
             }
         }
     }
@@ -518,13 +515,12 @@ impl ClientSession {
     pub(crate) fn can_pool(&self) -> bool {
         self.streams.count() == 0
             && !self.goaway_received
-            && !self.encoder_poisoned
             && self.fatal_error.is_none()
-            && self.expecting_continuation == 0
+            && !self.header_block.is_open()
             && self.read_buffer.is_empty()
             && self.write_buffer.is_empty()
             && self.remote_max_concurrent_streams > 0
-            && self.next_stream_id < wire::MAX_STREAM_ID
+            && self.next_stream_id < MAX_STREAM_ID
     }
 
     /// No request is left: the connection only waits for the ACK of its liveness PING.
@@ -547,19 +543,12 @@ impl ClientSession {
 
     pub(crate) fn write_frame(
         &mut self,
-        frame_type: wire::FrameType,
+        frame_type: FrameType,
         flags: u8,
         stream_id: u32,
         payload: &[u8],
     ) {
-        // Wire format: u24 length BE, u8 type, u8 flags, u32 stream-id BE.
-        let len = u32::try_from(payload.len()).expect("int cast");
-        let mut header = [0u8; wire::FrameHeader::BYTE_SIZE];
-        header[0..3].copy_from_slice(&len.to_be_bytes()[1..4]);
-        header[3] = frame_type as u8;
-        header[4] = flags;
-        header[5..9].copy_from_slice(&stream_id.to_be_bytes());
-        self.queue(&header);
+        self.queue(&FrameHeader::new(frame_type, flags, stream_id, payload.len()).to_bytes());
         self.queue(payload);
     }
 
@@ -568,30 +557,17 @@ impl ClientSession {
     fn attach(&mut self, client: &mut HTTPClient) {
         debug_assert!(self.has_headroom());
 
-        let send_window = i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE))
-            .expect("int cast");
-        // Only clients with an abort-signal store are ever looked up by id
-        // (the HTTP-thread wake paths key off `abort_tracker()`); mirror that
-        // gate so unsignaled callers sharing the `0` sentinel never collide.
-        let async_http_id = client
-            .signals
-            .aborted
-            .is_some()
-            .then_some(client.async_http_id);
         let stream = bun_core::heap::into_raw(Stream::new(
             self.next_stream_id,
-            async_http_id,
+            NonNull::from(&mut *self),
             Some(client.as_erased_ptr()),
-            send_window,
+            SendWindow::new(self.remote_initial_window_size),
         ));
         super::live_streams.fetch_add(1, Ordering::Relaxed);
         self.next_stream_id = self.next_stream_id.saturating_add(2);
         let stream_ref = stream_mut(stream);
         let _ = self.streams.put(stream_ref.id, stream);
-        if let Some(id) = async_http_id {
-            let _ = self.by_http_id.put(id, stream);
-        }
-        client.h2 = NonNull::new(stream);
+        client.carrier = Carrier::H2(NonNull::from(&mut *stream_ref));
         client.flags.protocol = Protocol::Http2;
         client.allow_retry = false;
 
@@ -604,33 +580,18 @@ impl ClientSession {
         // cursor stays valid across event-loop ticks.
         if let Err(e) = client.compress_body_for_send(false) {
             self.remove_stream(stream);
-            client.h2 = None;
+            client.carrier = Carrier::None;
             client.fail(e);
             return;
         }
-        let request = client.h2_build_request(client.body_len_for_send());
+        let mut header_overflow = Vec::new();
+        let request = client.build_request(client.body_len_for_send(), &mut header_overflow);
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
-            // encodeHeader pushes into the HPACK encoder's dynamic table per
-            // call, so a mid-encode failure leaves entries the server will
-            // never see. Mark the session unusable for future streams and
-            // remove without RST — from the server's view this stream id was
-            // never opened (RST on an idle stream is a connection error per
-            // RFC 9113 §5.1).
-            self.encoder_poisoned = true;
+            // No RST: the server never saw this stream id, and RST_STREAM on an idle stream is a connection error (RFC 9113 §5.1).
             self.remove_stream(stream);
-            client.h2 = None;
-            client.h2_fail(err);
-            // The poisoned session is dead for new work; bounce any waiters
-            // and let maybeRelease() drop the registration so the next fetch
-            // opens a fresh connection instead of waiting for idle-timeout.
-            for c in core::mem::take(&mut self.pending_attach) {
-                pending_client_mut(c).h2_retry_after_coalesce();
-            }
+            client.carrier = Carrier::None;
+            client.fail(err);
             let _ = self.flush();
-            // Do NOT maybeRelease() here: attach() runs from drainPending()
-            // inside onData (whose tail maybeRelease handles cleanup) and from
-            // adopt() (which calls maybeRelease itself when this leaves the
-            // session empty). Releasing twice would close+deref twice.
             return;
         }
         if client.verbose != HTTPVerboseLevel::None {
@@ -656,24 +617,15 @@ impl ClientSession {
         }
 
         if client.flags.is_streaming_request_body {
-            client.h2_progress_update(self.ctx, self.socket);
+            // Nothing of the response is here to decode, so this can't fail.
+            let _ = client.send_progress();
         }
     }
 
-    /// Unlink `stream` from the session map and free it. If the stream was
-    /// mid-CONTINUATION (HEADERS arrived without END_HEADERS), the buffered
-    /// fragment is moved to `orphan_header_block` so the trailing CONTINUATION
-    /// frames decode against the full block — otherwise HPACK-decoding the
-    /// suffix alone desyncs the dynamic table for every sibling stream.
+    /// Unlink `stream` from the session map and free it.
     fn remove_stream(&mut self, stream: *mut Stream) {
         let s = stream_mut(stream);
-        if self.expecting_continuation == s.id {
-            self.orphan_header_block = core::mem::take(&mut s.header_block);
-        }
         self.streams.swap_remove(&s.id);
-        if let Some(id) = s.async_http_id {
-            self.by_http_id.swap_remove(&id);
-        }
         drop_stream(stream);
     }
 
@@ -681,15 +633,15 @@ impl ClientSession {
     /// session and socket stay up for siblings.
     pub(crate) fn detach_with_failure(&mut self, stream: *mut Stream, err: Error) {
         let s = stream_mut(stream);
-        self.rst_stream(s, wire::ErrorCode::CANCEL);
+        self.rst_stream(s, ErrorCode::CANCEL);
         let _ = self.flush();
         let client = s.client.take();
         if let Some(c) = client {
-            stream_client_mut(c).h2 = None;
+            stream_client_mut(c).carrier = Carrier::None;
         }
         self.remove_stream(stream);
         if let Some(c) = client {
-            stream_client_mut(c).h2_fail(err);
+            stream_client_mut(c).fail(err);
         }
     }
 
@@ -730,7 +682,7 @@ impl ClientSession {
         }
         self.ping_cap_armed = false;
         if self.awaiting_ping_ack {
-            let mut cap = crate::normalize_idle_timeout_seconds(PING_ACK_TIMEOUT_SECONDS);
+            let mut cap = PING_ACK_TIMEOUT_SECONDS;
             let global = crate::idle_timeout_seconds();
             if global != 0 {
                 cap = cap.min(global);
@@ -743,43 +695,9 @@ impl ClientSession {
         self.socket.set_timeout(want);
     }
 
-    /// O(1) lookup in the `by_http_id` secondary index. Returns the raw
-    /// stream pointer (owned by `self.streams`) so callers can re-borrow
-    /// `&mut self` afterwards without an outstanding shared borrow.
-    #[inline]
-    fn stream_for_http_id(&self, async_http_id: u32) -> Option<*mut Stream> {
-        self.by_http_id.get(&async_http_id).copied()
-    }
-
-    /// A body consumer attached on the JS side: flush any body bytes that arrived between
-    /// metadata delivery and `getReader()`.
-    fn drain_response_body(&mut self, async_http_id: u32) {
-        let Some(stream) = self.stream_for_http_id(async_http_id) else {
-            return;
-        };
-        if let Some(client) = stream_mut(stream).client_mut() {
-            client.h2_drain_response_body(self.socket);
-        }
-    }
-
-    fn resume_receive(&mut self, async_http_id: u32) {
-        if self.stream_for_http_id(async_http_id).is_none() {
-            return;
-        }
-        self.replenish_window();
-        if self.write_buffer.is_not_empty() {
-            if let Err(err) = self.flush() {
-                self.fail_all(err);
-            }
-        }
-    }
-
     /// New request body bytes (or end-of-body) are available in the request's
     /// ThreadSafeStreamBuffer.
-    fn stream_request_body(&mut self, async_http_id: u32, message: WriteMessageType) {
-        let Some(stream) = self.stream_for_http_id(async_http_id) else {
-            return;
-        };
+    fn on_request_body(&mut self, stream: *mut Stream, message: WriteMessageType) {
         {
             let Some(client) = stream_mut(stream).client_mut() else {
                 return;
@@ -804,25 +722,19 @@ impl ClientSession {
 
     pub(crate) fn write_window_update(&mut self, stream_id: u32, increment: u31) {
         let bytes = increment.to_be_bytes();
-        self.write_frame(
-            wire::FrameType::HTTP_FRAME_WINDOW_UPDATE,
-            0,
-            stream_id,
-            &bytes,
-        );
+        self.write_frame(FrameType::WindowUpdate, 0, stream_id, &bytes);
     }
 
     fn replenish_window(&mut self) {
-        let threshold = LOCAL_INITIAL_WINDOW_SIZE / 2;
-        if self.conn_unacked_bytes >= threshold {
-            self.write_window_update(0, self.conn_unacked_bytes);
-            self.conn_unacked_bytes = 0;
+        if self.conn_recv_window.needs_update() {
+            let increment = self.conn_recv_window.take_update();
+            self.write_window_update(0, increment);
         }
-        // Collect (id, unacked) pairs before mutating self.
+        // Collect (id, increment) pairs before mutating self.
         let mut updates: Vec<(u32, u32)> = Vec::new();
         for &s in self.streams.values() {
             let s = stream_mut(s);
-            if s.unacked_bytes < threshold || s.remote_closed() {
+            if !s.recv_window.needs_update() || s.remote_closed() {
                 continue;
             }
             if s.client_ref()
@@ -830,11 +742,10 @@ impl ClientSession {
             {
                 continue;
             }
-            updates.push((s.id, s.unacked_bytes));
-            s.unacked_bytes = 0;
+            updates.push((s.id, s.recv_window.take_update()));
         }
-        for (id, unacked) in updates {
-            self.write_window_update(id, unacked);
+        for (id, increment) in updates {
+            self.write_window_update(id, increment);
         }
         // PERF: could iterate and write in one pass; profile if extra Vec matters.
     }
@@ -927,7 +838,7 @@ impl ClientSession {
                 // never did and hasn't RST'd) must signal abandonment so the
                 // server can release its concurrency slot. rst() is idempotent.
                 if s.state != StreamState::Closed {
-                    self.rst_stream(s, wire::ErrorCode::CANCEL);
+                    self.rst_stream(s, ErrorCode::CANCEL);
                     rst_any = true;
                 }
                 self.remove_stream(stream);
@@ -1015,25 +926,24 @@ impl ClientSession {
         // aliased `&mut NewHTTPContext` via autoref.
         unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
         for client in core::mem::take(&mut self.pending_attach) {
-            pending_client_mut(client).h2_fail(err);
+            pending_client_mut(client).fail(err);
         }
         // `handle_data`'s deliver loop holds a stream across the callback that re-entered here.
         let deliver_loop_frees_streams = self.delivering;
         for &e in self.streams.values() {
             let client = stream_mut(e).client.take();
             if let Some(c) = client {
-                stream_client_mut(c).h2 = None;
+                stream_client_mut(c).carrier = Carrier::None;
             }
             if !deliver_loop_frees_streams {
                 drop_stream(e);
             }
             if let Some(c) = client {
-                stream_client_mut(c).h2_fail(err);
+                stream_client_mut(c).fail(err);
             }
         }
         if !deliver_loop_frees_streams {
             self.streams.clear_retaining_capacity();
-            self.by_http_id.clear_retaining_capacity();
         }
         self.give_up_socket_ref();
     }
@@ -1055,7 +965,7 @@ impl ClientSession {
             let mut goaway = [0u8; 8];
             goaway[0..4].copy_from_slice(&0u32.to_be_bytes());
             goaway[4..8].copy_from_slice(&dispatch::error_code_for(err).0.to_be_bytes());
-            self.write_frame(wire::FrameType::HTTP_FRAME_GOAWAY, 0, 0, &goaway);
+            self.write_frame(FrameType::GoAway, 0, 0, &goaway);
             let _ = self.flush();
         }
         NewHTTPContext::<true>::mark_socket_as_dead(sock);
@@ -1063,24 +973,8 @@ impl ClientSession {
         sock.close(bun_uws::CloseKind::Failure);
     }
 
-    /// RST_STREAMs (or unparks and fails) the one aborted request; siblings
-    /// continue. See [`Self::probe_liveness`].
-    fn abort_request(&mut self, async_http_id: u32) {
-        // Find the index via a raw-ptr field read first, then swap_remove, so
-        // no `&mut HTTPClient` is held across the Vec mutation and no `&mut`
-        // is materialised during iteration.
-        let found = self
-            .pending_attach
-            .iter()
-            .position(|&c| pending_client_mut(c).async_http_id == async_http_id);
-        let mut silent_since = self.last_read;
-        if let Some(i) = found {
-            let client = self.pending_attach.swap_remove(i);
-            pending_client_mut(client).h2_fail(crate::Error::Aborted);
-        } else if let Some(stream) = self.stream_for_http_id(async_http_id) {
-            silent_since = silent_since.max(stream_ref(stream).opened_at);
-            self.detach_with_failure(stream, crate::Error::Aborted);
-        }
+    /// One request was aborted; its siblings continue. See [`Self::probe_liveness`].
+    fn after_abort(&mut self, silent_since: Instant) {
         self.probe_liveness(silent_since);
         self.rearm_timeout();
         self.maybe_release();
@@ -1099,7 +993,7 @@ impl ClientSession {
             return;
         }
         self.liveness_ping_spent = true;
-        self.write_frame(wire::FrameType::HTTP_FRAME_PING, 0, 0, &[0; 8]);
+        self.write_frame(FrameType::Ping, 0, 0, &[0; 8]);
         self.awaiting_ping_ack = self.flush().is_ok();
     }
 
@@ -1135,7 +1029,7 @@ impl ClientSession {
         }
         // Idempotent: a session is released exactly once. The registry index is
         // the sentinel — `registerH2` re-arms it on keep-alive resume, and any
-        // path that has already unregistered (encoder-poison, abort, a
+        // path that has already unregistered (abort, a
         // `fail_all` earlier in the same entry point) leaves it at maxInt so a
         // second caller can't close the socket or give up the ref twice.
         if self.registry_index.get() == u32::MAX {
@@ -1155,7 +1049,7 @@ impl ClientSession {
             // ctx back-ref is valid for the session's lifetime. Unlike
             // `unregister_h2_raw` above, this branch is *not* reachable on the
             // re-entrant `connect()` → `adopt()` path: every adopt-side entry
-            // into `maybe_release` has `encoder_poisoned`, `!has_headroom()`
+            // into `maybe_release` has `goaway_received`, `!has_headroom()`
             // (goaway/fatal/stream-id-exhausted/unanswered PING), or `streams.count() > 0` —
             // all of which short-circuit before reaching `can_pool()`. So no
             // ancestor frame holds `&mut NewHTTPContext` here and forming one
@@ -1196,17 +1090,21 @@ impl ClientSession {
         let client = stream_client_mut(client_ptr);
 
         if client.signals.get(signals::Field::Aborted) {
-            self.rst_stream(stream, wire::ErrorCode::CANCEL);
+            self.rst_stream(stream, ErrorCode::CANCEL);
             let _ = self.flush();
             stream.client = None;
-            client.h2 = None;
-            client.h2_fail(crate::Error::Aborted);
+            client.carrier = Carrier::None;
+            client.fail(crate::Error::Aborted);
             return true;
         }
 
         if let Some(err) = stream.fatal_error {
             stream.client = None;
-            client.h2 = None;
+            client.carrier = Carrier::None;
+            if stream.http1_required && stream.status_code == 0 && client.can_retry_over_http1() {
+                client.retry_over_http1();
+                return true;
+            }
             // Only transparently retry when the server refused the stream
             // before producing any of it (REFUSED_STREAM after HEADERS would
             // be a server bug, but retrying then re-streams a body prefix
@@ -1219,146 +1117,42 @@ impl ClientSession {
                     HTTPRequestBody::Bytes(_)
                 )
             {
-                client.h2_retry();
+                client.retry_from_h2();
             } else {
-                client.h2_fail(err);
+                client.fail(err);
             }
             return true;
         }
 
-        if stream.headers_ready {
-            stream.headers_ready = false;
-            let (result, response) = match client
-                .apply_multiplexed_headers(stream.status_code, &stream.decoded_headers)
-            {
-                Ok(r) => r,
-                Err(err) => {
-                    self.rst_stream(stream, wire::ErrorCode::CANCEL);
-                    let _ = self.flush();
-                    stream.client = None;
-                    client.h2 = None;
-                    client.h2_fail(err);
-                    return true;
-                }
-            };
-            // handleResponseMetadata set is_redirect_pending. The doRedirect
-            // contract assumes the caller already detached the stream.
-            // Detach + RST here unconditionally so the
-            // header_progress path below can never re-enter doRedirect via
-            // progressUpdate while the old Stream still points at this
-            // client — that path would attach a second Stream to the same
-            // HTTPClient and the first one's `stream.client` becomes a
-            // dangling pointer once the request completes.
-            if client.state.flags.is_redirect_pending {
-                self.rst_stream(stream, wire::ErrorCode::CANCEL);
-                let _ = self.flush();
-                stream.client = None;
-                client.h2 = None;
-                client.h2_do_redirect(self.ctx, self.socket);
-                return true;
-            }
-            // Deep-copy before detaching: `response` borrows
-            // `stream.decoded_headers`.
-            client.h2_clone_metadata(&response);
-            // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an
-            // SSE content-type), which would make the headerProgress update
-            // below terminal and free `client` while the stream still holds it.
-            if result == HeaderResult::Finished
-                || (stream.remote_closed() && stream.body_buffer.is_empty())
-                || client.state.is_done()
-            {
-                stream.client = None;
-                client.h2 = None;
-                client.state.flags.received_last_chunk = true;
-                // .finished = HEAD/204/304: no body is expected regardless of
-                // any Content-Length header, so clear it. Otherwise leave the
-                // parsed value so finishStream() enforces §8.1.1 against the
-                // (zero) bytes actually received.
-                if result == HeaderResult::Finished {
-                    client.state.content_length = Some(0);
-                }
-                return self.finish_stream(stream, client);
-            }
-            // Mirror the h1 path: deliver headers
-            // to JS now so `await fetch()` resolves and `getReader()` can enable
-            // response_body_streaming. Without this, a content-length response
-            // buffers the entire body before the Response promise settles.
-            if client.signals.get(signals::Field::HeaderProgress) {
-                client.h2_progress_update(self.ctx, self.socket);
-            }
-        }
-
-        if client.state.response_stage != HTTPStage::Body {
+        if stream.status_code == 0 {
             return false;
         }
-
-        if !stream.body_buffer.is_empty() {
-            let terminal = stream.remote_closed();
-            if terminal {
-                client.state.flags.received_last_chunk = true;
-                stream.client = None;
-                client.h2 = None;
+        let head = core::mem::take(&mut stream.headers_ready)
+            .then_some((stream.status_code, stream.decoded_headers.as_slice()));
+        let mut progress =
+            client.receive_from_stream(head, &stream.body_buffer, stream.remote_closed());
+        stream.body_buffer.clear();
+        if let Ok(StreamProgress::Open { report }) = progress {
+            if !report {
+                return false;
             }
-            let report = match client.h2_handle_response_body(&stream.body_buffer, false) {
-                Ok(r) => r,
-                Err(err) => {
-                    stream.body_buffer.clear();
-                    self.rst_stream(stream, wire::ErrorCode::CANCEL);
-                    let _ = self.flush();
-                    if !terminal {
-                        stream.client = None;
-                        client.h2 = None;
-                    }
-                    client.h2_fail(err);
-                    return true;
+            match client.send_progress() {
+                Ok(_) => return false,
+                Err(err) => progress = Err(err),
+            }
+        }
+        // `handle_data` resets a stream that the server still has open.
+        stream.client = None;
+        client.carrier = Carrier::None;
+        match progress {
+            Ok(StreamProgress::Redirect) => client.follow_redirect(),
+            Ok(_) => {
+                if let Err(err) = client.send_progress() {
+                    client.fail(err);
                 }
-            };
-            stream.body_buffer.clear();
-            if terminal {
-                return self.finish_stream(stream, client);
             }
-            if report {
-                // handleResponseBody may report completion before END_STREAM
-                // (Content-Length satisfied). The terminal progressUpdate
-                // path frees the AsyncHTTP that owns `client`, so detach
-                // first; the trailing END_STREAM/trailers land on a stream
-                // we no longer track and are discarded.
-                if client.state.is_done() {
-                    stream.client = None;
-                    client.h2 = None;
-                    client.h2_progress_update(self.ctx, self.socket);
-                    return true;
-                }
-                client.h2_progress_update(self.ctx, self.socket);
-            }
-            return false;
+            Err(err) => client.fail(err),
         }
-
-        if stream.remote_closed() {
-            stream.client = None;
-            client.h2 = None;
-            if let Err(err) = client.state.finalize_body_on_eof() {
-                client.h2_fail(err);
-                return true;
-            }
-            return self.finish_stream(stream, client);
-        }
-
-        false
-    }
-
-    /// Terminal delivery: enforce the announced Content-Length (RFC 9113
-    /// §8.1.1 — mismatch is malformed) and hand off to progressUpdate.
-    /// `total_body_received` is clamped at content_length by the body handler,
-    /// so compare the raw DATA byte count instead — that catches overshoot too.
-    fn finish_stream(&mut self, stream: &mut Stream, client: &mut HTTPClient) -> bool {
-        if let Some(cl) = client.state.content_length {
-            if stream.data_bytes_received != cl as u64 {
-                client.h2_fail(crate::Error::HTTP2ContentLengthMismatch);
-                return true;
-            }
-        }
-        client.h2_progress_update(self.ctx, self.socket);
         true
     }
 }
@@ -1368,7 +1162,7 @@ impl Drop for ClientSession {
         super::live_sessions.fetch_sub(1, Ordering::Relaxed);
         debug_assert!(self.registry_index.get() == u32::MAX);
         // hpack: HpackHandle drops automatically (lshpack_wrapper_deinit).
-        // write_buffer / read_buffer / pending_attach / orphan_header_block /
+        // write_buffer / read_buffer / pending_attach / header_block /
         // encode_scratch / hostname / ssl_config are dropped automatically.
         for &e in self.streams.values() {
             drop_stream(e);

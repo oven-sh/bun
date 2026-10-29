@@ -35,30 +35,25 @@ typedef struct uws_h3_res_s uws_h3_res_t;
 typedef struct uws_h3_req_s uws_h3_req_t;
 
 typedef void (*uws_h3_method_handler)(uws_h3_res_t*, uws_h3_req_t*, void*);
-typedef void (*uws_h3_listen_handler)(us_quic_listen_socket_t*, void*);
+typedef void (*uws_h3_listen_handler)(us_quic_udp_t*, void*);
 
 /* ───── app ───── */
 
-uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s)
+uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s, uint64_t max_request_body_size)
 {
-    static int once = (us_quic_global_init(), 1);
-    (void)once;
-    uWS::SocketContextOptions sco;
-    static_assert(sizeof(sco) == sizeof(options));
-    memcpy(&sco, &options, sizeof(sco));
-    return (uws_h3_app_t*)H3App::create(sco, idle_timeout_s);
+    return (uws_h3_app_t*)H3App::create(options, idle_timeout_s, max_request_body_size);
 }
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
+void uws_h3_app_on_released(uws_h3_app_t* app, void (*cb)(void*), void* user) { ((H3App*)app)->onReleased(cb, user); }
+bool uws_h3_app_is_released(uws_h3_app_t* app) { return ((H3App*)app)->isReleased(); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
     struct us_bun_socket_context_options_t options)
 {
-    uWS::SocketContextOptions sco;
-    memcpy(&sco, &options, sizeof(sco));
-    return ((H3App*)app)->addServerNameWithOptions(hostname, sco);
+    return ((H3App*)app)->addServerNameWithOptions(hostname, options);
 }
 
 #define H3_ROUTE(name, method)                                                                       \
@@ -86,17 +81,17 @@ void uws_h3_app_listen_with_config(uws_h3_app_t* app, const char* host, uint16_t
     int32_t options, uws_h3_listen_handler handler, void* user_data)
 {
     std::string h = host && host[0] ? std::string(host) : std::string {};
-    ((H3App*)app)->listen(h, port, options, [handler, user_data](us_quic_listen_socket_t* ls) {
+    ((H3App*)app)->listen(h, port, options, [handler, user_data](us_quic_udp_t* ls) {
         handler(ls, user_data);
     });
 }
 
-int uws_h3_listen_socket_port(us_quic_listen_socket_t* ls) { return us_quic_listen_socket_port(ls); }
-int uws_h3_listen_socket_local_address(us_quic_listen_socket_t* ls, char* buf, int len)
+int uws_h3_listen_socket_port(us_quic_udp_t* ls) { return us_quic_listen_socket_port(ls); }
+int uws_h3_listen_socket_local_address(us_quic_udp_t* ls, char* buf, int len)
 {
     return us_quic_listen_socket_local_address(ls, buf, len);
 }
-void uws_h3_listen_socket_close(us_quic_listen_socket_t* ls) { us_quic_listen_socket_close(ls); }
+void uws_h3_listen_socket_close(us_quic_udp_t* ls) { us_quic_listen_socket_close(ls); }
 
 /* ───── response ───── */
 
@@ -116,10 +111,11 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
     r->sendTerminatingChunk(close_connection);
 }
 
+/* RESET_STREAM, not FIN: a FIN would make a truncated body look complete. */
 void uws_h3_res_force_close(uws_h3_res_t* res)
 {
     ((Http3Response*)res)->clearOnWritableAndAborted();
-    us_quic_stream_close((us_quic_stream_t*)res);
+    us_quic_stream_reset((us_quic_stream_t*)res, US_QUIC_H3_INTERNAL_ERROR);
 }
 
 bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)
@@ -127,11 +123,13 @@ bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t
     return ((Http3Response*)res)->tryEnd(sv(bytes, len), total_len, close).first;
 }
 
-void uws_h3_res_end_without_body(uws_h3_res_t* res, bool close_connection)
+bool uws_h3_res_accept_request_body(uws_h3_res_t* res) { return ((Http3Response*)res)->acceptRequestBody(); }
+
+void uws_h3_res_end_without_body(uws_h3_res_t* res)
 {
     Http3Response* r = (Http3Response*)res;
     r->clearOnWritableAndAborted();
-    r->endWithoutBody(std::nullopt, close_connection);
+    r->endWithoutBody();
 }
 
 void uws_h3_res_pause(uws_h3_res_t* res) { ((Http3Response*)res)->pause(); }
@@ -154,17 +152,6 @@ void uws_h3_res_write_header_int(uws_h3_res_t* res, const char* key, size_t key_
     ((Http3Response*)res)->writeHeader(sv(key, key_len), value);
 }
 
-void uws_h3_res_mark_wrote_content_length_header(uws_h3_res_t* res)
-{
-    ((Http3Response*)res)->getHttpResponseData()->state |= Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-}
-
-void uws_h3_res_mark_wrote_date_header(uws_h3_res_t* res)
-{
-    ((Http3Response*)res)->getHttpResponseData()->state |= Http3ResponseData::HTTP_WROTE_DATE_HEADER;
-}
-
-void uws_h3_res_write_mark(uws_h3_res_t* res) { ((Http3Response*)res)->writeMark(); }
 void uws_h3_res_flush_headers(uws_h3_res_t* res, bool) { ((Http3Response*)res)->flushHeaders(); }
 
 bool uws_h3_res_write(uws_h3_res_t* res, const char* data, size_t* length)
@@ -267,6 +254,8 @@ size_t uws_h3_req_get_method(uws_h3_req_t* req, const char** dest)
 {
     return ffi_sv(((Http3Request*)req)->getMethod(), dest);
 }
+
+uint64_t uws_h3_req_get_content_length(uws_h3_req_t* req) { return ((Http3Request*)req)->getContentLength(); }
 
 size_t uws_h3_req_get_header(uws_h3_req_t* req, const char* lower, size_t lower_len, const char** dest)
 {

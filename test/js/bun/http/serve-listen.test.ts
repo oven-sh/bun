@@ -1,9 +1,11 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
+import { getSystemErrorName } from "node:util";
 
 const networks = Object.values(networkInterfaces()).flat() as NetworkInterfaceInfo[];
 const hasIPv4 = networks.some(({ family }) => family === "IPv4");
@@ -116,7 +118,8 @@ describe.each([
       ? {
           protocol: "unix:",
           pathname: unix.substring(unix.indexOf(":") + 1),
-          hostname: unix.substring(0, unix.indexOf(":")),
+          // "C:" is the URL's host, where a raw ":" would start a port.
+          hostname: unix.substring(0, unix.indexOf(":")) + "%3A",
           port: "",
         }
       : {
@@ -161,6 +164,44 @@ describe.each([
   });
 });
 
+// "localhost" usually resolves to both ::1 and 127.0.0.1.
+test("throws EADDRINUSE when another server holds the port on localhost", () => {
+  using occupant = serve({ hostname: "localhost", port: 0, fetch: () => new Response() });
+  const { port } = occupant;
+  for (const listen of [
+    () => serve({ hostname: "localhost", port, fetch: () => new Response() }),
+    () => Bun.listen({ hostname: "localhost", port: port!, socket: { data() {} } }),
+  ]) {
+    expect(() => listen().stop(true)).toThrow(expect.objectContaining({ code: "EADDRINUSE" }));
+  }
+});
+
+// Linux refuses [::]:port while a listener holds [::1]:port.
+test.skipIf(!isLinux || !hasIPv6)(
+  "without a hostname, falls back to 0.0.0.0 when the port is only taken on IPv6",
+  () => {
+    using occupant = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
+    using server = serve({ port: occupant.port, fetch: () => new Response() });
+    expect((server as any).address).toEqual({ address: "0.0.0.0", family: "IPv4", port: occupant.port });
+  },
+);
+
+test.skipIf(isWindows)("rejects a unix socket path with a null byte instead of truncating it", async () => {
+  const dir = tmpdirSync();
+  const unix = join(dir, "nul\0byte.sock");
+  for (const listen of [
+    () => serve({ unix, fetch: () => new Response() }),
+    () => Bun.listen({ unix, socket: { data() {} } }),
+  ]) {
+    expect(() => listen().stop(true)).toThrow(expect.objectContaining({ code: "EINVAL" }));
+  }
+  expect(existsSync(join(dir, "nul"))).toBe(false);
+
+  // A listener at the truncated path must not be reachable through the longer one.
+  using truncated = Bun.listen({ unix: join(dir, "nul"), socket: { data() {} } });
+  await expect(Bun.connect({ unix, socket: { data() {} } })).rejects.toMatchObject({ code: "EINVAL" });
+});
+
 // A name that cannot be a host name (a space, a colon, an empty label,
 // brackets around anything but an IPv6 literal) is rejected in-process with the
 // resolver's ENOTFOUND, the error Bun.connect reports for the same name. The
@@ -180,10 +221,11 @@ describe.each([
       } catch (e) {
         error = e;
       }
-      const { name, code, syscall, hostname: errHostname, message } = error ?? {};
-      expect({ name, code, syscall, hostname: errHostname, message }).toEqual({
+      const { name, code, errno, syscall, hostname: errHostname, message } = error ?? {};
+      expect({ name, code, errno, syscall, hostname: errHostname, message }).toEqual({
         name: "Error",
         code: "ENOTFOUND",
+        errno: -3008,
         syscall: "getaddrinfo",
         hostname,
         message: `getaddrinfo ENOTFOUND ${hostname}`,
@@ -263,4 +305,118 @@ test.skipIf(!isLinux)("server.address / server.port do not panic when getsocknam
   expect({ address: out.address, port: out.port }).toEqual({ address: null, port: 0 });
   expect(out.url).not.toContain("65535");
   expect(out.url).not.toContain(":-1");
+});
+
+describe("Bun.serve() throws the error of the call that failed", () => {
+  // `errno` is the negative libuv number, as in Node.
+  const shape = ({ code, syscall, errno, message }: any) => ({
+    code,
+    syscall,
+    errno: errno < 0 ? getSystemErrorName(errno) : errno,
+    message,
+  });
+
+  test.skipIf(!hasIPv4).each([
+    ["127.0.0.1", { hostname: "127.0.0.1" }],
+    ["every address", {}],
+  ])("EADDRINUSE for a port that is in use on %s", (_, address) => {
+    using occupant = serve({ ...address, port: 0, fetch: () => new Response() });
+    let error: unknown;
+    try {
+      serve({ ...address, port: occupant.port, fetch: () => new Response() }).stop(true);
+    } catch (e) {
+      error = shape(e);
+    }
+    expect(error).toEqual({
+      code: "EADDRINUSE",
+      syscall: "listen",
+      errno: "EADDRINUSE",
+      message: `Failed to start server. Is port ${occupant.port} in use?`,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/30363
+  const isRoot = process.getuid?.() === 0;
+  // root can bind any port, so the child drops to nobody.
+  const asNobody = isRoot ? { uid: 65534, gid: 65534 } : {};
+  const refusesPort80 = (() => {
+    if (isWindows) return false;
+    if (isLinux) {
+      try {
+        if (Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8")) <= 80) return false;
+      } catch {}
+    }
+    if (!isRoot) return true;
+    try {
+      return Bun.spawnSync({ cmd: [bunExe(), "--version"], env: bunEnv, ...asNobody }).exitCode === 0;
+    } catch {
+      return false;
+    }
+  })();
+  test.skipIf(!refusesPort80)("EACCES for a privileged port", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+          Bun.serve({ hostname: "127.0.0.1", port: 80, fetch: () => new Response() }).stop(true);
+          console.log("listening");
+        } catch ({ code, syscall, errno, message }) {
+          console.log(JSON.stringify({ code, syscall, errno, message }));
+        }`,
+      ],
+      env: bunEnv,
+      ...asNobody,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(shape(JSON.parse(stdout))).toEqual({
+      code: "EACCES",
+      syscall: "listen",
+      errno: "EACCES",
+      message: "permission denied 127.0.0.1:80",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  const facts = (listen: () => { stop(closeActiveConnections: boolean): unknown }) => {
+    try {
+      listen().stop(true);
+      return "listening";
+    } catch ({ code, errno, syscall, address, port, path }: any) {
+      return { code, errno: getSystemErrorName(errno), syscall, address, port, path };
+    }
+  };
+
+  test.skipIf(isWindows || !hasIPv4)("with the properties Bun.listen() gives the same failure", () => {
+    using dir = tempDir("serve-listen-error", {});
+    using occupant = serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const missing = join(String(dir), "missing", "a.sock");
+    const tooLong = join(String(dir), Buffer.alloc(200, "a").toString() + ".sock");
+    const rows = [
+      [
+        { hostname: "127.0.0.1", port: occupant.port },
+        { code: "EADDRINUSE", address: "127.0.0.1", port: occupant.port },
+      ],
+      [{ unix: missing }, { code: "ENOENT", address: missing, path: missing }],
+      [{ unix: tooLong }, { code: "ENAMETOOLONG", address: tooLong, path: tooLong }],
+    ] as const;
+    for (const [address, { code, ...rest }] of rows) {
+      const expected = { port: undefined, path: undefined, ...rest, code, errno: code, syscall: "listen" };
+      expect(facts(() => serve({ ...address, fetch: () => new Response() }))).toEqual(expected);
+      expect(facts(() => Bun.listen({ ...address, socket: { data() {} } } as Bun.UnixSocketOptions))).toEqual(expected);
+    }
+  });
+
+  test.skipIf(isWindows)("Bun.listen({ fd }) reports the code listen() failed with", () => {
+    using dir = tempDir("serve-listen-fd", { "file.txt": "" });
+    const fd = openSync(join(String(dir), "file.txt"), "r");
+    const listen = () => Bun.listen({ fd, socket: { data() {} } } as any);
+    const expected = { syscall: "listen", address: undefined, port: undefined, path: undefined };
+    expect(facts(listen)).toEqual({ ...expected, code: "ENOTSOCK", errno: "ENOTSOCK" });
+    closeSync(fd);
+    expect(facts(listen)).toEqual({ ...expected, code: "EBADF", errno: "EBADF" });
+  });
 });

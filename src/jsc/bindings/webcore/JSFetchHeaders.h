@@ -21,6 +21,7 @@
 #pragma once
 
 #include "FetchHeaders.h"
+#include "JSDOMIterator.h"
 #include "JSDOMWrapper.h"
 
 namespace WebCore {
@@ -38,6 +39,8 @@ public:
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
     static FetchHeaders* toWrapped(JSC::VM&, JSC::JSValue);
+    // toWrapped() for a HeadersInit. Returns null if Symbol.iterator isn't Headers.prototype.entries, so Web IDL converts through it.
+    static FetchHeaders* toWrappedAsInit(JSC::JSValue);
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
@@ -81,5 +84,10 @@ template<> struct JSDOMWrapperConverterTraits<FetchHeaders> {
 };
 
 JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl);
+
+struct FetchHeadersIteratorTraits;
+using FetchHeadersIteratorBase = JSDOMIteratorBase<JSFetchHeaders, FetchHeadersIteratorTraits>;
+template<> const JSC::ClassInfo FetchHeadersIteratorBase::s_info;
+JSC::JSObject* fetchHeadersIteratorPrototype(JSDOMGlobalObject&);
 
 } // namespace WebCore

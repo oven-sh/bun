@@ -3,7 +3,6 @@
 pub mod error;
 pub use error::{Error, Result};
 
-use core::cell::RefCell;
 use core::mem::MaybeUninit;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
@@ -70,20 +69,32 @@ pub mod whatwg {
         safe fn URL__pathname(url: &URL) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__deinit(url: *mut URL);
-        safe fn URL__getHref(input: &String) -> String;
+        safe fn URL__getHref(input: &String, exclude_fragment: bool) -> String;
         safe fn URL__getFileURLString(input: &String) -> String;
         safe fn URL__pathFromFileURL(input: &String) -> String;
-        safe fn URL__getHrefJoin(base: &String, relative: &String) -> String;
+        safe fn URL__getHrefJoin(
+            base: &String,
+            relative: &String,
+            exclude_fragment: bool,
+        ) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
-        URL__getHref(str)
+        URL__getHref(str, false)
+    }
+    /// [`href_from_string`], serialized with the URL Standard's *exclude fragment* flag.
+    pub fn href_from_string_without_fragment(str: &String) -> String {
+        URL__getHref(str, true)
     }
     pub fn join(base: &String, relative: &String) -> String {
-        URL__getHrefJoin(base, relative)
+        URL__getHrefJoin(base, relative, false)
+    }
+    /// [`join`], serialized with the URL Standard's *exclude fragment* flag.
+    pub fn join_without_fragment(base: &String, relative: &String) -> String {
+        URL__getHrefJoin(base, relative, true)
     }
     pub fn file_url_from_string(str: &String) -> String {
         URL__getFileURLString(str)
@@ -158,7 +169,7 @@ pub mod whatwg {
             URL__fromString(str).map(Self)
         }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
-            Self::from_string(&String::borrow_utf8(input))
+            Self::from_string(&bun_core::StringView::borrow_utf8(input))
         }
     }
 
@@ -180,7 +191,8 @@ pub mod whatwg {
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
 pub use whatwg::{
-    file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
+    file_url_from_string, href_from_string, href_from_string_without_fragment, join,
+    join_without_fragment, origin_from_slice, path_from_file_url,
 };
 
 /// Where the authority ends, which is where the search for the `@` of the userinfo stops.
@@ -211,7 +223,6 @@ pub struct URL<'a> {
     pub(crate) search: &'a [u8],
     pub(crate) search_params: Option<QueryStringMap>,
     pub username: &'a [u8],
-    pub(crate) port_was_automatically_set: bool,
     /// The rule `parse` used, so `href_without_userinfo` cuts the same bytes.
     pub(crate) authority_end: AuthorityEnd,
 }
@@ -232,7 +243,6 @@ impl<'a> Default for URL<'a> {
             search: b"",
             search_params: None,
             username: b"",
-            port_was_automatically_set: false,
             authority_end: AuthorityEnd::LikeNewURL,
         }
     }
@@ -323,7 +333,6 @@ impl<'a> URL<'a> {
             search: d(self.search),
             search_params: self.search_params,
             username: d(self.username),
-            port_was_automatically_set: self.port_was_automatically_set,
             authority_end: self.authority_end,
         }
     }
@@ -557,8 +566,9 @@ impl<'a> URL<'a> {
         bun_core::ip_address::is_ip_address(self.hostname)
     }
 
+    /// A URL without a port uses its scheme's default port.
     pub fn has_valid_port(&self) -> bool {
-        self.get_port().unwrap_or(0) > 0
+        self.port.is_empty() || self.get_port().unwrap_or(0) > 0
     }
 
     pub fn is_empty(&self) -> bool {
@@ -988,7 +998,6 @@ pub struct QueryStringMap {
     slice: *const [u8],
     pub(crate) buffer: Vec<u8>,
     pub(crate) list: ParamList,
-    pub(crate) name_count: Option<usize>,
 }
 
 impl Clone for QueryStringMap {
@@ -1013,28 +1022,13 @@ impl Clone for QueryStringMap {
             slice,
             buffer,
             list: self.list.clone(),
-            name_count: self.name_count,
         }
     }
-}
-
-thread_local! {
-    // Unused in current code (commented-out path in get_name_count).
-    static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([std::ptr::from_ref::<[u8]>(&[]); 8]) };
 }
 
 impl QueryStringMap {
     pub fn get_name_count(&self) -> usize {
         self.list.len()
-        // if (this.name_count == null) {
-        //     var count: usize = 0;
-        //     var iterate = this.iter();
-        //     while (iterate.next(&_name_count) != null) {
-        //         count += 1;
-        //     }
-        //     this.name_count = count;
-        // }
-        // return this.name_count.?;
     }
 
     pub fn iter(&self) -> Iterator<'_> {
@@ -1202,7 +1196,6 @@ impl QueryStringMap {
             list,
             buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 
@@ -1256,7 +1249,6 @@ impl QueryStringMap {
                 buffer: Vec::new(),
                 // `slice` borrows the caller's query_string; lifetime not tracked here
                 slice: std::ptr::from_ref::<[u8]>(query_string),
-                name_count: None,
             }));
         }
 
@@ -1330,7 +1322,6 @@ impl QueryStringMap {
             list,
             buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 }

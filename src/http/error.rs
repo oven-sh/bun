@@ -67,12 +67,8 @@ pub enum Error {
     RequestBodyLengthMismatch,
     #[error("UnsupportedRedirectProtocol")]
     UnsupportedRedirectProtocol,
-    #[error("RedirectURLTooLong")]
-    RedirectURLTooLong,
     #[error("RedirectURLInvalid")]
     RedirectURLInvalid,
-    #[error("InvalidRedirectURL")]
-    InvalidRedirectURL,
     #[error("UnexpectedRedirect")]
     UnexpectedRedirect,
     #[error("ShortRead")]
@@ -299,9 +295,7 @@ impl Error {
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
             Self::RequestBodyLengthMismatch => "RequestBodyLengthMismatch",
             Self::UnsupportedRedirectProtocol => "UnsupportedRedirectProtocol",
-            Self::RedirectURLTooLong => "RedirectURLTooLong",
             Self::RedirectURLInvalid => "RedirectURLInvalid",
-            Self::InvalidRedirectURL => "InvalidRedirectURL",
             Self::UnexpectedRedirect => "UnexpectedRedirect",
             Self::ShortRead => "ShortRead",
             Self::WantRead => "WantRead",
@@ -374,7 +368,8 @@ impl From<bun_picohttp::ParseResponseError> for Error {
     fn from(e: bun_picohttp::ParseResponseError) -> Self {
         match e {
             bun_picohttp::ParseResponseError::ShortRead => Error::ShortRead,
-            _ => Error::Picohttp(e),
+            bun_picohttp::ParseResponseError::TooManyHeaders => Error::ResponseHeadersTooLarge,
+            bun_picohttp::ParseResponseError::MalformedHttpResponse => Error::Picohttp(e),
         }
     }
 }

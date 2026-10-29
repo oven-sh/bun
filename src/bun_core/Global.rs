@@ -41,6 +41,26 @@ pub fn top_level_dir() -> &'static [u8] {
     *TOP_LEVEL_DIR.read()
 }
 
+static HAS_WORKING_DIRECTORY_IN_EXECUTABLE: AtomicBool = AtomicBool::new(false);
+static WORKING_DIRECTORY_IN_EXECUTABLE: crate::RwLock<Option<&'static [u8]>> =
+    crate::RwLock::new(None);
+
+/// `process.chdir()` into a folder that only the executable holds, without a separator at its end.
+pub fn set_working_directory_in_executable(directory: Option<&'static [u8]>) {
+    let mut current = WORKING_DIRECTORY_IN_EXECUTABLE.write();
+    *current = directory;
+    HAS_WORKING_DIRECTORY_IN_EXECUTABLE.store(directory.is_some(), Ordering::Release);
+}
+
+/// Where `process.cwd()`, `path.resolve()` and the path arguments of `node:fs` and `Bun.file()` start, if not in the system's working directory.
+#[inline]
+pub fn working_directory_in_executable() -> Option<&'static [u8]> {
+    if !HAS_WORKING_DIRECTORY_IN_EXECUTABLE.load(Ordering::Acquire) {
+        return None;
+    }
+    *WORKING_DIRECTORY_IN_EXECUTABLE.read()
+}
+
 /// Set by `bun_crash_handler::init()` once it has installed its segfault
 /// handlers. `raise_ignoring_panic_handler` consults this to decide whether
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
@@ -713,9 +733,12 @@ pub fn exit(code: u32) -> ! {
         // kills it. No args, no preconditions: `safe fn`.
         unsafe extern "C" {
             safe fn Bun__lockThreadSuspensionForExit();
+            safe fn bsd_shutdown_owned_sockets();
         }
         Bun__onExit();
         Bun__lockThreadSuspensionForExit();
+        // A POSIX kernel ends the connections an exiting process left open. Winsock resets them.
+        bsd_shutdown_owned_sockets();
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
         crate::windows_sys::kernel32::ExitProcess(code)
     }
@@ -862,40 +885,13 @@ unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
-/// The certificate authorities that TLS trusts when a connection names none, besides those in
-/// `NODE_EXTRA_CA_CERTS`.
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CAStore {
-    /// The bundled ones, and those in OpenSSL's default certificate file and directory.
-    Bundled = 0,
-    /// Those of `Bundled`, and the system's.
-    System = 1,
-    /// Only those in OpenSSL's default certificate file and directory.
-    OpenSSL = 2,
-}
-
-/// A `CAStore`. `root_certs.cpp` reads this when it builds the default certificate store. `Relaxed`
-/// is enough for it and for `PASSED_CA_STORE_FLAG`: they are written while the arguments are parsed,
-/// before there is another thread.
-#[unsafe(no_mangle)]
-static Bun__Node__CAStore: AtomicU8 = AtomicU8::new(CAStore::Bundled as u8);
-
-pub fn ca_store() -> CAStore {
-    match Bun__Node__CAStore.load(Ordering::Relaxed) {
-        store if store == CAStore::System as u8 => CAStore::System,
-        store if store == CAStore::OpenSSL as u8 => CAStore::OpenSSL,
-        _ => CAStore::Bundled,
-    }
-}
-
 const CA_STORE_FLAGS: [&CStr; 3] = [c"--use-system-ca", c"--use-openssl-ca", c"--use-bundled-ca"];
 
 pub fn is_ca_store_flag(arg: &[u8]) -> bool {
     CA_STORE_FLAGS.iter().any(|flag| flag.to_bytes() == arg)
 }
 
-/// Index into `CA_STORE_FLAGS`, or its length.
+/// Index into `CA_STORE_FLAGS`, or its length. `Relaxed` is enough: it is written while the arguments are parsed, before there is another thread.
 static PASSED_CA_STORE_FLAG: AtomicU8 = AtomicU8::new(CA_STORE_FLAGS.len() as u8);
 
 /// The one of `CA_STORE_FLAGS` that was passed, to pass on to a `bun` that this process spawns.
@@ -907,8 +903,7 @@ pub fn ca_store_flag() -> Option<&'static ZStr> {
         .map(ZStr::from_cstr)
 }
 
-/// Handles `CA_STORE_FLAGS`. Exits with an error if more than one is passed, and falls back to
-/// `NODE_USE_SYSTEM_CA` if none is.
+/// Handles `CA_STORE_FLAGS`. Exits with an error if more than one is passed.
 pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
     let passed = CA_STORE_FLAGS.map(|flag| has_flag(flag.to_bytes()));
     let count = passed.iter().filter(|&&passed| passed).count();
@@ -918,20 +913,42 @@ pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
         );
         exit(1);
     }
-    let store = match passed {
-        [true, ..] => CAStore::System,
-        // Node exits if `NODE_USE_SYSTEM_CA=1` comes with this flag:
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L212
-        // Here a `.env` file can set the variable for the processes that this one spawns, which get
-        // the flag too.
-        [_, true, _] => CAStore::OpenSSL,
-        [_, _, true] => CAStore::Bundled,
-        _ if crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) => CAStore::System,
-        _ => CAStore::Bundled,
-    };
-    Bun__Node__CAStore.store(store as u8, Ordering::Relaxed);
     let index = passed.iter().position(|&passed| passed);
     PASSED_CA_STORE_FLAG.store(index.unwrap_or(passed.len()) as u8, Ordering::Relaxed);
+}
+
+/// The roots in the default certificate store, besides `NODE_EXTRA_CA_CERTS` and OpenSSL's default paths.
+#[repr(C)]
+struct DefaultCASources {
+    bundled: bool,
+    system: bool,
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__defaultCASources() -> DefaultCASources {
+    let (bundled, system) = match ca_store_flag().map(ZStr::as_bytes) {
+        Some(b"--use-system-ca") => (true, true),
+        // Node exits if `NODE_USE_SYSTEM_CA=1` comes with this flag. Here a `.env` file can set the variable for the processes that this one spawns, which get the flag too.
+        Some(b"--use-openssl-ca") => (false, false),
+        // Read when asked, not at startup: a compiled executable parses no flags.
+        _ => (
+            true,
+            crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false),
+        ),
+    };
+    DefaultCASources { bundled, system }
+}
+
+/// The `tls.getCACertificates()` types that make up `"default"`. OpenSSL's default paths have no type, as in Node.
+pub fn default_ca_certificate_types() -> impl Iterator<Item = &'static str> {
+    let sources = Bun__defaultCASources();
+    [
+        (sources.bundled, "bundled"),
+        (sources.system, "system"),
+        (true, "extra"),
+    ]
+    .into_iter()
+    .filter_map(|(used, name)| used.then_some(name))
 }
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are

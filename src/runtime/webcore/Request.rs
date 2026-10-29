@@ -5,26 +5,26 @@ use core::ptr::NonNull;
 use std::borrow::Cow;
 
 use bun_jsc::JsCell;
-use enumset::EnumSet;
 
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::generated_bindgen::response::js_Request as js;
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
+use crate::webcore::fetch::request_init::{self, InitSources};
 use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
-use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
+use crate::webcore::{AbortSignal, Blob, CookieMap, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringView, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
-use bun_http_jsc::method_jsc::MethodJsc as _;
+use bun_http_jsc::method_jsc::{self, MethodJsc as _};
 use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
-use bun_http_types::Method::Method;
+use bun_http_types::Method::{Method, OwnedMethod};
 use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
@@ -81,13 +81,13 @@ pub(crate) struct Request {
     /// once before `Box::from_raw().drop()` (which would otherwise re-run it).
     body: ManuallyDrop<BodyHiveHandle>,
     js_ref: JsCell<JsRef>,
-    pub method: Method,
-    pub(crate) flags: Flags,
+    pub method: OwnedMethod,
     pub(crate) request_context: AnyRequestContext,
     /// The JS wrapper holds the only ref, so `destroy` runs when it is collected.
     ref_count: Cell<u32>,
     /// Bun.serve's RequestContext holds a weak reference, which can outlive the wrapper.
     pub(crate) weak_ptr_data: WeakPtrData,
+    pub(crate) flags: Flags,
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
 }
@@ -158,21 +158,12 @@ impl BodyMixin for Request {
         Request::get_body_value(self)
     }
     #[inline]
-    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Opaque C++ handle. Return the raw `*mut`
-        // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
-        // going through `as_deref()` would derive it from a `&FetchHeaders`
-        // and make the later `as_mut()` UB under Stacked Borrows.
-        self.headers.get().as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr())
-                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
-        })
+    fn get_content_type(&self) -> Option<bun_core::Utf8Bytes<'_>> {
+        Request::get_content_type(self)
     }
     #[inline]
-    fn get_form_data_encoding(
-        &self,
-    ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        Request::get_form_data_encoding(self)
+    fn ensure_headers(&self, global_this: &JSGlobalObject) -> bun_jsc::JsResult<()> {
+        self.ensure_fetch_headers(global_this).map(|_| ())
     }
 }
 
@@ -231,9 +222,9 @@ impl Request {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<&mut HeadersRef> {
-        if self.headers.get().is_some() {
+        if let Some(headers) = self.headers_mut() {
             // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+            return Ok(headers);
         }
 
         if let Some(req) = self.request_context.get_request() {
@@ -243,36 +234,20 @@ impl Request {
             )));
         } else {
             // we don't have a request context, so we need to create an empty headers object
-            self.headers.set(Some(HeadersRef::create_empty()));
-            // Snapshot the pointer first; it stays valid across the field borrow.
-            let content_type: Option<*const [u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => {
-                    Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
-                }
-                BodyValue::Locked(locked) => match locked.readable.get() {
-                    Some(readable) => match readable.ptr {
-                        crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
-                            // for as long as the readable stream exists; we only read
-                            // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.get().as_slice() };
-                            Some(std::ptr::from_ref::<[u8]>(ct))
-                        }
-                        _ => None,
-                    },
-                    None => None,
-                },
-                _ => None,
-            };
-
-            if let Some(content_type_) = content_type {
-                // SAFETY: the sources above are live for the duration of this
-                // call; the bytes are copied into the header map below.
-                let content_type_ = unsafe { &*content_type_ };
-                if !content_type_.is_empty() {
-                    self.headers_mut().as_mut().unwrap().put(
+            let headers = self.headers_mut().insert(HeadersRef::create_empty());
+            let body = self.body_value();
+            body.put_content_type_default(headers, global_this)?;
+            // Only this header list takes the type of a Blob whose unread stream() is the body.
+            if let BodyValue::Locked(locked) = body
+                && let Some(readable) = locked.readable.get()
+                && let crate::webcore::readable_stream::Source::Blob(loader) = readable.ptr
+            {
+                // SAFETY: `locked.readable` holds the stream, which keeps its `ByteBlobLoader` alive.
+                let content_type = unsafe { (*loader).content_type.get() };
+                if !content_type.is_empty() {
+                    headers.put_default(
                         HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type_),
+                        &StringView::ascii(content_type.as_slice()),
                         global_this,
                     )?;
                 }
@@ -328,29 +303,22 @@ impl Request {
         Ok(None)
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
-        if let Some(req) = self.request_context.get_request() {
+    pub(crate) fn get_content_type(&self) -> Option<bun_core::Utf8Bytes<'_>> {
+        // The header list has what the handler changed, so the request it was made from comes second.
+        if let Some(headers) = self.headers_mut().as_mut() {
+            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
+                return Some(value.to_utf8());
+            }
+        } else if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             if let Some(value) = req.header(b"content-type") {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
+                return Some(bun_core::Utf8Bytes::Borrowed(value));
             }
         }
 
-        if let Some(headers) = self.headers_mut().as_mut() {
-            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_utf8()));
-            }
-        }
-
-        if let BodyValue::Blob(blob) = self.body_value() {
-            let ct = blob.content_type_slice();
-            if !ct.is_empty() {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
-            }
-        }
-
-        Ok(None)
+        let content_type = self.body_value().content_type().as_slice();
+        (!content_type.is_empty()).then_some(bun_core::Utf8Bytes::Borrowed(content_type))
     }
 }
 
@@ -367,9 +335,7 @@ impl Request {
             .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }
 
-    /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
-    /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
-    /// so it needs the same fetch-spec step-1 usability check.
+    /// `BunRequest.prototype.clone` (`JSBunRequest::clone`) calls this, not [`Self::do_clone`], so it needs the same check.
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<NonNull<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
@@ -406,7 +372,7 @@ impl Request {
         url: BunString,
         headers: Option<HeadersRef>,
         body: BodyHiveHandle,
-        method: Method,
+        method: OwnedMethod,
     ) -> Request {
         Request {
             url: JsCell::new(url),
@@ -421,21 +387,6 @@ impl Request {
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }
-    }
-
-    pub(crate) fn get_form_data_encoding(
-        &self,
-    ) -> JsResult<Option<Box<crate::webcore::form_data::AsyncFormData>>> {
-        let Some(content_type_slice) = self.get_content_type()? else {
-            return Ok(None);
-        };
-        let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
-        else {
-            return Ok(None);
-        };
-        Ok(Some(crate::webcore::form_data::AsyncFormData::init(
-            encoding,
-        )))
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
@@ -541,7 +492,7 @@ impl Request {
             )?;
 
             // Wire-form token (e.g. "M-SEARCH"), not the Rust Debug variant identifier.
-            writer.write_str(self.method.as_str())?;
+            write!(writer, "{}", bstr::BStr::new(self.method.as_bytes()))?;
             writer.write_str("\"")?;
             formatter
                 .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
@@ -686,7 +637,10 @@ impl Request {
     }
 
     pub(crate) fn get_method(&self, cx: &mut JsScope<'_>) -> JSValue {
-        self.method.to_js(cx.global())
+        match &self.method {
+            OwnedMethod::Known(method) => method.to_js(cx.global()),
+            OwnedMethod::Token(token) => bun_core::EncodedSlice::latin1(token).to_js(cx.global()),
+        }
     }
 
     pub(crate) fn get_mode(&self, cx: &mut JsScope<'_>) -> JSValue {
@@ -885,7 +839,7 @@ impl Request {
 
                         debug_assert!(self.size_of_url() == url.len());
 
-                        let href = bun_url::href_from_string(&BunString::from_bytes(url));
+                        let href = bun_url::href_from_string(&StringView::from_bytes(url));
                         if !href.is_empty() {
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
                                 self.url.set(BunString::clone_latin1(&url[..href.length()]));
@@ -937,23 +891,36 @@ impl Request {
     }
 }
 
-#[derive(enumset::EnumSetType)]
-enum Fields {
-    Method,
-    Headers,
-    Body,
-    // Referrer,
-    // ReferrerPolicy,
-    Mode,
-    // Credentials,
-    Redirect,
-    Cache,
-    // Integrity,
-    // Keepalive,
-    Signal,
-    // Proxy,
-    // Timeout,
-    Url,
+/// A Request or Response that nothing has tampered with is copied from its fields, not through its getters.
+pub(crate) enum Pristine<'a> {
+    Request(&'a Request),
+    Response(&'a Response),
+    No,
+}
+
+impl Pristine<'_> {
+    /// `value` is an object.
+    pub(crate) fn of(value: JSValue) -> Self {
+        if value.js_type() == bun_jsc::JSType::DOMWrapper {
+            if let Some(request) = value.as_direct::<Request>() {
+                // SAFETY: the live payload of the wrapper, which the caller's argument keeps alive.
+                return Self::Request(unsafe { &*request });
+            }
+            if let Some(response) = value.as_direct::<Response>() {
+                // SAFETY: as above.
+                return Self::Response(unsafe { &*response });
+            }
+        }
+        Self::No
+    }
+}
+
+/// Returns a copy of the body, or `None` if there is none left to copy.
+fn copy_body<T: BodyMixin>(owner: &T, cx: &bun_jsc::JsThread<'_>) -> JsResult<Option<BodyValue>> {
+    match owner.get_body_value() {
+        BodyValue::Null | BodyValue::Used => Ok(None),
+        _ => owner.clone_body_value_via_cached_stream(cx).map(Some),
+    }
 }
 
 impl Request {
@@ -962,456 +929,201 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    fn construct_into(
-        cx: &bun_jsc::JsThread<'_>,
-        url_or_object: JSValue,
-        init: JSValue,
-    ) -> JsResult<Request> {
-        let mut success = false;
-        // SAFETY: bun_vm() yields the live per-thread VM singleton.
-        let body = body::hive_alloc(BodyValue::Null);
-        // Snapshot the seed slot pointer for the repoint check below; `body`
-        // (the +1) is moved into `req.body` next.
-        let body_seed_ptr = body.as_ptr();
-        let mut req = Request {
-            url: JsCell::new(BunString::EMPTY),
-            headers: JsCell::new(None),
-            signal: JsCell::new(None),
-            body: ManuallyDrop::new(body),
+    /// A Request that script made. Nothing here can fail, so a caller's `?` never leaves a body slot behind.
+    fn from_members(
+        url: BunString,
+        method: OwnedMethod,
+        headers: Option<HeadersRef>,
+        signal: Option<AbortSignalRef>,
+        body: BodyValue,
+        flags: Flags,
+    ) -> Request {
+        Request {
+            url: JsCell::new(url),
+            headers: JsCell::new(headers),
+            signal: JsCell::new(signal),
+            body: ManuallyDrop::new(body::hive_alloc(body)),
             js_ref: JsCell::new(JsRef::empty()),
-            method: Method::GET,
-            flags: Flags::default(),
+            method,
+            flags,
             request_context: AnyRequestContext::NULL,
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
-        };
-        // A scopeguard cannot capture `&mut req` while the
-        // fn body also uses it. Cleanup is invoked at each early-return site via `bail!`.
-        let cleanup = |req: &mut Request,
-                       body_seed_ptr: *mut crate::webcore::body::HiveRef,
-                       success: bool| {
-            // Snapshot before the `!success` drop — reading a `ManuallyDrop`
-            // after `ManuallyDrop::drop()` is documented use-after-drop.
-            let req_body_ptr = req.body.as_ptr();
-            if !success {
-                req.finalize_without_deinit();
-                // SAFETY: `req.body` is live; this is the sole release on this path.
-                unsafe { ManuallyDrop::drop(&mut req.body) };
-            }
-            if req_body_ptr != body_seed_ptr {
-                // `clone_into` `ptr::write`-overwrote `req.body`, orphaning the
-                // seed slot's +1. Recover and drop it.
-                // SAFETY: `body_seed_ptr` is a live +1 leaked by the ptr::write.
-                drop(unsafe { BodyHiveHandle::from_raw(body_seed_ptr) });
-            }
-        };
+        }
+    }
 
-        macro_rules! bail {
-            ($e:expr) => {{
-                cleanup(&mut req, body_seed_ptr, success);
-                return $e;
-            }};
+    fn construct_into(
+        cx: &bun_jsc::JsThread<'_>,
+        input: JSValue,
+        init: JSValue,
+    ) -> JsResult<Request> {
+        let global = cx.global();
+        if !input.is_cell() {
+            return Err(global.throw_type_error(format_args!(
+                "Failed to construct 'Request': expected non-empty string or object, got {}",
+                if input.is_null() {
+                    "null"
+                } else if input.is_number() {
+                    "number"
+                } else if input.is_boolean() {
+                    "boolean"
+                } else {
+                    "undefined"
+                }
+            )));
         }
 
-        if !url_or_object.is_cell() {
-            bail!(Err(cx.global().throw(format_args!(
-                "Failed to construct 'Request': expected non-empty string or object, got undefined"
-            ))));
-        }
-
-        let url_or_object_type = url_or_object.js_type();
-        let mut fields: EnumSet<Fields> = EnumSet::empty();
-
-        let is_first_argument_a_url =
-            // fastest path:
-            url_or_object_type.is_string_like() ||
-            // slower path:
-            bun_jsc::DOMURL::cast_(url_or_object, cx.global().vm()).is_some();
-
-        if is_first_argument_a_url {
-            let str = match BunString::from_js(url_or_object, cx.global()) {
-                Ok(s) => s,
-                Err(e) => bail!(Err(e)),
-            };
-            req.url.set(str);
-
-            if !req.url.get().is_empty() {
-                fields.insert(Fields::Url);
-            }
-        } else if !url_or_object_type.is_object() {
-            bail!(Err(cx.global().throw(format_args!(
+        let input_type = input.js_type();
+        let mut url = BunString::EMPTY;
+        let input = if input_type.is_string_like()
+            || bun_jsc::DOMURL::cast_(input, global.vm()).is_some()
+        {
+            url = BunString::from_js(input, global)?;
+            None
+        } else if input_type.is_object() {
+            Some(input)
+        } else {
+            return Err(global.throw_type_error(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object"
-            ))));
+            )));
+        };
+        let init = init.is_object().then_some(init);
+
+        if let (Some(only), None) | (None, Some(only)) = (init, input)
+            && let Pristine::Request(request) = Pristine::of(only)
+        {
+            return request.cloned(cx, (!url.is_empty()).then_some(url));
         }
 
-        let values_to_try_: [JSValue; 2] = [
-            if init.is_object() {
-                init
-            } else if is_first_argument_a_url {
-                JSValue::UNDEFINED
-            } else {
-                url_or_object
-            },
-            if is_first_argument_a_url {
-                JSValue::UNDEFINED
-            } else {
-                url_or_object
-            },
-        ];
-        let values_to_try =
-            &values_to_try_[0..((!is_first_argument_a_url) as usize + init.is_object() as usize)];
+        // `new Request()` also copies a Request that is `init`, so the readers below tell the kinds of object apart.
+        let sources = InitSources {
+            init,
+            request: None,
+            object: input,
+        };
 
-        for &value in values_to_try {
-            let value_type = value.js_type();
-            let explicit_check = values_to_try.len() == 2
-                && value_type == bun_jsc::JSType::FinalObject
-                && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
-            if value_type == bun_jsc::JSType::DOMWrapper {
-                if let Some(request) = value.as_direct::<Request>() {
-                    // SAFETY: as_direct returns the wrapper's live *mut Request
-                    let request = unsafe { &*request };
-                    if values_to_try.len() == 1 {
-                        match Request::clone_into(
-                            request,
-                            &mut req,
-                            cx,
-                            fields.contains(Fields::Url),
-                        ) {
-                            Ok(()) => {}
-                            Err(e) => bail!(Err(e)),
-                        }
-                        success = true;
-                        cleanup(&mut req, body_seed_ptr, success);
-                        return Ok(req);
-                    }
-
-                    if !fields.contains(Fields::Method) {
-                        req.method = request.method;
-                        fields.insert(Fields::Method);
-                    }
-
-                    if !fields.contains(Fields::Redirect) {
-                        req.flags.redirect = request.flags.redirect;
-                        fields.insert(Fields::Redirect);
-                    }
-
-                    if !fields.contains(Fields::Cache) {
-                        req.flags.cache = request.flags.cache;
-                        fields.insert(Fields::Cache);
-                    }
-
-                    if !fields.contains(Fields::Mode) {
-                        req.flags.mode = request.flags.mode;
-                        fields.insert(Fields::Mode);
-                    }
-
-                    if !fields.contains(Fields::Headers) {
-                        match request.clone_headers(cx.global()) {
-                            Ok(Some(headers)) => {
-                                req.headers.set(Some(headers));
-                                fields.insert(Fields::Headers);
-                            }
-                            Ok(None) => {}
-                            Err(e) => bail!(Err(e)),
-                        }
-                    }
-
-                    if !fields.contains(Fields::Body) {
-                        match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
-                            _ => {
-                                match request.clone_body_value_via_cached_stream(cx) {
-                                    Ok(v) => {
-                                        *req.body_value_mut() = v;
-                                    }
-                                    Err(e) => bail!(Err(e)),
-                                }
-                                fields.insert(Fields::Body);
-                            }
-                        }
-                    }
-                }
-
-                if let Some(response) = value.as_direct::<Response>() {
-                    // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
-                    let response = unsafe { &mut *response };
-                    if !fields.contains(Fields::Method) {
-                        req.method = response.get_method();
-                        fields.insert(Fields::Method);
-                    }
-
-                    if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers_mut() {
-                            // The flag is set unconditionally once `getInitHeaders()` yielded a
-                            // value, even if `cloneThis` returns null — so a later arg can't
-                            // repopulate headers from a different source.
-                            match headers.clone_this(cx.global()) {
-                                Ok(h) => {
-                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                                    req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
-                                    fields.insert(Fields::Headers);
-                                }
-                                Err(e) => bail!(Err(e)),
-                            }
-                        }
-                    }
-
-                    if !fields.contains(Fields::Url) {
-                        let url = response.url();
-                        if !url.is_empty() {
-                            req.url.set(url.clone());
-                            fields.insert(Fields::Url);
-                        }
-                    }
-
-                    if !fields.contains(Fields::Body) {
-                        match response.get_body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
-                            _ => {
-                                match response.clone_body_value_via_cached_stream(cx) {
-                                    Ok(v) => {
-                                        *req.body_value_mut() = v;
-                                    }
-                                    Err(e) => bail!(Err(e)),
-                                }
-                                fields.insert(Fields::Body);
-                            }
-                        }
-                    }
-                }
+        let body = sources.object_member(|object| {
+            let copy = match Pristine::of(object) {
+                Pristine::Request(request) => copy_body(request, cx)?,
+                Pristine::Response(response) => copy_body(response, cx)?,
+                Pristine::No => None,
+            };
+            if copy.is_some() {
+                return Ok(copy);
             }
-
-            if !fields.contains(Fields::Body) {
-                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Body) {
-                    Ok(Some(body_)) => {
-                        fields.insert(Fields::Body);
-                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
-                        // body throws before body extraction (Node's message is "keepalive").
-                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
-                            match value.get(cx.global(), "keepalive") {
-                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(cx
-                                        .global()
-                                        .throw_type_error(format_args!("keepalive"))));
-                                }
-                                Ok(_) => {}
-                                Err(e) => bail!(Err(e)),
-                            }
-                        }
-                        match BodyValue::from_js(cx.global(), body_) {
-                            Ok(v) => {
-                                *req.body_value_mut() = v;
-                            }
-                            Err(e) => bail!(Err(e)),
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
-                }
-
-                // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
-                if cx.global().has_exception() {
-                    bail!(Err(JsError::Thrown));
-                }
+            let Some(value) = object.fast_get(global, bun_jsc::BuiltinName::Body)? else {
+                return Ok(None);
+            };
+            // The spec throws before it extracts the body. "keepalive" is Node's message.
+            if ReadableStream::is_readable_stream(value)
+                && let Some(keepalive) = object.get(global, "keepalive")?
+                && keepalive.to_boolean()
+            {
+                return Err(global.throw_type_error(format_args!("keepalive")));
             }
+            BodyValue::from_js(global, value).map(Some)
+        })?;
 
-            if !fields.contains(Fields::Url) {
-                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Url) {
-                    Ok(Some(url)) => {
-                        match BunString::from_js(url, cx.global()) {
-                            Ok(s) => req.url.set(s),
-                            Err(e) => bail!(Err(e)),
-                        }
-                        if !req.url.get().is_empty() {
-                            fields.insert(Fields::Url);
-                        }
-
-                        // first value
-                    }
-                    Ok(None) => {
-                        // Short-circuit ordering: only probe
-                        // `implementsToString` (which performs JS property
-                        // lookup with observable side effects) when the first
-                        // two guards already hold.
-                        if value == values_to_try[values_to_try.len() - 1]
-                            && !is_first_argument_a_url
-                        {
-                            let implements = match value.implements_to_string(cx.global()) {
-                                Ok(b) => b,
-                                Err(e) => bail!(Err(e)),
-                            };
-                            if implements {
-                                let str = match BunString::from_js(value, cx.global()) {
-                                    Ok(s) => s,
-                                    Err(e) => bail!(Err(e)),
-                                };
-                                req.url.set(str);
-                                if !req.url.get().is_empty() {
-                                    fields.insert(Fields::Url);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => bail!(Err(e)),
-                }
-            }
-
-            if !fields.contains(Fields::Signal) {
-                // WebIDL `AbortSignal?`: present iff the member is not undefined.
-                // `fast_get` maps absent/undefined → None; `null` is Some(null) and
-                // means "present, detach" (no fallback to the input Request's signal).
-                match value.fast_get(cx.global(), bun_jsc::BuiltinName::signal) {
-                    Ok(Some(signal_)) => {
-                        fields.insert(Fields::Signal);
-                        if signal_.is_null() {
-                            // explicit detach; leave `req.signal` as None
-                        } else if let Some(signal) = AbortSignal::ref_from_js(signal_) {
-                            // Keep it alive
-                            signal_.ensure_still_alive();
-                            // `ref_from_js` already ref'd.
-                            req.signal.set(Some(signal));
-                        } else {
-                            bail!(Err(cx.global().throw_type_error(format_args!(
-                                "Failed to construct 'Request': signal is not of type AbortSignal."
-                            ))));
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
-                }
-            }
-
-            if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(cx.global(), value) {
-                    Ok(Some(response_init)) => {
-                        let header_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(cx.global(), bun_jsc::BuiltinName::Headers)
-                                {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if header_check {
-                            if let Some(headers) = response_init.headers {
-                                if !fields.contains(Fields::Headers) {
-                                    req.headers.set(Some(headers));
-                                    fields.insert(Fields::Headers);
-                                } else {
-                                    drop(headers); // headers.deref()
-                                }
-                            }
-                        }
-
-                        let method_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(cx.global(), bun_jsc::BuiltinName::Method) {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if method_check {
-                            if !fields.contains(Fields::Method) {
-                                req.method = response_init.method;
-                                fields.insert(Fields::Method);
-                            }
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
-                }
-            }
-
-            // Extract redirect option
-            if !fields.contains(Fields::Redirect) {
-                match value.get_optional_enum::<FetchRedirect>(cx.global(), "redirect") {
-                    Ok(Some(redirect_value)) => {
-                        req.flags.redirect = redirect_value;
-                        fields.insert(Fields::Redirect);
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
-                }
-            }
-
-            // Extract cache option
-            if !fields.contains(Fields::Cache) {
-                match value.get_optional_enum::<FetchCacheMode>(cx.global(), "cache") {
-                    Ok(Some(cache_value)) => {
-                        req.flags.cache = cache_value;
-                        fields.insert(Fields::Cache);
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
-                }
-            }
-
-            // Extract mode option
-            if !fields.contains(Fields::Mode) {
-                match value.get_optional_enum::<FetchRequestMode>(cx.global(), "mode") {
-                    Ok(Some(mode_value)) => {
-                        req.flags.mode = mode_value;
-                        fields.insert(Fields::Mode);
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
-                }
-            }
-        }
-
-        if req.url.get().is_empty() {
-            bail!(Err(cx.global().throw(format_args!(
-                "Failed to construct 'Request': url is required."
-            ))));
-        }
-
-        let href = bun_url::href_from_string(req.url.get());
-        if href.is_empty() {
-            // globalThis.throw can cause GC, which could cause the above string to be freed.
-            // so we must increment the reference count before calling it.
-            let err = cx.global().err_invalid_url(format_args!(
-                "Failed to construct 'Request': Invalid URL \"{}\"",
-                req.url.get()
-            ));
-            bail!(Err(cx.global().throw_value(err)));
-        }
-
-        // hrefFromString increments the reference count if they end up being
-        // the same
-        //
-        // we increment the reference count on usage above, so we must
-        // decrement it to be perfectly balanced.
-
-        req.url.set(href);
-
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
-            if let BodyValue::Blob(blob) = req.body_value() {
-                let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
+        if url.is_empty() {
+            let member = sources.object_member(|object| {
+                if let Pristine::Response(response) = Pristine::of(object)
+                    && !response.url().is_empty()
                 {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
-                    match req.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &BunString::ascii(unsafe { &*ct_ptr }),
-                        cx.global(),
-                    ) {
-                        Ok(()) => {}
-                        Err(e) => bail!(Err(e)),
-                    }
+                    return Ok(Some(response.url().clone()));
                 }
+                let url = match object.fast_get(global, bun_jsc::BuiltinName::Url)? {
+                    Some(value) => BunString::from_js(value, global)?,
+                    // Only `input` is converted to a string.
+                    None if Some(object) == input && object.implements_to_string(global)? => {
+                        BunString::from_js(object, global)?
+                    }
+                    None => return Ok(None),
+                };
+                Ok((!url.is_empty()).then_some(url))
+            })?;
+            if let Some(member) = member {
+                url = member;
             }
         }
 
-        req.calculate_estimated_byte_size();
-        success = true;
+        let signal = sources.object_member(|object| {
+            request_init::signal_member(global, object, || {
+                global.throw_type_error(format_args!(
+                    "Failed to construct 'Request': signal is not of type AbortSignal."
+                ))
+            })
+        })?;
 
-        cleanup(&mut req, body_seed_ptr, success);
+        let headers = sources.object_member(|object| match Pristine::of(object) {
+            Pristine::Request(request) => request.clone_headers(global),
+            Pristine::Response(response) => response.clone_init_headers(global),
+            Pristine::No => match object.fast_get(global, bun_jsc::BuiltinName::Headers)? {
+                Some(value) => HeadersRef::from_init_value(global, value),
+                None => Ok(None),
+            },
+        })?;
+
+        let method = sources.object_member(|object| match Pristine::of(object) {
+            Pristine::Request(request) => Ok(Some(request.method.clone())),
+            // A Response has no `method` property, so as `init` it can't set one.
+            Pristine::Response(response) => {
+                Ok((Some(object) == input).then(|| response.get_method().into()))
+            }
+            Pristine::No => match object.fast_get(global, bun_jsc::BuiltinName::Method)? {
+                Some(value) => method_jsc::request_method_from_js(global, value).map(Some),
+                None => Ok(None),
+            },
+        })?;
+
+        let mut flags = Flags::default();
+        if let Some(redirect) = sources.object_member(|object| match Pristine::of(object) {
+            Pristine::Request(request) => Ok(Some(request.flags.redirect)),
+            _ => object.get_optional_enum::<FetchRedirect>(global, "redirect"),
+        })? {
+            flags.redirect = redirect;
+        }
+        if let Some(cache) = sources.object_member(|object| match Pristine::of(object) {
+            Pristine::Request(request) => Ok(Some(request.flags.cache)),
+            _ => object.get_optional_enum::<FetchCacheMode>(global, "cache"),
+        })? {
+            flags.cache = cache;
+        }
+        if let Some(mode) = sources.object_member(|object| match Pristine::of(object) {
+            Pristine::Request(request) => Ok(Some(request.flags.mode)),
+            _ => object.get_optional_enum::<FetchRequestMode>(global, "mode"),
+        })? {
+            flags.mode = mode;
+        }
+
+        if url.is_empty() {
+            return Err(global.throw_type_error(format_args!(
+                "Failed to construct 'Request': url is required."
+            )));
+        }
+        let href = bun_url::href_from_string(&url);
+        if href.is_empty() {
+            let err = global.err_invalid_url(format_args!(
+                "Failed to construct 'Request': Invalid URL \"{url}\""
+            ));
+            return Err(global.throw_value(err));
+        }
+
+        let body = body.unwrap_or(BodyValue::Null);
+        let mut headers = headers;
+        if let Some(headers) = &mut headers {
+            body.put_content_type_default(headers, global)?;
+        }
+
+        let req = Self::from_members(
+            href,
+            method.unwrap_or_else(|| Method::GET.into()),
+            headers,
+            signal.flatten(),
+            body,
+            flags,
+        );
+        req.calculate_estimated_byte_size();
         Ok(req)
     }
 
@@ -1445,88 +1157,23 @@ impl Request {
         Ok(js_wrapper)
     }
 
-    pub(crate) fn clone_into(
-        &self,
-        req: &mut Request,
-        cx: &bun_jsc::JsThread<'_>,
-        preserve_url: bool,
-    ) -> JsResult<()> {
-        // allocator param dropped (global mimalloc)
+    /// A copy with its own headers and body, at `url` if there is one.
+    fn cloned(&self, cx: &bun_jsc::JsThread<'_>, url: Option<BunString>) -> JsResult<Request> {
         let _ = self.ensure_url();
-        let body_ = self.clone_body_value_via_cached_stream(cx)?;
-        // BodyValue's Drop frees `body_` on the `?` error path
-        let body = body::hive_alloc(body_);
-        // Last fallible call; an early return here leaves `req.url` untouched.
-        // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
+        let body = self.clone_body_value_via_cached_stream(cx)?;
         let headers = self.clone_headers(cx.global())?;
-        let url = if preserve_url {
-            req.url.take()
-        } else {
-            self.url.get().clone()
-        };
-
-        // `ptr::write` is a raw bit-overwrite — no destructors run on the old
-        // `*req`, so the Drop impl on `JsRef` doesn't fire on the caller's
-        // sentinel.
-        // The old `req.body` hive ref is intentionally NOT unref'd here:
-        // `clone()` seeds it with a dangling sentinel, and `construct_into`
-        // releases its seed via the ptr-equality arm of its `cleanup`.
-        // `url` was taken above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
-        // SAFETY: `req` is a valid &mut, fully initialized by the caller;
-        // nothing between here and the write can panic.
-        unsafe {
-            core::ptr::write(
-                req,
-                Request {
-                    url: JsCell::new(url),
-                    headers: JsCell::new(headers),
-                    signal: JsCell::new(None),
-                    body: ManuallyDrop::new(body),
-                    js_ref: JsCell::new(JsRef::empty()),
-                    method: self.method,
-                    flags: self.flags,
-                    request_context: AnyRequestContext::NULL,
-                    ref_count: Cell::new(1),
-                    weak_ptr_data: WeakPtrData::EMPTY,
-                    reported_estimated_size: Cell::new(0),
-                },
-            );
-        }
-
-        if let Some(signal) = self.signal.get() {
-            // `AbortSignalRef::clone` → C++ `ref()`.
-            req.signal.set(Some(signal.clone()));
-        }
-        Ok(())
+        Ok(Self::from_members(
+            url.unwrap_or_else(|| self.url.get().clone()),
+            self.method.clone(),
+            headers,
+            self.signal.get().clone(),
+            body,
+            self.flags,
+        ))
     }
 
     pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<*mut Request> {
-        // allocator param dropped (global mimalloc)
-        // `clone_into` `ptr::write`s the new fields over the seed
-        // without reading or dropping it.
-        let mut req = Box::new(Request {
-            url: JsCell::new(BunString::EMPTY),
-            headers: JsCell::new(None),
-            signal: JsCell::new(None),
-            // `clone_into` `ptr::write`s the whole struct without dropping the
-            // sentinel; seed with a non-deref'd dangling handle. `ManuallyDrop`
-            // suppresses drop, so the `?` error path won't unref the dangling ptr.
-            // SAFETY: never deref'd or dropped — overwritten by `clone_into`.
-            body: ManuallyDrop::new(unsafe {
-                BodyHiveHandle::from_raw(NonNull::dangling().as_ptr())
-            }),
-            js_ref: JsCell::new(JsRef::empty()),
-            method: Method::GET,
-            flags: Flags::default(),
-            request_context: AnyRequestContext::NULL,
-            ref_count: Cell::new(1),
-            weak_ptr_data: WeakPtrData::EMPTY,
-            reported_estimated_size: Cell::new(0),
-        });
-        // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, cx, false)?;
-        Ok(bun_core::heap::into_raw(req))
+        Ok(Request::new(self.cloned(cx, None)?))
     }
 }
 
@@ -1544,7 +1191,7 @@ impl Request {
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
-            method,
+            method: method.into(),
             flags: Flags {
                 https,
                 ..Flags::default()

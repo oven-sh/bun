@@ -12,10 +12,11 @@ interface WebResponseMembers {
   json(): Promise<any>;
   arrayBuffer(): Promise<ArrayBuffer>;
 }
-type WebResponseConstructor = new (
-  body?: ConstructorParameters<typeof globalThis.Response>[0],
-  init?: ConstructorParameters<typeof globalThis.Response>[1],
-) => Omit<globalThis.Response, keyof WebResponseMembers> & WebResponseMembers;
+type WebResponseConstructor = Pick<typeof globalThis.Response, "error" | "json" | "redirect"> &
+  (new (
+    body?: ConstructorParameters<typeof globalThis.Response>[0],
+    init?: ConstructorParameters<typeof globalThis.Response>[1],
+  ) => Omit<globalThis.Response, keyof WebResponseMembers> & WebResponseMembers);
 interface WebRequestMembers {
   readonly url: string;
 }
@@ -63,12 +64,12 @@ const kBody = Symbol("kBody");
 const kFetched = Symbol("kFetched");
 const HeadersPrototype = Headers.prototype;
 
-function closeEmptyBody(controller) {
+function closeEmptyBody(controller: ReadableStreamDefaultController) {
   controller.close();
 }
 
 // An old-style Stream (minipass, form-data's CombinedStream) is not a Readable, which Readable.toWeb() needs.
-function readableFromOldStyleStream(source: import("node:stream").Stream) {
+function readableFromOldStyleStream(source: $Node.Stream) {
   const { PassThrough } = require("node:stream");
   const passthrough = new PassThrough();
   // pipe() does not forward "error", so a source that fails would leave the body open forever.
@@ -78,6 +79,44 @@ function readableFromOldStyleStream(source: import("node:stream").Stream) {
   });
   source.pipe(passthrough);
   return passthrough;
+}
+
+function webStreamFromOldStyleStream(source: $Node.Stream) {
+  return require("node:stream").Readable.toWeb(readableFromOldStyleStream(source));
+}
+
+// Pipes the source on the first read, so a Request that is only inspected leaves a form-data body unread.
+function lazyWebStreamFromOldStyleStream(source: $Node.Stream) {
+  let reader: ReadableStreamDefaultReader | undefined;
+  return new ReadableStream(
+    {
+      async pull(controller) {
+        reader ??= webStreamFromOldStyleStream(source).getReader();
+        const { done, value } = await reader!.read();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      },
+      cancel(reason) {
+        return reader?.cancel(reason);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+// `init` with one member replaced. A spread would drop its inherited and non-enumerable members.
+function withMember(init, name: string, value): any {
+  return { __proto__: init, [name]: value };
+}
+
+// An old-style Stream has no Symbol.asyncIterator, which is how native fetch() and Request read a node stream.
+function withWebBody(init, toWebStream: typeof webStreamFromOldStyleStream) {
+  const body = init?.body;
+  return typeof body?.pipe === "function" &&
+    !body[Symbol.asyncIterator] &&
+    body instanceof require("node:stream").Stream
+    ? withMember(init, "body", toWebStream(body))
+    : init;
 }
 
 class Response extends WebResponse {
@@ -133,12 +172,21 @@ class Response extends WebResponse {
     return new $Buffer(await super.arrayBuffer());
   }
 
-  get type() {
-    if (!super.ok) {
-      return "error";
-    }
+  static error() {
+    return Object.setPrototypeOf(super.error(), ResponsePrototype);
+  }
 
-    return "default";
+  static json(data, init) {
+    return Object.setPrototypeOf(super.json(data, init), ResponsePrototype);
+  }
+
+  static redirect(url, status) {
+    return Object.setPrototypeOf(super.redirect(url, status), ResponsePrototype);
+  }
+
+  // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/response.js#L121-L125
+  get type() {
+    return super.type === "error" ? "error" : "default";
   }
 }
 var ResponsePrototype = Response.prototype;
@@ -161,6 +209,8 @@ class Request extends WebRequest {
   [kUrl]?: string;
 
   constructor(input, init) {
+    init = withWebBody(init, lazyWebStreamFromOldStyleStream);
+
     // node-fetch is relaxed with the URL, for example, it allows "/" as a valid URL.
     // If it's not a valid URL, use a placeholder URL during construction.
     // See: https://github.com/oven-sh/bun/issues/4947
@@ -192,33 +242,57 @@ async function fetch(
   // eslint-disable-next-line no-unused-vars
   init?: RequestInit & { body?: any },
 ) {
-  // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
-  // This is needed for libraries like `form-data` that use CombinedStream which extends
-  // Node.js Stream but doesn't implement Symbol.asyncIterator.
-  const initBody = init?.body;
-  if (initBody && typeof initBody === "object" && !initBody[Symbol.asyncIterator]) {
-    const { Readable, Stream } = require("node:stream");
-    if (initBody instanceof Stream || initBody instanceof Readable) {
-      const readable = initBody instanceof Readable ? initBody : readableFromOldStyleStream(initBody);
-      init = { ...init, body: Readable.toWeb(readable) };
-    }
-  }
   if (init && ObjectHasOwn(init, "agent") && (init as any).agent && (init as any).tls === undefined) {
     const tls = tlsFromAgent((init as any).agent, url);
-    if (tls !== undefined) init = { ...init, tls } as any;
+    if (tls !== undefined) init = withMember(init, "tls", tls);
   }
-  const response = await nativeFetch.$call(undefined, url, init);
+  init = withWebBody(init, webStreamFromOldStyleStream);
+  let response;
+  try {
+    response = await nativeFetch.$call(undefined, url, init);
+  } catch (error) {
+    throw toNodeFetchError(error);
+  }
   Object.setPrototypeOf(response, ResponsePrototype);
   response[kFetched] = true;
   return response;
 }
 
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L70-L217
+function toNodeFetchError(error) {
+  // An abort with a reason of its own, such as AbortSignal.timeout(), keeps rejecting with that reason.
+  if (error instanceof DOMException) return error.name === "AbortError" ? new AbortError(error.message) : error;
+  // Native fetch() sets a numeric `errno` on a request that failed, and none on a bad argument.
+  if (!(error instanceof TypeError) || typeof (error as any).errno !== "number") return error;
+  const { code, path } = error as any;
+  const message = `request to ${path} failed, reason: ${error.message}`;
+  switch (code) {
+    case "UnexpectedRedirect":
+      return new FetchError(
+        `uri requested responds with a redirect, redirect mode is set to error: ${path}`,
+        "no-redirect",
+      );
+    case "TooManyRedirects":
+      return new FetchError(`maximum redirect reached at: ${path}`, "max-redirect");
+    case "RedirectURLInvalid":
+      return new FetchError(message, "invalid-redirect");
+    case "UnsupportedRedirectProtocol":
+      return error;
+  }
+  return new FetchError(message, "system", error);
+}
+
+// Stays a DOMException, unlike node-fetch's AbortError, so `instanceof DOMException` still matches an aborted fetch().
 class AbortError extends DOMException {
-  constructor(message) {
+  type: string;
+
+  constructor(message, type = "aborted") {
     super(message, "AbortError");
+    this.type = type;
   }
 }
 
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/errors/base.js
 class FetchBaseError extends Error {
   type: string;
 
@@ -226,12 +300,28 @@ class FetchBaseError extends Error {
     super(message);
     this.type = type;
   }
+
+  get name() {
+    return this.constructor.name;
+  }
+
+  get [Symbol.toStringTag]() {
+    return this.constructor.name;
+  }
 }
 
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/errors/fetch-error.js
 class FetchError extends FetchBaseError {
-  constructor(message, type, systemError) {
+  declare code?: string;
+  declare errno?: string;
+  declare erroredSysCall?: string;
+
+  constructor(message, type, systemError?) {
     super(message, type);
-    this.code = systemError?.code;
+    if (systemError) {
+      this.code = this.errno = systemError.code;
+      this.erroredSysCall = systemError.syscall;
+    }
   }
 }
 

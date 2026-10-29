@@ -13,22 +13,6 @@ use bun_uws_sys::Loop as UwsLoop;
 
 pub type Loop = UwsLoop;
 
-// Note: `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
-// `active` counter is a public field, so inline the saturating math here until
-// `bun_uws_sys` grows `add_active`/`sub_active`. On Windows the uws loop has no
-// such counter (libuv tracks active handles itself); `posix_event_loop` is only
-// reachable from non-Windows `Loop` consumers, so the Windows arm is a no-op.
-#[cfg(not(windows))]
-#[inline]
-fn loop_add_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_add(value);
-}
-#[cfg(not(windows))]
-#[inline]
-fn loop_sub_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_sub(value);
-}
-
 #[cfg(not(windows))]
 use bun_sys::syslog;
 
@@ -214,6 +198,7 @@ pub enum PollTag {
     ParentDeathWatchdog,
     LifecycleScriptSubprocessOutputReader,
     MemoryPressure,
+    FdPipe,
 }
 
 /// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
@@ -481,10 +466,7 @@ impl FilePoll {
         }
         self.flags.remove(Flags::HasIncrementedPollCount);
 
-        loop_sub_active(
-            loop_,
-            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
-        );
+        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
@@ -499,10 +481,7 @@ impl FilePoll {
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
-            loop_add_active(
-                loop_,
-                (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
-            );
+            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }
@@ -599,7 +578,7 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        let watcher_fd = loop_.fd;
+        let watcher_fd = loop_.fd();
 
         syslog!(
             "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
@@ -921,7 +900,7 @@ impl FilePoll {
             return sys::Result::Ok(());
         }
 
-        let watcher_fd = loop_.fd;
+        let watcher_fd = loop_.fd();
         let both_directions = disarmed_only
             || (self.flags.contains(Flags::PollReadable)
                 && self.flags.contains(Flags::PollWritable));
@@ -1406,6 +1385,15 @@ impl Store {
         // SAFETY: ctx was set to `self as *mut Store` in `put` above.
         let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();
+    }
+}
+
+/// Polls whose free is still deferred may be heap slots of the hive's fallback,
+/// which only the pending list names.
+#[cfg(not(windows))]
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.process_deferred_frees();
     }
 }
 

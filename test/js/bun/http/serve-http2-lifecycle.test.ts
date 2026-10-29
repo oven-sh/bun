@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import http2 from "node:http2";
+import { once } from "node:events";
+import net from "node:net";
+import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
   F,
-  H2Result,
+  Fixture,
+  PREFACE,
   RawH2,
   T,
   baseHeaders,
@@ -22,6 +25,18 @@ const fetchH3 = (port: number, path: string, init: RequestInit = {}) =>
     protocol: "http3",
     tls: { rejectUnauthorized: false },
   } as RequestInit);
+
+// Over a connection of its own. With an `idleTimeout` of 4 or more, each request keeps it from timing out.
+const control = async (fx: { port: number }, path: string) =>
+  void (await (await fetch(`http://127.0.0.1:${fx.port}${path}`)).text());
+/** One socket timeout sweep in the server, as if 4 seconds had passed. A timeout is never early, so `idleTimeout` 4 outlives one sweep and ends at the second. */
+const sweep = (fx: { port: number }) => control(fx, "/sweep");
+const release = (fx: { port: number }, gate: string) => control(fx, "/release?gate=" + gate);
+/** Sweeps until `done()`, `limit` times at most. Returns whether it got there. */
+async function sweepUntil(fx: { port: number }, done: () => boolean, limit: number) {
+  for (let i = 0; i < limit && !done(); i++) await sweep(fx);
+  return done();
+}
 
 describe("Bun.serve http2 + http3 on one port", () => {
   test("fetch, static and file routes over both; alt-svc advertised on h2; reload; stop with a stream open on each", async () => {
@@ -82,17 +97,19 @@ describe("Bun.serve http2 lifecycle", () => {
   });
 
   test("idleTimeout closes a silent connection; server.timeout(req, 0) exempts it", async () => {
-    // usockets ticks timeouts in 4 s steps, so this test needs real seconds.
-    await using fx = await startFixture({ tls: false, idleTimeout: 2 });
+    await using fx = await startFixture({ tls: false, idleTimeout: 4 });
     const idle = await connectH2(fx.port, false);
-    const idleClosed = new Promise<void>(r => idle.once("close", () => r()));
     const busy = await connectH2(fx.port, false);
-    const kept = request(busy, { ":path": "/keepalive?ms=9000" });
-    await idleClosed;
+    const kept = request(busy, { ":path": "/keepalive?until=done" });
+    // Answered behind it on the same connection, so the exemption is in place.
+    await request(busy, { ":path": "/hello" });
+    expect(await sweepUntil(fx, () => idle.closed, 8)).toBe(true);
+    for (let i = 0; i < 4; i++) await sweep(fx);
+    await release(fx, "done");
     expect((await kept).body.toString()).toBe("kept");
     expect(fx.stderr()).not.toContain("KEEPALIVE-ABORTED");
     busy.close();
-  }, 30000);
+  });
 
   test("graceful stop closes a connection whose last stream ends outside a socket event", async () => {
     await using fx = await startFixture({ tls: false });
@@ -126,31 +143,153 @@ describe("Bun.serve http2 lifecycle", () => {
     raw.close();
   });
 
-  test("a paused (slowly read) request body does not idle out the connection", async () => {
-    // usockets ticks timeouts in 4 s steps, so this needs real seconds.
-    await using fx = await startFixture({ tls: false, idleTimeout: 2 });
-    const session = await connectH2(fx.port, false);
-    const res = await new Promise<H2Result>((resolve, reject) => {
-      const r = session.request({ ":path": "/slow-read?ms=700", ":method": "POST" }, { endStream: false });
-      const chunks: Buffer[] = [];
-      let headers: http2.IncomingHttpHeaders = {};
-      r.on("response", h => (headers = h));
-      r.on("data", (c: Buffer) => chunks.push(c));
-      r.on("end", () => resolve({ status: Number(headers[":status"]), headers, body: Buffer.concat(chunks) }));
-      r.on("error", reject);
-      // 12 × 512 KB; at 700 ms per delivered chunk the stream sits paused
-      // (window closed) for well over idleTimeout in total.
-      let i = 0;
-      const next = () => (i++ < 12 ? r.write(Buffer.alloc(512 * 1024), next) : r.end());
-      next();
-    });
-    expect(res.body.toString()).toBe(String(12 * 512 * 1024));
-    session.close();
-  }, 40000);
+  // Such a connection is still an HTTP/1 socket when stop() sends GOAWAY to the HTTP/2 connections.
+  describe("graceful stop: a connection that becomes HTTP/2 after stop() serves one stream, then closes", () => {
+    async function stopThenBecomeH2(fx: Fixture, secure: boolean, becomeH2: () => Promise<RawH2>) {
+      const session = await connectH2(fx.port, secure);
+      const sessionClosed = once(session, "close");
+      expect((await request(session, { ":path": "/stop?exit" })).body.toString()).toBe("stopping");
+      // stop() closes this drained session, so once it's closed stop() has run.
+      await sessionClosed;
 
-  // usockets ticks timeouts every 4 s and idleTimeout rounds to ticks, so 8 s
-  // (two ticks) with keepalive traffic every 2 s is the smallest setting that
-  // separates "refreshed the timer" from "did not".
+      const raw = await becomeH2();
+      const get = (id: number) =>
+        frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, id, hpackLiteral(baseHeaders("/hello")));
+      // One write, so the server has read both requests before it can close.
+      raw.write(Buffer.concat([get(1), get(3)]));
+      expect((await raw.body(1)).toString()).toBe("hello");
+      await raw.waitForClose();
+      expect({
+        goaways: raw.frames
+          .filter(f => f.type === T.GOAWAY)
+          .map(f => ({ lastStreamId: f.payload.readUInt32BE(0), code: f.payload.readUInt32BE(4) })),
+        answeredStream3: raw.frames.some(f => f.streamId === 3),
+      }).toEqual({ goaways: [{ lastStreamId: 1, code: 0 }], answeredStream3: false });
+      // The fixture exits when stop() resolves.
+      expect(await fx.proc.exited).toBe(0);
+    }
+
+    test("TLS handshake pending", async () => {
+      await using fx = await startFixture({ tls: true });
+      const tcp = net.connect({ port: fx.port, host: "127.0.0.1" });
+      await once(tcp, "connect");
+      // The ClientHello goes out, but the server's reply is held back so the handshake can't finish yet.
+      let hold = true;
+      const held: Buffer[] = [];
+      const wire = new Duplex({ read() {}, write: (chunk, _encoding, cb) => void tcp.write(chunk, cb) });
+      tcp.on("data", d => void (hold ? held.push(d) : wire.push(d)));
+      tcp.on("close", () => wire.push(null));
+      const socket = tls.connect({ socket: wire, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+      socket.on("error", () => {});
+      await once(tcp, "data");
+
+      await stopThenBecomeH2(fx, true, async () => {
+        const secured = once(socket, "secureConnect");
+        hold = false;
+        for (const d of held) wire.push(d);
+        await secured;
+        return RawH2.over(socket);
+      });
+    });
+
+    test("cleartext preface pending", async () => {
+      await using fx = await startFixture({ tls: false });
+      const tcp = net.connect({ port: fx.port, host: "127.0.0.1" });
+      await once(tcp, "connect");
+      // Too short to tell HTTP/2 from HTTP/1, so the server buffers these bytes and waits for more.
+      tcp.write(PREFACE.subarray(0, 3));
+
+      await stopThenBecomeH2(fx, false, async () => {
+        const raw = RawH2.over(tcp, { sendPreface: false });
+        raw.write(PREFACE.subarray(3));
+        raw.write(frame(T.SETTINGS, 0, 0));
+        return raw;
+      });
+    });
+  });
+
+  // close(2) resets the connection when another frame arrives, and the reset drops what the kernel hasn't delivered.
+  describe.each([
+    ["h2c", false],
+    ["TLS", true],
+  ] as const)(
+    "graceful stop over %s delivers the whole response to a client that keeps sending frames",
+    (_, secure) => {
+      test.each([
+        ["it's already in the kernel's send buffer", "/fixed?n=1048576", 1024 * 1024],
+        ["the server is still writing it", "/big", 5 * 1024 * 1024],
+      ])("when %s", async (_name, path, size) => {
+        await using fx = await startFixture({ tls: secure });
+        // Windows wide enough that flow control never holds the response back.
+        const raw = await RawH2.connect(fx.port, secure, { settings: Buffer.from([0, 4, 0x40, 0, 0, 0]) });
+        raw.write(frame(T.WINDOW_UPDATE, 0, 0, Buffer.from([0x40, 0, 0, 0])));
+        raw.headers(1, baseHeaders(path));
+        await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+        // The client stops reading, so the response backs up in the kernel and then in the server.
+        raw.socket.pause();
+
+        const session = await connectH2(fx.port, secure);
+        const sessionClosed = once(session, "close");
+        expect((await request(session, { ":path": "/stop?exit" })).body.toString()).toBe("stopping");
+        await sessionClosed;
+
+        // Like a client that sends WINDOW_UPDATE while it downloads.
+        raw.socket.on("data", () => {
+          if (!raw.closed && raw.socket.writable) raw.write(frame(T.PING, 0, 0, Buffer.from("8 bytes!")));
+        });
+        raw.write(frame(T.PING, 0, 0, Buffer.from("8 bytes!")));
+        raw.socket.resume();
+        expect((await raw.body(1)).length).toBe(size);
+        expect(await raw.goaway()).toEqual({ lastStreamId: 1, code: 0 });
+        await raw.waitForClose();
+        // The fixture exits when stop() resolves.
+        expect(await fx.proc.exited).toBe(0);
+      });
+    },
+  );
+
+  test("a paused (slowly read) request body does not idle out the connection", async () => {
+    await using fx = await startFixture({ tls: false, idleTimeout: 4 });
+    const raw = await RawH2.connect(fx.port, false);
+    const settings = (await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) === 0)).payload;
+    let streamWindow = 65535;
+    for (let i = 0; i < settings.length; i += 6) {
+      if (settings.readUInt16BE(i) === 4) streamWindow = settings.readUInt32BE(i + 2);
+    }
+    const total = 4 * 1024 * 1024;
+    const chunk = Buffer.alloc(16384);
+    let sent = 0;
+    let pings = 0;
+    const granted = (streamId: number) =>
+      raw.frames
+        .filter(f => f.type === T.WINDOW_UPDATE && f.streamId === streamId)
+        .reduce((sum, f) => sum + f.payload.readUInt32BE(0), 0);
+    const hasRoom = () => Math.min(streamWindow + granted(1), 65535 + granted(0)) - sent >= chunk.length;
+    // Sends what flow control allows, until all of it is sent or the server has stopped widening the window.
+    const pump = async () => {
+      while (sent < total) {
+        for (; sent < total && hasRoom(); sent += chunk.length) raw.write(frame(T.DATA, 0, 1, chunk));
+        // Answered behind every WINDOW_UPDATE for what was sent so far.
+        raw.write(frame(T.PING, 0, 0, Buffer.alloc(8, ++pings)));
+        await raw.waitFor(f => f.type === T.PING && (f.flags & F.ACK) !== 0 && f.payload[0] === pings);
+        if (!hasRoom()) return;
+      }
+    };
+    raw.headers(1, baseHeaders("/slow-read?until=go", "POST"), F.END_HEADERS);
+    await pump();
+    expect(sent).toBeLessThan(total);
+    // 16 s in which nothing moves, because the server itself closed the window.
+    for (let i = 0; i < 4; i++) await sweep(fx);
+    await release(fx, "go");
+    while (sent < total) {
+      await raw.waitFor(hasRoom);
+      await pump();
+    }
+    raw.write(frame(T.DATA, F.END_STREAM, 1));
+    expect((await raw.body(1)).toString()).toBe(String(total));
+    raw.close();
+  });
+
   for (const [name, keepalive] of [
     ["PING", (raw: RawH2) => raw.write(frame(T.PING, 0, 0, Buffer.from("keepaliv")))],
     // An open POST sending empty non-final DATA frames.
@@ -165,42 +304,40 @@ describe("Bun.serve http2 lifecycle", () => {
       for (let i = 0, id = 1; i < 8; i++, id += 2) stalled.headers(id, baseHeaders("/big"));
       stalled.write(frame(T.HEADERS, F.END_HEADERS, 101, hpackLiteral(baseHeaders("/echo", "POST"))));
       await stalled.waitFor(f => f.type === T.HEADERS && f.streamId === 15);
-      // Control: a connection making real progress every 2 s on the same server outlives it.
+      // Control: a connection making real progress ahead of every sweep on the same server outlives it.
       const live = await RawH2.connect(fx.port, false);
-      let liveId = 1;
-      const t0 = Date.now();
-      const tick = setInterval(() => {
-        if (!stalled.closed) keepalive(stalled);
-        if (!live.closed) {
-          live.headers(liveId, baseHeaders("/hello"));
-          liveId += 2;
-        }
-      }, 2000);
       try {
-        await stalled.waitForClose();
-        expect(Date.now() - t0).toBeLessThan(20000);
+        for (let liveId = 1; liveId < 16 && !stalled.closed; liveId += 2) {
+          keepalive(stalled);
+          live.headers(liveId, baseHeaders("/hello"));
+          await live.body(liveId);
+          await sweep(fx);
+        }
+        expect(stalled.closed).toBe(true);
         expect(stalled.frames.some(f => f.type === T.GOAWAY)).toBe(true);
         expect(live.closed).toBe(false);
       } finally {
-        clearInterval(tick);
         stalled.close();
         live.close();
       }
-    }, 40000);
+    });
   }
 
   test("server.timeout(req, n) on h2 is per connection: the most permissive open request wins", async () => {
     await using fx = await startFixture({ tls: false, idleTimeout: 4 });
     const session = await connectH2(fx.port, false);
-    // 30 s is set first, then 1 s; both sleep 6 s. Max-wins keeps the
-    // connection; last-wins, min-wins or a no-op would all close it at the 4 s tick.
-    const a = request(session, { ":path": "/t?s=30&ms=6000" });
-    await new Promise<void>(r => setTimeout(r, 100));
-    const b = request(session, { ":path": "/t?s=1&ms=6000" });
+    // 30 s is set first, then 1 s; both answer after 16 s. Max-wins keeps the
+    // connection; last-wins, min-wins or a no-op would all close it within 8 s.
+    const a = request(session, { ":path": "/t?s=30&until=done" });
+    const b = request(session, { ":path": "/t?s=1&until=done" });
+    // Answered behind them on the same connection, so both have set their timeout.
+    await request(session, { ":path": "/hello" });
+    for (let i = 0; i < 4; i++) await sweep(fx);
+    await release(fx, "done");
     const [ra, rb] = await Promise.all([a, b]);
     expect([ra.body.toString(), rb.body.toString()]).toEqual(["t30", "t1"]);
     session.close();
-  }, 40000);
+  });
 
   // Same two shapes serve.test.ts has for HTTP/1: stop(true) synchronously
   // inside the handler, and stop(true) between two awaits; each over a GET and
@@ -242,20 +379,21 @@ describe("Bun.serve http2 lifecycle", () => {
   test("server.timeout(req, n) on h2: once the more permissive request ends, the remaining one's budget applies", async () => {
     await using fx = await startFixture({ tls: false }); // idleTimeout 30
     const session = await connectH2(fx.port, false);
-    const closed = new Promise<void>(r => session.once("close", () => r()));
-    // A keeps the 30 s default and answers after 1.5 s; B, opened while A is in
-    // flight, asks for 1 s and would answer after 60 s. While both are open the
-    // 30 s wins. Once A has retired, B's 1 s is the connection's budget: the
-    // server idles it out at the next 4 s tick, not 30 s later.
-    const a = request(session, { ":path": "/slow?ms=1500" });
-    const pending = request(session, { ":path": "/t?s=1&ms=60000" }).catch(e => e);
+    // A keeps the 30 s default and answers after 12 s; B, opened while A is in
+    // flight, asks for 1 s and never answers. While both are open the 30 s
+    // wins. Once A has retired, B's 1 s is the connection's budget: the
+    // server idles it out at the next sweep, not 30 s (eight sweeps) later.
+    const a = request(session, { ":path": "/slow?until=a" });
+    const pending = request(session, { ":path": "/t?s=1&until=never" }).catch(e => e);
+    // Answered behind them on the same connection, so B has set its timeout.
+    await request(session, { ":path": "/hello" });
+    for (let i = 0; i < 3; i++) await sweep(fx);
+    await release(fx, "a");
     expect((await a).body.toString()).toBe("slow");
-    const t0 = Date.now();
-    await closed;
-    expect(Date.now() - t0).toBeLessThan(15000);
+    expect(await sweepUntil(fx, () => session.closed, 6)).toBe(true);
     const result = await pending;
     expect(result instanceof Error ? NaN : result.status).toBeNaN();
-  }, 30000);
+  });
 
   test("--max-http-header-size applies to h2 like HTTP/1.1", async () => {
     await using fx = await startFixture({ tls: false, execArgv: ["--max-http-header-size=4096"] });
@@ -285,15 +423,17 @@ describe("Bun.serve http2 lifecycle", () => {
   });
 
   test("idle timer is re-armed after a request that was exempted from it", async () => {
-    await using fx = await startFixture({ tls: false, idleTimeout: 2 });
+    await using fx = await startFixture({ tls: false, idleTimeout: 4 });
     const session = await connectH2(fx.port, false);
-    const closed = new Promise<number>(r => session.once("close", () => r(Date.now())));
     // /keepalive sets server.timeout(req, 0) for its duration; once it's done the
     // connection's idle timeout must apply again.
-    expect((await request(session, { ":path": "/keepalive?ms=5000" })).body.toString()).toBe("kept");
-    const tDone = Date.now();
-    expect((await closed) - tDone).toBeLessThan(15000);
-  }, 40000);
+    const kept = request(session, { ":path": "/keepalive?until=done" });
+    await request(session, { ":path": "/hello" });
+    for (let i = 0; i < 4; i++) await sweep(fx);
+    await release(fx, "done");
+    expect((await kept).body.toString()).toBe("kept");
+    expect(await sweepUntil(fx, () => session.closed, 8)).toBe(true);
+  });
 
   test("h2 is not negotiated below TLS 1.2; a TLS 1.2 client offering only ECDHE-RSA-AES128-GCM-SHA256 works", async () => {
     await using fx = await startFixture({ tls: true });

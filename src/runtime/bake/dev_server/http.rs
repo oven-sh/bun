@@ -281,7 +281,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &route_id[route_id.len() - min_len..][..::core::mem::size_of::<u64>() * 2];
-    let Some(id) = parse_hex_to_int::<u64>(hex) else {
+    let Some(id) = parse_hex_to_u64(hex) else {
         return not_found(resp);
     };
 
@@ -307,7 +307,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
                 Err(e) => bun_core::handle_oom(Err(e)),
             };
         let response = StaticRoute::init_from_any_blob(
-            crate::webcore::blob::Any::from_array_list(json_bytes),
+            crate::webcore::blob::Any::from_owned_slice(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
                 server: dev.server,
                 mime_type: Some(&MimeType::JSON),
@@ -341,7 +341,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &param[..::core::mem::size_of::<u64>() * 2];
-    let Some(hash) = parse_hex_to_int::<u64>(hex) else {
+    let Some(hash) = parse_hex_to_u64(hex) else {
         return not_found(resp);
     };
     debug_log!("onAssetRequest {} {}", hash, bstr::BStr::new(param));
@@ -352,7 +352,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     StaticRoute::on(asset.this_ptr(), resp);
 }
 
-pub(super) use bun_core::fmt::parse_hex_to_int;
+pub(super) use bun_core::fmt::parse_hex_to_u64;
 
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {
@@ -463,13 +463,7 @@ impl UnrefSourceMapRequest {
         // live borrow of *ctx exists.
         let ctx = unsafe { bun_core::heap::take(ctx) };
         // SAFETY: dev outlives the request
-        unsafe {
-            (*ctx.dev)
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete()
-        };
+        unsafe { (*ctx.dev).server.as_mut().unwrap().on_request_complete() };
         drop(ctx);
     }
 

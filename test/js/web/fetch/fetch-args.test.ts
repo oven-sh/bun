@@ -1,6 +1,8 @@
 import { TCPSocketListener } from "bun";
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow, tempDir } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 
 let server;
@@ -166,6 +168,9 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
   const cases: [name: string, code: string, expectedStderr: string][] = [
     ["no arguments", `fetch()`, 'The "input" argument must be specified'],
     ["blank url", `fetch("")`, "fetch() URL must not be a blank string"],
+    ["number url", `fetch(123)`, "fetch() URL is invalid"],
+    ["undefined url", `fetch(undefined)`, "fetch() URL is invalid"],
+    ["relative toString url", `fetch({ toString() { return "/some_path"; } })`, "fetch() URL is invalid"],
     ["invalid url", `fetch("not a url")`, "fetch() URL is invalid"],
     ["unsupported protocol", `fetch("gopher://example.com/")`, "protocol must be http:, https: or s3:"],
     // No host may be read behind the second scheme, and the request still has to be refused.
@@ -361,6 +366,25 @@ test("fetch(RequestSubclass, undefined)", async () => {
   expect(headers.get("hello")).toBe("world");
 });
 
+test("fetch() sends the type of a zero-length body", async () => {
+  using echo = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: req => new Response(`${req.headers.get("content-type")} ${req.headers.get("content-length")}`),
+  });
+  const sent = async (body: Bun.BodyInit) => [
+    await (await fetch(echo.url, { method: "POST", body })).text(),
+    await (await fetch(new Request(echo.url.href, { method: "POST", body }))).text(),
+  ];
+  const form = "application/x-www-form-urlencoded;charset=UTF-8 0";
+  expect(await sent(new URLSearchParams())).toEqual([form, form]);
+  const json = "application/json;charset=utf-8 0";
+  expect(await sent(new Blob([], { type: "application/json" }))).toEqual([json, json]);
+  const text = "text/plain;charset=utf-8 0";
+  expect(await sent(new File([], "a.txt", { type: "text/plain" }))).toEqual([text, text]);
+  expect(await sent(new Blob([]))).toEqual(["null 0", "null 0"]);
+});
+
 describe("does not send a request when", () => {
   let requestCount = 0;
   let server: TCPSocketListener | undefined;
@@ -513,4 +537,76 @@ describe("does not send a request when", () => {
       expect(requestCount).toBe(prevCount);
     });
   }
+});
+
+// https://github.com/oven-sh/bun/issues/6021
+describe("method", () => {
+  /** Resolves with the head and body of the one request `send` makes to a raw TCP server. */
+  async function onTheWire(send: (url: string) => Promise<Response>) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const origin = net.createServer(socket => {
+      let received = "";
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        received += chunk.toString("latin1");
+        const head = received.indexOf("\r\n\r\n");
+        if (head === -1) return;
+        const length = Number(/^content-length: (\d+)/im.exec(received.slice(0, head))?.[1] ?? 0);
+        if (received.length < head + 4 + length) return;
+        resolve(received);
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      });
+    });
+    await once(origin.listen(0, "127.0.0.1"), "listening");
+    try {
+      await send(`http://127.0.0.1:${(origin.address() as net.AddressInfo).port}/`);
+      return await promise;
+    } finally {
+      origin.close();
+    }
+  }
+  const requestLine = (request: string) => request.slice(0, request.indexOf("\r\n"));
+
+  test.concurrent.each([
+    // Any token goes out as written, like in Node.
+    ["LIST", "LIST"],
+    ["custom", "custom"],
+    ["PatCh", "PatCh"],
+    ["M-search", "M-search"],
+    ["a!#$%&'*+-.^_`|~0", "a!#$%&'*+-.^_`|~0"],
+    // Fetch normalizes DELETE, GET, HEAD, OPTIONS, POST and PUT whatever their case.
+    ["Put", "PUT"],
+    ["pOsT", "POST"],
+    ["Delete", "DELETE"],
+    // Unlike Fetch, Bun also upper-cases an all-lowercase verb it knows.
+    ["patch", "PATCH"],
+    // Still GET: not a token, or not a string.
+    ["GET POST", "GET"],
+    ["caf\u00e9", "GET"],
+    ["", "GET"],
+    [false, "GET"],
+    [0, "GET"],
+    [null, "GET"],
+  ])("%j is sent as %s", async (method, expected) => {
+    const init = { method } as RequestInit;
+    expect(requestLine(await onTheWire(url => fetch(url, init)))).toBe(`${expected} / HTTP/1.1`);
+    expect(requestLine(await onTheWire(url => fetch(new Request(url, init))))).toBe(`${expected} / HTTP/1.1`);
+    expect(requestLine(await onTheWire(url => fetch({ url, ...init } as any)))).toBe(`${expected} / HTTP/1.1`);
+  });
+
+  test.concurrent("a method outside the table can carry a body", async () => {
+    const request = await onTheWire(url => fetch(url, { method: "LIST", body: "payload" }));
+    expect(requestLine(request)).toBe("LIST / HTTP/1.1");
+    expect(request).toContain("\r\nContent-Length: 7\r\n");
+    expect(request).toEndWith("\r\n\r\npayload");
+  });
+
+  test.concurrent("a method outside the table sends no Content-Length without a body", async () => {
+    expect((await onTheWire(url => fetch(url, { method: "LIST" }))).toLowerCase()).not.toContain("content-length");
+  });
+
+  test.concurrent("s3: rejects a method outside the table like any method S3 doesn't have", async () => {
+    const s3 = { accessKeyId: "a", secretAccessKey: "b" };
+    expect(await fetch("s3://bucket/key", { method: "LIST", s3 }).catch(e => e.code)).toBe("ERR_S3_INVALID_METHOD");
+  });
 });

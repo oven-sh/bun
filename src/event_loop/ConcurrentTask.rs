@@ -78,7 +78,8 @@ pub mod task_tag {
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Close,
         CppTask,
-        DuplexUpgradeContext,
+        UpgradedDuplex,
+        FdPipe,
         FetchTasklet,
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
@@ -119,8 +120,6 @@ pub mod task_tag {
         HTTPSServerDeinit,
         DebugHTTPServerDeinit,
         DebugHTTPSServerDeinit,
-        HTTPAppClose,
-        HTTPSAppClose,
         ShellAsync,
         ShellCondExprStatTask,
         ShellCpTask,
@@ -138,13 +137,15 @@ pub mod task_tag {
         AsyncCpTask,
         ShellAsyncCpTask,
         StreamPending,
+        TCPSocketWriteCompletion, // bun_runtime::socket::DeferredWriteCompletion<false>
+        TLSSocketWriteCompletion, // bun_runtime::socket::DeferredWriteCompletion<true>
         ThreadSafeFunction,
         UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)
         UvHandleClose,            // an addon's uv_close (posix)
         UvLoopDispatch,           // an addon's uv_async_send (posix)
         ValkeyDeferredClose,
         ValkeyDeferredFailure,
-        WindowsNamedPipeContext,
+        WindowsNamedPipe,
         Write,
         Writev,
     }
@@ -231,6 +232,12 @@ pub trait Taskable {
 }
 
 impl TaskTag {
+    /// A bundle asks its plugins to resolve or load something.
+    #[inline]
+    pub fn is_plugin_request(self) -> bool {
+        self == task_tag::BundleV2PluginResolve || self == task_tag::BundleV2PluginLoad
+    }
+
     /// The tag's identifier, for diagnostics.
     pub fn name(self) -> &'static str {
         task_tag::NAMES.get(self.0 as usize).copied().unwrap_or("?")

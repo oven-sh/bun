@@ -4,7 +4,7 @@ use core::fmt;
 
 use bstr::BStr;
 
-use bun_core::fmt::{escape_control_chars, for_terminal};
+use bun_core::fmt::{EscapeControlChars, escape_control_chars, for_terminal, quote_posix_shell};
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
@@ -159,6 +159,15 @@ impl Header {
     }
 }
 
+/// Starts every line of the verbose trace. The `[fetch]` tag only shows when stderr has colors.
+pub fn trace_line_prefix() -> &'static str {
+    if enable_ansi_colors_stderr() {
+        pretty_fmt!("<r><d>[fetch]<r> ", true)
+    } else {
+        ""
+    }
+}
+
 // The `Display` impls here (except `Headers`: wire format) print peer-supplied text to a terminal.
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -201,6 +210,23 @@ impl fmt::Display for Header {
 const _: () = assert!(core::mem::size_of::<Header>() == core::mem::size_of::<c::phr_header>());
 const _: () = assert!(core::mem::align_of::<Header>() == core::mem::align_of::<c::phr_header>());
 
+/// One argument of the printed `curl` command.
+struct CurlArg<'a>(&'a [&'a [u8]]);
+
+impl fmt::Display for CurlArg<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // cmd.exe has no single quotes.
+        if cfg!(windows) {
+            f.write_str("\"")?;
+            for part in self.0 {
+                write!(f, "{}", escape_control_chars(part))?;
+            }
+            return f.write_str("\"");
+        }
+        write!(f, "{}", EscapeControlChars(quote_posix_shell(self.0)))
+    }
+}
+
 struct HeaderCurlFormatter<'a> {
     header: &'a Header,
 }
@@ -209,14 +235,9 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let header = self.header;
         if header.value_len > 0 {
-            write!(
-                f,
-                "-H \"{}: {}\"",
-                escape_control_chars(header.name()),
-                escape_control_chars(header.value())
-            )
+            write!(f, "-H {}", CurlArg(&[header.name(), b": ", header.value()]))
         } else {
-            write!(f, "-H \"{}\"", escape_control_chars(header.name()))
+            write!(f, "-H {}", CurlArg(&[header.name()]))
         }
     }
 }
@@ -269,9 +290,7 @@ impl<'a> HeaderList<'a> {
 pub struct Request<'a> {
     pub method: &'a [u8],
     pub path: &'a [u8],
-    pub minor_version: usize,
     pub headers: &'a [Header],
-    pub bytes_read: u32,
 }
 
 impl<'a> Request<'a> {
@@ -281,51 +300,6 @@ impl<'a> Request<'a> {
             ignore_insecure,
             body,
         }
-    }
-
-    /// Widen the borrowed slices to `'static` for self-referential storage.
-    ///
-    /// Field-by-field move (no bitwise reinterpret). Used when the request's
-    /// `method`/`path`/`headers` borrow thread-local static buffers
-    /// (`SHARED_REQUEST_HEADERS_BUF`) or a sibling field on the same
-    /// heap-stable owner.
-    ///
-    /// # Safety
-    /// Caller guarantees every borrowed slice outlives the returned value.
-    #[inline]
-    pub unsafe fn detach_lifetime(self) -> Request<'static> {
-        Request {
-            // SAFETY: caller contract.
-            method: unsafe { &*core::ptr::from_ref::<[u8]>(self.method) },
-            // SAFETY: caller contract.
-            path: unsafe { &*core::ptr::from_ref::<[u8]>(self.path) },
-            minor_version: self.minor_version,
-            // SAFETY: caller contract.
-            headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
-            bytes_read: self.bytes_read,
-        }
-    }
-}
-
-impl fmt::Display for Request<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if enable_ansi_colors_stderr() {
-            f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-        }
-        writeln!(
-            f,
-            "> HTTP/1.1 {} {}",
-            BStr::new(self.method),
-            escape_control_chars(self.path)
-        )?;
-        for header in self.headers {
-            if enable_ansi_colors_stderr() {
-                f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-            }
-            f.write_str("> ")?;
-            writeln!(f, "{}", header)?;
-        }
-        Ok(())
     }
 }
 
@@ -356,19 +330,24 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
             write!(
                 f,
-                pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
-                escape_control_chars(request.path),
+                pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>{}<r>", true),
+                CurlArg(&[request.path]),
             )?;
         } else {
-            write!(
-                f,
-                "curl --http1.1 \"{}\"",
-                escape_control_chars(request.path)
-            )?;
+            write!(f, "curl --http1.1 {}", CurlArg(&[request.path]))?;
         }
 
-        if request.method != b"GET" {
-            write!(f, " -X {}", BStr::new(request.method))?;
+        // Without this, curl expands `[1-3]` and `{a,b}` in the URL.
+        if strings::index_of_any(request.path, b"[]{}").is_some() {
+            f.write_str(" --globoff")?;
+        }
+
+        if request.method.iter().all(u8::is_ascii_alphabetic) {
+            if request.method != b"GET" {
+                write!(f, " -X {}", BStr::new(request.method))?;
+            }
+        } else {
+            write!(f, " -X {}", CurlArg(&[request.method]))?;
         }
 
         if self.ignore_insecure {
@@ -394,11 +373,15 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
         if !self.body.is_empty() && Self::is_printable_body(content_type) {
             f.write_str(" --data-raw ")?;
-            bun_core::js_printer::write_json_string(
-                self.body,
-                f,
-                bun_core::strings::Encoding::Utf8,
-            )?;
+            if cfg!(windows) {
+                bun_core::js_printer::write_json_string(
+                    self.body,
+                    f,
+                    bun_core::strings::Encoding::Utf8,
+                )?;
+            } else {
+                write!(f, "{}", CurlArg(&[self.body]))?;
+            }
         }
 
         Ok(())
@@ -435,6 +418,8 @@ impl fmt::Display for StatusCodeFormatter {
 pub enum ParseResponseError {
     #[strum(serialize = "Malformed_HTTP_Response")]
     MalformedHttpResponse,
+    /// The response has more header fields than `src` has slots.
+    TooManyHeaders,
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseResponseError);
@@ -507,6 +492,8 @@ impl<'a> Response<'a> {
         };
 
         match rc {
+            // Running out of slots is -1 too, but a malformed field leaves `num_headers` below `src.len()`.
+            -1 if num_headers == src.len() => Err(ParseResponseError::TooManyHeaders),
             -1 => {
                 bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
                 Err(ParseResponseError::MalformedHttpResponse)
@@ -554,10 +541,7 @@ impl<'a> Response<'a> {
 
 impl fmt::Display for Response<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if enable_ansi_colors_stderr() {
-            f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-        }
-
+        f.write_str(trace_line_prefix())?;
         writeln!(
             f,
             "< {} {}",
@@ -567,10 +551,7 @@ impl fmt::Display for Response<'_> {
             escape_control_chars(self.status),
         )?;
         for header in self.headers.list {
-            if enable_ansi_colors_stderr() {
-                f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-            }
-
+            f.write_str(trace_line_prefix())?;
             f.write_str("< ")?;
             writeln!(f, "{}", header)?;
         }

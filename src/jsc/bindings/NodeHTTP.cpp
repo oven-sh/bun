@@ -22,16 +22,12 @@
 #include "node/JSNodeHTTPServerSocket.h"
 #include "node/JSNodeHTTPServerSocketPrototype.h"
 #include "GeneratedHwExports.h"
+#include "wtf/SIMDUTF.h"
 namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
-
-extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open);
-extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
-extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
-extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
-extern "C" EncodedJSValue Server__setMaxHeadersCount(JSC::JSGlobalObject*, EncodedJSValue, uint32_t);
+using namespace std::string_view_literals;
 
 // Bit layout must stay in sync with kDispatchBits* in src/js/node/_http_server.ts.
 static constexpr uint32_t kDispatchConnClose = 1 << 0;
@@ -76,12 +72,14 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
     return false;
 }
 
+using RequestArguments = MarkedArgumentBufferWithSize<16>;
+
 // One pass over the request: append url, method and jsNumber(dispatch
 // bitfield) to `args`, and capture the raw header bytes into `flatHeaders`
 // as [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
 // req.headers can be materialized lazily (Bun__NodeHTTP__buildRawHeadersArray,
-// Bun__NodeHTTP__buildHeadersObject) only when user code reads them.
-static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+// Bun__NodeHTTP__buildHeadersObject) only when user code reads them. Returns the bitfield.
+static uint32_t assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, RequestArguments& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     {
         std::string_view fullURLStdStr = request->getFullUrl();
@@ -100,9 +98,9 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 
     uint32_t bits = 0;
     // llhttp's F_CONNECTION_CLOSE / F_CONNECTION_UPGRADE: a whole list item.
-    if (request->hasConnectionClose(true))
+    if (request->getConnectionClose())
         bits |= kDispatchConnClose;
-    if (request->hasConnectionToken("upgrade") || request->isUpgradeRequest())
+    if (request->hasConnectionToken("upgrade"))
         bits |= kDispatchConnUpgrade;
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -158,6 +156,17 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     // The headers-object slot now carries the dispatch bitfield; rawHeaders
     // materialize lazily from the captured bytes, so no array is passed.
     args.append(jsNumber(bits));
+    return bits;
+}
+
+// Returns true if the JS dispatcher can pass `head` on: to 'connect', or to 'upgrade' for a request with no body that isn't pipelined.
+static ALWAYS_INLINE bool canHandOffHead(JSC::VM& vm, JSValue methodString, uint32_t dispatchBits, bool hasBody, bool isPipelinedDispatch)
+{
+    static constexpr uint32_t upgradeBits = kDispatchHasUpgrade | kDispatchConnUpgrade;
+    // Bun__HTTPMethod__toJS returns this cell for every CONNECT. It's null until the first one, and then matches nothing.
+    if (methodString == JSValue(Bun::commonStrings(vm).m_httpCONNECT))
+        return true;
+    return !hasBody && !isPipelinedDispatch && (dispatchBits & upgradeBits) == upgradeBits;
 }
 
 // A known header's value as a string: the one remembered from the last request when it holds the same bytes,
@@ -342,38 +351,23 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
 // them on demand.
 extern "C" void NodeHTTPResponse__adoptRawRequestHeaders(void* nodeHttpResponse, const uint8_t* data, size_t length);
 
-template<bool isSSL>
-static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
-{
-    app->enableNodeHttpCompat();
-    app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, int readError, bool peerEnded) -> void {
-        auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
-        ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
-        // A TLS socket's ciphertext that the kernel didn't take is either still held here, or was thrown away on the way here.
-        socket->closedWithUnsentData = !reinterpret_cast<uWS::AsyncSocket<isSSL>*>(rawSocket)->hasFullyDrained() || us_socket_ssl_spill_dropped(rawSocket);
-        socket->onClose(readError, peerEnded);
-    });
-    app->setOnSocketDrain([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
-        auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
-        ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
-        socket->onDrain();
-    });
-    app->setOnSocketData([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, const char* data, int length, bool last) -> void {
-        auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
-        ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
-        socket->onData(data, length, last);
-    });
-    app->setOnSocketUpgraded([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
-        reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onUpgraded(rawSocket);
-    });
-}
+static constexpr uWS::NodeHttpSocketHooks nodeHttpSocketHooks = {
+    .onClosed = [](void* socketData, int readError, bool peerEnded) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onClose(readError, peerEnded); },
+    .onDrain = [](void* socketData) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onDrain(); },
+    .onRawRead = [](void* socketData, const char* data, int length) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onRawRead(data, length); },
+    .onReadParsed = [](void* socketData) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onReadParsed(); },
+    .onUpgradeBodyEnded = [](void* socketData) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onUpgradeBodyEnded(); },
+    .onHandshake = [](void* socketData, int success, us_bun_verify_error_t verifyError) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onHandshake(success, verifyError); },
+    .onPeerEnded = [](void* socketData) { return reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->onPeerEnded(); },
+    .halfCloseAfterDrain = [](void* socketData) { reinterpret_cast<JSNodeHTTPServerSocket*>(socketData)->halfCloseAfterDrain(); },
+};
 
 extern "C" void NodeHTTP_assignOnNodeJSCompat(bool is_ssl, void* uws_app)
 {
     if (is_ssl) {
-        assignOnNodeJSCompat<true>(reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app));
+        reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app)->enableNodeHttpCompat(&nodeHttpSocketHooks);
     } else {
-        assignOnNodeJSCompat<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app));
+        reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app)->enableNodeHttpCompat(&nodeHttpSocketHooks);
     }
 }
 
@@ -392,7 +386,6 @@ template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
     size_t any_server,
     Zig::GlobalObject* globalObject,
-    JSValue thisValue,
     JSValue callback,
     JSValue methodString,
     uWS::HttpRequest* request,
@@ -403,16 +396,15 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* callbackObject = uncheckedDowncast<JSObject>(callback);
-    MarkedArgumentBuffer args;
-    args.append(thisValue);
+    RequestArguments args;
 
     // Typical request header sections are a few hundred bytes; the inline
     // capacity keeps the capture heap-allocation-free for the common case.
     WTF::Vector<uint8_t, 1024> flatHeaders;
-    assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
+    const uint32_t dispatchBits = assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
 
     auto* httpResponseData = response->getHttpResponseData();
-    // Pipelined: an earlier response is in flight, so this one is queued and gets the connection at its turn (startPipelinedResponse).
+    // Pipelined: an earlier response is in flight, so this one is queued and gets the connection at its turn (startRawResponse).
     const bool isPipelinedDispatch = (httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_NODE_PIPELINED_DISPATCH) != 0;
     const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;
 
@@ -455,7 +447,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     args.append(jsBoolean(request->isAncient()));
 
     // Pass pipelined data (head buffer) for Node.js compat (connect/upgrade events)
-    if (!request->head.empty()) {
+    if (!request->head.empty() && canHandOffHead(vm, methodString, dispatchBits, hasBody, isPipelinedDispatch)) {
         JSC::JSUint8Array* headBuffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(request->head.data()), request->head.size()));
         RETURN_IF_EXCEPTION(scope, {});
         args.append(headBuffer);
@@ -471,8 +463,8 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     return JSValue::encode(returnValue);
 }
 
-template<bool isSSL>
-static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::StringView& name, const WTF::StringView& value)
+template<typename Response>
+static void writeResponseHeader(Response* res, const WTF::StringView& name, const WTF::StringView& value)
 {
     ASSERT(name.containsOnlyASCII());
     HTTPLatin1String nameBytes(name);
@@ -480,25 +472,7 @@ static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::String
     res->writeHeader(nameBytes.view(), valueBytes.view());
 }
 
-// Connection is `1#connection-option` (RFC 9112 §9.3): look for the "close"
-// token anywhere in a comma-separated list. Mirrors the /(?:^|\W)close(?:$|\W)/i
-// check used by Bun's node:http layer.
-static bool connectionValueHasClose(const WTF::String& value)
-{
-    size_t pos = 0;
-    while ((pos = value.findIgnoringASCIICase("close"_s, pos)) != WTF::notFound) {
-        bool leftOk = pos == 0 || !isASCIIAlphanumeric(value[pos - 1]);
-        size_t end = pos + 5;
-        bool rightOk = end >= value.length() || !isASCIIAlphanumeric(value[end]);
-        if (leftOk && rightOk)
-            return true;
-        pos = end;
-    }
-    return false;
-}
-
-// Headers that user code can't set on a 101 response. HttpResponse::upgrade() writes the handshake headers itself
-// (RFC 6455 4.2.2), and a 1xx response must not have Content-Length or Transfer-Encoding (RFC 9110 8.6).
+// Headers that user code can't set on a 101 response. HttpResponse::upgrade() writes the handshake headers itself (RFC 6455 4.2.2).
 static bool isReservedWebSocketUpgradeHeader(WebCore::HTTPHeaderName name)
 {
     switch (name) {
@@ -509,16 +483,15 @@ static bool isReservedWebSocketUpgradeHeader(WebCore::HTTPHeaderName name)
     case WebCore::HTTPHeaderName::SecWebSocketVersion:
     case WebCore::HTTPHeaderName::SecWebSocketProtocol:
     case WebCore::HTTPHeaderName::SecWebSocketExtensions:
-    case WebCore::HTTPHeaderName::ContentLength:
-    case WebCore::HTTPHeaderName::TransferEncoding:
         return true;
     default:
         return false;
     }
 }
 
-template<bool isSSL, bool forWebSocketUpgrade = false>
-static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
+// A Bun.serve handler's headers, for any protocol. writeHeader() knows which of them uWS would otherwise add, and which it frames by itself.
+template<bool forWebSocketUpgrade = false, typename Response>
+static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, Response* res)
 {
     auto& internalHeaders = headers.internalHeaders();
 
@@ -527,67 +500,16 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         res->writeHeader(std::string_view("set-cookie", 10), valueBytes.view());
     }
 
-    auto* data = res->getHttpResponseData();
-
     for (const auto& header : internalHeaders.commonHeaders()) {
         if constexpr (forWebSocketUpgrade) {
             if (isReservedWebSocketUpgradeHeader(header.key))
                 continue;
         }
-
-        const auto& name = WebCore::httpHeaderNameString(header.key);
-        const auto& value = header.value;
-
-        // We have to tell uWS not to automatically insert a TransferEncoding or Date header.
-        // Otherwise, you get this when using Fastify;
-        //
-        // ❯ curl http://localhost:3000 --verbose
-        // *   Trying [::1]:3000...
-        // * Connected to localhost (::1) port 3000
-        // > GET / HTTP/1.1
-        // > Host: localhost:3000
-        // > User-Agent: curl/8.4.0
-        // > Accept: */*
-        // >
-        // < HTTP/1.1 200 OK
-        // < Content-Type: application/json; charset=utf-8
-        // < Content-Length: 17
-        // < Date: Sun, 06 Oct 2024 13:37:01 GMT
-        // < Transfer-Encoding: chunked
-        // <
-        //
-        if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                res->writeMark();
-            }
-        }
-
-        // Prevent automatic Date header insertion when user provides one
-        if (header.key == WebCore::HTTPHeaderName::Date) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
-        }
-
-        // Prevent automatic Transfer-Encoding: chunked insertion when user provides one
-        if (header.key == WebCore::HTTPHeaderName::TransferEncoding) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
-        }
-
-        // RFC 9112 §9.6: a server that sends the "close" connection option MUST
-        // close the connection after the response. Mark the uWS state so
-        // end()/tryEnd() shut the socket down instead of returning it to the
-        // keep-alive pool.
-        if (header.key == WebCore::HTTPHeaderName::Connection && connectionValueHasClose(value)) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
-        }
-        writeResponseHeader<isSSL>(res, name, value);
+        writeResponseHeader(res, WebCore::httpHeaderNameString(header.key), header.value);
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
-        const auto& name = header.key;
-        const auto& value = header.value;
-
-        writeResponseHeader<isSSL>(res, name, value);
+        writeResponseHeader(res, header.key, header.value);
     }
 }
 
@@ -602,6 +524,8 @@ static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
 // Node's _storeHeader emits chunked Transfer-Encoding after Connection/Keep-Alive, so it
 // cannot ride in the flat array (written first). Carry as an auto-header bit, rendered last.
 static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
+// Bits 5 and 6, no header line: how JS framed the body, in uWS's numbering. 0 leaves it to uWS.
+static constexpr uint32_t kAutoHeaderBodyShift = 5;
 
 // "Date: <IMF-fixdate>\r\n", rebuilt at most once per second. Hand-rolled
 // (not strftime) so the day/month names are locale-independent.
@@ -663,10 +587,177 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
     if (autoHeaderBits & kAutoHeaderTransferEncodingChunked) {
         static constexpr const char te[] = "Transfer-Encoding: chunked\r\n";
         response->uWS::template AsyncSocket<isSSL>::write(te, sizeof(te) - 1);
-        // Same state the flat-array path sets when it sees the header, so uWS
-        // chunk-frames the body.
-        response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
     }
+    using Data = uWS::HttpResponseData<isSSL>;
+    static_assert(Data::HTTP_BODY_UNTIL_CLOSE == 2 * Data::HTTP_BODY_CHUNKED && Data::HTTP_BODY_NONE == 3 * Data::HTTP_BODY_CHUNKED);
+    if (uint32_t framing = (autoHeaderBits >> kAutoHeaderBodyShift) & 3) {
+        response->setFraming(framing * Data::HTTP_BODY_CHUNKED);
+    }
+}
+
+static std::string_view autoConnectionHeaders(uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs)
+{
+    if (autoHeaderBits & kAutoHeaderConnKeepAlive) {
+        if (autoHeaderBits & kAutoHeaderKeepAliveTimeout)
+            return keepAliveHeaderBlob(keepAliveTimeoutSecs);
+        return "Connection: keep-alive\r\n"sv;
+    }
+    if (autoHeaderBits & kAutoHeaderConnClose)
+        return "Connection: close\r\n"sv;
+    return {};
+}
+
+template<bool isSSL>
+static bool tryWriteHeadAtOnce(uWS::HttpResponse<isSSL>* response, std::string_view status, JSC::JSArray* pairs, uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs, const std::string_view* body = nullptr)
+{
+    using Data = uWS::HttpResponseData<isSSL>;
+    auto* httpResponseData = response->getHttpResponseData();
+    if (httpResponseData->state & Data::HTTP_STATUS_CALLED)
+        return false;
+
+    WTF::Vector<std::string_view, 32> texts;
+    uint32_t state = Data::HTTP_STATUS_CALLED | Data::HTTP_WROTE_DATE_HEADER | Data::HTTP_WROTE_CONNECTION_HEADER;
+    size_t size = "HTTP/1.1 \r\n"sv.length() + status.length();
+    unsigned length = pairs->length();
+    for (unsigned i = 0; i + 1 < length; i += 2) {
+        std::array<std::string_view, 2> pair;
+        for (unsigned part = 0; part < 2; ++part) {
+            JSValue value = pairs->tryGetIndexQuickly(i + part);
+            if (!value || !value.isString())
+                return false;
+            const WTF::StringImpl* impl = asString(value)->tryGetValueImpl();
+            if (!impl || !impl->is8Bit())
+                return false;
+            auto span = impl->span8();
+            pair[part] = { reinterpret_cast<const char*>(span.data()), span.size() };
+        }
+        auto [name, value] = pair;
+        switch (uWS::classifyResponseField(name, value)) {
+        case uWS::ResponseField::ContentLength:
+            state |= Data::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+            break;
+        case uWS::ResponseField::TransferEncoding:
+            state |= Data::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
+            break;
+        default:
+            break;
+        }
+        texts.append(name);
+        texts.append(value);
+        size += name.length() + value.length() + ": \r\n"sv.length();
+    }
+
+    std::string_view date = autoHeaderBits & kAutoHeaderDate ? cachedDateHeaderLine() : std::string_view();
+    std::string_view connection = autoConnectionHeaders(autoHeaderBits, keepAliveTimeoutSecs);
+    std::string_view encoding = autoHeaderBits & kAutoHeaderTransferEncodingChunked ? "Transfer-Encoding: chunked\r\n"sv : std::string_view();
+    size += date.length() + connection.length() + encoding.length();
+
+    // What JS decided replaces what the status says, like writeAutoHeaders() after writeStatus(). 0 is undecided.
+    uint32_t framing = ((autoHeaderBits >> kAutoHeaderBodyShift) & 3) * Data::HTTP_BODY_CHUNKED;
+    if (!framing && response->isStatusWithoutBody(status))
+        framing = Data::HTTP_BODY_NONE;
+
+    char digits[uWS::utils::U64_MAX_DIGITS];
+    std::string_view contentLength;
+    if (body) {
+        constexpr uint32_t framedOtherwise = Data::HTTP_WRITE_CALLED | Data::HTTP_END_CALLED | Data::HTTP_CONNECTION_CLOSE | Data::HTTP_WROTE_TRANSFER_ENCODING_HEADER | Data::HTTP_ANCIENT_REQUEST
+            | Data::HTTP_FRAMING_DECIDED | Data::HTTP_NODE_HAS_RESPONSE_TRAILERS;
+        if (framing || ((httpResponseData->state | state) & framedOtherwise) || httpResponseData->offset)
+            return false;
+        if (!((httpResponseData->state | state) & Data::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+            contentLength = { digits, static_cast<size_t>(uWS::utils::u64toa(body->length(), digits)) };
+            size += "Content-Length: \r\n"sv.length() + contentLength.length();
+            state |= Data::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+        }
+        size += "\r\n"sv.length() + body->length();
+    }
+
+    char* at = response->uWS::template AsyncSocket<isSSL>::reserveInCorkBuffer(size);
+    if (!at)
+        return false;
+    httpResponseData->state |= state;
+    if (body)
+        response->setFraming(Data::HTTP_BODY_LENGTH);
+    else if (framing)
+        response->setFraming(framing);
+
+    auto append = [&](std::string_view text) {
+        if (text.empty())
+            return;
+        memcpy(at, text.data(), text.length());
+        at += text.length();
+    };
+    append("HTTP/1.1 "sv);
+    append(status);
+    append("\r\n"sv);
+    for (size_t i = 0; i < texts.size(); i += 2) {
+        append(texts[i]);
+        append(": "sv);
+        append(texts[i + 1]);
+        append("\r\n"sv);
+    }
+    append(date);
+    append(connection);
+    append(encoding);
+    if (body) {
+        if (!contentLength.empty()) {
+            append("Content-Length: "sv);
+            append(contentLength);
+            append("\r\n"sv);
+        }
+        append("\r\n"sv);
+        append(*body);
+    }
+    return true;
+}
+
+extern "C" bool NodeHTTPServer__bytesOfChunk(EncodedJSValue encodedChunk, const uint8_t** bytes, size_t* length)
+{
+    JSValue chunk = JSValue::decode(encodedChunk);
+    std::span<const uint8_t> found;
+    if (chunk.isString()) {
+        const WTF::StringImpl* impl = asString(chunk)->tryGetValueImpl();
+        if (!impl || !impl->is8Bit())
+            return false;
+        found = byteCast<uint8_t>(impl->span8());
+        bool isAllASCII = found.size() < 64 ? WTF::charactersAreAllASCII(impl->span8()) : simdutf::validate_ascii(reinterpret_cast<const char*>(found.data()), found.size());
+        if (!isAllASCII)
+            return false;
+    } else if (auto* view = dynamicDowncast<JSC::JSUint8Array>(chunk))
+        found = view->span();
+    else
+        return false;
+    if (found.empty())
+        return false;
+    *bytes = found.data();
+    *length = found.size();
+    return true;
+}
+
+extern "C" bool NodeHTTPServer__writeWholeResponse(bool isSSL, void* response, const char* status, size_t statusLength, EncodedJSValue headers, uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs, const char* body, size_t bodyLength)
+{
+    auto* pairs = dynamicDowncast<JSC::JSArray>(JSValue::decode(headers));
+    if (!pairs)
+        return false;
+    std::string_view statusText(status, statusLength);
+    std::string_view bodyText = bodyLength ? std::string_view(body, bodyLength) : std::string_view();
+    if (isSSL)
+        return tryWriteHeadAtOnce<true>(reinterpret_cast<uWS::HttpResponse<true>*>(response), statusText, pairs, autoHeaderBits, keepAliveTimeoutSecs, &bodyText);
+    return tryWriteHeadAtOnce<false>(reinterpret_cast<uWS::HttpResponse<false>*>(response), statusText, pairs, autoHeaderBits, keepAliveTimeoutSecs, &bodyText);
+}
+
+template<bool isSSL>
+static bool finishWholeResponse(uWS::HttpResponse<isSSL>* response, size_t bodyLength)
+{
+    response->finishResponseInCorkBuffer(bodyLength);
+    return !us_socket_is_closed(reinterpret_cast<us_socket_t*>(response)) && !response->hasFullyDrained();
+}
+
+extern "C" bool NodeHTTPServer__finishWholeResponse(bool isSSL, void* response, size_t bodyLength)
+{
+    if (isSSL)
+        return finishWholeResponse<true>(reinterpret_cast<uWS::HttpResponse<true>*>(response), bodyLength);
+    return finishWholeResponse<false>(reinterpret_cast<uWS::HttpResponse<false>*>(response), bodyLength);
 }
 
 template<bool isSSL>
@@ -682,126 +773,33 @@ static void NodeHTTPServer__writeHead(
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSObject* headersObject = headersObjectValue.getObject();
     if (!response->uWS::template AsyncSocket<isSSL>::isCorked() && response->getBufferedAmount() == 0) {
         response->uWS::template AsyncSocket<isSSL>::cork();
     }
+    // A flat [name, value, ...] array, so that a repeated name (Set-Cookie) gets one header line per value, like in Node.js.
+    auto* pairsArray = dynamicDowncast<JSC::JSArray>(headersObjectValue);
+    if (pairsArray && tryWriteHeadAtOnce<isSSL>(response, std::string_view(statusMessage, statusMessageLength), pairsArray, autoHeaderBits, keepAliveTimeoutSecs))
+        return;
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
-    // node:http's ServerResponse owns the Date header entirely (it honors
-    // res.sendDate / removeHeader("date") in JS), so never let uWS write its
-    // own Date header for these responses.
-    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+    // node:http's ServerResponse decides the Date and Connection headers in JS, so uWS must not add its own.
+    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER
+        | uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER;
 
-    // 204/304 responses must not carry any body framing, even when the user
-    // explicitly set a Transfer-Encoding header (Node.js suppresses the
-    // chunked framing and closes the connection for those).
-    if (statusMessageLength >= 3 && (memcmp(statusMessage, "204", 3) == 0 || memcmp(statusMessage, "304", 3) == 0)
-        && (statusMessageLength == 3 || statusMessage[3] == ' ')) {
-        response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
-    }
-
-    if (headersObject) {
-        if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
-            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
+    if (pairsArray) {
+        unsigned length = pairsArray->length();
+        for (unsigned i = 0; i + 1 < length; i += 2) {
+            JSValue nameValue = pairsArray->getIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, void());
-            if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return;
-        }
-
-        // A flat [name, value, name, value, ...] array. Used by node:http's
-        // ServerResponse so that repeated header names (multiple Set-Cookie or
-        // duplicate Content-Length values, etc.) are written as separate
-        // header lines exactly as Node.js does.
-        if (auto* pairsArray = dynamicDowncast<JSC::JSArray>(headersObject)) {
-            auto* httpResponseData = response->getHttpResponseData();
-            unsigned length = pairsArray->length();
-            for (unsigned i = 0; i + 1 < length; i += 2) {
-                JSValue nameValue = pairsArray->getIndex(globalObject, i);
-                RETURN_IF_EXCEPTION(scope, void());
-                JSValue headerValue = pairsArray->getIndex(globalObject, i + 1);
-                RETURN_IF_EXCEPTION(scope, void());
-
-                String name = nameValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, void());
-                String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, void());
-
-                // node:http marks framing decisions with a NUL-named sentinel
-                // pair instead of a real header: value "1" = close-delimited
-                // (the user removed the framing headers), value "2" = no body
-                // (HEAD - suppress all body framing like 204/304).
-                if (name.length() == 1 && name[0] == 0) {
-                    if (value == "2"_s) {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
-                    } else {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED;
-                    }
-                    continue;
-                }
-
-                WebCore::HTTPHeaderName headerName;
-                if (WebCore::findHTTPHeaderName(StringView(name), headerName)) {
-                    if (headerName == WebCore::HTTPHeaderName::ContentLength) {
-                        if (!(httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                            httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                            response->writeMark();
-                        }
-                    } else if (headerName == WebCore::HTTPHeaderName::Date) {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
-                    } else if (headerName == WebCore::HTTPHeaderName::TransferEncoding) {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
-                    }
-                }
-
-                writeResponseHeader<isSSL>(response, name, value);
-            }
-            RETURN_IF_EXCEPTION(scope, void());
-            if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return;
-        }
-
-        if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
-            headersObject->reifyAllStaticProperties(globalObject);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
-
-        auto* structure = headersObject->structure();
-
-        if (structure->canPerformFastPropertyEnumeration()) {
-            structure->forEachProperty(vm, [&](const auto& entry) {
-                JSValue headerValue = headersObject->getDirect(entry.offset());
-                if (!headerValue.isString()) {
-
-                    return true;
-                }
-
-                String key = entry.key();
-                String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
-
-                writeResponseHeader<isSSL>(response, key, value);
-
-                return true;
-            });
-        } else {
-            PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+            JSValue headerValue = pairsArray->getIndex(globalObject, i + 1);
             RETURN_IF_EXCEPTION(scope, void());
 
-            for (unsigned i = 0; i < propertyNames.size(); ++i) {
-                JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
-                RETURN_IF_EXCEPTION(scope, void());
-                if (!headerValue.isString()) {
-                    continue;
-                }
+            String name = nameValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+            String value = headerValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
 
-                String key = propertyNames[i].string();
-                String value = headerValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, void());
-
-                writeResponseHeader<isSSL>(response, key, value);
-            }
+            writeResponseHeader(response, name, value);
         }
     }
 
@@ -836,7 +834,6 @@ extern "C" void NodeHTTPServer__writeHead_https(
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     size_t any_server,
     Zig::GlobalObject* globalObject,
-    EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
@@ -846,7 +843,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     return NodeHTTPServer__onRequest<false>(
         any_server,
         globalObject,
-        JSValue::decode(thisValue),
         JSValue::decode(callback),
         JSValue::decode(methodString),
         request,
@@ -857,7 +853,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     size_t any_server,
     Zig::GlobalObject* globalObject,
-    EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
@@ -867,7 +862,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     return NodeHTTPServer__onRequest<true>(
         any_server,
         globalObject,
-        JSValue::decode(thisValue),
         JSValue::decode(callback),
         JSValue::decode(methodString),
         request,
@@ -875,105 +869,10 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
         nodeHttpResponsePtr);
 }
 
-// Node's static_cast<uint64_t>(double) is undefined for these: NaN or below 1 selects the default limit (0), 2^64 or more selects none.
-static uint64_t maxHTTPHeaderSizeFromNumber(double value)
-{
-    if (!(value >= 1)) return 0;
-    if (value >= 18446744073709551616.0) return UINT64_MAX;
-    return static_cast<uint64_t>(value);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 8);
-    // This is an internal binding.
-    JSValue serverValue = callFrame->uncheckedArgument(0);
-    JSValue requireHostHeader = callFrame->uncheckedArgument(1);
-    JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue lenientHttpFlags = callFrame->uncheckedArgument(3);
-    JSValue maxHeaderSize = callFrame->uncheckedArgument(4);
-    JSValue callback = callFrame->uncheckedArgument(5);
-    JSValue onConnectionCallback = callFrame->argument(6);
-    JSValue httpAllowHalfOpen = callFrame->argument(7);
-
-    double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    int32_t lenientBits = lenientHttpFlags.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHTTPHeaderSizeFromNumber(maxHeaderSizeNumber));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (onConnectionCallback.isCallable()) {
-        Server__setOnConnection(globalObject, JSValue::encode(serverValue), JSValue::encode(onConnectionCallback));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    return JSValue::encode(jsUndefined());
-}
-
-// Pushes only the parser/handler flags. Unlike setServerCustomOptions this rebinds no
-// callbacks, so it is safe to call on a listening server (server.httpAllowHalfOpen is
-// assignable at any time, like Node's).
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetAppFlags, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 5);
-    // This is an internal binding.
-    JSValue serverValue = callFrame->uncheckedArgument(0);
-    JSValue requireHostHeader = callFrame->uncheckedArgument(1);
-    JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue lenientHttpFlags = callFrame->uncheckedArgument(3);
-    JSValue httpAllowHalfOpen = callFrame->argument(4);
-
-    int32_t lenientBits = lenientHttpFlags.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsUndefined());
-}
-
-// Also called on a listening server. 0 means the option is not set.
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetMaxHeadersCount, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 2);
-    // This is an internal binding.
-    JSValue serverValue = callFrame->uncheckedArgument(0);
-    uint32_t maxHeadersCount = callFrame->uncheckedArgument(1).toUInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    Server__setMaxHeadersCount(globalObject, JSValue::encode(serverValue), maxHeadersCount);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(jsUndefined());
-}
-
 JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto* obj = constructEmptyObject(globalObject);
     VM& vm = globalObject->vm();
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerCustomOptions"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "setServerCustomOptions"_s, jsHTTPSetCustomOptions, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerAppFlags"_s)),
-        JSC::JSFunction::create(vm, globalObject, 5, "setServerAppFlags"_s, jsHTTPSetAppFlags, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerMaxHeadersCount"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "setServerMaxHeadersCount"_s, jsHTTPSetMaxHeadersCount, ImplementationVisibility::Public), 0);
     obj->putDirectNativeFunction(
         vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "drainMicrotasks"_s)),
         0, Bun::Bindgen::Generated::HwExports::jsDrainMicrotasks, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
@@ -981,60 +880,20 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-/* Http2Response and Http3Response share this surface: headers are buffered
- * as a list and framed by the transport, so there is no Transfer-Encoding. */
-template<typename Response, typename ResponseData>
-static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Response* res)
-{
-    auto& internalHeaders = headers.internalHeaders();
-    auto* data = res->getHttpResponseData();
-
-    auto writeOne = [&](const WTF::StringView& name, const WTF::StringView& value) {
-        ASSERT(name.containsOnlyASCII());
-        HTTPLatin1String nameBytes(name);
-        HTTPLatin1String valueBytes(value);
-        res->writeHeader(nameBytes.view(), valueBytes.view());
-    };
-
-    for (auto& value : internalHeaders.getSetCookieHeaders()) {
-        HTTPLatin1String valueBytes(value);
-        res->writeHeader(std::string_view("set-cookie", 10), valueBytes.view());
-    }
-
-    for (const auto& header : internalHeaders.commonHeaders()) {
-        if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                data->state |= ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                res->writeMark();
-            }
-        }
-        if (header.key == WebCore::HTTPHeaderName::Date) {
-            data->state |= ResponseData::HTTP_WROTE_DATE_HEADER;
-        }
-        // No Transfer-Encoding on these transports; if a user header reaches
-        // here it was already stripped by doWriteHeaders().
-        writeOne(WebCore::httpHeaderNameString(header.key), header.value);
-    }
-
-    for (auto& header : internalHeaders.uncommonHeaders()) {
-        writeOne(header.key, header.value);
-    }
-}
-
 extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, UWSResponseKind kind, void* arg2)
 {
     switch (kind) {
     case UWSResponseKind::TCP:
-        writeFetchHeadersToUWSResponse<false>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        writeFetchHeadersToUWSResponse(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
         break;
     case UWSResponseKind::SSL:
-        writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+        writeFetchHeadersToUWSResponse(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
     case UWSResponseKind::H2:
-        writeFetchHeadersToStreamResponse<uWS::Http2Response, uWS::Http2ResponseData>(*arg0, reinterpret_cast<uWS::Http2Response*>(arg2));
+        writeFetchHeadersToUWSResponse(*arg0, reinterpret_cast<uWS::Http2Response*>(arg2));
         break;
     case UWSResponseKind::H3:
-        writeFetchHeadersToStreamResponse<uWS::Http3Response, uWS::Http3ResponseData>(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
+        writeFetchHeadersToUWSResponse(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
         break;
     }
 }
@@ -1042,9 +901,9 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
 extern "C" void WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(WebCore::FetchHeaders* arg0, bool isSSL, void* arg1)
 {
     if (isSSL) {
-        writeFetchHeadersToUWSResponse<true, true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg1));
+        writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg1));
     } else {
-        writeFetchHeadersToUWSResponse<false, true>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg1));
+        writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg1));
     }
 }
 

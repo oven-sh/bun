@@ -37,13 +37,15 @@ leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
 leak:JSC__JSModuleLoader__loadAndEvaluateModule
 leak:uws_create_app
+# uws_create_app ends in a tail call to this, so an optimized build has no frame for the shim.
+leak:uWS::TemplatedApp<*>::create(ssl_ctx_st*)
 leak:uws_h3_create_app
 leak:lsquic_global_init
 leak:us_create_quic_client_context
 leak:lsquic_engine_connect
 leak:lsquic_engine_packet_in
 leak:lshpack_wrapper_decode
-leak:lshpack_wrapper_encode
+leak:lshpack_wrapper_encode_block
 leak:lshpack_wrapper_init
 leak:jsc.ipc.onData2
 leak:runtime.node.fs_events.InitLibrary
@@ -67,6 +69,9 @@ leak:runtime.webcore.Blob.getNameString
 leak:JSC::callIntlDateTimeFormat
 leak:functionRunProfiler
 leak:JSC::JSModuleLoader::evaluateNonVirtual
+# Under --aot it serves the default export of an entry point, which plain Bun does from the evaluation of its entry
+# wrapper (the line above). NewServer::init makes a pool of request contexts once a thread, which a Worker's end does not free.
+leak:Zig::startServerFromNamespace
 leak:patch.patch.PatchFile.apply
 leak:jsc.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.runFromJSThread
 leak:runtime.webcore.blob.Store.initS3WithReferencedCredentials
@@ -102,7 +107,6 @@ leak:fse_run_loop
 leak:Zig::NapiClass_ConstructorFunction
 leak:runtime.webcore.fetch.FetchTasklet.toResponse
 leak:JSC::jsonProtoFuncStringify
-leak:libarchive_sys.bindings.Archive.readNew
 leak:Zig::SourceProvider::create
 
 leak:fromErrorInstance

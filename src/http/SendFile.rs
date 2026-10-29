@@ -1,9 +1,12 @@
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+#[cfg(target_os = "freebsd")]
 use core::ptr;
 
-use bun_core::feature_flags;
+use bun_core::{RacyCell, feature_flags};
 use bun_sys::{self, Fd};
 use bun_url::URL;
+
+// Allocated at the first copy: the executable's zero-filled data is the one mapping that can't opt out of transparent huge pages.
+static COPY_BUFFER: RacyCell<Option<Box<[u8]>>> = RacyCell::new(None);
 
 #[derive(Copy, Clone)]
 pub struct SendFile {
@@ -20,6 +23,55 @@ impl SendFile {
             return false;
         }
         url.is_http() && url.href.len() > 0
+    }
+
+    /// Moves the cursor back to the first byte so a redirect or a retry can send the body again.
+    pub(crate) fn rewind(&mut self) {
+        self.offset -= self.content_size - self.remain;
+        self.remain = self.content_size;
+    }
+
+    /// The head promised `content_size` bytes, and the file can have become shorter since it was measured.
+    fn at_end_of_file(&self) -> Status {
+        if self.remain == 0 {
+            Status::Done
+        } else {
+            Status::Err(crate::Error::RequestBodyLengthMismatch)
+        }
+    }
+
+    /// `pread` + `send`, for a connection `sendfile(2)` can't write to. Nothing here touches `self` after `send` fails.
+    pub(crate) fn write_copy(
+        &mut self,
+        mut send: impl FnMut(&[u8]) -> crate::Result<usize>,
+    ) -> Status {
+        // SAFETY: only the HTTP thread sends requests, and every pass refills the buffer before `send` reads it.
+        let buf = unsafe { &mut *COPY_BUFFER.get() }
+            .get_or_insert_with(|| vec![0; 256 * 1024].into_boxed_slice());
+        // Start small and double. A writable event can mean very little room.
+        let mut chunk: usize = 16 * 1024;
+        loop {
+            let want = chunk.min(self.remain);
+            if want == 0 {
+                return Status::Done;
+            }
+            let offset = i64::try_from(self.offset).expect("int cast");
+            let read = match bun_sys::pread(self.fd, &mut buf[..want], offset) {
+                Ok(0) => return self.at_end_of_file(),
+                Ok(n) => n,
+                Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
+            };
+            let wrote = match send(&buf[..read]) {
+                Ok(n) => n,
+                Err(err) => return Status::Err(err),
+            };
+            self.offset += wrote;
+            self.remain -= wrote;
+            if wrote < read {
+                return Status::Again;
+            }
+            chunk = (chunk * 2).min(buf.len());
+        }
     }
 
     // Takes the resolved fd directly rather than the socket; callers pass
@@ -50,6 +102,10 @@ impl SendFile {
             self.offset = u64::try_from(signed_offset).expect("int cast") as usize;
 
             let errcode = bun_sys::get_errno(val);
+            // The send buffer is full, for example with this request's own head.
+            if errcode == bun_sys::E::EAGAIN {
+                return Status::Again;
+            }
 
             self.remain = (self.remain as u64)
                 .saturating_sub((self.offset as u64).saturating_sub(begin as u64))
@@ -57,7 +113,7 @@ impl SendFile {
 
             if errcode != bun_sys::E::SUCCESS || self.remain == 0 || val == 0 {
                 if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
+                    return self.at_end_of_file();
                 }
 
                 return Status::Err(bun_errno::from_errno(errcode as i32).into());
@@ -87,45 +143,13 @@ impl SendFile {
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
             if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {
                 if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
+                    return self.at_end_of_file();
                 }
                 return Status::Err(bun_errno::from_errno(errcode as i32).into());
             }
         }
 
-        #[cfg(all(
-            unix,
-            not(any(target_os = "linux", target_os = "android")),
-            not(target_os = "freebsd")
-        ))]
-        {
-            let mut sbytes: i64 = i64::try_from(adjusted_count).expect("int cast"); // C off_t
-            // Same-width signedness flip; `as` is a bit-reinterpret here.
-            let signed_offset: i64 = self.offset as u64 as i64;
-            // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
-            let errcode = bun_sys::get_errno(unsafe {
-                bun_sys::c::sendfile(
-                    self.fd.native(),
-                    socket_fd.native(),
-                    signed_offset,
-                    &raw mut sbytes,
-                    ptr::null_mut(),
-                    0,
-                )
-            });
-            let wrote: u64 = u64::try_from(sbytes).expect("int cast");
-            self.offset = (self.offset as u64).saturating_add(wrote) as usize;
-            self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
-            if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {
-                if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
-                }
-
-                return Status::Err(bun_errno::from_errno(errcode as i32).into());
-            }
-        }
-
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         {
             let _ = (socket_fd, adjusted_count);
         }
@@ -135,9 +159,7 @@ impl SendFile {
 }
 
 pub(crate) enum Status {
-    #[cfg(not(windows))]
     Done,
-    #[cfg(not(windows))]
     Err(crate::Error),
     Again,
 }

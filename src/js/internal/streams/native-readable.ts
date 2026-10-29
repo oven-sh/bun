@@ -6,11 +6,12 @@
 // Bun, `fromWeb` is able to check if the stream is backed by a native handle,
 // to which it will take this path.
 const Readable = require("internal/streams/readable");
-const transferToNativeReadable = $newCppFunction(
+const transferToNativeReadable: (stream: ReadableStream) => NativePtr | undefined = $newCppFunction(
   "streams/BunStreamConsumers.cpp",
   "jsFunctionTransferToNativeReadableStream",
   1,
 );
+const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { errorOrDestroy } = require("internal/streams/destroy");
 
 const kRefCount = Symbol("refCount");
@@ -27,17 +28,7 @@ let dynamicallyAdjustChunkSize = (_?) => (
   (dynamicallyAdjustChunkSize = () => _)
 );
 
-type NodeReadable = import("node:stream").Readable;
-
-interface NativeReadable extends NodeReadable {
-  _readableState: {
-    flowing: boolean | null;
-    ended: boolean;
-    sync: boolean;
-    buffer: unknown[];
-    bufferIndex: number;
-    length: number;
-  };
+interface NativeReadable extends $Node.Readable {
   $bunNativePtr: NativePtr | undefined;
   $start?: typeof ensureConstructed;
   ref: typeof ref;
@@ -65,12 +56,26 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
+function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
-  const bunNativePtr = (readableStream as any).$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
-  $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
+  return fromNativeHandle(transferToNativeReadable(readableStream), options, undefined);
+}
 
+// Readable.fromWeb(): returns undefined for a stream that something has started, whose queue only a reader can empty.
+function tryConstructNativeReadable(readableStream: ReadableStream, options, signal): NativeReadable | undefined {
+  const bunNativePtr = transferToNativeReadable(readableStream);
+  if (bunNativePtr === undefined) return undefined;
+  try {
+    return fromNativeHandle(bunNativePtr, options, signal);
+  } catch (error) {
+    bunNativePtr.cancel(error);
+    throw error;
+  }
+}
+
+// The caller took the handle first, because a getter in `options` could start the stream.
+function fromNativeHandle(bunNativePtr: NativePtr | undefined, options, signal): NativeReadable {
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
@@ -98,12 +103,8 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
     stream.$start = ensureConstructed;
   }
 
-  // https://github.com/oven-sh/bun/pull/12801
-  // https://github.com/oven-sh/bun/issues/9555
-  // There may be a ReadableStream.Strong handle to the ReadableStream.
-  // We can't update those handles to point to the NativeReadable from JS
-  // So we instead mark it as no longer usable, and create a new NativeReadable
-  transferToNativeReadable(readableStream);
+  // Not through `options`: an aborted signal destroys the stream at once, and only `destroy` above cancels the handle.
+  if (signal) addAbortSignal(signal, stream);
 
   $debug(`[${stream.debugId}] constructed!`);
 
@@ -222,17 +223,17 @@ function pushEof(stream: NativeReadable) {
 // `push()` returning false means the Readable's buffer is at/above hwm (or
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
-function pushAndCheck(stream: NativeReadable, chunk: any) {
+function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
   if (!stream.push(chunk)) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }
 }
 
-function handleNumberResult(stream: NativeReadable, result: number, chunk: any, isClosed: boolean) {
+function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffer | undefined, isClosed: boolean) {
   if (result > 0) {
-    const slice = chunk.subarray(0, result);
-    chunk = slice.byteLength < chunk.byteLength ? chunk.subarray(result) : undefined;
+    const slice = chunk!.subarray(0, result);
+    chunk = slice.byteLength < chunk!.byteLength ? chunk!.subarray(result) : undefined;
     if (slice.byteLength > 0) {
       pushAndCheck(stream, slice);
     }
@@ -245,7 +246,12 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: any, 
   return chunk;
 }
 
-function handleArrayBufferViewResult(stream: NativeReadable, result: any, chunk: any, isClosed: boolean) {
+function handleArrayBufferViewResult(
+  stream: NativeReadable,
+  result: ArrayBufferView,
+  chunk: Buffer | undefined,
+  isClosed: boolean,
+) {
   if (result.byteLength > 0) {
     pushAndCheck(stream, result);
   }
@@ -304,4 +310,4 @@ function unref(this: NativeReadable) {
   }
 }
 
-export default { constructNativeReadable };
+export default { constructNativeReadable, tryConstructNativeReadable };

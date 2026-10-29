@@ -8,7 +8,7 @@ use bun_ptr::RefPtr;
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringView, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc as jsc;
@@ -286,9 +286,7 @@ mod advanced {
         /// messages keep the version-1 wire format.
         SerializedMessageWithBuffers = 4,
     }
-    // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
-    // `Copy + 'static`; the single byte is always an initialized discriminant.
-    unsafe impl bytemuck::NoUninit for IPCMessageType {}
+    bun_core::impl_no_uninit!(IPCMessageType);
 
     impl IPCMessageType {
         fn tag_name(raw: u8) -> &'static str {
@@ -513,28 +511,27 @@ mod json {
         // Use ExternalString to avoid copying data if possible.
         // This is only possible for ascii data, as that fits into latin1
         // otherwise we have to convert it utf-8 into utf16-le.
-        let str = if is_ascii {
+        let parsed = if is_ascii {
+            // SAFETY: `json_data` outlives `s`, and the check below panics if anything kept a ref past `s`.
             // .dead if `json_data` exceeds max length
-            let s = BunString::create_external::<*mut bool>(
-                json_data,
-                true,
-                &raw mut was_ascii_string_freed,
-                json_ipc_data_string_free_cb,
-            );
+            let s = unsafe {
+                BunString::create_external::<*mut bool>(
+                    json_data,
+                    &raw mut was_ascii_string_freed,
+                    json_ipc_data_string_free_cb,
+                )
+            };
             if s.tag() == bun_core::Tag::Dead {
                 bun_core::hint::cold();
                 return Err(IPCDecodeError::Js(JsError::OutOfMemory));
             }
-            s
+            s.to_js_by_parse_json(global_this)
         } else {
-            BunString::borrow_utf8(json_data)
+            StringView::borrow_utf8(json_data).to_js_by_parse_json(global_this)
         };
-
         // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
         // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
-        // drop — so the freed-flag check must follow it.
-        let parsed = str.to_js_by_parse_json(global_this);
-        drop(str);
+        // drop of `s` — so the freed-flag check must follow it.
         if is_ascii && !was_ascii_string_freed {
             panic!(
                 "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
@@ -769,19 +766,27 @@ impl CallbackList {
         Ok(())
     }
 
-    fn call_next_tick(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+    /// `sent` false: the peer never took the message, and each callback gets a `write EPIPE` error of its own.
+    fn call_next_tick(&mut self, global: &JSGlobalObject, sent: bool) -> JsResult<()> {
+        let result = || {
+            if sent {
+                JSValue::NULL
+            } else {
+                broken_pipe_error(global)
+            }
+        };
         match self {
             CallbackList::AckNack => {}
             CallbackList::None => {}
             CallbackList::Callback(cb) => {
-                JSValue::call_next_tick_1(cb.value(), global, JSValue::NULL)?;
+                JSValue::call_next_tick_1(cb.value(), global, result())?;
                 // Assignment drops the old `Callback(cb)` guard → unprotect.
                 *self = CallbackList::None;
             }
             CallbackList::CallbackArray(arr) => {
                 let mut iter = arr.value().array_iterator(global)?;
                 while let Some(item) = iter.next()? {
-                    JSValue::call_next_tick_1(item, global, JSValue::NULL)?;
+                    JSValue::call_next_tick_1(item, global, result())?;
                 }
                 // Assignment drops the old `CallbackArray(arr)` guard → unprotect.
                 *self = CallbackList::None;
@@ -789,6 +794,21 @@ impl CallbackList {
         }
         Ok(())
     }
+}
+
+fn broken_pipe_error(global: &JSGlobalObject) -> JSValue {
+    #[cfg(windows)]
+    let errno = uv::UV_EPIPE;
+    #[cfg(not(windows))]
+    let errno = -(bun_sys::E::EPIPE as c_int);
+    jsc::SystemError {
+        errno,
+        code: BunString::static_("EPIPE"),
+        message: BunString::static_("write EPIPE"),
+        syscall: BunString::static_("write"),
+        ..Default::default()
+    }
+    .to_error_instance(global)
 }
 
 pub(crate) struct SendHandle {
@@ -815,17 +835,22 @@ impl SendHandle {
                 }
             }
         }
-        let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
+        let _ = self.callbacks.call_next_tick(global, true); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
     }
 
-    pub(crate) fn abort_unsent(self, global: &JSGlobalObject) {
+    pub(crate) fn abort_unsent(mut self, global: &JSGlobalObject, answer: bool) {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
                 let js = handle.js.value();
                 if js.is_object() {
                     let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
                 }
+            }
+        }
+        if answer {
+            if let Err(err) = self.callbacks.call_next_tick(global, false) {
+                let _ = bun_jsc::task::report_error_or_terminate(global, err);
             }
         }
     }
@@ -1196,30 +1221,40 @@ impl SendQueue {
             // SAFETY: caller contract — the queued task owns a ref on `this`.
             let sq = unsafe { &*this };
             sq.deferred_scheduled.set(false);
-            if sq.pending_close.replace(false) {
-                log!("SendQueue#closeSocketTask");
-                sq.close_socket(CloseReason::Normal, CloseFrom::User);
-            }
-            if sq.pending_after_close.replace(false) {
-                log!("SendQueue#_onAfterIPCClosed");
-                if !sq.close_event_sent.replace(true) {
-                    let global = sq.get_global_this();
-                    if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
-                        item.complete(&global);
-                    }
-                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
-                    for item in sq.queue.with_mut(std::mem::take) {
-                        item.abort_unsent(&global);
-                    }
-                    if let Some(owner) = sq.owner.get() {
-                        owner.handle_ipc_close();
-                    }
-                }
-            }
+            sq.run_pending();
         }
         // Release the task's ref; the SendQueue may be freed here.
         // SAFETY: `this` is live and owns the ref taken at schedule.
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+    }
+
+    /// Does now what the queued task would do. A pending flag means that task is still queued, and its ref keeps `self` alive through the callbacks.
+    pub(crate) fn run_pending(&self) {
+        if self.pending_close.replace(false) {
+            log!("SendQueue#closeSocketTask");
+            self.close_socket(CloseReason::Normal, CloseFrom::User);
+        }
+        if self.pending_after_close.replace(false) {
+            log!("SendQueue#_onAfterIPCClosed");
+            if !self.close_event_sent.replace(true) {
+                let global = self.get_global_this();
+                // Like node, a message held back until an earlier handle is acked gets no answer when the channel closes.
+                let mut held_back = false;
+                if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
+                    item.complete(&global);
+                    held_back = true;
+                }
+                // on_write_complete already dequeued everything fully written; the rest was never delivered.
+                for item in self.queue.with_mut(std::mem::take) {
+                    let has_handle = item.handle.is_some();
+                    item.abort_unsent(&global, !held_back);
+                    held_back |= has_handle;
+                }
+                if let Some(owner) = self.owner.get() {
+                    owner.handle_ipc_close();
+                }
+            }
+        }
     }
 
     /// `Taskable::release_unrun`: a scheduled deferred task that will never

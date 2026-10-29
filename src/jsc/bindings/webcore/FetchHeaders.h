@@ -44,18 +44,9 @@ class FetchHeaders : public RefCounted<FetchHeaders> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FetchHeaders, FetchHeaders);
 
 public:
-    enum class Guard : uint8_t {
-        None,
-        Immutable,
-        Request,
-        RequestNoCors,
-        Response
-    };
-
     using Init = std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>>;
     static ExceptionOr<Ref<FetchHeaders>> create(std::optional<Init>&&);
 
-    static Ref<FetchHeaders> create(Guard guard = Guard::None, HTTPHeaderMap&& headers = {}) { return adoptRef(*new FetchHeaders { guard, WTF::move(headers) }); }
     static Ref<FetchHeaders> create(const FetchHeaders& headers) { return adoptRef(*new FetchHeaders { headers }); }
 
     ExceptionOr<void> append(const String& name, const String& value);
@@ -130,10 +121,7 @@ public:
     void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers.willChange() = WTF::move(headers); }
     const HTTPHeaderMap& internalHeaders() const { return m_headers.get(); }
 
-    void setGuard(Guard);
-    Guard guard() const { return m_guard; }
-
-    FetchHeaders(Guard, HTTPHeaderMap&&);
+    explicit FetchHeaders(HTTPHeaderMap&& = {});
     explicit FetchHeaders(const FetchHeaders&);
 
 private:
@@ -158,43 +146,20 @@ private:
         uint64_t m_updateCounter { 0 };
     };
 
-    Guard m_guard;
     // How often fastRemove() ran. An iterator compares it with the counter to tell that nothing else changed the map.
     uint16_t m_nativeRemovals { 0 };
     CountedHeaderMap m_headers;
 };
 
-inline FetchHeaders::FetchHeaders(Guard guard, HTTPHeaderMap&& headers)
-    : m_guard(guard)
-    , m_headers(WTF::move(headers))
+inline FetchHeaders::FetchHeaders(HTTPHeaderMap&& headers)
+    : m_headers(WTF::move(headers))
 {
 }
 
 inline FetchHeaders::FetchHeaders(const FetchHeaders& other)
     : RefCounted<FetchHeaders>()
-    , m_guard(other.m_guard)
     , m_headers(other.internalHeaders())
 {
 }
 
-inline void FetchHeaders::setGuard(Guard guard)
-{
-    ASSERT(!internalHeaders().size());
-    m_guard = guard;
-}
-
 } // namespace WebCore
-
-namespace WTF {
-
-template<> struct EnumTraits<WebCore::FetchHeaders::Guard> {
-    using values = EnumValues<
-        WebCore::FetchHeaders::Guard,
-        WebCore::FetchHeaders::Guard::None,
-        WebCore::FetchHeaders::Guard::Immutable,
-        WebCore::FetchHeaders::Guard::Request,
-        WebCore::FetchHeaders::Guard::RequestNoCors,
-        WebCore::FetchHeaders::Guard::Response>;
-};
-
-}

@@ -1,23 +1,32 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const method = { returns: b.any, capability: "js", throws: true } as const;
+const js = { capability: "js", throws: true } as const;
+const read = { returns: b.any.returning("Promise"), ...js } as const;
 
 const members = {
   cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
-  drain: { ...method, length: 1 },
-  isClosed: { getter: b.bool },
-  pull: { ...method, args: { view: b.any, flags: b.any }, passThis: true, length: 1 },
-  start: { ...method, length: 1 },
+  drain: { returns: b.any.returning("Uint8Array", "undefined"), ...js, length: 1 },
+  isClosed: { getter: b.bool, pure: true },
+  pull: {
+    ...js,
+    args: { view: b.any, flags: b.any },
+    returns: b.any.returning("number", "boolean", "Promise", "Uint8Array", "undefined"),
+    passThis: true,
+    length: 1,
+  },
+  start: { returns: b.any.returning("number", "Uint8Array", "undefined"), ...js, length: 1 },
   updateRef: { args: { enable: b.bool.loose } },
 } as const;
 
 /** Reads the whole stream. */
 const buffered = {
-  arrayBuffer: method,
-  blob: method,
-  bytes: method,
-  json: method,
-  text: method,
+  arrayBuffer: read,
+  blob: read,
+  bytes: read,
+  json: read,
+  /** What `json` parses, for the JSON parser of a compiled program. */
+  jsonSource: read,
+  text: read,
 } as const;
 
 const bufferedSource = {
@@ -28,6 +37,7 @@ const bufferedSource = {
   drain: members.drain,
   isClosed: members.isClosed,
   json: buffered.json,
+  jsonSource: buffered.jsonSource,
   pull: members.pull,
   start: members.start,
   text: buffered.text,
@@ -50,7 +60,7 @@ export const BlobInternalReadableStreamSource = b.class({
 export const FileInternalReadableStreamSource = b.class({
   ...source,
   rustPath: "crate::webcore::file_reader::Source",
-  /** `lockedStream` is the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
+  /** `lockedStream` is the stream `ReadableStream__tryLockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
   internalFields: [...internalFields, "lockedStream"],
   proto: {
     cancel: members.cancel,
@@ -58,7 +68,7 @@ export const FileInternalReadableStreamSource = b.class({
     isClosed: members.isClosed,
     pull: members.pull,
     setFlowing: { args: { flag: b.any }, capability: "js" },
-    setRawMode: { args: { flag: b.any }, returns: b.any, capability: "js" },
+    setRawMode: { args: { flag: b.any }, returns: b.any.returning("object", "undefined"), capability: "js" },
     start: members.start,
     updateRef: members.updateRef,
   },
@@ -69,4 +79,11 @@ export const BytesInternalReadableStreamSource = b.class({
   rustPath: "crate::webcore::byte_stream::Source",
   internalFields: [...internalFields, "lockedStream"],
   proto: bufferedSource,
+});
+
+/** For `undici`. The stream is a body that `fetch()` decoded, so `Content-Encoding` and `Content-Length` describe other bytes. */
+export const isDecodedBody = b.fn({
+  args: { stream: b.any },
+  returns: b.bool,
+  rustPath: "crate::webcore::readable_stream::is_decoded_body",
 });

@@ -33,8 +33,7 @@ typedef void* zig_mutex_t;
 #endif
 
 // IMPORTANT: When changing this, don't forget to update the Rust mirror in src/uws_sys/InternalLoopData.rs as well!
-struct us_quic_socket_context_s;
-struct us_nq_driver_s;
+struct us_quic_driver_s;
 
 /* A socket that us_socket_resume() failed to re-register with the kernel, and
  * its close code. */
@@ -51,26 +50,22 @@ struct us_internal_loop_data_t {
      * timeout — no timerfd, no EVFILT_TIMER. */
     long long sweep_next_tick_ns;
 #endif
+    /* The sockets a sweep visits: linked in a group, connecting, or parked in the low-priority queue. Plus one per QUIC context. The sweep timer is armed while this isn't 0. */
     int sweep_timer_count;
+    /* Counts the sweeps. us_socket_t.timeout is the count at which that socket's timeout is due. */
+    uint32_t sweep_tick;
+    /* us_internal_coarse_ms() at the last sweep, or at the first socket if there was none since. */
+    uint64_t sweep_time_ms;
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;
     /* QUIC engines on this loop. us_quic_loop_process walks the list from
      * loop_post / drainMicrotasks; the lazy fallthrough timer only wakes the
      * loop for lsquic's time-driven state (RTO, ACK delay) — its callback
      * just calls us_quic_loop_process. */
-    struct us_quic_socket_context_s *quic_head;
-    /* µs until lsquic next wants process_conns (min earliest_adv_tick
-     * across engines), or -1 for "no deadline". Written by
-     * us_quic_loop_process from loop_post; read by Bun's getTimeout() to
-     * bound the epoll_pwait2 timeout. No timerfd, no scheduling syscall —
-     * the gap between loop_post and getTimeout is sub-µs so storing the
-     * relative diff is precise enough. */
+    struct us_quic_driver_s *quic_head;
+    int quic_walk_depth;
+    /* µs until a driver wants its next pass, or -1. us_quic_loop_process writes it, and us_loop_run_bun_tick bounds the poll timeout with it right after loop_pre. */
     long long quic_next_tick_us;
-    /* node:quic endpoints on this loop. us_nq_loop_flush_if_pending walks it
-     * from loop_pre/loop_post and the microtask drain, running each endpoint's
-     * full process pass only when it flagged pending work -- one engine pass
-     * per loop turn instead of one per native call. */
-    struct us_nq_driver_s *nq_head;
 #ifdef LIBUS_USE_LIBUV
     /* A fallthrough us_timer_t armed to quic_next_tick_us so the uv loop wakes
      * for lsquic's time-driven state. POSIX folds the deadline into the

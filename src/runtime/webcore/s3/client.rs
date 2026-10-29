@@ -174,6 +174,7 @@ pub(crate) fn delete(
     )
 }
 
+#[inline(never)]
 pub(crate) fn list_objects(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -181,6 +182,7 @@ pub(crate) fn list_objects(
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, list_objects);
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
@@ -973,11 +975,10 @@ pub(crate) fn upload_stream(
     // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the JS
     // `readStreamIntoSink` pump.
     if let Some(byte_stream) = readable_stream.ptr.bytes() {
-        if byte_stream.sink.get().is_none() {
+        if byte_stream.sink.get().is_none() && readable_stream.try_lock_native(cx.global()) {
             sink.source = crate::webcore::streams::SourceHandle::ByteStream(byte_stream);
             byte_stream.sink.set(sink_handle);
             byte_stream.sink_paused.set(false);
-            readable_stream.lock_native(cx.global());
             byte_stream.signal_consumer_attached();
 
             if let Some(err) = byte_stream.take_pending_error() {
@@ -1088,6 +1089,7 @@ pub(crate) fn upload_stream(
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
+#[inline(never)]
 fn download_stream(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -1103,6 +1105,7 @@ fn download_stream(
     ),
     callback_context: *mut c_void,
 ) -> *mut S3HttpDownloadStreamingTask {
+    bun_removable_features::removable_definition!(S3Client, download_stream);
     if s3_simple_request::nothing_new_leaves(context) {
         callback(
             &MutableString::default(),
@@ -1458,7 +1461,6 @@ pub(crate) fn readable_stream(
     // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.
     let reader_mut = unsafe { &mut *reader };
 
-    reader_mut.context.setup();
     let readable_value = reader_mut.to_readable_stream(cx)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {

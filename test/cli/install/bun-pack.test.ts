@@ -109,9 +109,8 @@ test.concurrent("basic", async () => {
   expect(tarballEntries(join(dir, "pack-basic-1.2.3.tgz"))).toEqual(["package/package.json", "package/index.js"]);
 });
 
-// The archive ends right after the two end-of-archive blocks. libarchive's default for a custom
-// output sink would pad it to a full 10 KiB record instead, which would change the size and shasum
-// of every tarball bun produces.
+// The archive ends right after the two end-of-archive blocks. Padding it to a full 10 KiB record,
+// as Bun.Archive does, would change the size and shasum of every tarball bun produces.
 test.concurrent("the archive is not padded to a full tar record", async () => {
   using dir = tempDir("pack-unpadded", {
     "package.json": JSON.stringify({ name: "pack-unpadded", version: "1.0.0" }),
@@ -123,6 +122,52 @@ test.concurrent("the archive is not padded to a full tar record", async () => {
   const tar = gunzipSync(await file(join(dir, "pack-unpadded-1.0.0.tgz")).bytes());
   // header + data for each of the two entries, then the two end-of-archive blocks
   expect(tar.byteLength).toBe(6 * 512);
+});
+
+// A package packed twice must give the same tarball, whichever version of bun packs it. What the
+// compressor makes of the archive depends on the CPU, so that part is compared decompressed.
+// The hashes are from Bun 1.4.4. Not on Windows, where files have no permission bits to record.
+test.concurrent.skipIf(isWindows).each([
+  [[], "1f8b08000000000002ff"],
+  [["--gzip-level", "0"], "1f8b08000000000000ff"],
+  [["--gzip-level", "1"], "1f8b08000000000004ff"],
+  [["--gzip-level", "6"], "1f8b08000000000000ff"],
+])("the bytes of a tarball do not change %j", async (args, gzipHeader) => {
+  const n = (count: number) => Buffer.alloc(count, "n").toString();
+  const files = {
+    "package.json": JSON.stringify({ name: "@scope/pack-bytes", version: "1.2.3", bin: { x: "bin/x.js" } }),
+    "index.js": "module.exports = 1;",
+    "empty.txt": "",
+    "bin/x.js": "#!/usr/bin/env node\n",
+    "run.sh": "#!/bin/sh\n",
+    "café.txt": "not ASCII",
+    [n(92) + ".js"]: "the name fits once package/ is in front of it",
+    [n(93) + ".js"]: "the name does not fit",
+    [n(200) + ".js"]: "the name does not fit and cannot be split",
+    [`${n(50)}/${n(50)}/${n(50)}/split.js`]: "the name fits once it is split",
+    [`${n(150)}/${n(100)}/no-split.js`]: "the name cannot be split",
+    "blocks/511": n(511),
+    "blocks/512": n(512),
+    "blocks/513": n(513),
+    "blocks/100000": n(100000),
+  };
+  using dir = tempDir("pack-bytes", files);
+  // The archive records them, and what they start as depends on the umask.
+  for (const path of Object.keys(files)) await chmod(join(String(dir), path), path === "run.sh" ? 0o755 : 0o644);
+
+  await pack(dir, bunEnv, ...args);
+
+  const tgz = await file(join(dir, "scope-pack-bytes-1.2.3.tgz")).bytes();
+  const tar = gunzipSync(tgz);
+  expect({
+    gzipHeader: Buffer.from(tgz.subarray(0, 10)).toString("hex"),
+    length: tar.byteLength,
+    sha256: new Bun.CryptoHasher("sha256").update(tar).digest("hex"),
+  }).toEqual({
+    gzipHeader,
+    length: 119296,
+    sha256: "f77c6cf6bbb5acff151d905cc601904310c7eebdfa00bc346b8a8c7465f19294",
+  });
 });
 
 // pack only reads package.json, so a file that is readable but not writable (a read-only
@@ -657,7 +702,7 @@ describe.concurrent("flags", () => {
   });
 
   // Every write(2) to /dev/full fails with ENOSPC, the same as a tarball destination on a full disk.
-  // "an entry": enough incompressible data that libarchive flushes a block while it writes index.js.
+  // "an entry": enough incompressible data that a block is flushed while it writes index.js.
   // "the end of the archive": small enough that the only write(2) happens when the archive is closed.
   test.skipIf(!isLinux).each([
     ["an entry", () => `// ${randomBytes(128 * 1024).toString("base64")}`],
@@ -5389,7 +5434,7 @@ test.concurrent("unicode", async () => {
 // names into JS strings, which maps the bytes this test is about onto U+FFFD.
 // Names are returned latin1-decoded (one char per stored byte) and collected
 // from every place the archive spells a name: the ustar header `name` field
-// and, when libarchive emits one, the `path` record of the pax header.
+// and, when there is one, the `path` record of the pax header.
 function rawTarballMembers(tgz: Uint8Array) {
   const tar = Buffer.from(Bun.gunzipSync(tgz));
   const members: { names: Set<string>; contents: string }[] = [];

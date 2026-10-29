@@ -65,7 +65,7 @@ pub(crate) fn log_unhandled_exception(exception: JSValue) {
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
 pub(crate) fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
-    frames: *mut ZigStackFrame,
+    frames: *mut ZigStackFrame<'_>,
     frames_count: usize,
 ) {
     // The collector thread is not otherwise a Bun thread: give it the per-thread output source a source-map warning writes
@@ -210,27 +210,14 @@ mod sql_hooks {
         // `in_heap` is consulted and reset.
         unsafe { (*heap.cast::<crate::timer::All>()).remove(timer) };
     }
-    unsafe fn ssl_ctx_cache(_vm: *mut VirtualMachine) -> *mut c_void {
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; the embedded
-        // `SSLContextCache` has stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache).cast::<c_void>() }
-    }
-    unsafe fn ssl_ctx_get_or_create(
-        cache: *mut c_void,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
-        // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
-        let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
-        cache.get_or_create_opts(opts, err)
-    }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
-        use crate::socket::SSLConfigFromJs;
-        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
-            Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
-            Ok(None) => core::ptr::null_mut(),
+        use crate::socket::ssl_config::ParsedTls;
+        let vm = global.bun_vm_ref();
+        match ParsedTls::from_js(vm, global, value, false) {
+            // `sslmode` already asked for TLS, so `tls: {}` is `tls: true`.
+            Ok(parsed) => {
+                bun_core::heap::into_raw(Box::new(parsed.or_defaults(vm, false))).cast::<c_void>()
+            }
             Err(bun_jsc::JsError::OutOfMemory) => {
                 let _ = global.throw_out_of_memory();
                 core::ptr::null_mut()
@@ -266,8 +253,6 @@ mod sql_hooks {
         timer_heap,
         timer_insert,
         timer_remove,
-        ssl_ctx_cache,
-        ssl_ctx_get_or_create,
         ssl_config_from_js,
         ssl_config_free,
         ssl_config_as_usockets_client,

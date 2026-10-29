@@ -1,11 +1,13 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::server::node_http_response" });
 
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 const head = {
-  statusCode: b.i32.validateInteger(100, 999).default(200),
-  statusMessage: b.string.loose.utf8.nullable,
+  /** `ServerResponse` has checked the range. */
+  statusCode: b.u16.default(200),
+  statusMessage: b.string.loose.nullable,
   /** The flat `[name, value, ...]` array, which C++ reads in place. */
   headers: b.any,
 };
@@ -28,40 +30,47 @@ export const NodeHTTPResponse = b.class({
   rustPath: "crate::server::NodeHTTPResponse",
   refCounted: true,
   finalize: true,
+  types: [table.exactType("$Node.NodeHTTPResponse"), table.exactType("$Bindgen.NodeHTTPResponse")],
+  lockedObjects: ["prototype"],
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },
-    aborted: { getter: b.bool },
-    bufferedAmount: { getter: b.u64 },
-    cork: { ...method, args: { callback: b.callable } },
-    end: { ...method, ...body, passThis: true, length: 2 },
-    finished: { getter: b.bool },
-    flags: { getter: b.i32 },
+    bufferedAmount: { getter: b.u64, pure: true },
+    end: { ...method, ...body, returns: b.any.returning("number", "undefined"), passThis: true, length: 2 },
+    finished: { getter: b.bool, pure: true },
+    flags: { getter: b.i32, pure: true },
     flushHeaders: {},
-    getBytesWritten: { returns: b.usize },
-    hasBody: { getter: b.i32 },
-    headersObject: { returns: b.any, capability: "js" },
+    hasBody: { getter: b.i32, pure: true },
+    headersObject: { returns: b.any.returning("object", "undefined"), capability: "js" },
     notifyWhenReadParsed: { returns: b.bool },
     onabort: eventHandler,
     ondata: eventHandler,
     onwritable: eventHandler,
     pause: { returns: b.bool },
-    pauseReads: {},
-    ref: { rustName: "js_ref" },
     resume: { returns: b.bool },
-    takeRawHeaders: { ...method, args: { headers: b.any } },
-    takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.bool.default(false) }, length: 0 },
-    unref: { rustName: "js_unref" },
-    upgraded: { getter: b.bool },
-    write: { ...method, ...body, length: 3 },
+    takeRawHeaders: { ...method, args: { headers: b.any }, returns: b.any.returning("Array", "undefined") },
+    takeRequestTrailers: {
+      ...method,
+      args: { useInsecureHTTPParser: b.bool.default(false) },
+      returns: b.any.returning("Array", "undefined"),
+      length: 0,
+    },
+    write: { ...method, ...body, returns: b.any.returning("number"), length: 3 },
     writeContinue: { capability: "js", throws: true },
     writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },
     writeHeadAndEnd: {
       ...method,
       args: { ...head, ...chunk, strictContentLength, ...autoHeaders },
       expected,
+      returns: b.any.returning("number", "undefined"),
       passThis: true,
       length: 8,
+    },
+    writeHeadAndWrite: {
+      ...method,
+      args: { ...head, ...chunk, callback: b.callable.optional, strictContentLength, ...autoHeaders },
+      expected: body.expected,
+      length: 9,
     },
     writeInformational: {
       args: chunk,
@@ -69,6 +78,15 @@ export const NodeHTTPResponse = b.class({
       capability: "js",
       throws: true,
       length: 1,
+    },
+    /** `writeHeadAndEnd` for the usual arguments, read as they are. `undefined`: nothing was written. */
+    writeWholeResponse: {
+      ...method,
+      args: { args: b.any.variadic },
+      returns: b.any.returning("number", "undefined"),
+      passThis: true,
+      rustName: "write_whole_response_as_given",
+      length: 8,
     },
   },
 });

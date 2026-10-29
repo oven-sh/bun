@@ -1517,7 +1517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && (!keep || expr.value.loc.start == stmt.loc.start)
                         {
                             is_directive_prologue = true;
-                            let source: &'a bun_ast::Source = p.source;
+                            let source: &'a bun_ast::Source<'a> = p.source;
                             let as_written = keep.then(|| {
                                 let text = &source.contents()[stmt.loc.start as usize..];
                                 let mut end = 1;

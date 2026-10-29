@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
+import { once } from "node:events";
+import net, { type AddressInfo } from "node:net";
 
 const node = nodeExe();
 
@@ -632,18 +634,23 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
-  test.concurrent(
-    "sending an http.Server throws ERR_INVALID_HANDLE_TYPE instead of silently dropping the handle",
-    async () => {
-      // An http.Server listens through Bun.serve and has no handle to pass.
+  // An http.Server and an https.Server listen through Bun.serve and have no handle to pass.
+  test.concurrent.each([
+    ["http", "require('node:http').createServer((req, res) => res.end('ok'))"],
+    ["https", "require('node:https').createServer({ key: fs.readFileSync('key.pem'), cert: fs.readFileSync('cert.pem') }, (req, res) => res.end('ok'))"], // prettier-ignore
+  ])(
+    "sending an %s.Server throws ERR_INVALID_HANDLE_TYPE instead of silently dropping the handle",
+    async (_label, createServer) => {
       using dir = tempDir("ipc-handle-http-server", {
+        "cert.pem": tls.cert,
+        "key.pem": tls.key,
         "parent.js": `
 const { fork } = require('node:child_process');
-const http = require('node:http');
+const fs = require('node:fs');
 const child = fork('child.js');
 const finish = out => { console.log(JSON.stringify(out)); server.close(); child.disconnect(); };
 child.on('message', m => finish({ childReceived: m }));
-const server = http.createServer((req, res) => res.end('ok'));
+const server = ${createServer};
 server.listen(0, '127.0.0.1', () => {
   try { child.send('server', server); } catch (err) { finish({ code: err.code, childReceived: null }); }
 });
@@ -812,6 +819,141 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
       },
       stderr: "",
     });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// On Windows both processes wake up for each connection on the shared listening socket, and the one that lost the race
+// used to block in accept() until the next connection. A third process connects one at a time, so both acceptors are
+// idle when a connection arrives. After each one the parent must handle an IPC message and the child must answer a ping.
+test.skipIf(!isWindows)(
+  "a net.Server sent to a child doesn't block either process's event loop in accept()",
+  async () => {
+    using dir = tempDir("ipc-handle-shared-accept", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const N = 100;
+const accepted = { parent: 0, child: 0 };
+const server = net.createServer(socket => { accepted.parent++; socket.destroy(); });
+const acceptor = fork('child.js', ['acceptor']);
+const client = fork('child.js', ['client']);
+const connect = i => client.send({ port: server.address().port, i });
+client.on('message', ({ closed }) => acceptor.send({ ping: closed }));
+acceptor.on('message', m => {
+  if (m === 'ready') return connect(0);
+  accepted.child = m.accepted;
+  if (m.pong + 1 < N) return connect(m.pong + 1);
+  server.close();
+  client.disconnect();
+  acceptor.disconnect();
+});
+acceptor.on('exit', code => console.log(JSON.stringify({ ...accepted, code })));
+server.listen(0, '127.0.0.1', () => acceptor.send('server', server));
+`,
+      "child.js": `
+const net = require('node:net');
+if (process.argv[2] === 'acceptor') {
+  let accepted = 0;
+  process.on('message', (m, server) => {
+    if (m !== 'server') return process.send({ pong: m.ping, accepted });
+    server.on('connection', socket => { accepted++; socket.destroy(); });
+    process.on('disconnect', () => server.close());
+    process.send('ready');
+  });
+} else {
+  process.on('message', ({ port, i }) => {
+    const socket = net.connect(port, '127.0.0.1');
+    socket.on('error', () => {});
+    socket.on('close', () => process.send({ closed: i }));
+  });
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { parent, child, code } = JSON.parse(stdout.trim());
+    expect({ accepted: parent + child, parentAccepted: parent > 0, childAccepted: child > 0, code, stderr }).toEqual({
+      accepted: 100,
+      parentAccepted: true,
+      childAccepted: true,
+      code: 0,
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The parent connects and sends the socket to the child with keepOpen, so both hold the one connection. One of them
+// exits without closing it, and the other one then writes its own name and ends the connection.
+describe("a net.Socket that the parent and the child both hold", () => {
+  test.concurrent.each([
+    { leaves: "parent", stays: "child" },
+    { leaves: "child", stays: "parent" },
+  ])("still sends from the $stays after the $leaves exited", async ({ leaves, stays }) => {
+    const accepted = Promise.withResolvers<net.Socket>();
+    const closed = Promise.withResolvers<string[]>();
+    await using server = net.createServer({ allowHalfOpen: true }, socket => {
+      const events: string[] = [];
+      socket.setEncoding("utf8");
+      socket.on("data", chunk => events.push(String(chunk)));
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(String(err.code)));
+      socket.on("end", () => {
+        events.push("end");
+        socket.end();
+      });
+      socket.on("close", () => closed.resolve(events));
+      accepted.resolve(socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    using dir = tempDir("ipc-handle-one-holder-exits", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const [port, leaves] = process.argv.slice(2);
+// Windows ends a child together with its parent unless it is detached.
+const child = fork('child.js', [leaves], { detached: leaves === 'parent', stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+const socket = net.connect(Number(port), '127.0.0.1', () => child.send('socket', socket, { keepOpen: true }));
+if (leaves === 'parent') child.on('message', () => process.exit(0));
+else child.on('exit', () => socket.end('parent'));
+`,
+      "child.js": `
+setTimeout(() => process.exit(1), 60_000).unref();
+process.on('message', (message, socket) => {
+  if (process.argv[2] === 'child') process.exit(0);
+  // The test writes once the parent is gone.
+  socket.on('data', () => socket.end('child'));
+  process.send('received');
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js", String((server.address() as AddressInfo).port), leaves],
+      // The child has to outlive the parent.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const socket = await accepted.promise;
+    try {
+      if (leaves === "parent") {
+        await proc.exited;
+        if (socket.writable) socket.write("go");
+      }
+      expect(await closed.promise).toEqual([stays, "end"]);
+    } finally {
+      socket.destroy();
+    }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

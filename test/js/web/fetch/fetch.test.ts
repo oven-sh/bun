@@ -21,7 +21,6 @@ import {
   tempDir,
   tls,
   tmpdirSync,
-  withoutAggressiveGC,
 } from "harness";
 
 import { once } from "events";
@@ -93,7 +92,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(13);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain");
     expect(blob.text()).resolves.toBe("Hello, World!");
   });
   it("percent encoded (invalid)", async () => {
@@ -111,7 +110,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(13);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=us-ascii");
     expect(blob.text()).resolves.toBe("Hello, World!");
 
     url = "data:,helloworld!";
@@ -122,7 +121,7 @@ describe("fetch data urls", () => {
 
     blob = await res.blob();
     expect(blob.size).toBe(11);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=us-ascii");
     expect(blob.text()).resolves.toBe("helloworld!");
   });
   it("unstrict parsing of invalid URL characters", async () => {
@@ -134,7 +133,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(4);
-    expect(blob.type).toBe("application/json;charset=utf-8");
+    expect(blob.type).toBe("application/json");
     expect(blob.text()).resolves.toBe("{{}}");
   });
   it("unstrict parsing of double percent characters", async () => {
@@ -146,7 +145,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(9);
-    expect(blob.type).toBe("application/json;charset=utf-8");
+    expect(blob.type).toBe("application/json");
     expect(blob.text()).resolves.toBe("{%{}%%}%%");
   });
   it("data url (invalid)", async () => {
@@ -154,6 +153,17 @@ describe("fetch data urls", () => {
     expect(async () => {
       await fetch(url);
     }).toThrow("failed to fetch the data URL");
+  });
+  it("a media type with many parameters is serialized in linear time", async () => {
+    // ";aaaa=1;aaab=1;aaac=1" and so on. A Buffer, because a debug build concatenates strings slowly.
+    const count = 100_000;
+    const bytes = Buffer.alloc(count * 7, ";aaaa=1");
+    for (let i = 0; i < count; i++) {
+      for (let digit = 4, rest = i; rest > 0; digit--, rest = Math.floor(rest / 26)) bytes[i * 7 + digit] += rest % 26;
+    }
+    const parameters = bytes.latin1Slice();
+    const res = await fetch(`data:text/plain${parameters};AAAB=2,x`);
+    expect(res.headers.get("content-type") === "text/plain" + parameters).toBe(true);
   });
   it("emoji", async () => {
     var url = "data:,😀";
@@ -165,7 +175,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(4);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=us-ascii");
     expect(blob.text()).resolves.toBe("😀");
   });
   it("should work with Request", async () => {
@@ -177,7 +187,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(13);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=us-ascii");
     expect(blob.text()).resolves.toBe("Hello, World!");
 
     req = new Request("data:,😀");
@@ -188,7 +198,7 @@ describe("fetch data urls", () => {
 
     blob = await res.blob();
     expect(blob.size).toBe(4);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=us-ascii");
     expect(blob.text()).resolves.toBe("😀");
   });
   it("should work with Request (invalid)", async () => {
@@ -804,6 +814,19 @@ describe("fetch", () => {
     }),
   );
 
+  // https://github.com/oven-sh/bun/issues/19615
+  it.concurrent("reads the body of a TRACE response", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(`${req.method} x-foo: ${req.headers.get("x-foo")}`),
+    });
+    // The second request reuses the socket, so it fails if the first body was left unread.
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(server.url, { method: "TRACE", headers: { "X-Foo": "bar" } });
+      expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "TRACE x-foo: bar" });
+    }
+  });
+
   // WHATWG Fetch only forbids a body for GET and HEAD. OPTIONS with content is
   // legal HTTP (RFC 9110 §9.3.7) and must be sent, not rejected.
   it.concurrent("OPTIONS with body is sent and delivered", async () => {
@@ -970,14 +993,7 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
-
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
-        });
+        expect(compare).toEqual(bytes);
         if (withGC) gc();
       });
 
@@ -993,14 +1009,8 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         const compare = await response.bytes();
         if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
-
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
-        });
+        expect(compare).toBeInstanceOf(Uint8Array);
+        expect(compare).toEqual(bytes);
         if (withGC) gc();
       });
 
@@ -1018,14 +1028,7 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
-
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
-        });
+        expect(compare).toEqual(bytes);
         if (withGC) gc();
       });
 
@@ -1043,14 +1046,8 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         const compare = await response.bytes();
         if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
-
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
-        });
+        expect(compare).toBeInstanceOf(Uint8Array);
+        expect(compare).toEqual(bytes);
         if (withGC) gc();
       });
 
@@ -1297,7 +1294,7 @@ describe("Response", () => {
         const output = JSON.stringify(input);
         expect(await Response.json(input).text()).toBe(output);
       }
-      // JSON.stringify() returns undefined
+      // No argument gives an empty body. An explicit undefined throws.
       expect(await Response.json().text()).toBe("");
       // JSON.stringify("") returns '""'
       expect(await Response.json("").text()).toBe('""');
@@ -1348,8 +1345,8 @@ describe("Response", () => {
       expect(() => Response.json({ func: function () {} })).not.toThrow();
       expect(() => Response.json({ undef: undefined })).not.toThrow();
 
-      // BigInt should throw with Node.js compatible error message
-      expect(() => Response.json(123n)).toThrow("Do not know how to serialize a BigInt");
+      // A BigInt throws JSON.stringify's own error
+      expect(() => Response.json(123n)).toThrow("JSON.stringify cannot serialize BigInt.");
     });
   });
   describe("Response.redirect", () => {
@@ -1747,18 +1744,29 @@ it("#2794", () => {
   expect(typeof Bun.fetch.bind).toBe("function");
 });
 
-it("#3545", () => {
-  expect(() => fetch("http://example.com?a=b")).not.toThrow();
+it("#3545", async () => {
+  // A query directly after the host, with no path, used to fail to open the socket.
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname, search } = new URL(req.url);
+      return Response.json({ pathname, search });
+    },
+  });
+  const response = await fetch(`${server.url.origin}?a=b`);
+  expect(await response.json()).toEqual({ pathname: "/", search: "?a=b" });
+  expect(response.url).toBe(`${server.url.origin}/?a=b`);
+  expect(response.status).toBe(200);
 });
 
-it("invalid header doesnt crash", () => {
-  expect(() =>
-    fetch("http://example.com", {
-      headers: {
-        ["lol!!!!!" + "emoji" + "😀"]: "hello",
-      },
-    }),
-  ).toThrow();
+it("invalid header doesnt crash", async () => {
+  const promise = fetch("http://127.0.0.1:1/", {
+    headers: {
+      ["lol!!!!!" + "emoji" + "😀"]: "hello",
+    },
+  });
+  await expect(promise).rejects.toBeInstanceOf(TypeError);
+  await expect(promise).rejects.toThrow("Invalid header name: 'lol!!!!!emoji😀'");
 });
 
 it("new Request(https://example.com, otherRequest) uses url from left instead of right", () => {
@@ -1792,6 +1800,49 @@ it("fetch() file:// works", async () => {
   gc(true);
   expect(fileResponseText).toEqual(bunFileText);
   gc(true);
+});
+describe("fetch() file:// rejects a path that cannot be read", () => {
+  // The reported path keeps the URL's forward slashes.
+  const reportedPath = (path: string) => (isWindows ? path.replaceAll("\\", "/") : path);
+
+  it("ENOENT for a missing file", async () => {
+    using dir = tempDir("fetch-file-url", { "exists.txt": "exists" });
+    const missing = join(String(dir), "missing.txt");
+    const url = Bun.pathToFileURL(missing);
+    for (const input of [url.href, url, new Request(url.href)]) {
+      await expect(fetch(input)).rejects.toMatchObject({
+        name: "TypeError",
+        code: "ENOENT",
+        syscall: "stat",
+        path: reportedPath(missing),
+      });
+    }
+    const response = await fetch(Bun.pathToFileURL(join(String(dir), "exists.txt")));
+    expect([response.status, await response.text()]).toEqual([200, "exists"]);
+  });
+
+  it("EISDIR for a directory", async () => {
+    using dir = tempDir("fetch-file-url", {});
+    await expect(fetch(Bun.pathToFileURL(String(dir)))).rejects.toMatchObject({
+      name: "TypeError",
+      code: "EISDIR",
+      syscall: "read",
+      path: reportedPath(String(dir)),
+    });
+  });
+
+  it.skipIf(isWindows)("but resolves for a FIFO without opening it", async () => {
+    using dir = tempDir("fetch-file-url", {});
+    const fifo = join(String(dir), "pipe");
+    mkfifo(fifo);
+    // The pipe never gets a writer, so opening it would block.
+    expect((await fetch(Bun.pathToFileURL(fifo))).status).toBe(200);
+  });
+
+  it.skipIf(isWindows)("but resolves for a character device", async () => {
+    const response = await fetch("file:///dev/null");
+    expect([response.status, await response.text()]).toEqual([200, ""]);
+  });
 });
 it("fetch() file:// rejects a host that is not this machine", async () => {
   const path = Bun.fileURLToPath(new URL("fixture.html", import.meta.url));
@@ -1943,9 +1994,10 @@ it("URL credentials survive a same-origin redirect whose Location leaves them ou
 it("connection failures reject with an errno-style code that the message starts with", async () => {
   using dead = await deadPort();
   const refused = await fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e);
-  expect({ name: refused.name, code: refused.code, message: refused.message }).toEqual({
+  expect({ name: refused.name, code: refused.code, syscall: refused.syscall, message: refused.message }).toEqual({
     name: "TypeError",
     code: "ECONNREFUSED",
+    syscall: "connect",
     message: "ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
   });
 
@@ -2026,7 +2078,7 @@ it("should work with http 100 continue", async () => {
     });
 
     const { promise: start, resolve } = Promise.withResolvers();
-    server.listen(8080, resolve);
+    server.listen(0, resolve);
 
     await start;
 
@@ -2056,7 +2108,7 @@ it("should work with http 100 continue on the same buffer", async () => {
     });
 
     const { promise: start, resolve } = Promise.withResolvers();
-    server.listen(8080, resolve);
+    server.listen(0, resolve);
 
     await start;
 
@@ -2314,11 +2366,13 @@ it.concurrent("should allow very long redirect URLS", async () => {
       });
     },
   });
-  // run it more times to check Malformed_HTTP_Response errors
-  for (let i = 0; i < 100; i++) {
-    const { url, status } = await fetch(`${server.url.origin}/redirect`);
-    expect(url).toBe(`${server.url.origin}${Location}`);
-    expect(status).toBe(404);
+  // The second round's /redirect reuses the connection pooled after the first round's final response.
+  for (let i = 0; i < 2; i++) {
+    const response = await fetch(`${server.url.origin}/redirect`);
+    expect(response.url).toBe(`${server.url.origin}${Location}`);
+    expect(response.redirected).toBe(true);
+    expect(await response.text()).toBe("Not Found");
+    expect(response.status).toBe(404);
   }
 });
 
@@ -2537,9 +2591,8 @@ describe("fetch Response life cycle", () => {
 
     await using serverProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture3],
-      stderr: "inherit",
-      stdout: "inherit",
-      stdin: "inherit",
+      stderr: "pipe",
+      stdout: "pipe",
       env: bunEnv,
       ipc(message) {
         deferred.resolve(message);
@@ -2549,12 +2602,23 @@ describe("fetch Response life cycle", () => {
     const serverUrl = await deferred.promise;
     await using clientProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
-      stderr: "inherit",
-      stdout: "inherit",
-      stdin: "inherit",
+      stderr: "pipe",
+      stdout: "pipe",
       env: bunEnv,
     });
-    expect(await clientProcess.exited).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      clientProcess.stdout.text(),
+      clientProcess.stderr.text(),
+      clientProcess.exited,
+    ]);
+    // The fixture checks the post-GC Response and Promise counts itself and logs one summary per iteration.
+    expect(stderr).toBe("");
+    expect(stdout.match(/Response: \d+/g)).toHaveLength(10);
+    expect(exitCode).toBe(0);
+
+    serverProcess.kill();
+    const [serverStdout, serverStderr] = await Promise.all([serverProcess.stdout.text(), serverProcess.stderr.text()]);
+    expect({ serverStdout, serverStderr }).toEqual({ serverStdout: "", serverStderr: "" });
   });
   it("should allow to get promise result after response is GC'd", async () => {
     using server = Bun.serve({
@@ -2824,7 +2888,7 @@ describe("fetch should allow duplex", () => {
   // rate difference in-process. Before the fix, a chunk arriving before the
   // upload sink attached flipped the source to BufferAll and RSS grew at the
   // line rate (several GB in seconds on localhost).
-  it("bounds memory when the upload target is slower than the download source", async () => {
+  it.concurrent("bounds memory when the upload target is slower than the download source", async () => {
     const fixture = `
       const net = require("node:net");
       const chunk = Buffer.alloc(64 * 1024, 0x47);
@@ -2875,7 +2939,7 @@ describe("fetch should allow duplex", () => {
   // A type:"direct" stream body where pull does `await controller.write(chunk)`
   // in a loop must suspend when the sink is backpressured: write() returns a
   // pending Promise once the stream buffer is over the high-water mark.
-  it("suspends a type:'direct' body's controller.write() when the upload target is backpressured", async () => {
+  it.concurrent("suspends a type:'direct' body's controller.write() when the upload target is stalled", async () => {
     const fixture = `
       const net = require("node:net");
       const sink = net.createServer(sock => sock.pause());
@@ -2926,7 +2990,7 @@ describe("fetch should allow duplex", () => {
   // Passing a response body as a request body attaches it to a native sink;
   // the source stream must be marked locked + disturbed so a second consumer
   // errors instead of hanging on data that will never be delivered to it.
-  it("locks the response body when it is used as a request body", async () => {
+  it.concurrent("locks the response body when it is used as a request body", async () => {
     await using source = Bun.serve({
       port: 0,
       fetch: () => new Response(new ReadableStream({ pull: c => c.enqueue(new Uint8Array(64 * 1024)) })),
@@ -2968,7 +3032,7 @@ describe("fetch should allow duplex", () => {
   // back-pressure the uploading client rather than buffering the difference:
   // the request-body ByteStream stops reading from the inbound socket while
   // the outbound sink is over its high-water mark.
-  it("bounds memory when a handler forwards req.body to a stalled target", async () => {
+  it.concurrent("bounds memory when a handler forwards req.body to a stalled target", async () => {
     const fixture = `
       const net = require("node:net");
       const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
@@ -3015,68 +3079,66 @@ describe("fetch should allow duplex", () => {
   });
 });
 
-it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
-  for (const type of ["normal", "delay"]) {
-    await using server = net.createServer(socket => {
+describe("redirect whose response closes the connection", () => {
+  // The 308 carries "Connection: close" and the server ends the socket, so following the redirect
+  // needs a new connection, and an abort has to reach that connection.
+  async function listen(onRedirectedRequest: (socket: net.Socket) => void) {
+    const server = net.createServer(socket => {
       // Raw test server: tolerate client aborts, surface anything unexpected.
       socket.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
       });
-      let body = "";
-      socket.on("data", data => {
-        body += data.toString("utf8");
-
-        const headerEndIndex = body.indexOf("\r\n\r\n");
-        if (headerEndIndex !== -1) {
-          // headers received
-          const headers = body.split("\r\n\r\n")[0];
-          const path = headers.split("\r\n")[0].split(" ")[1];
-          if (path === "/redirect") {
-            socket.end(
-              "HTTP/1.1 308 Permanent Redirect\r\nCache-Control: public, max-age=0, must-revalidate\r\nContent-Type: text/plain\r\nLocation: /\r\nConnection: close\r\n\r\n",
-            );
-          } else {
-            if (type === "delay") {
-              setTimeout(() => {
-                if (!socket.destroyed)
-                  socket.end(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
-                  );
-              }, 200);
-            } else {
-              socket.end(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
-              );
-            }
-          }
+      let request = "";
+      socket.on("data", function onData(data) {
+        request += data.toString("utf8");
+        if (!request.includes("\r\n\r\n")) return;
+        socket.off("data", onData);
+        const path = request.split(" ")[1];
+        if (path === "/redirect") {
+          socket.end("HTTP/1.1 308 Permanent Redirect\r\nLocation: /\r\nConnection: close\r\n\r\n");
+        } else {
+          onRedirectedRequest(socket);
         }
       });
     });
-    await once(server.listen(0), "listening");
-
-    try {
-      let { address, port } = server.address() as AddressInfo;
-      if (address === "::") {
-        address = "[::]";
-      }
-      const response = await fetch(`http://${address}:${port}/redirect`, {
-        signal: AbortSignal.timeout(150),
-      });
-      if (type === "delay") {
-        console.error(response, type);
-        expect.unreachable();
-      } else {
-        expect(response.status).toBe(200);
-        expect(await response.text()).toBe("Hello Bun");
-      }
-    } catch (err) {
-      if (type === "delay") {
-        expect((err as Error).name).toBe("TimeoutError");
-      } else {
-        expect.unreachable();
-      }
-    }
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return server;
   }
+
+  it("follows the redirect on a new connection", async () => {
+    const controller = new AbortController();
+    await using server = await listen(socket => {
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun");
+    });
+    const { port } = server.address() as AddressInfo;
+
+    const response = await fetch(`http://127.0.0.1:${port}/redirect`, { signal: controller.signal });
+    expect(response.status).toBe(200);
+    expect(response.redirected).toBe(true);
+    expect(await response.text()).toBe("Hello Bun");
+  });
+
+  it("can still be aborted once the redirected request is in flight", async () => {
+    const controller = new AbortController();
+    // The server never answers the redirected request, so only the abort can end it.
+    const redirected = Promise.withResolvers<net.Socket>();
+    await using server = await listen(redirected.resolve);
+    const { port } = server.address() as AddressInfo;
+
+    const pending = fetch(`http://127.0.0.1:${port}/redirect`, { signal: controller.signal });
+    const socket = await redirected.promise;
+    // events.once() would reject on the ECONNRESET "error" that can come before "close".
+    const closed = new Promise<void>(resolve => socket.once("close", resolve));
+    controller.abort();
+
+    const error = await pending.then(
+      () => expect.unreachable(),
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe("AbortError");
+    await closed;
+  });
 });
 
 it("rejects a response with an unparseable Content-Length instead of treating it as empty", async () => {
@@ -3796,9 +3858,16 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
   // redirect path, which pools the socket itself), so trailing bytes must cost the
   // connection while the same responses without them must still be pooled.
   const injected = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected";
+  const chunkedBody = "5\r\nhello\r\n0\r\n\r\n";
   const responses: Record<string, { head: string; junk: string }> = {
     "/204": { head: "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n", junk: injected },
     "/304": { head: 'HTTP/1.1 304 Not Modified\r\nETag: "x"\r\nConnection: keep-alive\r\n\r\n', junk: injected },
+    // RFC 9112 §6.3: a 204 or 304 ends at its header block whatever framing headers it carries.
+    "/204-chunked": { head: "HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\n\r\n", junk: chunkedBody },
+    "/304-chunked": {
+      head: 'HTTP/1.1 304 Not Modified\r\nETag: "x"\r\nTransfer-Encoding: chunked\r\n\r\n',
+      junk: chunkedBody,
+    },
     "/empty": { head: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n", junk: injected },
     // Answered with HEAD: Content-Length describes the GET body, nothing may follow.
     // The junk variant sends that body anyway.
@@ -3857,6 +3926,8 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
   const cases: { path: string; init?: () => RequestInit }[] = [
     { path: "/204" },
     { path: "/304" },
+    { path: "/204-chunked" },
+    { path: "/304-chunked" },
     { path: "/empty" },
     { path: "/head", init: () => ({ method: "HEAD" }) },
     // The redirect path only pools the socket once the upload is known to be
@@ -3905,6 +3976,10 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
       { request: "/204", status: 204, body: "", newConnections: 0 },
       { request: "/304 + trailing bytes", status: 304, body: "", newConnections: 1 },
       { request: "/304", status: 304, body: "", newConnections: 0 },
+      { request: "/204-chunked + trailing bytes", status: 204, body: "", newConnections: 1 },
+      { request: "/204-chunked", status: 204, body: "", newConnections: 0 },
+      { request: "/304-chunked + trailing bytes", status: 304, body: "", newConnections: 1 },
+      { request: "/304-chunked", status: 304, body: "", newConnections: 0 },
       { request: "/empty + trailing bytes", status: 200, body: "", newConnections: 1 },
       { request: "/empty", status: 200, body: "", newConnections: 0 },
       { request: "/head + trailing bytes", status: 200, body: "", newConnections: 1 },
@@ -3978,135 +4053,241 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
   }
 });
 
+it("does not reuse a keep-alive connection whose chunked response carried bytes past the terminating chunk", async () => {
+  // Chunked counterpart of the Content-Length overshoot test above.
+  const injected = Buffer.from(
+    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected",
+    "latin1",
+  );
+  const chunkedResponse = (payload: Buffer, headers: string = "") =>
+    Buffer.concat([
+      Buffer.from(
+        `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n${headers}Transfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n` +
+          `${payload.length.toString(16)}\r\n`,
+        "latin1",
+      ),
+      payload,
+      Buffer.from("\r\n0\r\n\r\n", "latin1"),
+    ]);
+  // The client has two chunked decoders: one for a read that fits its 16 KiB scratch buffer, one for the rest.
+  const largeBody = Buffer.alloc(64 * 1024, "x").toString();
+  const responses: Record<string, Buffer> = {
+    "/legit": chunkedResponse(Buffer.from("legit!")),
+    "/overshoot": Buffer.concat([chunkedResponse(Buffer.from("hello")), injected]),
+    "/overshoot-large": Buffer.concat([chunkedResponse(Buffer.from(largeBody)), injected]),
+    "/overshoot-gzip": Buffer.concat([
+      chunkedResponse(gzipSync(Buffer.from("hello")), "Content-Encoding: gzip\r\n"),
+      injected,
+    ]),
+    "/repeated-terminator": Buffer.concat([chunkedResponse(Buffer.from("hello")), Buffer.from("0\r\n\r\n")]),
+    "/one-crlf": Buffer.concat([chunkedResponse(Buffer.from("hello")), Buffer.from("\r\n")]),
+    "/one-crlf-large": Buffer.concat([chunkedResponse(Buffer.from(largeBody)), Buffer.from("\r\n")]),
+    "/two-crlf": Buffer.concat([chunkedResponse(Buffer.from("hello")), Buffer.from("\r\n\r\n")]),
+    "/crlf-overshoot": Buffer.concat([chunkedResponse(Buffer.from("hello")), Buffer.from("\r\n"), injected]),
+  };
+
+  let connections = 0;
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    connections++;
+    sockets.push(socket);
+    socket.on("error", () => {});
+    let buffered = "";
+    socket.on("data", data => {
+      buffered += data.toString("latin1");
+      while (true) {
+        const headerEnd = buffered.indexOf("\r\n\r\n");
+        if (headerEnd === -1) break;
+        const head = buffered.slice(0, headerEnd);
+        buffered = buffered.slice(headerEnd + 4);
+        const path = head.split("\r\n")[0].split(" ")[1];
+        socket.write(responses[path]);
+      }
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    const results: Array<[path: string, body: string, connections: number]> = [];
+    for (const path of [
+      "/overshoot",
+      "/legit",
+      "/overshoot-large",
+      "/legit",
+      "/overshoot-gzip",
+      "/repeated-terminator",
+      "/legit",
+      "/one-crlf",
+      "/one-crlf-large",
+      "/two-crlf",
+      "/crlf-overshoot",
+      "/legit",
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`);
+      const body = await response.text();
+      results.push([path, body === largeBody ? "<large body>" : body, connections]);
+    }
+    // Each body still arrives in full. Only the request after an overshoot dials a new connection. A repeated
+    // terminator or one empty line isn't an overshoot.
+    expect(results).toEqual([
+      ["/overshoot", "hello", 1],
+      ["/legit", "legit!", 2],
+      ["/overshoot-large", "<large body>", 2],
+      ["/legit", "legit!", 3],
+      ["/overshoot-gzip", "hello", 3],
+      ["/repeated-terminator", "hello", 4],
+      ["/legit", "legit!", 4],
+      ["/one-crlf", "hello", 4],
+      ["/one-crlf-large", "<large body>", 4],
+      ["/two-crlf", "hello", 4],
+      ["/crlf-overshoot", "hello", 5],
+      ["/legit", "legit!", 6],
+    ]);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/16682
-it("an explicit numeric `timeout` extends the socket idle deadline past the default", async () => {
-  // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1) and
-  // talks to an in-process server whose handler holds every request idle for
-  // 10s (longer than the worst-case firing window of the 1s idle timer, which
-  // is swept on uSockets' 4s tick) before responding.
-  //
-  //   - `timeout: 60_000` must override the 1s idle default and resolve.
-  //   - `timeout: 0` must keep meaning "no timeout" and resolve.
-  //   - no `timeout` at all must still hit the 1s idle default (control that
-  //     proves the env override and the stall are both real).
-  const script = /* js */ `
-    const HOLD_MS = 10_000;
+it.concurrent(
+  "an explicit numeric `timeout` extends the socket idle deadline past the default",
+  async () => {
+    // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1). Its server holds
+    // every request idle until a control request with no `timeout` hits that default.
+    //
+    //   - `timeout: 60_000` must override the 1s idle default and resolve.
+    //   - `timeout: 0` and `timeout: Infinity` must still mean "no timeout" and resolve.
+    //   - The control must time out, which proves the env override and the stall are real.
+    //
+    // The control is sent after the server has the three explicit requests, so their idle timers
+    // were armed first. If fetch() ignored the explicit `timeout`, they would time out no later
+    // than the control, before the server releases them.
+    const script = /* js */ `
+    const explicitArrived = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    let arrived = 0;
     using server = Bun.serve({
       port: 0,
       // Disable Bun.serve's own request idle timeout; only the client-side
       // idle timer under test may abort anything here.
       idleTimeout: 0,
       async fetch(req) {
-        const arrived = Date.now();
-        // Hold the connection idle (no bytes in either direction) until the
-        // hold window has really elapsed on the server's clock.
-        while (Date.now() - arrived < HOLD_MS) {
-          await Bun.sleep(HOLD_MS - (Date.now() - arrived));
-        }
+        if (++arrived === 3) explicitArrived.resolve();
+        await release.promise;
         return new Response("hello");
       },
     });
-    const get = init => fetch(server.url, init).then(r => r.text(), e => "ERR:" + (e?.code ?? e?.name ?? e));
-    const [withTimeout, withZero, withInfinity, withDefault] = await Promise.all([
-      get({ timeout: 60_000 }),
-      get({ timeout: 0 }),
-      get({ timeout: Infinity }),
-      get(undefined),
-    ]);
+    const get = init => fetch(server.url, init).then(r => r.text(), e => e?.name + ": " + e?.message);
+    const explicit = Promise.all([get({ timeout: 60_000 }), get({ timeout: 0 }), get({ timeout: Infinity })]);
+    await explicitArrived.promise;
+    const withDefault = await get(undefined);
+    release.resolve();
+    const [withTimeout, withZero, withInfinity] = await explicit;
     console.log(JSON.stringify({ withTimeout, withZero, withInfinity, withDefault }));
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const out = JSON.parse(stdout.trim().split("\n").pop()!) as Record<string, string>;
-  expect({ withTimeout: out.withTimeout, withZero: out.withZero, withInfinity: out.withInfinity }).toEqual({
-    withTimeout: "hello",
-    withZero: "hello",
-    withInfinity: "hello",
-  });
-  // Control: without an explicit `timeout`, the 1s idle default still aborts
-  // the stalled request.
-  expect(out.withDefault).toStartWith("ERR:");
-  expect(exitCode).toBe(0);
-}, 60_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      withTimeout: "hello",
+      withZero: "hello",
+      withInfinity: "hello",
+      withDefault: "TimeoutError: The operation timed out.",
+    });
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
 
-it("the idle timer is an absolute deadline for the response header block (not re-armed by a byte drip)", async () => {
-  // A server that trickles one response-header byte at a time, each interval
-  // shorter than the request's idle timeout, must not be able to keep the
-  // request alive indefinitely. The idle timer is armed when the request is
-  // written and is not re-armed on partial header reads, so it bounds how long
-  // the header block may take to arrive in total (undici `headersTimeout`
-  // semantics). Once the header block completes the body path re-arms per
-  // chunk, so a slow-but-steady body is still accepted.
-  const BODY = "abc";
-  const HEAD = `HTTP/1.1 200 OK\r\nContent-Length: ${BODY.length}\r\n\r\n`;
-  const DRIP_MS = 2_000;
-  const DRIP_N = 10; // header drip sends this many single bytes, then the rest at once
-  const IDLE_MS = 5_000;
+it.concurrent(
+  "the idle timer is an absolute deadline for the response header block (not re-armed by a byte drip)",
+  async () => {
+    // A server that trickles one response-header byte at a time, each interval
+    // shorter than the request's idle timeout, must not be able to keep the
+    // request alive indefinitely. The idle timer is armed when the request is
+    // written and is not re-armed on partial header reads, so it bounds how long
+    // the header block may take to arrive in total (undici `headersTimeout`
+    // semantics). Once the header block completes the body path re-arms per
+    // chunk, so a slow-but-steady body is still accepted.
+    //
+    // uSockets sweeps timeouts on a 4s tick, so the 5s timeout fires 8-12s after it was armed.
+    const BODY = "body bytes that trickle in one at a time";
+    const HEAD = `HTTP/1.1 200 OK\r\nContent-Length: ${BODY.length}\r\n\r\n`;
+    const DRIP_MS = 1_000;
+    const DRIP_N = 20; // header drip sends this many single bytes, then the rest at once
+    const IDLE_MS = 5_000;
 
-  const sockets = new Set<net.Socket>();
-  const intervals = new Set<ReturnType<typeof setInterval>>();
-  const server = net.createServer(sock => {
-    sockets.add(sock);
-    sock.on("close", () => sockets.delete(sock));
-    sock.on("error", () => {});
-    sock.once("data", chunk => {
-      // /h drips DRIP_N header bytes then bursts the rest + body.
-      // /b bursts the header block then drips the body byte-by-byte.
-      const headerDrip = chunk.includes("/h ");
-      if (!headerDrip) sock.write(HEAD);
-      const dripped = headerDrip ? HEAD.slice(0, DRIP_N) : BODY;
-      const tail = headerDrip ? HEAD.slice(DRIP_N) + BODY : "";
-      let i = 0;
-      const iv = setInterval(() => {
-        if (sock.destroyed) {
+    const sockets = new Set<net.Socket>();
+    const intervals = new Set<ReturnType<typeof setInterval>>();
+    // Resolves once /b is requested, with a function that sends the rest of /b's body.
+    const bodyDrip = Promise.withResolvers<() => void>();
+    const server = net.createServer(sock => {
+      sockets.add(sock);
+      sock.on("close", () => sockets.delete(sock));
+      sock.on("error", () => {});
+      sock.once("data", chunk => {
+        // /h drips DRIP_N header bytes, then sends the rest of the head and the body at once.
+        // /b sends the head at once, then drips body bytes until the test ends its body.
+        const headerDrip = chunk.includes("/h ");
+        if (!headerDrip) sock.write(HEAD);
+        const dripped = headerDrip ? HEAD.slice(0, DRIP_N) : BODY.slice(0, -1);
+        let i = 0;
+        const iv = setInterval(() => {
+          if (!sock.destroyed && i < dripped.length) {
+            sock.write(dripped[i++]);
+            return;
+          }
           clearInterval(iv);
           intervals.delete(iv);
-          return;
+          if (headerDrip && !sock.destroyed) sock.end(HEAD.slice(DRIP_N) + BODY);
+        }, DRIP_MS);
+        intervals.add(iv);
+        if (!headerDrip) {
+          bodyDrip.resolve(() => {
+            clearInterval(iv);
+            intervals.delete(iv);
+            if (!sock.destroyed) sock.end(BODY.slice(i));
+          });
         }
-        if (i < dripped.length) {
-          sock.write(dripped[i++]);
-        } else {
-          clearInterval(iv);
-          intervals.delete(iv);
-          sock.end(tail);
-        }
-      }, DRIP_MS);
-      intervals.add(iv);
+      });
     });
-  });
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
-  const port = (server.address() as AddressInfo).port;
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as AddressInfo).port;
 
-  try {
-    const settle = (path: string) =>
-      fetch(`http://127.0.0.1:${port}${path}`, { timeout: IDLE_MS }).then(
-        async r => ({ ok: true as const, status: r.status, body: await r.text() }),
-        e => ({ ok: false as const, name: e?.name as string, message: String(e?.message ?? e) }),
-      );
+    try {
+      // fetch() resolves on the head, so a /b timeout rejects text(). catch() covers both.
+      const settle = (path: string) =>
+        fetch(`http://127.0.0.1:${port}${path}`, { timeout: IDLE_MS })
+          .then(async r => ({ ok: true as const, status: r.status, body: await r.text() }))
+          .catch(e => ({ ok: false as const, name: e?.name as string, message: String(e?.message ?? e) }));
 
-    // /h: DRIP_N bytes * DRIP_MS = ~20s of drip before the response would
-    // complete; the 5s idle deadline (armed padded on uSockets' 4s-tick
-    // sweep, so it fires at ~8-12s) must fire first. A build that re-arms on
-    // every partial header read resolves 200 after the full drip instead.
-    // /b: headers arrive in one write, then the 3-byte body trickles at
-    // DRIP_MS/byte (~8s). Each body chunk re-arms the idle timer, so this
-    // resolves despite taking longer than IDLE_MS overall.
-    const [hdr, bod] = await Promise.all([settle("/h"), settle("/b")]);
-    expect({ hdr, bod }).toEqual({
-      hdr: { ok: false, name: "TimeoutError", message: "The operation timed out." },
-      bod: { ok: true, status: 200, body: BODY },
-    });
-  } finally {
-    for (const iv of intervals) clearInterval(iv);
-    for (const s of sockets) s.destroy();
-    await new Promise<void>(r => server.close(() => r()));
-  }
-}, 60_000);
+      // /h's header drip (DRIP_N * DRIP_MS = 20s) outlasts the deadline, so /h must time out.
+      // If partial header reads re-armed the timer, /h would get a 200 after the full drip.
+      // /b is sent first, so its timer was armed before /h's. If body bytes didn't re-arm it,
+      // /b would time out no later than /h and never receive the rest of its body.
+      const bod = settle("/b");
+      const finishBody = await bodyDrip.promise;
+      const hdr = await settle("/h");
+      finishBody();
+      expect({ hdr, bod: await bod }).toEqual({
+        hdr: { ok: false, name: "TimeoutError", message: "The operation timed out." },
+        bod: { ok: true, status: 200, body: BODY },
+      });
+    } finally {
+      for (const iv of intervals) clearInterval(iv);
+      for (const s of sockets) s.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  },
+  60_000,
+);
 
 // https://github.com/oven-sh/bun/issues/39952
 it("a numeric `timeout` does not abort in-flight requests on the 4s sweep tick", async () => {
@@ -4227,11 +4408,48 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
 
   expect(stdout).toBe("Bearer sekret-token\n");
   const authorizationLines = stderr.split(/\r?\n/).flatMap(line => {
-    const match = /^(?:\[fetch\])?\s*>?\s*authorization:(.*)$/i.exec(line);
+    const match = /^> authorization:(.*)$/i.exec(line);
     return match ? [match[1].trim()] : [];
   });
   expect(authorizationLines).toEqual(["Bearer [redacted]"]);
   expect(stderr).not.toContain("sekret-token");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent.each([
+  ["without colors", { NO_COLOR: "1" }, ""],
+  ["with colors", { NO_COLOR: undefined, FORCE_COLOR: "1" }, "[fetch] "],
+])("verbose fetch logging starts request lines with > and response lines with < (%s)", async (_, env, tag) => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response("ok", { headers: { "x-response-header": "yes" } }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const headers = { Authorization: "Bearer sekret-token", "x-request-header": "yes" };
+       const res = await fetch(process.env.SERVER_URL, { verbose: true, headers });
+       console.log(await res.text());`,
+    ],
+    env: { ...bunEnv, ...env, SERVER_URL: server.url.href },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lines = Bun.stripANSI(stderr)
+    .split(/\r?\n/)
+    .filter(line => line.length > 0);
+  expect(lines.filter(line => !line.startsWith(`${tag}> `) && !line.startsWith(`${tag}< `))).toEqual([]);
+  expect(lines[0]).toBe(`${tag}> HTTP/1.1 GET ${server.url.href}`);
+  expect(lines).toContain(`${tag}> Authorization: Bearer [redacted]`);
+  expect(lines).toContain(`${tag}> x-request-header: yes`);
+  expect(lines).toContain(`${tag}< 200 OK`);
+  expect(lines).toContain(`${tag}< x-response-header: yes`);
+  expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 });
 
@@ -4286,7 +4504,59 @@ it("verbose fetch logging escapes control characters coming from the peer", asyn
   expect(stderr).toMatch(/^.*authorization: Bea\\u009brer \[redacted\]$/im);
   expect(stderr).toMatch(/^< 500 Server \\u009bError$/m);
   expect(stderr).toMatch(/^< x-evil: a\\u009b31mb$/m);
-  expect(stderr).toContain(`-H "x-req: v\\u009b31mq"`);
+  expect(stderr).toContain(isWindows ? `-H "x-req: v\\u009b31mq"` : `-H 'x-req: v\\u009b31mq'`);
   expect(stderr).not.toMatch(/[\x80-\x9f]/);
   expect(exitCode).toBe(0);
 });
+
+it.skipIf(isWindows)(
+  "verbose curl line reaches curl with the request's URL, headers and body when pasted",
+  async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    // Stands in for curl and prints its arguments.
+    using dir = tempDir("verbose-curl-line", { "curl": `#!/bin/sh\nprintf '%s\\n' "$@"\n` });
+    chmodSync(join(String(dir), "curl"), 0o755);
+
+    const url = new URL(`${server.url.href}a?filter[x]=$(echo)`).href;
+    const header = "\"q\" 'q' $HOME $(echo pwned) `echo pwned` \\ !x";
+    const body = JSON.stringify({ query: "query($id: ID!) { a }", s: 'it\'s "q" `x` \\' });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `await fetch(process.env.URL, {
+         verbose: "curl",
+         method: "POST",
+         headers: { "x-req": process.env.HEADER, "content-type": "application/json" },
+         body: process.env.BODY,
+       });`,
+      ],
+      env: { ...bunEnv, NO_COLOR: "1", URL: url, HEADER: header, BODY: body },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const line = stderr.split("\n").find(line => line.startsWith("curl "))!;
+    expect(line).toBeDefined();
+
+    await using shell = Bun.spawn({
+      cmd: ["sh", "-c", line],
+      env: { ...bunEnv, PATH: `${dir}:${process.env.PATH}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [args, shellStderr, shellExitCode] = await Promise.all([
+      shell.stdout.text(),
+      shell.stderr.text(),
+      shell.exited,
+    ]);
+    const argv = args.split("\n");
+    expect(shellStderr).toBe("");
+    expect(argv.slice(0, 5)).toEqual(["--http1.1", url, "--globoff", "-X", "POST"]);
+    expect(argv).toContain(`x-req: ${header}`);
+    expect(argv.slice(-3)).toEqual(["--data-raw", body, ""]);
+    expect(shellExitCode).toBe(0);
+    expect(exitCode).toBe(0);
+  },
+);

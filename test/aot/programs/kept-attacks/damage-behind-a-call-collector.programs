@@ -1,0 +1,121 @@
+//// damage-behind-a-call-collector/a-collection-between-the-damage-and-a-tail-call.ts
+// The callee does the damage, collects, and leaves through a call in tail position with arguments that it has just allocated. The function that runs in its place collects once more and returns one of them to the holder.
+////= Point
+
+let strikes = false;
+function last(first: Point, second: Point, list: number[]): Point {
+  if (strikes) Bun.gc(true);
+  return list[0] & 1 ? first : second;
+}
+function leaves(p: Point, n: number): Point {
+  if (strikes) {
+    delete (p as any).x;
+    Bun.gc(true);
+  }
+  return last(new Point(n, 10), new Point(n, 20), [n]);
+}
+
+function holder(n: number): string {
+  const p = new Point(n, 1);
+  const kept = new Point(n + 1, 2);
+  const got = leaves(p, n);
+  return got.x + "," + got.y + " " + p.x + "," + p.y + " " + kept.x + "," + kept.y;
+}
+
+for (let round = 0; round < 80; round++) {
+  strikes = round % 20 >= 18;
+  const line = holder(round);
+  if (strikes || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-collector/a-collection-in-a-dirty-activation.ts
+// The caller holds objects, arrays and strings that nothing else refers to. The callee does the damage, so its return address is no longer that of the call site, and then collects and fills the heap again. The collector has to find what the caller holds.
+////= Point
+
+let strikes = false;
+let sink = 0;
+function churn(): void {
+  Bun.gc(true);
+  for (let index = 0; index < 2000; index++) {
+    const filler = new Point(-1, -2);
+    const list = [-3, -4, -5];
+    sink += filler.x + list[2] + ("f" + index).length;
+  }
+  Bun.gc(true);
+}
+function damages(p: Point): number {
+  if (!strikes) return 0;
+  delete (p as any).x;
+  churn();
+  return 1;
+}
+
+function holder(n: number): string {
+  const p = new Point(n, 1);
+  const a = new Point(n + 1, 2);
+  const b = new Point(n + 2, 3);
+  const list = [n, n + 1, n + 2];
+  const halves = [n + 0.5, n + 1.5];
+  const name = "n" + n + "!";
+  const nested = { inner: new Point(n + 3, 4), items: [new Point(n + 4, 5)] };
+  const got = damages(p);
+  return [got, p.x, p.y, a.x, a.y, b.x, b.y, list[0], list[2], halves[1], name, nested.inner.x, nested.items[0].y].join(" ");
+}
+
+////= for-21	60	strikes	20	19	holder	round
+//// damage-behind-a-call-collector/a-collection-under-a-tower-of-dirty-activations.ts
+// A function calls itself. Every activation holds an object of its own that nothing else refers to, damages another one, and goes deeper. At the bottom the heap is collected and filled again. On the way back each reads what it holds.
+////= Point
+
+let strikes = false;
+let sink = 0;
+function tower(depth: number): string {
+  const mine = new Point(depth, depth * 2);
+  const list = [depth, depth + 1];
+  const spoiled = new Point(depth, 0);
+  if (strikes) (spoiled as any).x = "s" + depth;
+  if (depth === 0) {
+    Bun.gc(true);
+    for (let index = 0; index < 3000; index++) sink += new Point(-1, -1).x + [-2, -2][1];
+    Bun.gc(true);
+    return "";
+  }
+  const below = tower(depth - 1);
+  return mine.x + "," + mine.y + "," + list[1] + "," + spoiled.x + " " + below;
+}
+
+////= for-21	40	strikes	20	19	tower	12
+//// damage-behind-a-call-collector/a-collection-while-an-exception-passes-dirty-frames.ts
+// The damage is done, the heap is collected, and an exception is thrown through two frames. A finally block on the way collects again. The handler's function reads what it has held all the time.
+////= Point
+
+let strikes = false;
+function deep(p: Point): number {
+  if (!strikes) return 1;
+  (p as any).y = "text";
+  Bun.gc(true);
+  throw new Error("deep");
+}
+function middle(p: Point): number {
+  const mine = new Point(5, 6);
+  try {
+    return deep(p) + mine.x;
+  } finally {
+    if (strikes) Bun.gc(true);
+    seen = mine.x + "," + mine.y;
+  }
+}
+let seen = "";
+
+function holder(n: number): string {
+  const p = new Point(n, 1);
+  const kept = [new Point(n + 1, 2), new Point(n + 2, 3)];
+  let got: string;
+  try {
+    got = "" + middle(p);
+  } catch (error) {
+    got = (error as Error).message;
+  }
+  return got + " " + p.x + "," + p.y + " " + kept[0].x + "," + kept[1].y + " " + seen;
+}
+
+////= for-21	60	strikes	20	19	holder	round

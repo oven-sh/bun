@@ -127,6 +127,8 @@ impl Checker<'_, '_> {
                 Decl::Class(c) => {
                     let class = &self.hir(f)[c];
                     let name = class.name.is_some().then_some(class.name_pos);
+                    let name =
+                        name.or_else(|| self.files.is_compile_build().then_some(class.start));
                     Some((f, class.type_params, name))
                 }
                 Decl::Interface(i) => {

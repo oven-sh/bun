@@ -1,8 +1,8 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::socket::udp_socket" });
 
-export const dgramIsFdAdopted = b.fn({ args: { fd: b.i32 }, returns: b.bool });
 export const dgramNewSocketFd = b.fn({ args: { isIPv6: b.bool, isStream: b.bool }, returns: b.i32, throws: true });
 export const dgramAdoptFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramBindFd = b.fn({
@@ -25,22 +25,23 @@ const sourceSpecificMembership = {
 /** What `Bun.udpSocket()` resolves to. */
 export const UDPSocket = b.class({
   rustPath: "crate::socket::udp_socket::UDPSocket",
+  types: [table.exactType("$Node.UDPSocketHandle"), table.exactType("$Bindgen.UDPSocket")],
   internalFields: ["onData", "onDrain", "onError"],
   proto: {
     addMembership: membership,
-    address: { ...js, getter: b.any, cache: true },
+    address: { ...js, getter: b.any.returning("object", "undefined"), cache: true },
     addSourceSpecificMembership: sourceSpecificMembership,
-    binaryType: { ...js, getter: b.any, cache: true },
+    binaryType: { ...js, getter: b.any.returning("string"), cache: true },
     close: {},
-    closed: { getter: b.bool },
+    closed: { getter: b.bool, pure: true },
     dropMembership: membership,
     dropSourceSpecificMembership: sourceSpecificMembership,
     fd: { getter: b.i32 },
-    hostname: { ...js, getter: b.any, cache: true },
+    hostname: { ...js, getter: b.any.returning("string"), cache: true },
     port: { getter: b.i32.optional, cache: true },
     ref: {},
     reload: { ...js, passThis: true, args: { options: b.any } },
-    remoteAddress: { ...js, getter: b.any, cache: true },
+    remoteAddress: { ...js, getter: b.any.returning("object", "undefined"), cache: true },
     /** `(data)` when connected, `(data, port, address)` when not. */
     send: { ...js, args: { data: b.any, port: b.any, address: b.any }, returns: b.bool },
     sendMany: { ...js, args: { packets: b.any }, returns: b.i32, length: 3 },

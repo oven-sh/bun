@@ -1,6 +1,22 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { Request } from "../webcore/response.bind.ts";
 
 export const ServerProtocol = b.enumeration(["http", "https"]);
+
+/** The options of `Bun.serve` that are `ToBoolean` of a property. `ServerConfig::from_js` reads them between `app` and `maxRequestBodySize`. */
+export const ServeSwitches = b.dictionary(
+  {
+    reusePort: b.bool.loose.optional,
+    ipv6Only: b.bool.loose.default(false),
+    http3: b.bool.loose.default(false),
+    http2: b.bool.loose.default(false),
+    http1: b.bool.loose.default(true),
+  },
+  { fromJS: true, allowArray: true },
+);
+
+/** What only `node:http` passes, next to `onNodeHTTPRequest`. */
+export const NodeHTTPServeOptions = b.dictionary({ fd: b.i32.optional }, { fromJS: true, allowArray: true });
 
 /** What `Bun.serve` returns. There is one class for each `NewServer<SSL, DEBUG>`. */
 function server(name: string) {
@@ -16,7 +32,8 @@ function server(name: string) {
       "onError",
       "onNodeHTTPRequest",
       "onClientError",
-      "onConnection",
+      "socketHandlers",
+      "socketData",
       "wsOnOpen",
       "wsOnMessage",
       "wsOnClose",
@@ -27,26 +44,26 @@ function server(name: string) {
       "wsPackageHandlers",
     ],
     proto: {
-      address: { getter: b.any, cache: true, capability: "js", throws: true },
+      address: { getter: b.any.returning("string", "object", "null"), cache: true, capability: "js", throws: true },
       closeIdleConnections: { returns: b.usize, capability: "js" },
-      development: { getter: b.bool },
+      development: { getter: b.bool, pure: true },
       fetch: {
         args: { input: b.any, init: b.any },
-        returns: b.any,
+        returns: b.any.returning("Promise"),
         capability: "js",
         throws: true,
         length: 1,
       },
-      hostname: { getter: b.any, cache: true, capability: "js", throws: true },
+      hostname: { getter: b.any.returning("string", "undefined"), cache: true, capability: "js", throws: true },
       id: { getter: b.string.utf8, cache: true },
-      pendingRequests: { getter: b.i32 },
-      pendingWebSockets: { getter: b.i32 },
+      pendingRequests: { getter: b.i32, pure: true },
+      pendingWebSockets: { getter: b.i32, pure: true },
       port: { getter: b.u16.optional },
       protocol: { getter: ServerProtocol },
       /** `publish(topic)` throws. `publish(topic, undefined)` sends the text "undefined". */
       publish: {
         args: { topic: b.any, rest: b.any.variadic },
-        returns: b.any,
+        returns: b.any.returning("number"),
         capability: "js",
         throws: true,
         length: 3,
@@ -61,14 +78,15 @@ function server(name: string) {
         length: 2,
       },
       requestIP: {
-        args: { request: b.any },
-        returns: b.any,
+        args: { request: Request },
+        expected: { request: "Expected Request object" },
+        returns: b.any.returning("object", "null"),
         capability: "js",
         throws: true,
       },
       stop: {
         args: { closeActiveConnections: b.any },
-        returns: b.any,
+        returns: b.any.returning("Promise"),
         capability: "js",
         rustName: "do_stop",
       },
@@ -80,7 +98,6 @@ function server(name: string) {
       },
       timeout: {
         args: { request: b.any, seconds: b.any },
-        returns: b.any,
         capability: "heap",
         throws: true,
       },
@@ -92,7 +109,7 @@ function server(name: string) {
         throws: true,
         length: 1,
       },
-      url: { getter: b.any, cache: true, capability: "js", throws: true },
+      url: { getter: b.any.returning("URL"), cache: true, capability: "js", throws: true },
       "@@dispose": { capability: "js" },
     },
   });
@@ -114,14 +131,14 @@ export const BinaryType = b.enumeration([
 /** `b.any`: a closed socket must ignore the call before any argument is converted. */
 const send = {
   args: { data: b.any, compress: b.any },
-  returns: b.any,
+  returns: b.any.returning("number"),
   capability: "js",
   throws: true,
 } as const;
-const control = { args: { data: b.any }, returns: b.any, capability: "js", throws: true } as const;
+const control = { args: { data: b.any }, returns: b.any.returning("number"), capability: "js", throws: true } as const;
 const publish = {
   args: { topic: b.any, data: b.any, compress: b.any },
-  returns: b.any,
+  returns: b.any.returning("number"),
   capability: "js",
   throws: true,
 } as const;
@@ -155,14 +172,14 @@ export const ServerWebSocket = b.class({
     publish,
     publishBinary: { ...publish, length: 2 },
     publishText: { ...publish, length: 2 },
-    readyState: { getter: b.i32 },
-    remoteAddress: { getter: b.any, cache: true, capability: "js", throws: true },
+    readyState: { getter: b.i32, pure: true },
+    remoteAddress: { getter: b.any.returning("string", "undefined"), cache: true, capability: "js", throws: true },
     resume: {},
     send,
     sendBinary: send,
     sendText: send,
     subscribe: topic,
-    subscriptions: { getter: b.any, capability: "js", throws: true },
+    subscriptions: { getter: b.any.returning("Array"), capability: "js", throws: true },
     terminate: { capability: "js" },
     unsubscribe: topic,
   },

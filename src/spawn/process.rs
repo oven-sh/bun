@@ -66,19 +66,7 @@ pub use bun_spawn_sys::{
 /// tracked process exits and stays readable until the fd is closed, so a
 /// plain level-triggered watch is sufficient: when the event fires we
 /// `wait4(WNOHANG)`, and on success we close the pidfd (which removes it
-/// from epoll).
-///
-/// `EPOLLONESHOT` is actively harmful here: the kernel disarms the fd the
-/// instant `epoll_wait` returns it — before user-space has dispatched it.
-/// If a poll callback then re-enters `us_loop_run_bun_tick` (e.g.
-/// `expect(p).resolves` → `waitForPromise` → `autoTick`, or any other
-/// `waitForPromise` path), the inner tick overwrites the shared
-/// `loop->ready_polls`/`num_ready_polls`/`current_ready_poll` and the outer
-/// dispatch silently skips its remaining events. A dropped one-shot pidfd
-/// event is unrecoverable: the fd is disarmed with no re-arm path, so the
-/// process's `'exit'` arrives only when the next unrelated timer wakes the
-/// loop. Level-triggered makes a dropped slot harmless — the next
-/// `epoll_wait` just returns it again. `rewatch_posix` still re-registers
+/// from epoll). `rewatch_posix` still re-registers
 /// defensively if `wait4` returns 0, which is a harmless `CTL_MOD`.
 ///
 /// macOS/FreeBSD watch the pid via `EVFILT_PROC` + `NOTE_EXIT`, which is
@@ -1543,8 +1531,7 @@ pub mod waiter_thread_posix {
         // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
         let this: &'static WaiterThreadPosix = instance_ref();
 
-        #[allow(unused_labels)]
-        'outer: loop {
+        loop {
             // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
             // in `append()` (interior mutability via `active: UnsafeCell`).
             this.js_process.loop_();
@@ -1563,7 +1550,7 @@ pub mod waiter_thread_posix {
                 // Consume the pending eventfd
                 let mut buf = [0u8; 8];
                 if bun_sys::read(efd, &mut buf).unwrap_or(0) > 0 {
-                    continue 'outer;
+                    continue;
                 }
 
                 // SAFETY: valid pollfd array.
@@ -1762,15 +1749,12 @@ impl Default for WindowsOptions {
             verbatim_arguments: false,
             hide_window: true,
             // Every `bun.spawnSync` call site sets `loop_` explicitly. A
-            // zeroed handle here keeps `..Default::default()` usable
+            // null handle here keeps `..Default::default()` usable
             // for the other fields. `spawn_process_windows` (the sole consumer)
             // asserts non-null at the read site so a forgotten `loop_` panics
             // with a pointed message instead of segfaulting at the `.uv_loop`
             // field offset.
-            // SAFETY: `EventLoopHandle` is a `Copy` enum of raw pointers; the
-            // all-zero bit pattern is discriminant 0 with a null payload —
-            // valid representation, never dereferenced before assignment.
-            loop_: unsafe { bun_core::ffi::zeroed_unchecked() },
+            loop_: EventLoopHandle::init(core::ptr::null_mut()),
         }
     }
 }
@@ -2062,12 +2046,15 @@ mod spawn_process_body {
             uv_process_options.flags |= uv::UV_PROCESS_SETGID;
         }
 
-        let mut stdio_containers: Vec<uv::uv_stdio_container_t> =
-            Vec::with_capacity(3 + options.extra_fds.len());
-        // SAFETY: all-zero is valid uv_stdio_container_t
-        stdio_containers.resize_with(3 + options.extra_fds.len(), || unsafe {
-            bun_core::ffi::zeroed_unchecked()
-        });
+        let mut stdio_containers = vec![
+            uv::uv_stdio_container_t {
+                flags: uv::UV_IGNORE,
+                data: uv::uv_stdio_container_data {
+                    stream: core::ptr::null_mut(),
+                },
+            };
+            3 + options.extra_fds.len()
+        ];
 
         let stdio_options: [&WindowsStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
 
@@ -2458,6 +2445,9 @@ mod spawn_process_body {
 
             #[cfg(windows)]
             pub windows: WindowsOptions,
+            /// Whether the child gets this process's descriptor `3 + index`, under the same number.
+            #[cfg(windows)]
+            pub inherited_extra_fds: Box<[bool]>,
         }
 
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2526,6 +2516,8 @@ mod spawn_process_body {
                     argv0: None,
                     #[cfg(windows)]
                     windows: Default::default(),
+                    #[cfg(windows)]
+                    inherited_extra_fds: Box::default(),
                 }
             }
         }
@@ -2545,6 +2537,15 @@ mod spawn_process_body {
                     new_process_group,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
+                    #[cfg(windows)]
+                    extra_fds: self
+                        .inherited_extra_fds
+                        .iter()
+                        .map(|&is_inherited| match is_inherited {
+                            true => WindowsStdio::Inherit,
+                            false => WindowsStdio::Ignore,
+                        })
+                        .collect(),
                     ..Default::default()
                 }
             }
@@ -3443,9 +3444,7 @@ mod spawn_process_body {
                         }
                     }
 
-                    let mut poll_fds_buf: [libc::pollfd; 2] =
-                    // SAFETY: zeroed pollfd is valid
-                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut poll_fds_buf: [libc::pollfd; 2] = bun_core::ffi::zeroed();
                     let mut poll_len: usize = 0;
                     for &fd in &out_fds_to_wait_for {
                         if fd == Fd::INVALID {
@@ -3575,7 +3574,6 @@ mod spawn_process_body {
             // before `udata`.
             const TAG_PPID: usize = 2;
 
-            // SAFETY: zeroed kevent is valid
             let mut changes_buf: [libc::kevent; 5] = bun_core::ffi::zeroed();
             let mut changes_len: usize = 0;
             let add = |list: &mut [libc::kevent; 5],
@@ -3648,7 +3646,6 @@ mod spawn_process_body {
                 }
             }
 
-            // SAFETY: zeroed kevent is valid
             let mut receipts: [libc::kevent; 5] = bun_core::ffi::zeroed();
             match bun_sys::kevent(
                 kq_fd,
@@ -3695,7 +3692,6 @@ mod spawn_process_body {
             // seeded `m_seen` with `child`'s uniqueid, so this picks them up.
             Bun__noOrphans_onFork();
 
-            // SAFETY: zeroed kevent is valid
             let mut events: [libc::kevent; 16] = bun_core::ffi::zeroed();
             let mut child_exited = false;
             let mut child_status: Option<Status> = None;
@@ -3821,7 +3817,6 @@ mod spawn_process_body {
                     libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
                 });
                 let fd = {
-                    // SAFETY: POD, zero-valid — sigemptyset overwrites it immediately.
                     let mut kmask: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&raw mut kmask);
                     libc::sigaddset(&raw mut kmask, libc::SIGCHLD);
@@ -3954,7 +3949,6 @@ mod spawn_process_body {
                     }
                 }
 
-                // SAFETY: zeroed pollfd is valid
                 let mut buf: [libc::pollfd; 5] = bun_core::ffi::zeroed();
                 let mut pfds_len: usize = 0;
                 let push = |l: &mut [libc::pollfd; 5], len: &mut usize, fd: Fd| {

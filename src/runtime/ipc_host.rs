@@ -54,6 +54,10 @@ pub(crate) fn emit_process_error_event<'a>(cx: &mut JsScope<'a>, error: JsLocal<
     Process__emitErrorEvent(cx.global(), error.to_js());
 }
 
+pub(crate) fn emit_process_disconnect_event(cx: &mut JsScope<'_>) {
+    Process__emitDisconnectEvent(cx.global());
+}
+
 fn do_send_err(
     global_object: &JSGlobalObject,
     callback: JSValue,
@@ -167,10 +171,10 @@ pub(crate) fn do_send(
             match unsafe { (*listener).listener.get() } {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
-                    // owned by uSockets; `get_socket` only reinterpret-casts to
-                    // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
-                    let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
+                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket` owned by uSockets.
+                    let listen_socket = unsafe { &mut *socket_uws };
+                    listen_socket.set_shared();
+                    let fd = listen_socket.get_socket().get_fd();
                     #[cfg(not(windows))]
                     match Handle::init_dup(fd, handle, false) {
                         Ok(h) => zig_handle = Some(h),
@@ -468,7 +472,17 @@ impl IPCInstance {
         let event_loop = vm.event_loop_mut();
         crate::jsc_hooks::ipc_child_singleton_deinit();
         event_loop.enter();
-        Process__emitDisconnectEvent(vm.global());
+        // On the next tick, so that it comes after the callbacks of the messages that never went out.
+        let emit = bun_jsc::JSFunction::create(
+            vm.global(),
+            "",
+            crate::generated_bindgen::ipc_host::Bun__IPC__emitProcessDisconnectEvent,
+            0,
+            Default::default(),
+        );
+        if let Err(err) = JSValue::call_next_tick_1(emit, vm.global(), JSValue::UNDEFINED) {
+            let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+        }
         event_loop.exit();
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
@@ -483,6 +497,11 @@ pub(crate) fn get_ipc_instance(
 ) -> Option<*mut IPCInstance> {
     if let Some(inst) = CHANNEL.get() {
         return Some(inst.as_ptr());
+    }
+    if bun_removable_features::is_removed(bun_removable_features::Feature::Ipc)
+        && bun_removable_features::is_removed(bun_removable_features::Feature::Spawn)
+    {
+        return None;
     }
     let pending = vm.pending_ipc.take()?;
     let fd = pending.fd;

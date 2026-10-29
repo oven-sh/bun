@@ -1,0 +1,106 @@
+////: check
+function check(actual, expected, what) {
+    if (!Object.is(actual, expected))
+        throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+}
+////: check-2
+function check(actual, expected, what) {
+    if (actual !== expected)
+        throw new Error(what + ": " + actual + " instead of " + expected);
+}
+////: codes
+function codes(s) {
+    let result = [];
+    for (let i = 0; i < s.length; ++i)
+        result.push(s.charCodeAt(i));
+    return result.join();
+}
+////: for-2
+for (let round = 0; round < 200; ++round) {
+    let pieces = [], fromLeft = "", fromRight = "";
+    for (let i = 0; i < 60; ++i) {
+        let piece = i % 7 ? "p" + round + "." + i : "中" + i;
+        pieces.push(piece);
+        fromLeft = add(fromLeft, piece);
+        fromRight = add(piece, fromRight);
+    }
+    let both = add(fromLeft, fromRight);
+    check(both.length, fromLeft.length + fromRight.length, "the length of two ropes joined");
+    check(fromLeft, pieces.join(""), "a rope grown at its end");
+    check(fromRight, pieces.reverse().join(""), "a rope grown at its start");
+    check(both, fromLeft + fromRight, "two ropes joined");
+}
+////: for-3
+for (let round = 0; round < 300; ++round) {
+    for (let left of [...narrow, ...wide]) {
+        for (let right of [...narrow, ...wide]) {
+            let joined = add(left, right);
+            check(typeof joined, "string", "the kind of a join");
+            check(joined.length, left.length + right.length, "the length of a join");
+            check(codes(joined), codes(left) + "," + codes(right), "the characters of a join");
+        }
+    }
+}
+////: for-5
+for (let s of [...narrow, ...wide]) {
+    check(add("", s), s, "nothing and a string");
+    check(add(s, ""), s, "a string and nothing");
+    let rope = add(s, s);
+    check(add("", rope).length, 2 * s.length, "nothing and a rope");
+    check(add(rope, ""), s + s, "a rope and nothing");
+}
+////: lines
+{
+    let powers = ["x"];
+    for (let i = 1; i <= 30; ++i)
+        powers.push(add(powers[i - 1], powers[i - 1]));
+    for (let i = 0; i <= 30; ++i)
+        check(powers[i].length, 2 ** i, "a rope of a power of two");
+    let allButOne = powers[0];
+    for (let i = 1; i < 30; ++i)
+        allButOne = add(allButOne, powers[i]);
+    check(allButOne.length, 2 ** 30 - 1, "a rope one short of a power of two");
+    let longest = add(powers[30], allButOne);
+    check(longest.length, 2147483647, "a rope of the greatest length");
+    check(add(allButOne, powers[30]).length, 2147483647, "a rope of the greatest length, the other way round");
+    check(add(longest, "").length, 2147483647, "the longest rope and nothing");
+    check(add("", longest).length, 2147483647, "nothing and the longest rope");
+    throws(() => add(longest, "x"), RangeError, "one more than the greatest length");
+    throws(() => add("x", longest), RangeError, "one more than the greatest length, the other way round");
+    throws(() => add(powers[30], powers[30]), RangeError, "twice two to the thirtieth");
+    throws(() => add(longest, longest), RangeError, "twice the greatest length");
+}
+////: lines-2
+{
+    try {
+        run();
+    } catch (error) {
+        return error.constructor;
+    }
+    return null;
+}
+////: lines-4
+{
+    let long = "0123456789".repeat(20);
+    let part = long.substring(15, 150);
+    check(add(part, "!"), long.slice(15, 150) + "!", "a substring and a string");
+    check(add("!", part), "!" + long.slice(15, 150), "a string and a substring");
+    check(add(part, part).length, 270, "two substrings");
+}
+////: lines-5
+{
+    if (!Object.is(actual, expected))
+        throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+}
+////: throws
+function throws(f, constructor, what) {
+    let result;
+    try {
+        result = f();
+    } catch (error) {
+        if (!(error instanceof constructor))
+            throw new Error(what + ": threw " + String(error));
+        return;
+    }
+    throw new Error(what + ": did not throw, " + String(result).length + " characters");
+}

@@ -1,0 +1,448 @@
+////: lines
+class «1» {
+  constructor(«2») {
+    this.«2» = «2»;
+  }
+}
+////: lines-2
+class «1» {
+  constructor(public «2»: «3») {}
+}
+//// a-callback-changes-what-the-helper-walks.js
+// While a helper walks what one caller passed, the callback changes it: other kinds of elements, a shorter array, a getter in place of an element, the helper called again from inside.
+function each(array, callback) {
+  let count = 0;
+  for (let i = 0; i < array.length; i++) {
+    callback(array[i], i, array);
+    count++;
+  }
+  return count;
+}
+function findLast(array, predicate) {
+  let found;
+  for (let i = 0; i < array.length; i++) if (predicate(array[i])) found = array[i];
+  return found;
+}
+////= lines	Point	x
+const lines = [];
+const points = [new Point(1), new Point(2)];
+lines.push(each(points, (p, i, all) => {
+  if (i === 0) all.push("text", 3.5, null, { x: "other" });
+  lines.push(typeof p + " " + (p === null ? "null" : p.x));
+}));
+const shrinking = [new Point(1), new Point(2), new Point(3), new Point(4)];
+lines.push(each(shrinking, (p, i, all) => {
+  all.length = 2;
+  lines.push(p.x);
+}));
+const withGetter = [new Point(1), new Point(2), new Point(3)];
+lines.push(each(withGetter, (p, i, all) => {
+  if (i === 0) Object.defineProperty(all, 1, { get() { return "from a getter"; } });
+  lines.push(typeof p === "string" ? p : p.x);
+}));
+const outer = [new Point(10), new Point(20)];
+const inner = ["a", "b", "c"];
+lines.push(each(outer, p => {
+  lines.push(p.x + ":" + each(inner, s => lines.push(s + s.length)));
+}));
+lines.push(String(findLast(points, p => p !== null && typeof p === "object").x));
+lines.push(String(findLast(inner, s => s < "c")));
+lines.push(String(findLast([], () => true)));
+console.log(lines.join("\n"));
+//// a-helper-calls-itself-with-something-else.ts
+// Recursion: each turn passes another kind of value, goes one name deeper, or swaps its parameters.
+////= lines-2	Leaf	value	number
+class Branch {
+  constructor(public left: Tree, public right: Tree) {}
+}
+type Tree = Leaf | Branch;
+function leftmost(tree: Tree): Leaf {
+  return tree instanceof Leaf ? tree : leftmost(tree.left);
+}
+function sum(tree: Tree): number {
+  return tree instanceof Leaf ? tree.value : sum(tree.left) + sum(tree.right);
+}
+function alternate<A, B>(a: A, b: B, turns: number): A | B {
+  return turns === 0 ? a : alternate(b, a, turns - 1);
+}
+interface Link<T> {
+  value: T;
+  next: Link<T> | undefined;
+}
+function lastOf<T>(link: Link<T>): T {
+  return link.next === undefined ? link.value : lastOf(link.next);
+}
+function wrap(value: unknown, depth: number): unknown {
+  return depth === 0 ? value : wrap({ inner: value }, depth - 1);
+}
+function unwrap(value: any): unknown {
+  return typeof value === "object" && value !== null && "inner" in value ? unwrap(value.inner) : value;
+}
+function walk(tree: Tree, visit: (leaf: Leaf) => void): void {
+  if (tree instanceof Leaf) visit(tree);
+  else {
+    walk(tree.left, visit);
+    walk(tree.right, leaf => visit(new Leaf(leaf.value * 10)));
+  }
+}
+const tree = new Branch(new Branch(new Leaf(1), new Leaf(2)), new Branch(new Leaf(3), new Branch(new Leaf(4), new Leaf(5))));
+const lines: string[] = [];
+lines.push(String(leftmost(tree).value), String(sum(tree)));
+for (let turns = 0; turns < 4; turns++) {
+  const answer = alternate(new Leaf(7), "text", turns);
+  lines.push(typeof answer === "string" ? answer : "leaf " + answer.value);
+}
+lines.push(String(lastOf({ value: 1, next: { value: 2, next: { value: 3, next: { value: 4, next: { value: 5, next: undefined } } } } })));
+lines.push(lastOf({ value: "a", next: { value: "b", next: undefined } }));
+lines.push(lastOf({ value: new Leaf(9), next: undefined }).value.toString());
+lines.push(String(unwrap(wrap(5, 6))), (unwrap(wrap(new Leaf(8), 4)) as Leaf).value.toString(), String(unwrap(wrap("s", 0))));
+const seen: number[] = [];
+walk(tree, leaf => seen.push(leaf.value));
+lines.push(seen.join());
+console.log(lines.join("\n"));
+//// a-helper-keeps-what-one-caller-passed-for-the-next.ts
+// What a helper answers is not always what THIS caller passed: it may have kept what an earlier caller passed, in a variable, a closure, a field or an array.
+////= lines-2	Apple	weight	number
+////= lines-2	Pear	name	string
+let last: unknown;
+function swap<T>(value: T): unknown {
+  const old = last;
+  last = value;
+  return old;
+}
+function makeCell<T>() {
+  let held: T | undefined;
+  return (value: T): T | undefined => {
+    const old = held;
+    held = value;
+    return old;
+  };
+}
+const shelf: unknown[] = [];
+function shelve<T>(value: T): unknown {
+  shelf.push(value);
+  return shelf[shelf.length >> 1];
+}
+const box: { content: unknown } = { content: 0 };
+function exchange<T>(target: { content: unknown }, value: T): unknown {
+  const old = target.content;
+  target.content = value;
+  return old;
+}
+function describe(value: unknown): string {
+  if (value instanceof Apple) return "apple " + value.weight;
+  if (value instanceof Pear) return "pear " + value.name;
+  return typeof value + " " + String(value);
+}
+const cell = makeCell<Apple | Pear>();
+const lines: string[] = [];
+for (let i = 0; i < 6; i++) {
+  const apple = new Apple(i);
+  const pear = new Pear("p" + i);
+  lines.push(describe(swap(apple)) + " | " + describe(swap(pear)) + " | " + describe(swap(i)));
+  lines.push(describe(cell(apple)) + " | " + describe(cell(pear)));
+  lines.push(describe(shelve(apple)) + " | " + describe(shelve(pear)) + " | " + describe(shelve("s" + i)));
+  lines.push(describe(exchange(box, apple)) + " | " + describe(exchange(box, pear)) + " | " + describe(exchange({ content: i }, pear)));
+}
+console.log(lines.join("\n"));
+//// a-helper-makes-an-object-for-each-caller.ts
+// A helper wraps what it was passed into a new object, a closure or an array. Each caller looks into its own, and one of them changes it.
+function pair<A, B>(left: A, right: B) {
+  return { left, right };
+}
+function boxed<T>(value: T) {
+  return { get: () => value, set: (next: T) => void (value = next) };
+}
+function listOf<T>(...items: T[]): T[] {
+  return items;
+}
+class Holder<T> {
+  constructor(public held: T) {}
+  replace(next: T): T {
+    const old = this.held;
+    this.held = next;
+    return old;
+  }
+}
+function hold<T>(value: T): Holder<T> {
+  return new Holder(value);
+}
+////= lines-2	Coin	cents	number
+////= lines-2	Card	owner	string
+const lines: string[] = [];
+for (let i = 0; i < 3; i++) {
+  const coins = pair(new Coin(i), new Coin(i + 1));
+  const cards = pair(new Card("a" + i), i);
+  const odd = pair("text", undefined);
+  lines.push(coins.left.cents + coins.right.cents + " " + cards.left.owner + cards.right + " " + odd.left + odd.right);
+  const coinBox = boxed(new Coin(5));
+  const cardBox = boxed(new Card("c"));
+  const numberBox = boxed(1.5);
+  coinBox.set(new Coin(6 + i));
+  lines.push(coinBox.get().cents + " " + cardBox.get().owner + " " + numberBox.get());
+  lines.push(listOf(new Coin(1), new Coin(2)).map(c => c.cents).join() + " " + listOf("a", "b")[1] + " " + listOf<number>().length + " " + listOf(new Card("z"))[0].owner);
+  const coinHolder = hold(new Coin(i));
+  const cardHolder = hold(new Card("h" + i));
+  lines.push(coinHolder.replace(new Coin(50)).cents + " " + coinHolder.held.cents + " " + cardHolder.replace(new Card("new")).owner + " " + cardHolder.held.owner + " " + hold(i).held + " " + hold("s").replace("t"));
+  (coins as any).left = "no coin any more";
+  lines.push(String(coins.left) + " " + pair(new Coin(9), 0).left.cents);
+}
+console.log(lines.join("\n"));
+//// a-helper-reached-by-every-kind-of-call.js
+// One helper, entered directly, by call, apply, bind, Reflect.apply, as a method of two objects, as a callback of built-ins, through a variable that changes, with too few and too many arguments.
+function pick(array, index) {
+  return array === undefined ? "nothing" : array[index === undefined ? 0 : index];
+}
+function self() {
+  return this;
+}
+////= lines	Cat	name
+////= lines	Dog	age
+const cats = [new Cat("tom"), new Cat("kit")];
+const dogs = [new Dog(3), new Dog(5)];
+const lines = [];
+lines.push(pick(cats, 1).name, pick(dogs, 1).age, pick("text", 2), pick([1.5], 0));
+lines.push(pick.call(null, cats, 0).name, pick.apply(null, [dogs, 0]).age, Reflect.apply(pick, undefined, [cats]).name);
+const pickDog = pick.bind(null, dogs);
+lines.push(pickDog(1).age, pickDog().age);
+lines.push(pick(), pick(cats).name, pick(dogs, 1, "more", "than", "it takes").age);
+const holder = { pick, items: cats };
+lines.push(holder.pick(holder.items, 1).name);
+lines.push([cats, dogs].map(pick).map(x => x.name ?? x.age).join());
+lines.push([[cats, 1], [dogs, 0]].map(pair => pick(...pair)).map(x => x.name ?? x.age).join());
+let current = pick;
+for (let i = 0; i < 4; i++) {
+  lines.push(String(current(i & 1 ? cats : dogs, 0).name));
+  if (i === 1) current = (array, index) => array[index + 1];
+}
+const cat = cats[0];
+const dog = dogs[0];
+cat.self = self;
+dog.self = self;
+lines.push(cat.self().name, dog.self().age, self.call(cat).name, self.call(dog).age, typeof self.call(5), self.bind(dog)().age);
+lines.push(new Promise(resolve => resolve(cats)).then(pick) instanceof Promise);
+Promise.resolve(dogs).then(pick).then(x => console.log("later " + x.age));
+setTimeout(pick, 0, cats, 1);
+console.log(lines.join("\n"));
+//// a-helper-writes-through-what-it-was-passed.js
+// A helper stores one parameter into what another leads to: each caller's own objects get each caller's own values; a setter, a frozen object, a proxy and an array stand in the way.
+function link(node, next) {
+  node.next = next;
+  return node;
+}
+function setDeep(root, value) {
+  root.inner.slot = value;
+}
+function register(table, name, handler) {
+  table[name] = handler;
+}
+function fire(table, name, operand) {
+  return table[name](operand);
+}
+function append(list, item) {
+  list[list.length] = item;
+  return list.length;
+}
+class Car {
+  constructor(id) {
+    this.id = id;
+    this.next = undefined;
+  }
+}
+class Ship {
+  constructor(name) {
+    this.name = name;
+    this.next = null;
+  }
+}
+const lines = [];
+for (let i = 0; i < 3; i++) {
+  const cars = link(new Car(i), new Car(i + 1));
+  const ships = link(new Ship("s" + i), new Ship("t" + i));
+  const crossed = link(new Car(9), new Ship("x"));
+  lines.push(cars.next.id + " " + ships.next.name + " " + crossed.next.name + " " + link({}, 5).next);
+  const withSetter = { set next(value) { lines.push("setter got " + (value.id ?? value.name ?? value)); } };
+  link(withSetter, new Car(70 + i));
+  link(withSetter, "text");
+  try {
+    lines.push(String(link(Object.freeze({ next: "frozen" }), new Car(1)).next));
+  } catch (error) {
+    lines.push(error.constructor.name);
+  }
+  const a = { inner: { slot: 0 } };
+  const b = { inner: { slot: "" } };
+  setDeep(a, new Car(i));
+  setDeep(b, new Ship("deep"));
+  lines.push(a.inner.slot.id + " " + b.inner.slot.name);
+  const carTable = {};
+  const shipTable = Object.create(null);
+  register(carTable, "go", car => car.id * 2);
+  register(shipTable, "go", ship => ship.name + "!");
+  register(shipTable, "stop", () => "stopped");
+  lines.push(fire(carTable, "go", new Car(i)) + " " + fire(shipTable, "go", new Ship("f")) + " " + fire(shipTable, "st" + "op"));
+  const carList = [];
+  const mixedList = ["a"];
+  lines.push(append(carList, new Car(i)) + " " + append(mixedList, new Ship("m")) + " " + carList[0].id + " " + mixedList[1].name + " " + mixedList[0]);
+  const seen = [];
+  const proxy = new Proxy({}, { set(target, key, value) { seen.push(String(key) + "=" + (value.id ?? value)); return true; } });
+  link(proxy, new Car(5));
+  register(proxy, "name", 7);
+  lines.push(seen.join());
+}
+console.log(lines.join("\n"));
+//// a-typed-helper-gets-what-its-types-forbid.ts
+// Callers that prove what they pass stand beside callers that pass what the types forbid, through `any`. Each caller gets the answer that JavaScript gives, and the one does not spoil the other.
+////= lines-2	Meter	length	number
+////= lines-2	Word	letters	string
+function lengthOf(meter: Meter): number {
+  return meter.length;
+}
+function longest(meters: Meter[]): Meter {
+  let best = meters[0];
+  for (const meter of meters) if (meter.length > best.length) best = meter;
+  return best;
+}
+function rename(word: Word, letters: string): Word {
+  word.letters = letters;
+  return word;
+}
+function twice(callback: (meter: Meter) => number, meter: Meter): number {
+  return callback(meter) + callback(meter);
+}
+const loose: any = { lengthOf, longest, rename, twice };
+const lines: string[] = [];
+for (let i = 0; i < 4; i++) {
+  lines.push(String(lengthOf(new Meter(i))));
+  lines.push(String(loose.lengthOf("four")), String(loose.lengthOf([1, 2, 3])), String(loose.lengthOf({ length: "own" })), String(loose.lengthOf(new Word("w"))));
+  lines.push(String(longest([new Meter(1), new Meter(i)]).length));
+  lines.push(String(loose.longest(["a", "bbb", "cc"])), String(loose.longest([[1], [1, 2]]).length), String(loose.longest([{ length: 2, tag: "t" }]).tag));
+  lines.push(rename(new Word("a"), "b" + i).letters);
+  lines.push(String(loose.rename({ letters: 1, other: 2 }, 5).letters), String(loose.rename(new Meter(1), "x").letters), String(Object.keys(loose.rename({}, "y"))));
+  lines.push(String(twice(lengthOf, new Meter(i))), String(loose.twice((x: any) => x, "ab")), String(loose.twice(lengthOf, "abc")), String(twice(m => m.length * 2, new Meter(i))));
+  try {
+    loose.lengthOf(undefined);
+  } catch (error) {
+    lines.push((error as Error).constructor.name);
+  }
+}
+console.log(lines.join("\n"));
+//// helpers-handed-to-code-nobody-has-seen.js
+// The same helpers are also entered by callers that the compiler does not see: built-ins that take callbacks, timers, promises, JSON's reviver and replacer, a sort, a getter on a host object's options.
+function double(x) {
+  return typeof x === "number" ? x * 2 : x;
+}
+function nameOf(thing) {
+  return thing.name;
+}
+function compare(a, b) {
+  return a.rank - b.rank;
+}
+class Player {
+  constructor(name, rank) {
+    this.name = name;
+    this.rank = rank;
+  }
+}
+const players = [new Player("c", 3), new Player("a", 1), new Player("b", 2)];
+const lines = [];
+lines.push(double(4), double("s"), nameOf(players[0]), compare(players[0], players[1]));
+lines.push([1, 2, 3].map(double).join(), ["x", 2].map(double).join());
+lines.push(players.map(nameOf).join(), [{ name: 5 }, function named() {}, new Error("e")].map(nameOf).join());
+lines.push([...players].sort(compare).map(nameOf).join(), [{ rank: 2, name: "p" }, { rank: 1, name: "q" }].sort(compare).map(nameOf).join());
+lines.push(JSON.stringify({ a: 1, b: "t", c: [2] }, (key, value) => double(value)));
+lines.push(JSON.stringify(JSON.parse('{"a":1,"b":{"c":2}}', (key, value) => double(value))));
+lines.push(Array.from({ length: 3 }, (_, i) => double(i)).join(), Array.from(new Set(players), nameOf).join());
+lines.push(new Map(players.map(p => [nameOf(p), p])).get("b").rank);
+lines.push("abc".replace(/b/, double), [3, 1, 2].reduce((sum, x) => sum + double(x), 0), players.find(p => nameOf(p) === "a").rank);
+globalThis.helpers = { double, nameOf, compare };
+lines.push(globalThis.helpers.double(21), globalThis.helpers.nameOf({ name: "from outside" }));
+Promise.resolve(8).then(double).then(x => console.log("then " + x));
+Promise.all([players[1]].map(async p => nameOf(p))).then(x => console.log("all " + x.join()));
+queueMicrotask(() => console.log("microtask " + double(1)));
+setTimeout((a, b) => console.log("timer " + compare(a, b)), 0, players[0], players[2]);
+console.log(lines.join("\n"));
+//// one-helper-many-kinds-of-elements.ts
+// The helpers of a compiler's utilities, each called with arrays of several kinds, with callbacks that look into their own kind of element.
+function forEach<T, U>(array: readonly T[] | undefined, callback: (element: T, index: number) => U | undefined): U | undefined {
+  if (array !== undefined) {
+    for (let i = 0; i < array.length; i++) {
+      const result = callback(array[i], i);
+      if (result) return result;
+    }
+  }
+  return undefined;
+}
+function find<T>(array: readonly T[], predicate: (element: T) => boolean): T | undefined {
+  for (const element of array) if (predicate(element)) return element;
+  return undefined;
+}
+function first<T>(array: readonly T[]): T {
+  return array[0];
+}
+function map<T, U>(array: readonly T[], f: (element: T) => U): U[] {
+  const result: U[] = [];
+  for (const element of array) result.push(f(element));
+  return result;
+}
+function identity<T>(value: T): T {
+  return value;
+}
+////= lines-2	Name	text	string
+class Size {
+  constructor(public width: number, public height: number) {}
+}
+const names = [new Name("a"), new Name("bb"), new Name("ccc")];
+const sizes = [new Size(1, 2), new Size(3, 4)];
+const numbers = [1.5, 2, 3];
+const strings = ["x", "yy"];
+const mixed: (Name | Size | number | string | undefined | null)[] = [names[0], sizes[1], 7, "z", undefined, null];
+const lines: string[] = [];
+for (let round = 0; round < 3; round++) {
+  lines.push(String(find(names, n => n.text.length === round + 1)?.text));
+  lines.push(String(find(sizes, s => s.width > round)?.height));
+  lines.push(String(find(numbers, n => n > round)));
+  lines.push(String(find(strings, s => s.length > round)));
+  lines.push(String(find(mixed, m => typeof m === (round === 0 ? "number" : round === 1 ? "string" : "undefined"))));
+  lines.push(first(names).text + first(sizes).width + first(numbers) + first(strings) + (first(mixed) as Name).text);
+  lines.push(map(names, n => n.text.length).join() + " " + map(sizes, s => new Name(String(s.height))).map(n => n.text).join() + " " + map(numbers, n => n * 2).join());
+  lines.push(String(forEach(names, (n, i) => (i === round ? n : undefined))?.text) + " " + String(forEach(sizes, s => (s.height > 3 ? s.width : undefined))) + " " + String(forEach(undefined, () => 1)));
+  lines.push(identity(names[round]).text + identity(round) + identity("s") + String(identity(undefined)) + identity(sizes[round & 1]).height);
+}
+console.log(lines.join("\n"));
+//// what-a-helper-throws-is-what-its-caller-catches.js
+// A helper throws what it was passed, what it read out of it, what a callback threw, or lets a getter's exception through.
+function raise(value) {
+  throw value;
+}
+function raiseFirst(array) {
+  throw array[0];
+}
+function guard(callback, value) {
+  try {
+    return callback(value);
+  } catch (error) {
+    return { caught: error };
+  }
+}
+function read(object) {
+  return object.value;
+}
+////= lines	Problem	code
+////= lines	Note	text
+const lines = [];
+function attempt(f, ...operands) {
+  try {
+    return "answered " + String(f(...operands));
+  } catch (error) {
+    if (error instanceof Problem) return "problem " + error.code;
+    if (error instanceof Note) return "note " + error.text;
+    return "other " + typeof error + " " + String(error);
+  }
+}
+for (let i = 0; i < 3; i++) {
+  lines.push(attempt(raise, new Problem(i)), attempt(raise, new Note("n" + i)), attempt(raise, i), attempt(raise, undefined));
+  lines.push(attempt(raiseFirst, [new Note("first")]), attempt(raiseFirst, [new Problem(9)]), attempt(raiseFirst, []), attempt(raiseFirst, "text"));
+  lines.push(String(guard(raise, new Problem(i)).caught.code), String(guard(raise, new Note("g")).caught.text), String(guard(x => x + 1, i)));
+  lines.push(attempt(read, { value: i }), attempt(read, { get value() { throw new Problem(100 + i); } }), attempt(read, { get value() { throw new Note("getter"); } }), attempt(read, null).slice(0, 12));
+}
+console.log(lines.join("\n"));

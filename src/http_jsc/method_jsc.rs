@@ -1,7 +1,7 @@
 //! JSC bridge for `bun_http_types::Method`. Keeps `bun_http_types` free of JSC types.
 
 use bun_core::String as BunString;
-use bun_http_types::Method::Method;
+use bun_http_types::Method::{Method, OwnedMethod};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
 unsafe extern "C" {
@@ -23,6 +23,21 @@ pub fn from_js(global_this: &JSGlobalObject, input: JSValue) -> JsResult<Option<
     // directly.
     let utf8 = str.to_utf8();
     Ok(Method::which(utf8.slice()))
+}
+
+/// Reads `init.method` for `fetch`, `Request` and `server.fetch`.
+pub fn request_method_from_js(
+    global_this: &JSGlobalObject,
+    input: JSValue,
+) -> JsResult<OwnedMethod> {
+    let str = BunString::from_js(input, global_this)?;
+    let utf8 = str.to_utf8();
+    Ok(match Method::which(utf8.slice()) {
+        Some(method) => method.into(),
+        // `method: isPost && "POST"` means GET when `isPost` is false.
+        None if !input.is_string() => Method::GET.into(),
+        None => OwnedMethod::from_unlisted(utf8.slice()),
+    })
 }
 
 /// Extension trait providing `.to_js()` on `Method` (lives in the `*_jsc` crate so the

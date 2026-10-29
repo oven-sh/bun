@@ -1,0 +1,488 @@
+////: for-28
+for (let round = 0; round < 300; round++) {
+  const line = outer(round);
+  if (round % 100 >= 9«1»);
+}
+//// damage-behind-a-call-more-about-tests/a-method-is-replaced-by-every-tool.ts
+// The holder calls a method, reads a getter of the class and walks the object with for-of, makes a call, and does all three again. Below the call one of the three members is replaced, hidden or taken away,
+// each time by another tool than a plain assignment to the prototype object: Object.assign, defineProperty and defineProperties, Reflect, a proxy without traps around the prototype object,
+// a new parent for it, an own property of the instance, a class field defined on the instance.
+class Base {
+  label(): string {
+    return "base";
+  }
+}
+class Bag extends Base {
+  size: number;
+  constructor(size: number) {
+    super();
+    this.size = size;
+  }
+  twice(): number {
+    return this.size * 2;
+  }
+  get half(): number {
+    return this.size / 2;
+  }
+  *[Symbol.iterator](): Generator<number> {
+    yield this.size;
+    yield this.size + 1;
+  }
+}
+
+const own = Object.getOwnPropertyDescriptors(Bag.prototype);
+function repair(): void {
+  for (const name of Reflect.ownKeys(Bag.prototype)) if (!(name in own)) delete (Bag.prototype as any)[name];
+  Object.defineProperties(Bag.prototype, own);
+  Object.setPrototypeOf(Bag.prototype, Base.prototype);
+}
+
+const handsBack = function (this: any, o: any): any {
+  return o;
+} as any;
+class Stamp extends handsBack {
+  twice = () => -11;
+}
+
+const ways: ((bag: any) => void)[] = [
+  () => void Object.assign(Bag.prototype, { twice: () => -1 }),
+  () => void Object.defineProperty(Bag.prototype, "twice", { value: () => -2, configurable: true, writable: true }),
+  () => void Object.defineProperties(Bag.prototype, { half: { get: () => -3, configurable: true } }),
+  () => void Reflect.set(Bag.prototype, "twice", () => -4),
+  () => void Reflect.defineProperty(Bag.prototype, "half", { value: -5, configurable: true }),
+  () => void Reflect.deleteProperty(Bag.prototype, "twice"),
+  () => void (new Proxy(Bag.prototype, {}).twice = () => -6),
+  () => void delete (new Proxy(Bag.prototype, {}) as any).half,
+  () => void Object.setPrototypeOf(Bag.prototype, { label: () => "another parent" }),
+  () => void ((Bag.prototype as any).__proto__ = { label: () => "__proto__" }),
+  () => void ((Bag.prototype as any).label = () => "in front"),
+  () => void ((Bag.prototype as any)[Symbol.iterator] = function* () { yield -7; }),
+  () => void Reflect.deleteProperty(Base.prototype, "label"),
+  bag => void Object.defineProperty(bag, "twice", { value: () => -8, configurable: true }),
+  bag => void Object.defineProperty(bag, "half", { get: () => -9, configurable: true }),
+  bag => void (bag[Symbol.iterator] = function* () { yield -10; }),
+  bag => void new (Stamp as any)(bag),
+  bag => void Object.assign(bag, { label: () => "own" }),
+];
+const labelOfBase = Base.prototype.label;
+
+let way = -1;
+function touch(bag: Bag): number {
+  if (way >= 0) ways[way](bag);
+  return 1;
+}
+
+function holder(bag: Bag): string {
+  let before = bag.twice() + "," + bag.half + "," + bag.label();
+  for (const value of bag) before += "," + value;
+  const got = touch(bag);
+  let twice: string;
+  try {
+    twice = "" + bag.twice();
+  } catch (error) {
+    twice = (error as Error).name;
+  }
+  let label: string;
+  try {
+    label = bag.label();
+  } catch (error) {
+    label = (error as Error).name;
+  }
+  let after = twice + "," + bag.half + "," + label;
+  for (const value of bag) after += "," + value;
+  return before + " " + got + " " + after;
+}
+
+for (let round = 0; round < 50 * ways.length; round++) {
+  way = round % 50 === 49 ? (round - 49) / 50 : -1;
+  const line = holder(new Bag(round));
+  if (way >= 0) {
+    repair();
+    Base.prototype.label = labelOfBase;
+  }
+  if (way >= 0 || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-more-about-tests/a-result-that-fits-arrives-at-a-landing-for-results-that-do-not.ts
+// `user` holds nothing across its call of `pick`: it only takes the result, which is declared a Point, and reads two fields of it. Such a call site has a second return point for a result that is no Point.
+// In some rounds `pick` damages an object that `user` has never seen, so every return address on the stack that has a second return point is sent there, that of `pick` too: a Point arrives where strings are expected.
+// In some rounds the result is a string, and in some both happen.
+////= Point
+
+const odd: any = "odd";
+const points: Point[] = [];
+for (let index = 0; index < 8; index++) points.push(new Point(index, index * 2));
+
+let bystander: Point | null = null;
+let misfit = false;
+
+// It calls itself, so it stays a call.
+function pick(n: number, depth: number): Point {
+  if (depth > 0) return pick(n + 1, depth - 1);
+  const target = bystander;
+  if (target !== null) {
+    bystander = null;
+    (target as any).y = "gone";
+  }
+  return misfit ? odd : points[n & 7];
+}
+
+function user(n: number): string {
+  const got = pick(n, 2);
+  return typeof got + ":" + got.x + "," + got.y;
+}
+
+function holder(p: Point, n: number): string {
+  const before = p.x + p.y;
+  const told = user(n);
+  return before + " " + told + " " + (p.x + p.y);
+}
+
+for (let round = 0; round < 400; round++) {
+  const p = new Point(round, 1);
+  misfit = round % 100 === 97 || round % 100 === 99;
+  bystander = round % 100 >= 98 ? p : null;
+  const line = holder(p, round);
+  if (round % 100 >= 96 || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-more-about-tests/a-spread-and-a-copy-bring-the-state-of-a-damaged-object-along.ts
+// The callee makes a copy of an object, with a spread, with Object.assign into a literal, with structuredClone, and returns it under the declared type. In some rounds the source was damaged before:
+// a field holds a string, a field is an accessor, a field was deleted. The copy is new, so nobody has tested it, and the caller reads its fields right behind the call under the type that the callee declares.
+// The caller also holds the source across the call.
+type Pair = { left: number; right: number };
+
+let reads = 0;
+function damage(pair: Pair, kind: number): Pair {
+  if (kind === 1) (pair as any).left = "text";
+  if (kind === 2) Object.defineProperty(pair, "left", { get: () => ++reads * -1, enumerable: true, configurable: true });
+  if (kind === 3) delete (pair as any).left;
+  if (kind === 4) (pair as any).more = 5;
+  return pair;
+}
+
+////= lines-30	bySpread	source	Pair	Pair
+function byAssign(source: Pair): Pair {
+  return Object.assign({ left: 0, right: 0 }, source);
+}
+function byClone(source: Pair): Pair {
+  return structuredClone(source);
+}
+
+function holder(source: Pair): string {
+  const before = source.right;
+  const a = bySpread(source);
+  const first = a.left + "," + a.right;
+  const b = byAssign(source);
+  const second = b.left + "," + b.right;
+  const c = byClone(source);
+  const third = c.left + "," + c.right;
+  return before + " " + first + " " + second + " " + third + " " + source.left + "," + source.right + " " + Object.keys(a).join("") + Object.keys(b).join("") + Object.keys(c).join("");
+}
+
+for (let round = 0; round < 500; round++) {
+  const kind = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = holder(damage({ left: round, right: 1 }, kind));
+  if (kind || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-more-about-tests/a-trace-a-collection-and-a-throw-behind-a-write-below-native-frames.ts
+// Three typed callers hold objects that nothing else refers to. Below them a built-in calls back, and the callback damages one of the objects. From then on the return addresses of all of them are swapped,
+// with frames of the built-in in between. Behind the write, still in the callback: a stack trace is taken, or the heap is collected and filled again, or an error is thrown that the outermost of them catches
+// and whose stack is read only then.
+////= Point
+
+const own = new Set(["strikes", "callee", "holder", "outer", "outermost"]);
+function framesOf(stack: string): string {
+  const frames: string[] = [];
+  for (const line of stack.split("\n")) {
+    const frame = /^\s*at (\w+) \(.*:(\d+):\d+\)$/.exec(line);
+    if (frame && own.has(frame[1])) frames.push(frame[1] + "@" + frame[2]);
+  }
+  return frames.join(" < ");
+}
+
+let mode = 0;
+let victim: Point | null = null;
+let told = "";
+let sink = 0;
+function strikes(step: number): number {
+  const target = victim;
+  if (step !== 2 || target === null) return step;
+  victim = null;
+  (target as any).x = "struck";
+  if (mode === 1) told = framesOf(String(new Error("in the callback").stack));
+  if (mode === 2) {
+    Bun.gc(true);
+    for (let index = 0; index < 3000; index++) sink += new Point(-1, -1).x + [-2, -2][1];
+    Bun.gc(true);
+  }
+  if (mode === 3) throw new Error("out of the callback");
+  return step;
+}
+
+const steps = [1, 2, 3];
+function callee(round: number): number {
+  return steps.map(strikes)[1] + (round & 3);
+}
+
+function holder(p: Point, round: number): string {
+  const mine = new Point(round, 2);
+  const before = p.x + p.y + mine.x + mine.y;
+  const got = callee(round);
+  return before + " " + got + " " + p.x + "," + p.y + "," + mine.x + "," + mine.y;
+}
+
+function outer(round: number): string {
+  const p = new Point(round, 1);
+  const kept = new Point(round, 3);
+  const before = p.x + kept.y;
+  if (mode) victim = p;
+  const inner = holder(p, round);
+  return before + " [" + inner + "] " + p.x + "," + kept.x + "," + kept.y;
+}
+
+function outermost(round: number): string {
+  const last = new Point(round, 4);
+  const before = last.x + last.y;
+  let line: string;
+  try {
+    line = outer(round);
+  } catch (error) {
+    line = (error as Error).message + ": " + framesOf(String((error as Error).stack));
+  }
+  return before + " {" + line + "} " + last.x + "," + last.y;
+}
+
+for (let round = 0; round < 400; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  told = "";
+  const line = outermost(round);
+  if (mode || round === 0) console.log(round + ": " + line + (told ? " | " + told : ""));
+}
+//// damage-behind-a-call-more-about-tests/a-typed-store-of-undefined-or-null-marks-the-cell.ts
+// The callee stores what its parameter holds into a number field, in typed code on its usual path. The parameter admits undefined or null, and in some rounds that is what it holds.
+// No name is looked up and nothing of the run time is asked: the compiled store itself marks the cell. Two callers hold the object across the call and read the field raw behind it.
+////= Point
+
+function putX(p: Point, value: number | undefined): number {
+  p.x = value as number;
+  return 1;
+}
+function putY(p: Point, value: number | null): number {
+  p.y = value as number;
+  return 2;
+}
+
+function holder(p: Point, first: number | undefined, second: number | null): string {
+  const before = p.x + p.y;
+  const got = putX(p, first);
+  const between = p.x + 1 + "," + (p.x === undefined) + "," + p.y;
+  const more = putY(p, second);
+  return before + " " + got + " " + between + " " + more + " " + (p.x + 1) + "," + (p.y + 1) + "," + (p.y === null);
+}
+
+function outer(round: number): string {
+  const p = new Point(round, 1);
+  const before = p.x * 2 + p.y;
+  const inner = holder(p, round % 100 === 98 ? undefined : round + 5, round % 100 === 99 ? null : round + 6);
+  return before + " [" + inner + "] " + (p.x + 1) + "," + typeof p.x + "," + (p.y + 1) + "," + typeof p.y;
+}
+
+////= for-28	7 || round === 0) console.log(round + ": " + line
+//// damage-behind-a-call-more-about-tests/a-write-at-every-level-of-a-deep-recursion.ts
+// A function calls itself two thousand deep. Every activation holds an object of its own across the call and hands it down, and every activation damages what it was handed, on its way back.
+// So each of them comes back to a caller whose object it has just damaged, and each write finds all the activations above it on the stack.
+// WHAT TO LOOK AT BESIDE THE ANSWER: the time. A write costs a look at the whole stack, so this is the square of the depth.
+////= Point
+
+function descend(depth: number, handed: Point): number {
+  const mine = new Point(depth, 1);
+  const before = mine.x + mine.y + handed.x;
+  const below = depth > 0 ? descend(depth - 1, mine) : 0;
+  const seen = mine.y === 1 ? 0 : typeof mine.y === "string" ? 1 : 2;
+  if (depth % 3 === 0) delete (handed as any).y;
+  else if (depth % 3 === 1) (handed as any).y = "s";
+  return (below * 3 + seen + before + mine.x) % 1000003;
+}
+
+for (let round = 0; round < 3; round++) {
+  const top = new Point(-1, 1);
+  console.log(round + ": " + descend(2001, top) + " " + top.x + "," + top.y);
+}
+//// damage-behind-a-call-more-about-tests/microtasks-are-drained-below-the-call.ts
+// The damage is no part of anything that the caller calls. It waits in the queue of microtasks, and the callee asks the run time to drain that queue. So it runs while both callers are on the stack,
+// called by nobody whom a summary of effects could name.
+import { drainMicrotasks } from "bun:jsc";
+
+////= Point
+
+function callee(round: number): number {
+  drainMicrotasks();
+  return round & 3;
+}
+
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round);
+  return before + " " + got + " " + (p.x + 1) + "," + typeof p.x + "," + p.y;
+}
+
+function outer(round: number): string {
+  const p = new Point(round, 1);
+  const before = p.x - p.y;
+  if (round % 100 === 97) void Promise.resolve().then(() => void delete (p as any).x);
+  if (round % 100 === 98) void Promise.resolve().then(() => void ((p as any).x = "late"));
+  if (round % 100 === 99) queueMicrotask(() => void Object.defineProperty(p, "x", { get: () => -7, configurable: true }));
+  const inner = holder(p, round);
+  return before + " [" + inner + "] " + (p.x + 1) + "," + typeof p.x;
+}
+
+////= for-28	6 || round === 0) console.log(round + ": " + line
+//// damage-behind-a-call-more-about-tests/object-assign-pours-a-damaged-object-into-one-that-is-held.ts
+// The holder has an object whose optional fields are all absent, and has read them. The callee pours another object of the same type into it with Object.assign. In some rounds that other object
+// was damaged long before: one of its fields holds a string, and it has a property that the type does not declare. However the run time copies, by name, by a plan that it has made for the two layouts
+// or word by word, the target is damaged behind the call as the source was in front of it.
+type Loose = { left?: number; right?: number };
+
+const whole: Loose = { left: 1, right: 2 };
+const damaged: Loose = { left: 1, right: 2 };
+(damaged as any).left = "outside";
+(damaged as any).more = 3;
+// Whatever is stored here lies in the heap and not in the frame of the function that made it.
+let last: Loose = whole;
+
+function pour(target: Loose, source: Loose): number {
+  Object.assign(target, source);
+  return 1;
+}
+
+function holder(target: Loose, source: Loose): string {
+  const before = target.left + "," + target.right;
+  const got = pour(target, source);
+  return before + " " + got + " " + target.left + "," + target.right + "," + typeof target.left;
+}
+
+function outer(round: number): string {
+  const target: Loose = {};
+  last = target;
+  const before = "" + target.left + target.right;
+  const inner = holder(target, round % 100 === 99 ? damaged : whole);
+  return before + " [" + inner + "] " + target.left + "," + target.right + "," + Object.keys(target).join("");
+}
+
+////= for-28	8 || round === 0) console.log(round + ": " + line + " " + last.left
+//// damage-behind-a-call-more-about-tests/stores-that-do-not-look-like-stores.ts
+// A string gets into a number field of the object, a field is deleted, becomes an accessor or changes its attributes, each time by another construct of the language or tool of the run time than a plain assignment:
+// targets of destructuring and of loops, compound and logical assignment, Reflect with a receiver, a store to `super`, a class field defined on an object that the base constructor hands back,
+// a proxy without traps around the object. The holder reads the field raw in front of the call and behind it.
+////= Point
+
+const viaSuper = {
+  __proto__: {},
+  put(this: any): void {
+    super.x = "super";
+  },
+} as any;
+const handsBack = function (this: any, o: any): any {
+  return o;
+} as any;
+////= lines-24	Stamp	handsBack	x	"field"
+const key = ["x"];
+
+const ways: ((p: any) => void)[] = [
+  p => void ([p.x] = ["array pattern"]),
+  p => void ({ v: p.x } = { v: "object pattern" }),
+  p => {
+    for (p.x of ["for of"]);
+  },
+  p => {
+    for (p.x in { "for in": 1 });
+  },
+  p => void (p.x += "+="),
+  p => void (p.y &&= "&&="),
+  p => void Reflect.set(p, "x", "Reflect.set"),
+  p => void Reflect.set({}, "x", "receiver", p),
+  p => void Object.assign(p, { x: "assign" }),
+  p => viaSuper.put.call(p),
+  p => void new (Stamp as any)(p),
+  p => void (p[key[0]] = "computed"),
+  p => void Object.defineProperty(p, "x", { value: "defined" }),
+  p => void Object.defineProperty(p, "x", { enumerable: false }),
+  p => void Object.defineProperty(p, "x", { writable: false }),
+  p => void p.__defineGetter__("x", () => "__defineGetter__"),
+  p => void Reflect.deleteProperty(p, "x"),
+  p => void delete p[key[0]],
+  p => void (new Proxy(p, {}).x = "through a proxy"),
+  p => void delete new Proxy(p, {}).x,
+  p => void Object.defineProperty(new Proxy(p, {}), "x", { get: () => "defined through a proxy", configurable: true }),
+  p => void Object.setPrototypeOf(new Proxy(p, {}), { z: "prototype through a proxy" }),
+  p => void (p.__proto__ = { z: "__proto__" }),
+  p => void Object.defineProperties(p, { y: { value: "both" }, x: { value: "defineProperties" } }),
+];
+
+let way = -1;
+function touch(p: Point): number {
+  if (way >= 0) ways[way](p);
+  return 1;
+}
+
+function holder(p: Point): string {
+  const before = p.x + p.y;
+  const got = touch(p);
+  let stored = "stored";
+  const x = p.x, y = p.y;
+  try {
+    p.x = 7;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  return before + " " + got + " " + typeof x + ":" + x + " " + typeof y + ":" + y + " " + stored + ":" + p.x + " " + (p as any).z + " " + Object.keys(p).join("");
+}
+
+function outer(round: number): string {
+  const p = new Point(round, 1);
+  const before = p.x - p.y;
+  const inner = holder(p);
+  return before + " [" + inner + "] " + typeof p.x + ":" + p.x + "," + p.y;
+}
+
+for (let round = 0; round < 50 * ways.length; round++) {
+  way = round % 50 === 49 ? (round - 49) / 50 : -1;
+  const line = outer(round);
+  if (way >= 0 || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-more-about-tests/the-same-frames-are-sent-to-their-landings-again-and-again.ts
+// One call of the holder, and below it the callee damages one object after the other, ten of them, with typed work in between. Each write finds the same callers on the stack, whose return addresses are swapped already.
+// The holder has all ten in local variables and reads them behind the call. Then it goes on in a loop, with whole objects again, in the same activation.
+////= Point
+
+let strikes = false;
+function spoil(list: Point[]): number {
+  let sum = 0;
+  for (let index = 0; index < list.length; index++) {
+    const p = list[index];
+    sum += p.x + p.y;
+    if (strikes) {
+      if (index % 3 === 0) delete (p as any).x;
+      else if (index % 3 === 1) (p as any).y = "T";
+      else Object.setPrototypeOf(p, { z: index });
+    }
+  }
+  return sum;
+}
+
+function holder(round: number): string {
+  let text = "";
+  for (let turn = 0; turn < 3; turn++) {
+    const a = new Point(round, 0), b = new Point(round, 1), c = new Point(round, 2), d = new Point(round, 3), e = new Point(round, 4);
+    const f = new Point(round, 5), g = new Point(round, 6), h = new Point(round, 7), i = new Point(round, 8), j = new Point(round, 9);
+    const before = a.x + b.x + c.x + d.x + e.x + f.y + g.y + h.y + i.y + j.y;
+    strikes = round % 100 === 99 && turn === 1;
+    const got = spoil([a, b, c, d, e, f, g, h, i, j]);
+    text += before + " " + got + " " + a.x + b.y + (c as any).z + d.x + e.y + (f as any).z + g.x + h.y + (i as any).z + j.x + (c instanceof Point) + (d instanceof Point) + " | ";
+  }
+  return text;
+}
+
+for (let round = 0; round < 300; round++) {
+  const line = holder(round);
+  if (round % 100 === 99 || round === 0) console.log(round + ": " + line);
+}

@@ -1131,7 +1131,6 @@ fn open(
                 None,
                 path_slice,
                 ptr,
-                false,
             )
         } else {
             uws::SocketTCP::connect_group(
@@ -1141,7 +1140,6 @@ fn open(
                 params.hostname,
                 params.port,
                 ptr,
-                false,
             )
         };
 
@@ -2014,6 +2012,35 @@ impl PostgresSQLConnection {
                 // keeps the statement alive.
                 let mut cached_structure: Option<ParentRef<PostgresCachedStructure>> = None;
                 let request_flags = request.flags.get();
+                let row_type = request.row_type.get();
+                if row_type != 0
+                    && request_flags.formats == ResultFormats::Decodable
+                    && !request_flags.bigint
+                    && request_flags.result_mode == SQLQueryResultMode::Objects
+                {
+                    if !statement.row_decoder.is_for(row_type) {
+                        statement.create_row_decoder(self.global(), row_type);
+                    }
+                    if let Some(this_value) = request.this_value.get().try_get() {
+                        let rows = postgres_sql_query::js::pending_value_get_cached(this_value)
+                            .unwrap_or_default();
+                        let (_, length) = reader.peek_length()?;
+                        let appended_to = statement
+                            .row_decoder
+                            .append_row(self.global(), &reader.peek()[4..length], rows)
+                            .map_err(crate::jsc::js_error_to_postgres)?;
+                        if let Some(appended_to) = appended_to {
+                            if rows.is_empty() {
+                                postgres_sql_query::js::pending_value_set_cached(
+                                    this_value,
+                                    self.global(),
+                                    appended_to,
+                                );
+                            }
+                            return reader.skip_message();
+                        }
+                    }
+                }
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
@@ -2255,6 +2282,7 @@ impl PostgresSQLConnection {
                 statement.cached_structure = Default::default();
                 statement.needs_duplicate_check = true;
                 statement.fields_flags = Default::default();
+                statement.row_decoder = Default::default();
             }
             MessageType::Authentication => {
                 let auth = protocol::Authentication::decode_internal(&mut reader)?;

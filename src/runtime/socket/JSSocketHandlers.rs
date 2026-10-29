@@ -10,7 +10,7 @@
 use bun_jsc::{JSGlobalObject, JSValue, Strong};
 
 unsafe extern "C" {
-    /// Allocates the cell with the 13 callback fields populated barrier-free
+    /// Allocates the cell with the 14 callback fields populated barrier-free
     /// (the cell is not yet GC-visible); the promise field starts `undefined`.
     safe fn Bun__SocketHandlers__create(
         global: &JSGlobalObject,
@@ -25,7 +25,7 @@ unsafe extern "C" {
         index: u32,
         value: JSValue,
     );
-    /// Overwrites all 13 callback fields on a live cell with one trailing
+    /// Overwrites all 14 callback fields on a live cell with one trailing
     /// write barrier.
     safe fn Bun__SocketHandlers__setCallbacks(
         global: &JSGlobalObject,
@@ -54,6 +54,7 @@ enum Field {
     Keylog,
     ServerName,
     AlpnCallback,
+    WriteComplete,
     /// Not a callback: the pending `Bun.connect` promise, cleared once settled.
     Promise,
 }
@@ -123,6 +124,7 @@ impl JSSocketHandlers {
         on_keylog => Keylog,
         on_server_name => ServerName,
         on_alpn_callback => AlpnCallback,
+        on_write_complete => WriteComplete,
     }
 
     /// Replaces every callback on a live cell. `JSValue::ZERO` entries clear
@@ -134,6 +136,18 @@ impl JSSocketHandlers {
         callbacks: &[JSValue; CALLBACK_COUNT],
     ) {
         Bun__SocketHandlers__setCallbacks(global, self.0, callbacks.as_ptr());
+    }
+
+    /// The inverse of [`set_callbacks`](Self::set_callbacks): unset fields read as `JSValue::ZERO`.
+    pub(crate) fn callbacks(self) -> [JSValue; CALLBACK_COUNT] {
+        core::array::from_fn(|i| {
+            let value = Bun__SocketHandlers__getField(self.0, i as u32);
+            if value.is_undefined() {
+                JSValue::ZERO
+            } else {
+                value
+            }
+        })
     }
 
     /// Drops the `open` callback: a client socket clears it after its first TLS

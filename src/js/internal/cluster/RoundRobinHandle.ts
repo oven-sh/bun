@@ -1,10 +1,12 @@
+import type { ClusterWorker, SendReply } from "internal/cluster/Worker";
+
 const { append, init, isEmpty, peek, remove } = require("internal/linkedlist");
 const { kHandle } = require("internal/shared");
 
-let net;
+let net: $BunModules["node:net"] | undefined;
 
 const sendHelper = $bindgen("node_cluster_binding.bind.ts", "sendHelperPrimary");
-const uvTranslateSysError = $bindgen("node_util_binding.bind.ts", "uvTranslateSysError");
+const uvTranslateSysError: (errno: number) => number = $bindgen("node_util_binding.bind.ts", "uvTranslateSysError");
 const { UV_EINVAL } = process.binding("uv");
 
 const ArrayIsArray = Array.isArray;
@@ -12,16 +14,18 @@ const ArrayIsArray = Array.isArray;
 const UV_TCP_IPV6ONLY = 1;
 
 export default class RoundRobinHandle {
-  key;
-  all;
-  free;
+  key: string;
+  all: Map<number, ClusterWorker>;
+  free: Map<number, ClusterWorker>;
   handles;
-  handle;
-  server;
-  listening;
-  inFlight;
+  handle: $Node.NetServer["_handle"];
+  server: $Node.NetServer | null;
+  listening: boolean;
+  inFlight: Map<number, AcceptedHandle>;
+  errno = 0;
+  declare data: unknown;
 
-  constructor(key, address, { port, fd, flags, backlog, readableAll, writableAll }) {
+  constructor(key: string, address, { port, fd, flags, backlog, readableAll, writableAll }) {
     net ??= require("node:net");
     this.key = key;
     this.all = new Map();
@@ -35,33 +39,38 @@ export default class RoundRobinHandle {
       RoundRobinHandle.prototype.onServerConnection.bind(this),
     );
 
-    if (fd >= 0) this.server.listen({ fd, backlog });
-    else if (port >= 0) {
-      this.server.listen({
-        port,
-        host: address,
-        // Currently, net module only supports `ipv6Only` option in `flags`.
-        ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
-        backlog,
-      });
-    } else
-      this.server.listen({
-        path: address,
-        backlog,
-        readableAll,
-        writableAll,
-      }); // UNIX socket path.
+    try {
+      if (fd >= 0) this.server.listen({ fd, backlog });
+      else if (port >= 0) {
+        this.server.listen({
+          port,
+          host: address,
+          // Currently, net module only supports `ipv6Only` option in `flags`.
+          ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
+          backlog,
+        });
+      } else
+        this.server.listen({
+          path: address,
+          backlog,
+          readableAll,
+          writableAll,
+        }); // UNIX socket path.
+    } catch {
+      // net validates these in the worker, so only a message it didn't write gets here.
+      this.errno = UV_EINVAL;
+    }
     this.server.once("listening", RoundRobinHandle.prototype.onServerListening.bind(this));
   }
 
-  onServerConnection(socket) {
+  onServerConnection(socket: $Node.Socket) {
     const handle = makeAcceptedHandle(socket);
     socket.on("error", noop);
     socket.once("close", RoundRobinHandle.prototype.onAcceptedSocketClose.bind(this, handle));
     this.distribute(0, handle);
   }
 
-  onAcceptedSocketClose(handle) {
+  onAcceptedSocketClose(handle: AcceptedHandle) {
     remove(handle);
     const inFlight = this.inFlight;
     for (const [id, pending] of inFlight) {
@@ -76,17 +85,19 @@ export default class RoundRobinHandle {
 
   onServerListening() {
     this.listening = true;
-    this.handle = this.server._handle;
+    this.handle = this.server!._handle;
   }
 
-  add(worker, send) {
+  add(worker: ClusterWorker, send: SendReply) {
     $assert(this.all.has(worker.id) === false);
     this.all.set(worker.id, worker);
+    const { errno } = this;
+    if (errno) return send(errno, null, null);
 
     const done = () => {
-      if (this.handle.getsockname && typeof this.server.address() === "object") {
+      if (this.handle!.getsockname && typeof this.server!.address() === "object") {
         const out = {};
-        this.handle.getsockname(out);
+        this.handle!.getsockname!(out);
         // TODO(bnoordhuis) Check err.
         send(null, { sockname: out }, null);
       } else {
@@ -99,25 +110,19 @@ export default class RoundRobinHandle {
     if (this.listening) return done();
 
     // Still busy binding.
-    this.server.once("listening", done);
-    this.server.once("error", err => {
+    this.server!.once("listening", done);
+    this.server!.once("error", (err: { errno?: unknown }) => {
       const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
       send(raw != null ? uvTranslateSysError(raw) : UV_EINVAL, null, null);
     });
   }
 
-  has(worker) {
+  has(worker: ClusterWorker) {
     return this.all.has(worker.id);
   }
 
-  // Returns the listener's file descriptor, or -1 if it isn't listening yet or remove() already closed it.
-  get fd() {
-    const fd = this.server?._handle?.fd;
-    return typeof fd === "number" ? fd : -1;
-  }
-
   // With the channel still up the unacked newconn is settled by its ack; once it is gone, a crashed worker's goes to another worker and a disconnected worker's (already settled by it) is dropped.
-  remove(worker, channelGone = false) {
+  remove(worker: ClusterWorker, channelGone = false) {
     if (channelGone) {
       const pending = this.inFlight.get(worker.id);
       if (pending !== undefined) {
@@ -141,7 +146,7 @@ export default class RoundRobinHandle {
     this.inFlight.clear();
 
     while (!isEmpty(this.handles)) {
-      const handle = peek(this.handles);
+      const handle: AcceptedHandle = peek(this.handles);
       handle.close();
       remove(handle);
     }
@@ -152,7 +157,7 @@ export default class RoundRobinHandle {
     return true;
   }
 
-  distribute(err, handle) {
+  distribute(err: number, handle: AcceptedHandle) {
     // If `accept` fails just skip it (handle is undefined)
     if (err) {
       return;
@@ -168,13 +173,13 @@ export default class RoundRobinHandle {
     }
   }
 
-  handoff(worker) {
+  handoff(worker: ClusterWorker) {
     if (!this.all.has(worker.id)) {
       return; // Worker is closing (or has closed) the server.
     }
 
     for (;;) {
-      const handle = peek(this.handles);
+      const handle: AcceptedHandle | null = peek(this.handles);
 
       if (handle === null) {
         this.free.set(worker.id, worker); // Add to ready queue again.
@@ -214,13 +219,15 @@ export default class RoundRobinHandle {
 
 function noop() {}
 
-function makeAcceptedHandle(socket) {
+type AcceptedHandle = ReturnType<typeof makeAcceptedHandle>;
+
+function makeAcceptedHandle(socket: $Node.Socket) {
   return {
     get fd() {
       const nativeSocket = socket._handle;
       return socket.destroyed || !nativeSocket ? -1 : nativeSocket.fd;
     },
-    close(cb?) {
+    close(cb?: () => void) {
       socket.destroy();
       if (typeof cb === "function") process.nextTick(cb);
     },

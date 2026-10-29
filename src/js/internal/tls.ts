@@ -1,8 +1,10 @@
 const { isTypedArray, isArrayBuffer, isArrayBufferView } = require("node:util/types");
 const { validateString, validateBuffer } = require("internal/validators");
 
-const StringPrototypeSplit = String.prototype.split;
-const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeSplit: (this: string, separator: string | RegExp, limit?: number) => string[] =
+  String.prototype.split;
+const StringPrototypeReplace: (this: string, searchValue: string | RegExp, replaceValue: string) => string =
+  String.prototype.replace;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeIncludes = String.prototype.includes;
 const ArrayPrototypeFilter = Array.prototype.filter;
@@ -63,32 +65,25 @@ function isValidTLSArray(obj: unknown) {
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L74-L87
 const VALID_TLS_ERROR_MESSAGE_TYPES = "string or an instance of Buffer, TypedArray, or DataView";
 
-// BoringSSL TLS1_x_VERSION constants (from openssl/tls1.h). The native TLS
-// config applies these via SSL_CTX_set_min/max_proto_version.
-const TLS1_VERSION = 0x0301;
-const TLS1_1_VERSION = 0x0302;
-const TLS1_2_VERSION = 0x0303;
-const TLS1_3_VERSION = 0x0304;
-function tlsStringToProtocolVersion(v) {
-  switch (v) {
-    case "TLSv1":
-      return TLS1_VERSION;
-    case "TLSv1.1":
-      return TLS1_1_VERSION;
-    case "TLSv1.2":
-      return TLS1_2_VERSION;
-    case "TLSv1.3":
-      return TLS1_3_VERSION;
-    default:
-      return 0;
-  }
+const protocolVersionCode: (name: string) => number = $bindgen("SSLConfig.bind.ts", "protocolVersionCode");
+
+// The code SSL_CTX_set_min/max_proto_version takes, 0 for none. A `fallback` that names no version counts as none, as on 1.4.4 (Node throws).
+function toProtocolVersion(which: string, version: unknown, fallback: unknown) {
+  if (version == null) return typeof fallback === "string" ? protocolVersionCode(fallback) : 0;
+  const code = typeof version === "string" ? protocolVersionCode(version) : 0;
+  if (code === 0) throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(version), which);
+  return code;
 }
 
 // Matches Node: SSLv2/SSLv3 methods are disabled, anything unrecognized is an
 // unknown method (THROW_ERR_TLS_INVALID_PROTOCOL_METHOD in
 // src/crypto/crypto_context.cc SecureContext::Init).
 let _SECURE_PROTOCOL_METHODS: Set<string> | undefined;
-function validateSecureProtocol(secureProtocol, minVersion, maxVersion) {
+function validateSecureProtocol(
+  secureProtocol: string | null | undefined,
+  minVersion: string | null | undefined,
+  maxVersion: string | null | undefined,
+) {
   if (secureProtocol === undefined || secureProtocol === null) return;
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/common.js#L78
   if (secureProtocol) {
@@ -129,30 +124,31 @@ function validateSecureProtocol(secureProtocol, minVersion, maxVersion) {
 // Node's legacy secureProtocol string pins both bounds to a single version
 // (e.g. 'TLSv1_2_method'); 'TLS_method'/'SSLv23_method' leave the range open.
 // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L120
-function secureProtocolToVersionRange(secureProtocol) {
+function secureProtocolToVersionRange(secureProtocol: string | null | undefined) {
   if (typeof secureProtocol !== "string") return null;
+  let name;
   if (
     secureProtocol === "TLSv1_method" ||
     secureProtocol === "TLSv1_client_method" ||
     secureProtocol === "TLSv1_server_method"
   )
-    return [TLS1_VERSION, TLS1_VERSION];
-  if (
+    name = "TLSv1";
+  else if (
     secureProtocol === "TLSv1_1_method" ||
     secureProtocol === "TLSv1_1_client_method" ||
     secureProtocol === "TLSv1_1_server_method"
   )
-    return [TLS1_1_VERSION, TLS1_1_VERSION];
-  if (
+    name = "TLSv1.1";
+  else if (
     secureProtocol === "TLSv1_2_method" ||
     secureProtocol === "TLSv1_2_client_method" ||
     secureProtocol === "TLSv1_2_server_method"
   )
-    return [TLS1_2_VERSION, TLS1_2_VERSION];
-  return null;
+    name = "TLSv1.2";
+  else return null;
+  const version = protocolVersionCode(name);
+  return [version, version];
 }
-
-const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
 
 const SUPPORTED_ECDH_GROUPS = new Set([
   "P-256",
@@ -243,10 +239,6 @@ function validateSecureContextOptions(options) {
   if (dhparam === "auto") {
     throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
   }
-  if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(minVersion), "minimum");
-  if (maxVersion != null && !VALID_TLS_VERSIONS.has(maxVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(maxVersion), "maximum");
   if (ticketKeys !== undefined && ticketKeys !== null) {
     validateBuffer(ticketKeys, "options.ticketKeys");
     const ticketKeysByteLength = ticketKeys.byteLength;
@@ -273,9 +265,62 @@ function validateSecureContextOptions(options) {
   }
 }
 
+// Reads each option by name, as Node does, so an inherited one, a getter and a non-enumerable one count. A spread would drop them.
+function readSecureContextOptions(options) {
+  return {
+    __proto__: null,
+    pfx: options.pfx,
+    key: options.key,
+    passphrase: options.passphrase,
+    cert: options.cert,
+    clientCertEngine: options.clientCertEngine,
+    ca: options.ca,
+    minVersion: options.minVersion,
+    maxVersion: options.maxVersion,
+    secureProtocol: options.secureProtocol,
+    crl: options.crl,
+    sigalgs: options.sigalgs,
+    ciphers: options.ciphers,
+    ecdhCurve: options.ecdhCurve,
+    dhparam: options.dhparam,
+    honorCipherOrder: options.honorCipherOrder,
+    secureOptions: options.secureOptions,
+    sessionTimeout: options.sessionTimeout,
+    ticketKeys: options.ticketKeys,
+    privateKeyIdentifier: options.privateKeyIdentifier,
+    privateKeyEngine: options.privateKeyEngine,
+    allowPartialTrustChain: options.allowPartialTrustChain,
+    // Not in Node: what else the native parser takes. ALPNProtocols belongs to the socket, not to the context.
+    servername: options.servername,
+    serverName: options.serverName,
+    keyFile: options.keyFile,
+    certFile: options.certFile,
+    caFile: options.caFile,
+    dhParamsFile: options.dhParamsFile,
+    lowMemoryMode: options.lowMemoryMode,
+    requestCert: options.requestCert,
+    rejectUnauthorized: options.rejectUnauthorized,
+    clientRenegotiationLimit: options.clientRenegotiationLimit,
+    clientRenegotiationWindow: options.clientRenegotiationWindow,
+  };
+}
+
+// https.Server takes Node's options only, as on 1.4.4. BoringSSL has no DHE suites to apply dhparam to.
+const ignoredByHttpsServer = {
+  dhparam: undefined,
+  keyFile: undefined,
+  certFile: undefined,
+  caFile: undefined,
+  dhParamsFile: undefined,
+  lowMemoryMode: undefined,
+  serverName: undefined,
+  clientRenegotiationLimit: undefined,
+  clientRenegotiationWindow: undefined,
+};
+
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
-let NativeSecureContext;
+let NativeSecureContext: $Node.NativeSecureContextConstructor | undefined;
 
 /**
  * Node's `pfx` option: parse each PKCS#12 blob into PEM key/cert/ca and fold
@@ -283,16 +328,14 @@ let NativeSecureContext;
  * config, the multi-identity check, the CA store) sees plain key/cert/ca.
  * Returns the original object untouched when no pfx is present.
  */
-function processPfxOptions(options) {
+function processPfxOptions(options: Record<string, any>): Record<string, any> {
   if (options == null || options.pfx == null) return options;
-  NativeSecureContext ??= $bindgen("SecureContext.bind.ts", "SecureContext");
+  NativeSecureContext ??= $bindgen("SecureContext.bind.ts", "SecureContext") as $Node.NativeSecureContextConstructor;
   const out = { ...options };
   const keys = out.key == null ? [] : Array.isArray(out.key) ? [...out.key] : [out.key];
   const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];
   const pfxCAs: string[] = [];
   const entries = Array.isArray(out.pfx) ? out.pfx : [out.pfx];
-  // CAs added after the context is built complete the chain of a lone identity only; several carry theirs, as in Node.
-  const several = entries.length + Math.max(keys.length, certs.length) > 1;
   for (const entry of entries) {
     let buf = entry;
     let passphrase = out.passphrase;
@@ -306,7 +349,8 @@ function processPfxOptions(options) {
     const parsed = NativeSecureContext.parsePkcs12(buf, passphrase);
     const parsedCA = parsed.ca;
     keys.push(parsed.key);
-    certs.push(several && parsedCA ? parsed.cert + parsedCA : parsed.cert);
+    // The bundle's other certificates are the chain: https://github.com/nodejs/node/blob/v26.5.0/src/crypto/crypto_context.cc#L2324
+    certs.push(parsedCA ? parsed.cert + parsedCA : parsed.cert);
     // A CA bundled inside the PKCS#12 EXTENDS the trust set (Node loads it
     // via addCACert on top of the default roots); folding it into the `ca`
     // option would instead REPLACE the trust store and break verification
@@ -361,6 +405,25 @@ function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only
   return { cipherList, tls13Only: cipherList === "" && kept.length !== parts.length };
 }
 
+// `ciphers`, `secureProtocol`, `minVersion` and `maxVersion` of node:tls as the `ciphers`, `minVersion` and `maxVersion` the native parser takes.
+function nativeCiphersAndVersions(options, defaultMinVersion?, defaultMaxVersion?) {
+  let { ciphers } = options;
+  let minVersion = toProtocolVersion("minimum", options.minVersion, defaultMinVersion);
+  let maxVersion = toProtocolVersion("maximum", options.maxVersion, defaultMaxVersion);
+  if (ciphers) {
+    const stripped = stripTls13CipherNames(ciphers);
+    ciphers = stripped.cipherList;
+    if (stripped.tls13Only) minVersion = protocolVersionCode("TLSv1.3");
+  }
+  // It wins, as in Node's SecureContext::Init.
+  const range = secureProtocolToVersionRange(options.secureProtocol);
+  if (range) {
+    minVersion = range[0];
+    maxVersion = range[1];
+  }
+  return { ciphers, minVersion, maxVersion };
+}
+
 // The native `ca` replaces the default store, so the CAs of an archive can only extend a `ca` the caller gave.
 function unsealPfxForNative(tls) {
   // `tls` can be the caller's own object, so a `pfx` that comes from a polluted Object.prototype doesn't count.
@@ -377,8 +440,6 @@ function unsealPfxForNative(tls) {
   const unsealed = { __proto__: tls, key, cert, ca, pfx: undefined };
   if (!pfxCAs) return unsealed;
   if (ca) unsealed.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
-  // No addCACert() follows to complete the chain of a lone identity. Several carry theirs already.
-  if (typeof cert === "string") unsealed.cert = cert + pfxCAs[0];
   return unsealed;
 }
 
@@ -406,13 +467,12 @@ function nodeClientTlsToNative(options) {
   // BoringSSL has no DHE suites to apply it to.
   options.dhparam = undefined;
   validateSecureContextOptions(options);
-  if (options.ciphers) {
-    // BoringSSL has no security levels to set.
-    const leveled = StringPrototypeReplace.$call(options.ciphers, /:?@SECLEVEL=\d/g, "");
-    const { cipherList, tls13Only } = stripTls13CipherNames(leveled);
-    options.ciphers = cipherList;
-    if (tls13Only) options.minVersion = "TLSv1.3";
-  }
+  // BoringSSL has no security levels to set.
+  if (options.ciphers) options.ciphers = StringPrototypeReplace.$call(options.ciphers, /:?@SECLEVEL=\d/g, "");
+  const { ciphers, minVersion, maxVersion } = nativeCiphersAndVersions(options);
+  options.ciphers = ciphers;
+  options.minVersion = minVersion || undefined;
+  options.maxVersion = maxVersion || undefined;
   let tls;
   for (let i = 0; i < nodeClientTlsKeys.length; i++) {
     const name = nodeClientTlsKeys[i];
@@ -424,16 +484,8 @@ function nodeClientTlsToNative(options) {
       if (value !== true) continue;
     } else if (name === "key") {
       value = normalizePemKeyOption(value, options.passphrase);
-    } else if (name === "minVersion" || name === "maxVersion") {
-      value = tlsStringToProtocolVersion(value);
     }
     (tls ??= { __proto__: null })[name] = value;
-  }
-  const range = secureProtocolToVersionRange(options.secureProtocol);
-  if (range) {
-    tls ??= { __proto__: null };
-    tls.minVersion = range[0];
-    tls.maxVersion = range[1];
   }
   return tls && unsealPfxForNative(tls);
 }
@@ -444,10 +496,10 @@ function nodeClientTlsToNative(options) {
  * error string in `verifyError.reason`; everything else is the peer
  * disconnecting mid-handshake, which Node reports as ECONNRESET.
  */
-function tlsHandshakeError(verifyError) {
+function tlsHandshakeError(verifyError: { code?: string; reason?: string; message?: string } | null | undefined) {
   const verifyErrorCode = verifyError ? verifyError.code : undefined;
   if (verifyErrorCode && verifyErrorCode !== "ECONNRESET") {
-    const reason = verifyError.reason || verifyError.message || "TLS handshake failed";
+    const reason = verifyError!.reason || verifyError!.message || "TLS handshake failed";
     const err = new Error(reason) as Error & {
       code?: string;
       library?: string;
@@ -470,17 +522,32 @@ function tlsHandshakeError(verifyError) {
   return new (require("internal/shared").ConnResetException)("socket hang up");
 }
 
+// Returns true if `stream` has every method the TLS engine calls on a wrapped stream.
+function hasStreamMethods(stream) {
+  return (
+    typeof stream.pause === "function" &&
+    typeof stream.resume === "function" &&
+    typeof stream.on === "function" &&
+    typeof stream.once === "function" &&
+    typeof stream.write === "function" &&
+    typeof stream.end === "function" &&
+    typeof stream.destroy === "function"
+  );
+}
+
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  hasStreamMethods,
+  ignoredByHttpsServer,
+  nativeCiphersAndVersions,
   nodeClientTlsKeys,
   nodeClientTlsToNative,
   normalizePemKeyOption,
   processPfxOptions,
-  secureProtocolToVersionRange,
+  readSecureContextOptions,
   stripTls13CipherNames,
   throwOnInvalidTLSArray,
   tlsHandshakeError,
-  tlsStringToProtocolVersion,
   unsealPfxForNative,
   validateSecureContextOptions,
 };

@@ -31,7 +31,8 @@ pub(crate) fn hostent_to_js_response(
         }
         // SAFETY: h_name is non-null NUL-terminated C string from c-ares.
         let name = unsafe { bun_core::ffi::cstr(this.h_name) }.to_bytes();
-        return bun_string_jsc::to_js_array(global_this, &[bstr::String::borrow_utf8(name)]);
+        let name = [bstr::StringView::borrow_utf8(name)];
+        return bun_string_jsc::to_js_array(global_this, bstr::StringView::as_strings(&name));
     }
 
     if this.h_aliases.is_null() {
@@ -298,7 +299,7 @@ fn caa_reply_to_js(
         JSValue::js_number(this.critical as f64),
     );
 
-    let property = bstr::String::borrow_utf8(this.property_bytes());
+    let property = bstr::StringView::borrow_utf8(this.property_bytes());
     let value = this.value_bytes();
     obj.put_may_be_index(global_this, &property, utf8_to_js(global_this, value)?)?;
 
@@ -531,7 +532,7 @@ fn any_reply_append(
     transformed.put(
         global_this,
         b"type",
-        bstr::String::ascii(upper).to_js(global_this)?,
+        bstr::StringView::ascii(upper).to_js(global_this)?,
     );
     array.put_index(global_this, *i, transformed)?;
     *i += 1;
@@ -844,10 +845,24 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     Ok(instance)
 }
 
+/// Builds the `getaddrinfo <CODE> <hostname>` error for a non-zero getaddrinfo(3) return value.
+pub(crate) fn getaddrinfo_error(gai: c_int, hostname: &[u8]) -> Option<SystemError> {
+    if gai == 0 {
+        return None;
+    }
+    c_ares::Error::init_eai(gai).map(|error| {
+        let mut err = system_error_with_syscall_and_hostname(error, b"getaddrinfo", hostname);
+        err.errno = c_ares::Error::uv_eai(gai).unwrap_or(err.errno);
+        err
+    })
+}
+
 /// Thrown before uSockets' synchronous `getaddrinfo` can block on a name that can never resolve.
 pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]) -> JSValue {
-    system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname)
-        .to_error_instance(global_this)
+    let mut err =
+        system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname);
+    err.errno = c_ares::UV_EAI_NONAME;
+    err.to_error_instance(global_this)
 }
 
 pub(crate) fn canonicalize_ip<'a>(

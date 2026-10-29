@@ -4,7 +4,7 @@ use super::*;
 
 pub(crate) struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
-    pub sources: &'a [bun_ast::Source],
+    pub sources: &'a [bun_ast::Source<'a>],
     /// bundle_v2.Graph.ast.items(.import_records)
     pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.input_files.items(.loader)
@@ -130,7 +130,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
 
     // Unref the ref added in `start_async_bundle`
     if let Some(server) = dev.server.as_mut() {
-        server.on_static_request_complete();
+        server.on_request_complete();
     }
 }
 

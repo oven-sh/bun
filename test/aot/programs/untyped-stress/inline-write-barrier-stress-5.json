@@ -1,0 +1,8 @@
+{
+  "env": {
+    "JSC_smallHeapSize": "65536",
+    "JSC_largeHeapSize": "65536",
+    "JSC_useZombieMode": "1",
+    "JSC_sweepSynchronously": "1"
+  }
+}

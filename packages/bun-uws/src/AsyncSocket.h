@@ -213,39 +213,12 @@ public:
         return true;
     }
 
-    /* Returns the text representation of an IPv4 or IPv6 address */
-    std::string_view addressAsText(std::string_view binary) {
-        static thread_local char buf[64];
-        int ipLength = 0;
-
-        if (!binary.length()) {
-            return {};
-        }
-
-        unsigned char *b = (unsigned char *) binary.data();
-
-        if (binary.length() == 4) {
-            ipLength = snprintf(buf, sizeof(buf), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
-        } else {
-            ipLength = snprintf(buf, sizeof(buf), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
-                b[12], b[13], b[14], b[15]);
-        }
-
-        return {buf, (unsigned int) ipLength};
-    }
-
     /* Returns the remote IP address or empty string on failure */
     std::string_view getRemoteAddress() {
         static thread_local char buf[16];
         int ipLength = 16;
         us_socket_remote_address((us_socket_t *) this, buf, &ipLength);
         return std::string_view(buf, (unsigned int) ipLength);
-    }
-
-    /* Returns the text representation of IP */
-    std::string_view getRemoteAddressAsText() {
-        return addressAsText(getRemoteAddress());
     }
 
     /**
@@ -303,6 +276,36 @@ public:
 
         /* Return the total number of bytes written during this flush operation */
         return total_written;
+    }
+
+    /* Room for `length` bytes in this socket's cork buffer, which the caller fills. nullptr if write() has to take them. */
+    char *reserveInCorkBuffer(size_t length) {
+        if (!length || length > LoopData::CORK_COPY_MAX || us_socket_is_closed((us_socket_t *) this) || getAsyncSocketData()->buffer.length()) {
+            return nullptr;
+        }
+        LoopData *loopData = getLoopData();
+        int slot = loopData->findCorkSlot(this);
+        if (slot == LoopData::INVALID_CORK_SLOT) {
+            return nullptr;
+        }
+        auto *s = loopData->getCorkSlot(slot);
+        if (LoopData::CORK_BUFFER_SIZE - s->offset < length) {
+            return nullptr;
+        }
+        char *room = s->buffer + s->offset;
+        s->offset += (unsigned int) length;
+        loopData->touchCorkSlot(slot);
+        return room;
+    }
+
+    template <typename... Pieces>
+    bool writeAllToCorkBuffer(Pieces... pieces) {
+        char *room = reserveInCorkBuffer((pieces.length() + ...));
+        if (!room) {
+            return false;
+        }
+        ((pieces.length() ? (void) memcpy(room, pieces.data(), pieces.length()) : (void) 0, room += pieces.length()), ...);
+        return true;
     }
 
     /* Write in three levels of prioritization: cork-buffer, syscall, socket-buffer. Always drain if possible.
@@ -417,6 +420,9 @@ public:
 
     /* write(head), write(src), write(tail) in one writev when they do not fit the cork buffer. The framing is never optional, and tail follows only a complete src. Returns like write(src). */
     std::pair<size_t, bool> writeFramed(std::string_view head, const char *src, size_t length, std::string_view tail, bool optionally = false) {
+        if (length > 0 && writeAllToCorkBuffer(head, std::string_view(src, length), tail)) {
+            return {length, false};
+        }
         LoopData *loopData = getLoopData();
         BackPressure &backpressure = getAsyncSocketData()->buffer;
         int slot = loopData->findCorkSlot(this);

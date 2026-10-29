@@ -124,7 +124,9 @@ Bun.serve({
 });
 ```
 
-Bun automatically decodes percent-encoded route parameter values, including Unicode characters. Bun replaces invalid Unicode with the Unicode replacement character (`\uFFFD`).
+A path segment is a parameter only when it starts with `:`, and the parameter captures the whole segment. A `:` anywhere else in a segment is matched literally, so `/files:batchGet/:id` has one parameter, `id`.
+
+Bun automatically decodes percent-encoded route parameter values, including Unicode characters. Bun replaces invalid Unicode with the Unicode replacement character (`\uFFFD`). A `%` that isn't followed by two hexadecimal digits stays a literal `%`.
 
 ### Static responses
 
@@ -163,10 +165,14 @@ Bun caches static route responses for the lifetime of the server object. To relo
 Serving a file from a route behaves differently depending on whether you buffer the file content or serve it directly:
 
 ```ts
+const logo = Bun.file("./logo.png");
+
 Bun.serve({
   routes: {
     // Static route - content is buffered in memory at startup
-    "/logo.png": new Response(await Bun.file("./logo.png").bytes()),
+    "/logo.png": new Response(await logo.bytes(), {
+      headers: { "Content-Type": logo.type },
+    }),
 
     // File route - content is read from filesystem on each request
     "/download.zip": new Response(Bun.file("./download.zip")),
@@ -181,6 +187,7 @@ Bun.serve({
 - **If-None-Match** - Returns `304 Not Modified` when client ETag matches
 - **No 404 handling** - Missing files cause startup errors, not runtime 404s
 - **Memory usage** - Full file content stored in RAM
+- **No Content-Type** - Bytes have no type, so set the `Content-Type` header yourself. `file.type` is the type Bun infers from the file extension
 - **Best for**: Small static assets, API responses, frequently accessed files
 
 **File routes** (`new Response(Bun.file(path))`) read from filesystem per request:
@@ -207,7 +214,16 @@ Bun.serve({
 });
 ```
 
-Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains `.`, `..`, empty segments, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`, so the kernel clamps symlinks that would escape `dir`.
+Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains a segment that is exactly `.` or `..`, an empty segment, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment.
+
+A symlink never leads out of `dir`. Bun resolves symlinks as if `dir` were the root directory:
+
+- A `..` stops at `dir`.
+- An absolute target starts from `dir`. A symlink to `/var/data/logo.png` serves `var/data/logo.png` in `dir`, or is a `404` if there is no such file.
+
+These are the rules of `openat2(RESOLVE_IN_ROOT)` on Linux. Bun applies them itself on macOS, on FreeBSD, and on Linux when `openat2` is not available. On Windows, Bun follows symlinks wherever they lead.
+
+Bun doesn't filter dotfiles. It serves any regular file under `dir`, including a `.env` file or the contents of a `.git` directory. Point `dir` at a directory that only contains public files.
 
 <Info>
   Routing is case-sensitive, but filesystems on macOS and Windows are case-insensitive by default. As a result, a
@@ -252,15 +268,16 @@ Bun.serve({
   fetch(req) {
     // parse `Range` header
     const [start = 0, end = Infinity] = req.headers
-      .get("Range") // Range: bytes=0-100
-      .split("=") // ["Range: bytes", "0-100"]
+      .get("Range") // "bytes=0-100"
+      .split("=") // ["bytes", "0-100"]
       .at(-1) // "0-100"
-      .split("-") // ["0", "100"]
-      .map(Number); // [0, 100]
+      .split("-") // ["0", "100"], or ["100", ""] for "bytes=100-"
+      .map(part => (part ? Number(part) : undefined)); // [0, 100]
 
     // return a slice of the file
+    // the end of a `Range` is inclusive and the end of a `slice` is exclusive, so add 1
     const bigFile = Bun.file("./big-video.mp4");
-    return new Response(bigFile.slice(start, end));
+    return new Response(bigFile.slice(start, end + 1));
   },
 });
 ```

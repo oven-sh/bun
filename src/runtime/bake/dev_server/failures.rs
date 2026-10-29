@@ -32,10 +32,10 @@ impl DevServer {
         if let Some(agent) = inspector_agent {
             debug_assert!(agent.is_enabled());
             let failures_encoded = &buf[failures_start_buf_pos..];
-            // base64 output is pure ASCII so a UTF-8 borrow is safe.
+            // base64 output is pure ASCII.
             agent.notify_bundle_failed(
                 self.inspector_server_id,
-                BunString::borrow_utf8(failures_encoded),
+                BunString::clone_latin1(failures_encoded),
             );
         }
         Ok(())
@@ -84,7 +84,7 @@ impl DevServer {
 
         StaticRoute::send_blob_then_deinit(
             resp,
-            crate::webcore::blob::Any::from_array_list(buf),
+            crate::webcore::blob::Any::from_owned_slice(buf),
             crate::server::static_route::InitFromBytesOptions {
                 mime_type: Some(&MimeType::HTML),
                 server: self.server,

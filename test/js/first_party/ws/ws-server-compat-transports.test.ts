@@ -518,9 +518,7 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
       testEarlyFrames({ bytes: frame(OP.text, "early"), late: true, defer: true, events: earlyAndLater }),
     );
 
-    // Bun's node:http passes an upgraded connection's bytes to JS in a task, so for a moment they're in neither `head`
-    // nor `socket`'s buffer. A Bun.listen() handler is called straight from the event loop's poll. If its socket
-    // becomes readable right after the connection does, it runs between that read and the task.
+    // A Bun.listen() handler is called straight from the event loop's poll, right behind the read of the connection.
     test("a message that was read from the connection but hasn't reached `socket` yet", async () => {
       const server = http.createServer();
       const wss = new WebSocketServer({ noServer: true });
@@ -554,8 +552,8 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
       }
     });
 
-    // The same moment, with the client's FIN. The native transport would never learn about it.
-    test("a FIN that was read from the connection but hasn't reached `socket` yet", async () => {
+    // Like npm ws on Node: completeUpgrade() destroys a socket that is no longer readable.
+    test("a FIN that arrives before handleUpgrade() runs", async () => {
       const server = http.createServer();
       const wss = new WebSocketServer({ noServer: true });
       const upgrade = Promise.withResolvers<[http.IncomingMessage, Duplex, Buffer]>();
@@ -564,27 +562,15 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
       const client = listening.connect();
       const [req, socket, head] = await upgrade.promise;
       const socketClosed = once(socket, "close");
+      const socketEnded = once(socket, "end");
+      client.end();
+      socket.resume();
+      await socketEnded;
 
       const events: string[] = [];
-      const accepted = Promise.withResolvers<void>();
-      using trigger = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        socket: {
-          open: () => accepted.resolve(),
-          data: () => wss.handleUpgrade(req, socket, head, ws => void recordEvents(ws, events)),
-        },
-      });
-      const triggerClient = net.connect(trigger.port, "127.0.0.1");
-      try {
-        await accepted.promise;
-        client.end();
-        triggerClient.write("now");
-        await Promise.all([socketClosed, client.closed]);
-        expect({ events, clients: wss.clients.size }).toEqual({ events: ["close 1006 Buffer() rs=3"], clients: 0 });
-      } finally {
-        triggerClient.destroy();
-      }
+      wss.handleUpgrade(req, socket, head, ws => void recordEvents(ws, events));
+      await Promise.all([socketClosed, client.closed]);
+      expect({ events, clients: wss.clients.size }).toEqual({ events: [], clients: 0 });
     });
   });
 
@@ -761,8 +747,7 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
     ws.on("close", () => order.push("ws 'close'"));
     client.close(1000);
     await nextEvent(req.socket, "close");
-    // The built-in reads the connection natively, so req.socket never emits 'end'.
-    expect(order).toEqual([...(builtin ? [] : ["socket 'end'"]), "ws 'close'", "socket 'close'"]);
+    expect(order).toEqual(["socket 'end'", "ws 'close'", "socket 'close'"]);
     expect(req.socket.destroyed).toBe(true);
   });
 

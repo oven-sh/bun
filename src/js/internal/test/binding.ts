@@ -10,9 +10,9 @@ interface ErrnoError {
   errno: number;
 }
 
-const newRawSocketFd = $bindgen("udp_socket.bind.ts", "dgramNewSocketFd");
-const listenRawFd = $bindgen("udp_socket.bind.ts", "dgramListenFd");
-const closeRawFd = $bindgen("udp_socket.bind.ts", "dgramCloseFd");
+const newRawSocketFd: (ipv6: boolean, stream: boolean) => number = $bindgen("udp_socket.bind.ts", "dgramNewSocketFd");
+const listenRawFd: (fd: number) => void = $bindgen("udp_socket.bind.ts", "dgramListenFd");
+const closeRawFd: (fd: number) => void = $bindgen("udp_socket.bind.ts", "dgramCloseFd");
 
 // Just enough of internalBinding('tcp_wrap').TCP for vendored dgram tests to
 // produce a listening stream descriptor and assert it gets rejected.
@@ -54,6 +54,15 @@ function safeGetenv(name: string) {
 
 let cachedUvBinding: Record<string, unknown> | undefined;
 
+function nghttp2ErrorString(code: number) {
+  const { NghttpError } = require("node:http2")[Symbol.for("::bunhttp2internals::")].util;
+  return new NghttpError(code).message;
+}
+
+// Bun has no native handle classes. Tests only stub methods on these prototypes, which has no effect here.
+class Http2Session {}
+class Http2Stream {}
+
 function internalBinding(name: string) {
   switch (name) {
     case "trace_events":
@@ -92,6 +101,13 @@ function internalBinding(name: string) {
       const { kMaxLength, kStringMaxLength } = require("node:buffer");
       return { kMaxLength, kStringMaxLength };
     }
+    case "http2":
+      return {
+        Http2Session,
+        Http2Stream,
+        constants: require("node:http2").constants,
+        nghttp2ErrorString,
+      };
     case "udp_wrap":
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":

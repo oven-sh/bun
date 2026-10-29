@@ -1,0 +1,14 @@
+a property read through with
+false 1
+let yield static implements
+a labeled function
+1
+2
+2
+1
+null [ "__proto__" ] 1
+a static method
+2
+a
+0
+1

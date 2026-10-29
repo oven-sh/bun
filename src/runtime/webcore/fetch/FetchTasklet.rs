@@ -29,14 +29,18 @@ use crate::api::bun_x509 as X509;
 use crate::generated_bindgen::fetch_tasklet::{
     Bun__FetchTasklet__onRejectRequestStream, Bun__FetchTasklet__onResolveRequestStream,
 };
+use crate::webcore::blob::BodyFacts;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
-use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
+use crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink;
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::ReadableSinkController;
+use crate::webcore::streams::EncodedChunk;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
-use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
+use crate::webcore::{
+    AbortSignal, BlobExt as _, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle,
+};
 use bun_jsc::AbortSignalRef;
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
@@ -157,11 +161,6 @@ pub struct FetchTasklet {
     pub(crate) concurrent_task: ConcurrentTask,
     /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
     pub poll_ref: JsCell<KeepAlive>,
-    /// For Http Client requests
-    /// when Content-Length is provided this represents the whole size of the request
-    /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
-    /// If is not chunked encoded and Content-Length is not provided this will be unknown
-    pub(crate) body_size: http::BodySize,
 
     /// This is url + proxy memory buffer and is owned by FetchTasklet
     /// We always clone url and proxy (if informed)
@@ -199,7 +198,7 @@ pub struct FetchTasklet {
 }
 
 // Boxing `AnyBlob` is not viable: the `AnyBlob` arm is constructed/matched in
-// `fetch.rs` (e.g. `HTTPRequestBodyExt::any_blob`) and would require changes
+// `fetch.rs` and would require changes
 // across files. The enum is also short-lived per-request, so the size cost is bounded.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum HTTPRequestBody {
@@ -217,6 +216,14 @@ impl Default for HTTPRequestBody {
 }
 
 impl HTTPRequestBody {
+    /// The `Blob` of a body that `is_s3()` or `needs_to_read_file()`.
+    pub(crate) fn blob(&self) -> &Blob {
+        match self {
+            HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob)) => blob,
+            _ => unreachable!("the body is not a Blob"),
+        }
+    }
+
     pub(crate) fn store(&self) -> Option<&BlobStore> {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.store(),
@@ -238,52 +245,30 @@ impl HTTPRequestBody {
                 stream.deinit();
             }
             HTTPRequestBody::Sendfile(sendfile) => {
-                if sendfile.offset.max(sendfile.remain) > 0 {
+                if sendfile.fd.is_valid() {
                     sendfile.fd.close();
+                    sendfile.fd = bun_sys::Fd::INVALID;
                 }
-                sendfile.offset = 0;
-                sendfile.remain = 0;
             }
         }
     }
 
     pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+        if let Some(form_data) = jsc::DOMFormData::from_js(value) {
+            return match Blob::from_dom_form_data(cx.global(), form_data) {
+                Ok(blob) => Ok(HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob))),
+                Err(err) => Err(cx
+                    .global()
+                    .throw_value(super::system_type_error(&err, cx.global()))),
+            };
+        }
+        // It threw if `value` is a stream that is disturbed or locked.
         let mut body_value = BodyValue::from_js(cx.global(), value)?;
-        if matches!(body_value, BodyValue::Used)
-            || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))
-        {
-            return Err(cx
-                .global()
-                .err(
-                    jsc::ErrorCode::BODY_ALREADY_USED,
-                    format_args!("body already used"),
-                )
-                .throw());
-        }
         body_value.to_blob_if_in_memory();
-        if let BodyValue::Locked(locked) = &mut body_value {
-            if locked.readable.has() {
-                // `BodyValue` now has `Drop` (H3), so we cannot move
-                // `l.readable` out by value (E0509). `mem::take` leaves a default
-                // readable; `Value::drop` on the residual `Locked` then runs
-                // `readable.deinit()` on that default — a no-op.
-                return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
-                    &mut locked.readable,
-                )));
-            }
-        }
-        if matches!(&body_value, BodyValue::Locked(_)) {
-            let readable = body_value.to_readable_stream(cx)?;
-            if !readable.is_empty_or_undefined_or_null() {
-                if let BodyValue::Locked(l) = &mut body_value {
-                    if l.readable.has() {
-                        // See note above re: E0509 and `Value::drop`.
-                        return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
-                            &mut l.readable,
-                        )));
-                    }
-                }
-            }
+        if let BodyValue::Locked(stream) = &mut body_value {
+            return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
+                &mut stream.readable,
+            )));
         }
         Ok(HTTPRequestBody::AnyBlob(body_value.use_as_any_blob()))
     }
@@ -873,13 +858,11 @@ impl FetchTasklet {
                 }
             }
 
-            // raw ptr: `body` and `get_fetch_headers()` are disjoint fields but borrowck can't see through the accessors.
-            let body: *mut BodyValue = response.get_body_value();
+            let body = response.get_body_value();
             // `BodyAbortListener::on_abort` may have set `Error` while this
             // callback was queued; checked before `buffer_reset.set(false)` so
             // the defer still drops the bytes.
-            // SAFETY: just obtained from live `response`.
-            if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
+            if !matches!(body, BodyValue::Locked(_)) {
                 return Ok(());
             }
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
@@ -887,61 +870,59 @@ impl FetchTasklet {
             if !self.result.has_more {
                 let scheduled_response_buffer =
                     core::mem::take(&mut self.scheduled_response_buffer.list);
-                // done resolve body
-                let old = core::mem::replace(
-                    // SAFETY: just obtained from live `response`; uniquely accessed here.
-                    unsafe { &mut *body },
-                    BodyValue::InternalBlob(InternalBlob {
-                        bytes: scheduled_response_buffer,
-                        was_string: false,
-                    }),
-                );
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived body_value length={}",
-                    // SAFETY: see above.
-                    match unsafe { &*body } {
-                        BodyValue::InternalBlob(b) => b.bytes.len(),
-                        _ => 0,
-                    }
+                    scheduled_response_buffer.len()
                 );
-
                 self.scheduled_response_buffer = MutableString::default();
 
-                if matches!(old, BodyValue::Locked(_)) {
-                    bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
-                    let mut old = old;
-                    // BodyValue::resolve takes `Option<NonNull<FetchHeaders>>` (opaque C++ handle
-                    // mutated via FFI); the inherent `get_fetch_headers` returns `Option<&_>`, so
-                    // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
-                    // response.body) and outlives this block.
-                    let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                    // SAFETY: `body` points into `response.body`, disjoint from `headers`
-                    // (response.init); both live for this block.
-                    let body = unsafe { &mut *body };
-                    let context = self.global_this.bun_vm().context_of(self.context);
-                    BodyValue::resolve(
-                        &mut old,
-                        body,
-                        &self.global_this.js_thread(context),
-                        headers,
-                    )?;
-                }
+                let context = self.global_this.bun_vm().context_of(self.context);
+                body.fulfill(
+                    scheduled_response_buffer,
+                    &self.global_this.js_thread(context),
+                )?;
             }
         }
         Ok(())
+    }
+
+    /// Removes the failure from `result` if body bytes that arrived before it haven't been delivered yet.
+    fn defer_failure_until_body_is_delivered(&mut self) -> Option<http::Error> {
+        let fail = self.result.fail?;
+        // Without a Response yet, the failure has to build it so every consumer sees the error.
+        if self.scheduled_response_buffer.list.is_empty() || !self.is_waiting_body {
+            return None;
+        }
+        // An abort ends the body right away.
+        if self.is_waiting_abort
+            || self.abort_reason.has()
+            || self.result.abort_reason().is_some()
+            || self.signal_store.aborted.load(Ordering::Relaxed)
+        {
+            return None;
+        }
+        self.result.fail = None;
+        self.result.has_more = true;
+        Some(fail)
     }
 
     pub(crate) fn on_progress_update(&mut self) -> JsResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();
-        self.has_schedule_callback.store(false, Ordering::Relaxed);
-        let is_done = !self.result.has_more;
+        // Only the HTTP thread's `callback` sets this flag, so the task `cleanup` enqueues below won't defer the failure again.
+        let posted_by_http_thread = self.has_schedule_callback.swap(false, Ordering::Relaxed);
 
         let vm = self.global_this.bun_vm();
         // The response, the upload's pump and what they settle continue the script that fetched.
         let _context = vm.enter_context(self.context);
+        let deferred_failure = if posted_by_http_thread && vm.script_allowed() {
+            self.defer_failure_until_body_is_delivered()
+        } else {
+            None
+        };
+        let is_done = !self.result.has_more;
         // teardown forbade script: we cannot touch JS
         if !vm.script_allowed() {
             // The certificate will never be checked; release the parked
@@ -963,6 +944,15 @@ impl FetchTasklet {
         let global_this = self.global_this;
         // explicit cleanup at each return (a closure keeps borrowck happy)
         let cleanup = |this: &mut FetchTasklet| {
+            if let Some(fail) = deferred_failure {
+                // This run delivered the bytes. The next task fails the body and owns this thread's ref.
+                this.result.fail = Some(fail);
+                this.result.has_more = false;
+                // SAFETY: `vm.event_loop()` is the live JS-thread loop.
+                unsafe {
+                    (*vm.event_loop()).enqueue_task(Task::init(std::ptr::from_mut(this)));
+                }
+            }
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if is_done {
@@ -983,7 +973,7 @@ impl FetchTasklet {
             if let Err(err) = self.start_request_stream() {
                 // The VM is being stopped: leave like the `!script_allowed()` gate above does.
                 self.mutex.unlock();
-                if is_done {
+                if is_done || deferred_failure.is_some() {
                     // SAFETY: `self` is the live heap tasklet; we hold a ref.
                     FetchTasklet::deref(std::ptr::from_mut(self));
                 }
@@ -1018,6 +1008,12 @@ impl FetchTasklet {
         }
         // if we already respond the metadata and still need to process the body
         if self.is_waiting_body {
+            if core::mem::take(&mut self.result.slot_wanted)
+                && !self.response_stream.roots_wrapper()
+            {
+                // If the Response is garbage, only a collection can tell. Its finalizer gives the slot back.
+                vm.gc_controller.collect_for_finalizers();
+            }
             // `scheduled_response_buffer` has two readers that both drain-and-reset:
             // this path (onBodyReceived) and `onStartStreamingHTTPResponseBodyCallback`,
             // which runs once when JS first touches `res.body` and hands any already-
@@ -1098,7 +1094,7 @@ impl FetchTasklet {
             // checkServerIdentity passed: un-park the HTTP-thread connection
             // so the request is finally written to the now-verified peer. If
             // the connection already closed/failed the resume is a no-op
-            // (keyed through the abort tracker).
+            // (the HTTP thread looks the request up by id).
             if let Some(http_) = self.http.as_mut() {
                 http::http_thread().schedule_cert_check_resume(http_);
             }
@@ -1374,19 +1370,26 @@ impl FetchTasklet {
             }
         }
 
-        if fail == http::Error::RequestBodyLengthMismatch
-            && let Some(declared) = self.declared_request_body_len
-        {
+        if fail == http::Error::RequestBodyLengthMismatch {
+            let code = jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH;
             let written = self.request_body_len_written;
-            let err = self
-                .global_this
-                .err(
-                    jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                    format_args!(
-                        "Request body of {written} bytes does not match the Content-Length of {declared}"
-                    ),
-                )
-                .to_js();
+            let global = &self.global_this;
+            let err = match self.declared_request_body_len {
+                Some(declared) => global
+                    .err(
+                        code,
+                        format_args!(
+                            "Request body of {written} bytes does not match the Content-Length of {declared}"
+                        ),
+                    )
+                    .to_js(),
+                None => global
+                    .err(
+                        code,
+                        format_args!("The file became shorter while it was being uploaded"),
+                    )
+                    .to_js(),
+            };
             return BodyValueError::JSValue(StrongOptional::create(err, &self.global_this));
         }
 
@@ -1432,6 +1435,14 @@ impl FetchTasklet {
             }
             http::Error::TLSHandshakeFailed => "EPROTO",
             _ => fail.name(),
+        };
+
+        let syscall = match fail {
+            http::Error::ConnectionRefused => BunString::static_("connect"),
+            http::Error::FailedToOpenSocket if self.result.connect_errno.is_some() => {
+                BunString::static_("connect")
+            }
+            _ => BunString::EMPTY,
         };
 
         let message = match fail {
@@ -1659,17 +1670,24 @@ impl FetchTasklet {
             code: BunString::static_(code),
             message,
             path,
+            syscall,
             ..Default::default()
         };
+
+        if matches!(fail, http::Error::Cert(_)) {
+            // Node's fetch reports the TLS error as `.cause`.
+            let global = &self.global_this;
+            let cause = fetch_error.clone().to_error_instance(global);
+            let err_js = fetch_error.to_type_error_instance(global);
+            err_js.put(global, b"cause", cause);
+            return BodyValueError::JSValue(StrongOptional::create(err_js, global));
+        }
 
         BodyValueError::SystemTypeError(fetch_error)
     }
 
     fn connect_errno_name(&self) -> Option<&'static str> {
-        if self.result.connect_errno == 0 {
-            return None;
-        }
-        bun_sys::SystemErrno::init(i64::from(self.result.connect_errno)).map(Into::into)
+        self.result.connect_errno.map(Into::into)
     }
 
     /// `ERR_PROXY_TUNNEL` with the `status`, `statusText` and `headers` of the
@@ -1746,7 +1764,7 @@ impl FetchTasklet {
         // After the take, not before: a chunk the HTTP thread appends (and pauses for) in
         // between would otherwise reach the stream with its task finding the buffer empty, and
         // nothing left to undo that pause. Unconditional: also flushes body bytes the client
-        // holds that arrived with no follow-up read (`drain_response_body`).
+        // holds that arrived with no follow-up read (`receive_resumed`).
         this.signal_store.receive_on_demand();
         this.schedule_receive_resume();
 
@@ -1761,7 +1779,7 @@ impl FetchTasklet {
     }
 
     fn get_size_hint(&self) -> BlobSizeType {
-        match self.body_size {
+        match self.result.body_size {
             http::BodySize::ContentLength(n) => n as BlobSizeType,
             http::BodySize::TotalReceived(n) => n as BlobSizeType,
             http::BodySize::Unknown => 0,
@@ -1861,8 +1879,14 @@ impl FetchTasklet {
             // the body so this matches the split-read `on_body_received` path.
             return BodyValue::Error(self.on_reject());
         }
+        let facts = if self.result.did_decompress {
+            BodyFacts::DECODED
+        } else {
+            BodyFacts::empty()
+        };
         if self.is_waiting_body {
             let mut pending = body::PendingValue::new(&self.global_this);
+            pending.facts = facts;
             pending.size_hint = self.get_size_hint();
             pending.task = Some(NonNull::from(&mut *self).cast::<c_void>());
             pending.on_start_streaming =
@@ -1876,7 +1900,7 @@ impl FetchTasklet {
         let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer);
         let response = BodyValue::InternalBlob(InternalBlob {
             bytes: scheduled_response_buffer.list,
-            was_string: false,
+            facts,
         });
         self.scheduled_response_buffer = MutableString::default();
 
@@ -2020,7 +2044,6 @@ impl FetchTasklet {
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: JsCell::new(KeepAlive::default()),
-            body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
             context: cx.context().id(),
@@ -2178,7 +2201,9 @@ impl FetchTasklet {
         let http_client = fetch_tasklet.http.as_mut().unwrap();
         http_client.client.flags.is_streaming_request_body = is_stream;
         http_client.client.flags.forced_protocol = fetch_options.forced_protocol;
-        http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
+        if fetch_tasklet.upgraded_connection {
+            http_client.client.expect_upgrade();
+        }
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
             // An upgraded connection tunnels its "body", so those bytes are not counted.
@@ -2309,7 +2334,7 @@ impl FetchTasklet {
     /// `start({ highWaterMark })`.
     pub(crate) fn write_request_data(
         &mut self,
-        data: RequestBodyChunk<'_>,
+        data: EncodedChunk<'_>,
         high_water_mark: usize,
     ) -> Writable {
         if self.signal_aborted() || self.request_body_mismatched {
@@ -2628,8 +2653,6 @@ impl FetchTasklet {
             task_ref.result.metadata = None;
         }
 
-        task_ref.body_size = task_ref.result.body_size;
-
         let success = task_ref.result.is_success();
 
         if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Abandoned {
@@ -2649,7 +2672,7 @@ impl FetchTasklet {
                 // doesn't leave the ~2x doubling over-capacity that the
                 // ArrayBuffer would adopt. Only for a consumer that wants the whole body.
                 if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
-                    if let http::BodySize::ContentLength(n) = task_ref.body_size {
+                    if let http::BodySize::ContentLength(n) = task_ref.result.body_size {
                         if n > scheduled.list.capacity() {
                             let additional = n
                                 .min(SCHEDULED_PRERESERVE_MAX)
@@ -2772,7 +2795,8 @@ impl FetchTasklet {
 }
 
 pub(crate) struct FetchOptions {
-    pub method: Method,
+    /// A token points into `headers.buf`.
+    pub method: http::MethodRef,
     pub(crate) headers: Headers,
     pub(crate) body: HTTPRequestBody,
     /// For a `ReadableStream` body; `transfer_encoding` points into `headers.buf`.
@@ -2796,7 +2820,6 @@ pub(crate) struct FetchOptions {
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) upgraded_connection: bool,
     pub(crate) forced_protocol: Option<http::Protocol>,
-    pub(crate) is_node_http_client: bool,
     pub(crate) compress: Option<http::compress_body::CompressOption>,
     pub(crate) pool: http::PoolOptions,
     pub(crate) bypass_pool: bool,

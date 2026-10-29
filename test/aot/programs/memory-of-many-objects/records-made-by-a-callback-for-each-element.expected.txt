@@ -1,0 +1,3 @@
+8000018000000 4000000
+what is kept takes less than 244 MB of the heap: true
+4000000

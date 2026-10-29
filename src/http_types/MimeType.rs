@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
+use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_core::strings;
+
+use crate::is_token;
 
 // ───────────────────────────────────────────────────────────────────────────
 // `Table` (= `mime_type_list_enum::MimeTypeList`). Hand-maintained `&'static
@@ -295,7 +298,7 @@ impl MimeType {
         }
     }
 
-    pub fn init(str_: &[u8], dupe: bool, allocated: Option<&mut bool>) -> MimeType {
+    pub fn init(str_: &[u8], dupe: bool) -> MimeType {
         let mut str = str_;
         if let Some(slash) = strings::index_of_char_usize(str, b'/') {
             let category_ = &str[0..slash];
@@ -325,12 +328,6 @@ impl MimeType {
                     if str == b"wasm" {
                         return WASM;
                     }
-
-                    if let Some(a) = allocated {
-                        if dupe {
-                            *a = true;
-                        }
-                    }
                     return MimeType {
                         value: Self::maybe_dupe(str_, dupe),
                         category: Category::Application,
@@ -338,11 +335,6 @@ impl MimeType {
                 }
                 len if len == b"font".len() => {
                     if strings::eql_comptime_ignore_len(category_, b"font") {
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Font,
@@ -365,12 +357,6 @@ impl MimeType {
                         if str == b"plain" {
                             return TEXT;
                         }
-
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Text,
@@ -379,11 +365,6 @@ impl MimeType {
                 }
                 len if len == b"image".len() => {
                     if strings::eql_comptime_ignore_len(category_, b"image") {
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Image,
@@ -391,11 +372,6 @@ impl MimeType {
                     }
 
                     if strings::eql_comptime_ignore_len(category_, b"audio") {
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Audio,
@@ -403,11 +379,6 @@ impl MimeType {
                     }
 
                     if strings::eql_comptime_ignore_len(category_, b"video") {
-                        if let Some(a) = allocated {
-                            if dupe {
-                                *a = true;
-                            }
-                        }
                         return MimeType {
                             value: Self::maybe_dupe(str_, dupe),
                             category: Category::Video,
@@ -415,12 +386,6 @@ impl MimeType {
                     }
                 }
                 _ => {}
-            }
-        }
-
-        if let Some(a) = allocated {
-            if dupe {
-                *a = true;
             }
         }
         MimeType {
@@ -452,7 +417,7 @@ pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeTyp
 // TODO: use a precomputed static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn by_name(name: &[u8]) -> MimeType {
-    MimeType::init(name, false, None)
+    MimeType::init(name, false)
 }
 
 // Duplicate keys are rejected at compile time. The original table
@@ -1673,4 +1638,121 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
         }
     }
     None
+}
+
+/// https://fetch.spec.whatwg.org/#http-whitespace
+const HTTP_WHITESPACE: &[u8] = b"\t\n\r ";
+
+/// https://mimesniff.spec.whatwg.org/#http-quoted-string-token-code-point
+fn is_http_quoted_string_token(c: u8) -> bool {
+    c == b'\t' || (0x20..=0x7E).contains(&c) || c >= 0x80
+}
+
+/// https://fetch.spec.whatwg.org/#collect-an-http-quoted-string with extract-value, after the opening `"`.
+fn collect_quoted_string_value(input: &[u8], pos: &mut usize) -> Vec<u8> {
+    let mut value = Vec::new();
+    while *pos < input.len() {
+        let c = input[*pos];
+        *pos += 1;
+        match c {
+            b'"' => return value,
+            b'\\' => {
+                if *pos < input.len() {
+                    value.push(input[*pos]);
+                    *pos += 1;
+                } else {
+                    value.push(b'\\');
+                }
+            }
+            _ => value.push(c),
+        }
+    }
+    value
+}
+
+/// https://mimesniff.spec.whatwg.org/#parse-a-mime-type then serialize; `None` for an invalid `type/subtype`.
+pub fn serialize_mime_type(input: &[u8]) -> Option<Vec<u8>> {
+    let input = strings::trim(input, HTTP_WHITESPACE);
+    let slash = strings::index_of_char_usize(input, b'/')?;
+    let type_ = &input[..slash];
+    if !is_token(type_) {
+        return None;
+    }
+
+    let mut pos = slash + 1;
+    let subtype_start = pos;
+    while pos < input.len() && input[pos] != b';' {
+        pos += 1;
+    }
+    let subtype = strings::trim_right(&input[subtype_start..pos], HTTP_WHITESPACE);
+    if !is_token(subtype) {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(input.len());
+    out.extend(type_.iter().map(u8::to_ascii_lowercase));
+    out.push(b'/');
+    out.extend(subtype.iter().map(u8::to_ascii_lowercase));
+
+    let mut seen = CaseInsensitiveAsciiStringArrayHashMap::<()>::new();
+    while pos < input.len() {
+        pos += 1; // consume ';'
+        while pos < input.len() && HTTP_WHITESPACE.contains(&input[pos]) {
+            pos += 1;
+        }
+        let name_start = pos;
+        while pos < input.len() && input[pos] != b';' && input[pos] != b'=' {
+            pos += 1;
+        }
+        let name = &input[name_start..pos];
+
+        if pos >= input.len() || input[pos] == b';' {
+            continue;
+        }
+        pos += 1; // consume '='
+
+        let value: Cow<'_, [u8]> = if pos < input.len() && input[pos] == b'"' {
+            pos += 1;
+            let v = collect_quoted_string_value(input, &mut pos);
+            while pos < input.len() && input[pos] != b';' {
+                pos += 1;
+            }
+            Cow::Owned(v)
+        } else {
+            let value_start = pos;
+            while pos < input.len() && input[pos] != b';' {
+                pos += 1;
+            }
+            let v = strings::trim_right(&input[value_start..pos], HTTP_WHITESPACE);
+            if v.is_empty() {
+                continue;
+            }
+            Cow::Borrowed(v)
+        };
+
+        if !is_token(name)
+            || !value.iter().all(|&c| is_http_quoted_string_token(c))
+            || bun_core::handle_oom(seen.get_or_put(name)).found_existing
+        {
+            continue;
+        }
+
+        out.push(b';');
+        out.extend(name.iter().map(u8::to_ascii_lowercase));
+        out.push(b'=');
+        if is_token(&value) {
+            out.extend_from_slice(&value);
+        } else {
+            out.push(b'"');
+            for &c in value.iter() {
+                if c == b'"' || c == b'\\' {
+                    out.push(b'\\');
+                }
+                out.push(c);
+            }
+            out.push(b'"');
+        }
+    }
+
+    Some(out)
 }

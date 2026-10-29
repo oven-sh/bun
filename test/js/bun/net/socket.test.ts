@@ -1,16 +1,21 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
+import { createSocketPair, setSocketOptions, socketFaultInjection, sweepSocketTimers } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
-import { generateKeyPairSync } from "crypto";
-import { closeSync, fstatSync, readFileSync } from "fs";
+import { generateKeyPairSync, randomFillSync } from "crypto";
+import { closeSync, existsSync, fstatSync, readFileSync, readSync, writeFileSync, writeSync } from "fs";
 import {
   bunEnv,
   bunExe,
   bunRun,
   expectMaxObjectTypeCount,
   getMaxFD,
+  isASAN,
+  isDebug,
+  isFreeBSD,
   isLinux,
+  isMacOS,
   isWindows,
   libcPathForDlopen,
   normalizeBunSnapshot,
@@ -22,51 +27,78 @@ import net from "node:net";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
 import { createSecureContext, connect as tlsConnect, createServer as tlsCreateServer, type TlsOptions } from "node:tls";
+
+type ErrorShape = { name: string; code: string | undefined; message: string };
+const errorShape = (error: unknown): ErrorShape => {
+  const e = error as Error & { code?: string };
+  return { name: e.name, code: e.code, message: e.message };
+};
+const refusedShape: ErrorShape = { name: "Error", code: "ECONNREFUSED", message: "Failed to connect" };
+
+// Returns a port that refuses connections. An established connection owns it as its local port,
+// so a concurrent `port: 0` listener can't be assigned the same port. `localAddress` makes the
+// holder bind() first. Linux can reuse a port that connect() picked as the local port of a later
+// connect(), and a connect to its own port succeeds.
+async function refusedPort() {
+  const sink = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  const holder = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: sink.port,
+    localAddress: "127.0.0.1",
+    socket: { data() {} },
+  } as any);
+  return {
+    port: holder.localPort,
+    [Symbol.dispose]() {
+      holder.terminate();
+      sink.stop(true);
+    },
+  };
+}
+
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
     const close = jest.fn();
     const data = jest.fn();
-    const connectError = jest.fn(() => {});
-    {
-      expect(
-        async () =>
-          await Bun.connect({
-            fd: getMaxFD() + 1024,
-            socket: {
-              open,
-              close,
-              data,
-              connectError,
-            },
-          } as any),
-      ).toThrow();
-      Bun.gc(true);
-      await Bun.sleep(10);
-      Bun.gc(true);
-    }
-
-    await Bun.sleep(10);
+    const connectErrorCalled = Promise.withResolvers<ErrorShape>();
+    const connectError = jest.fn((_socket: Socket, error: Error) => connectErrorCalled.resolve(errorShape(error)));
+    const rejection = await Bun.connect({
+      fd: getMaxFD() + 1024,
+      socket: {
+        open,
+        close,
+        data,
+        connectError,
+      },
+    } as any).then(
+      () => null,
+      error => errorShape(error),
+    );
+    // Don't pin the code. Platforms map a bad descriptor to different errnos.
+    const failedToConnect = { name: "Error", message: "Failed to connect" };
+    expect({ rejection, connectError: await connectErrorCalled.promise }).toMatchObject({
+      rejection: failedToConnect,
+      connectError: failedToConnect,
+    });
+    Bun.gc(true);
     expect(open).toHaveBeenCalledTimes(0);
     expect(close).toHaveBeenCalledTimes(0);
     expect(data).toHaveBeenCalledTimes(0);
     expect(connectError).toHaveBeenCalledTimes(1);
-    connectError.mockClear();
-    open.mockClear();
-    close.mockClear();
-    data.mockClear();
   });
 
   it.skipIf(isWindows)(
     "should not crash when a socket from a file descriptor is already closed after opening",
     async () => {
       const [server, client] = createSocketPair();
+      const closed = Promise.withResolvers<void>();
       const open = jest.fn();
-      const close = jest.fn();
+      const close = jest.fn(() => closed.resolve());
       const data = jest.fn();
       closeSync(client);
       {
-        const socket = await Bun.connect({
+        await Bun.connect({
           fd: server,
           socket: {
             open,
@@ -75,19 +107,24 @@ describe.concurrent("socket", () => {
           },
         } as any);
         Bun.gc(true);
-        await Bun.sleep(10);
+        // The peer end is already closed, so the adopted fd reads EOF and closes.
+        await closed.promise;
         Bun.gc(true);
       }
-      await Bun.sleep(10);
 
       expect(open).toHaveBeenCalledTimes(1);
       expect(close).toHaveBeenCalledTimes(1);
       expect(data).toHaveBeenCalledTimes(0);
-      open.mockClear();
-      close.mockClear();
-      data.mockClear();
     },
   );
+
+  it.skipIf(isWindows)("adopts a file descriptor given as a BigInt", async () => {
+    const [server, client] = createSocketPair();
+    const closed = Promise.withResolvers<void>();
+    await Bun.connect({ fd: BigInt(server), socket: { data() {}, close: () => closed.resolve() } } as any);
+    closeSync(client);
+    await closed.promise;
+  });
 
   it("should coerce '0' to 0", async () => {
     const listener = Bun.listen({
@@ -119,7 +156,7 @@ describe.concurrent("socket", () => {
   });
 
   it("should keep process alive only when active", async () => {
-    const { exited, stdout, stderr } = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "echo.js"],
       cwd: import.meta.dir,
       stdout: "pipe",
@@ -128,23 +165,25 @@ describe.concurrent("socket", () => {
       env: bunEnv,
     });
 
-    expect(await exited).toBe(0);
-    expect(await stderr.text()).toBe("");
-    var lines = (await stdout.text()).split(/\r?\n/);
-    expect(
-      lines.filter(function (line) {
-        return line.startsWith("[Server]");
-      }),
-    ).toEqual(["[Server] OPENED", "[Server] GOT request", "[Server] CLOSED"]);
-    expect(
-      lines.filter(function (line) {
-        return line.startsWith("[Client]");
-      }),
-    ).toEqual(["[Client] OPENED", "[Client] GOT response", "[Client] CLOSED"]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The server and client lines interleave, but each side's own order is fixed.
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+    expect({
+      stderr,
+      server: lines.filter(line => line.startsWith("[Server]")),
+      client: lines.filter(line => line.startsWith("[Client]")),
+      other: lines.filter(line => !line.startsWith("[Server]") && !line.startsWith("[Client]")),
+    }).toEqual({
+      stderr: "",
+      server: ["[Server] OPENED", "[Server] GOT request", "[Server] CLOSED"],
+      client: ["[Client] OPENED", "[Client] GOT response", "[Client] CLOSED"],
+      other: [],
+    });
+    expect(exitCode).toBe(0);
   });
 
   it("connect without top level await should keep process alive", async () => {
-    const server = Bun.listen({
+    using server = Bun.listen({
       socket: {
         open(socket) {},
         data(socket, data) {},
@@ -152,22 +191,29 @@ describe.concurrent("socket", () => {
       hostname: "localhost",
       port: 0,
     });
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port), server.hostname],
+    using refused = await refusedPort();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port), server.hostname, String(refused.port)],
       cwd: import.meta.dir,
       env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    await proc.exited;
-    try {
-      expect(proc.exitCode).toBe(0);
-      expect(await proc.stdout.text()).toContain("event loop was not killed");
-    } finally {
-      server.stop();
-    }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout:
+        "test 1: failed connection ECONNREFUSED\n" +
+        "test 2: failed connection [tls] ECONNREFUSED\n" +
+        "test 3: successful connection\n" +
+        "test 4: successful connection [tls]\n" +
+        "success: event loop was not killed\n",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 
   it("connect() should return the socket object", async () => {
-    const { exited, stdout, stderr } = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "connect-returns-socket.js"],
       cwd: import.meta.dir,
       stdout: "pipe",
@@ -176,10 +222,24 @@ describe.concurrent("socket", () => {
       env: bunEnv,
     });
 
-    const [stderrText, stdoutText, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
-    // stderr first so an ASAN/LSAN report isn't swallowed behind a bare "exit 134".
-    expect(stderrText).toBe("");
-    expect(stdoutText).toContain("CLIENT RECEIVED");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The two echoed writes can arrive in one or two data events, so compare their concatenation.
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+    const RECEIVED = "CLIENT RECEIVED ";
+    expect({
+      stderr,
+      opened: lines.filter(line => line.endsWith(" OPENED")).toSorted(),
+      localPort: lines.filter(line => /^\d+$/.test(line)).length,
+      received: lines
+        .filter(line => line.startsWith(RECEIVED))
+        .map(line => line.slice(RECEIVED.length))
+        .join(""),
+    }).toEqual({
+      stderr: "",
+      opened: ["CLIENT OPENED", "SERVER OPENED"],
+      localPort: 1,
+      received: "Hello, world!From returned socket",
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -201,54 +261,41 @@ describe.concurrent("socket", () => {
     }).toThrow();
   });
 
-  it("should reject on connection error, calling both connectError() and rejecting the promise", done => {
-    var data = {};
-    connect({
+  it("should reject on connection error, calling both connectError() and rejecting the promise", async () => {
+    using refused = await refusedPort();
+    const data = {};
+    const events: string[] = [];
+    const unexpected = (name: string) => () => void events.push(name);
+    let connectErrorArgs: { sameData: boolean; error: ErrorShape } | undefined;
+    const rejection = await connect({
       data,
       hostname: "localhost",
-      port: 55555,
+      port: refused.port,
       socket: {
         connectError(socket, error) {
-          expect(socket).toBeDefined();
-          expect(socket.data).toBe(data);
-          expect(error).toBeDefined();
-          expect(error.name).toBe("Error");
-          expect((error as any).code).toBe("ECONNREFUSED");
-          expect(error.message).toBe("Failed to connect");
+          events.push("connectError");
+          connectErrorArgs = { sameData: socket.data === data, error: errorShape(error) };
         },
-        data() {
-          done(new Error("Unexpected data()"));
-        },
-        drain() {
-          done(new Error("Unexpected drain()"));
-        },
-        close() {
-          done(new Error("Unexpected close()"));
-        },
-        end() {
-          done(new Error("Unexpected end()"));
-        },
-        error() {
-          done(new Error("Unexpected error()"));
-        },
-        open() {
-          done(new Error("Unexpected open()"));
-        },
+        data: unexpected("data"),
+        drain: unexpected("drain"),
+        close: unexpected("close"),
+        end: unexpected("end"),
+        error: unexpected("error"),
+        open: unexpected("open"),
       },
     }).then(
-      () => done(new Error("Promise should reject instead")),
-      err => {
-        expect(err).toBeDefined();
-        expect(err.name).toBe("Error");
-        expect(err.code).toBe("ECONNREFUSED");
-        expect(err.message).toBe("Failed to connect");
-
-        done();
-      },
+      () => null,
+      error => errorShape(error),
     );
+    expect({ events, connectErrorArgs, rejection }).toEqual({
+      events: ["connectError"],
+      connectErrorArgs: { sameData: true, error: refusedShape },
+      rejection: refusedShape,
+    });
   });
 
   it("should not leak memory when connect() fails", async () => {
+    using refused = await refusedPort();
     await (async () => {
       // windows can take more than a second per connection
       const quantity = isWindows ? 10 : 50;
@@ -256,7 +303,7 @@ describe.concurrent("socket", () => {
       for (let i = 0; i < quantity; i++) {
         promises[i] = connect({
           hostname: "localhost",
-          port: 55555,
+          port: refused.port,
           socket: {
             connectError(socket, error) {},
             data() {},
@@ -268,7 +315,8 @@ describe.concurrent("socket", () => {
           },
         });
       }
-      await Promise.allSettled(promises);
+      const settled = await Promise.allSettled(promises);
+      expect(settled.map(result => result.status)).toEqual(new Array(quantity).fill("rejected"));
       promises.length = 0;
     })();
 
@@ -276,94 +324,203 @@ describe.concurrent("socket", () => {
   }, 60_000);
 
   // this also tests we mark the promise as handled if connectError() is called
-  it("should handle connection error", done => {
-    var data = {};
+  it("should handle connection error", async () => {
+    using refused = await refusedPort();
+    const data = {};
+    const events: string[] = [];
+    const unexpected = (name: string) => () => void events.push(name);
+    const connectErrorCalled = Promise.withResolvers<{ sameData: boolean; error: ErrorShape }>();
     connect({
       data,
       hostname: "localhost",
-      port: 55555,
+      port: refused.port,
       socket: {
         connectError(socket, error) {
-          expect(socket).toBeDefined();
-          expect(socket.data).toBe(data);
-          expect(error).toBeDefined();
-          expect(error.name).toBe("Error");
-          expect(error.message).toBe("Failed to connect");
-          expect((error as any).code).toBe("ECONNREFUSED");
-          done();
+          events.push("connectError");
+          connectErrorCalled.resolve({ sameData: socket.data === data, error: errorShape(error) });
         },
-        data() {
-          done(new Error("Unexpected data()"));
-        },
-        drain() {
-          done(new Error("Unexpected drain()"));
-        },
-        close() {
-          done(new Error("Unexpected close()"));
-        },
-        end() {
-          done(new Error("Unexpected end()"));
-        },
-        error() {
-          done(new Error("Unexpected error()"));
-        },
-        open() {
-          done(new Error("Unexpected open()"));
-        },
+        data: unexpected("data"),
+        drain: unexpected("drain"),
+        close: unexpected("close"),
+        end: unexpected("end"),
+        error: unexpected("error"),
+        open: unexpected("open"),
       },
     });
+    expect(await connectErrorCalled.promise).toEqual({ sameData: true, error: refusedShape });
+    expect(events).toEqual(["connectError"]);
   });
 
   it("socket.timeout works", async () => {
-    try {
-      const { promise, resolve } = Promise.withResolvers<any>();
+    const { promise, resolve } = Promise.withResolvers<string>();
+    let timeouts = 0;
+    let received = "";
+    using server = Bun.listen({
+      socket: {
+        binaryType: "buffer",
+        open(socket) {
+          socket.write("hello");
+        },
+        data(socket, data) {
+          received += data.toString("utf-8");
+          if (received === "I have timed out!") {
+            client.end();
+            resolve(received);
+          }
+        },
+      },
+      hostname: "localhost",
+      port: 0,
+    });
+    const client = await connect({
+      hostname: server.hostname,
+      port: server.port,
+      socket: {
+        timeout(socket) {
+          timeouts++;
+          socket.write("I have timed out!");
+        },
+        data() {},
+        drain() {},
+        close() {},
+        end() {},
+        error() {},
+        open() {},
+      },
+    });
+    client.timeout(1);
+    // A sweep runs every 4 seconds, and the first one after the call may come too early.
+    sweepSocketTimers(2);
+    expect(await promise).toBe("I have timed out!");
+    expect(timeouts).toBe(1);
+  });
 
-      var server = Bun.listen({
-        socket: {
-          binaryType: "buffer",
-          open(socket) {
-            socket.write("hello");
-          },
-          data(socket, data) {
-            if (data.toString("utf-8") === "I have timed out!") {
-              client.end();
-              resolve(undefined);
-            }
-          },
-        },
-        hostname: "localhost",
-        port: 0,
-      });
-      var client = await connect({
-        hostname: server.hostname,
-        port: server.port,
-        socket: {
-          timeout(socket) {
-            socket.write("I have timed out!");
-          },
-          data() {},
-          drain() {},
-          close() {},
-          end() {},
-          error() {},
-          open() {},
-        },
-      });
-      client.timeout(1);
-      await promise;
-    } finally {
-      server!.stop(true);
-    }
-  }, 60_000);
+  // Runs in a child because the sweeps also advance every other socket's timeout on the thread.
+  it("socket.timeout() fires once and never early, for any number of seconds", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const accepted = Promise.withResolvers();
+        let timeouts = 0;
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open: accepted.resolve, timeout: () => void timeouts++, data() {} },
+        });
+        // A sweep runs every 4 seconds. Each timeout below is set a moment after one.
+        sweepSocketTimers(1);
+        using client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+        const socket = await accepted.promise;
+        for (const seconds of ["accepted", 1, 3, 4, 5, 240, 241, 300, 960, 964, 86400]) {
+          timeouts = 0;
+          if (seconds !== "accepted") socket.timeout(seconds);
+          sweepSocketTimers(Math.floor((seconds === "accepted" ? 120 : seconds) / 4));
+          const early = timeouts;
+          sweepSocketTimers(1);
+          const due = timeouts;
+          sweepSocketTimers(500);
+          console.log(seconds, early, due, timeouts);
+        }
+        // More than a second into the 4, the next sweep comes too early for 3 seconds.
+        await Bun.sleep(1100);
+        timeouts = 0;
+        socket.timeout(3);
+        sweepSocketTimers(1);
+        const early = timeouts;
+        sweepSocketTimers(1);
+        console.log("3 late in the period", early, timeouts);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual([
+      "accepted 0 1 1",
+      "1 0 1 1",
+      "3 0 1 1",
+      "4 0 1 1",
+      "5 0 1 1",
+      "240 0 1 1",
+      "241 0 1 1",
+      "300 0 1 1",
+      "960 0 1 1",
+      "964 0 1 1",
+      "86400 0 1 1",
+      "3 late in the period 0 1",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // In a child, for the same reason.
+  it("a timeout handler that reload() adds runs for the sockets accepted before it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        import { once } from "node:events";
+        import net from "node:net";
+        const timedOut = [];
+        let accepted;
+        const open = socket => accepted.resolve(socket);
+        const timeout = socket => void timedOut.push(socket.data);
+        async function connect(server, name) {
+          accepted = Promise.withResolvers();
+          const client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+          (await accepted.promise).data = name;
+          return client;
+        }
+        using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open, data() {} } });
+        // node:net listens without the timeout, in a way that a program can't.
+        using timed = Bun.listen({ hostname: "127.0.0.1", port: 0, defaultTimeout: false, socket: { open, timeout, data() {} } });
+        const untimed = net.createServer().listen(0, "127.0.0.1");
+        await once(untimed, "listening");
+        // A sweep runs every 4 seconds. Every socket below is accepted a moment after this one, with 120 seconds.
+        sweepSocketTimers(1);
+        using before = await connect(server, "before reload()");
+        server.reload({ socket: { open, timeout, data() {} } });
+        using after = await connect(server, "after reload()");
+        using ignored = await connect(timed, "defaultTimeout: false");
+        const connection = once(untimed, "connection");
+        using never = await Bun.connect({ hostname: "127.0.0.1", port: untimed.address().port, socket: { data() {} } });
+        await connection;
+        untimed._handle.reload({ socket: { timeout: () => void timedOut.push("node:net"), data() {} } });
+        sweepSocketTimers(30);
+        console.log(JSON.stringify(timedOut));
+        sweepSocketTimers(1);
+        console.log(JSON.stringify(timedOut.sort()));
+        untimed.close();
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual([
+      "[]",
+      JSON.stringify(["after reload()", "before reload()", "defaultTimeout: false"]),
+    ]);
+    expect(exitCode).toBe(0);
+  });
 
   it("should allow large amounts of data to be sent and received", async () => {
-    const { stderr, exitCode } = await bunRun(fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url)));
-    if (exitCode !== 0) console.error(stderr);
-    expect(exitCode).toBe(0);
+    // Hashing and copying 1 GiB takes several seconds on debug and ASAN builds.
+    const size = isDebug || isASAN ? 256 * 1024 * 1024 : 1024 * 1024 * 1024;
+    const fixture = fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url));
+    expect(await bunRun([fixture, String(size)])).toSpawn(`sent ${size} bytes, received ${size} bytes, digest matches`);
   }, 60_000);
 
   it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
+  });
+
+  it("reads the whole body when the peer's FIN arrives with the final data on a busy loop", async () => {
+    expect(await bunRun(fileURLToPath(new URL("./fin-with-final-data-fixture.ts", import.meta.url)))).toSpawn();
   });
 
   // ssl_update_handshake set last_write_failed on SSL_ERROR_WANT_READ, so a
@@ -381,8 +538,8 @@ describe.concurrent("socket", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "OK\n", exitCode: 0 });
-    void stderr;
+    expect({ stdout, stderr }).toEqual({ stdout: "OK\n", stderr: "" });
+    expect(exitCode).toBe(0);
   }, 30_000);
 
   it("it should not crash when getting a ReferenceError on client socket open", async () => {
@@ -394,13 +551,8 @@ describe.concurrent("socket", () => {
       },
     });
     {
-      const { resolve, reject, promise } = Promise.withResolvers();
-      let client: Socket<undefined> | null = null;
-      const timeout = setTimeout(() => {
-        client?.end();
-        reject(new Error("Timeout"));
-      }, 1000);
-      client = await Bun.connect({
+      const { resolve, promise } = Promise.withResolvers<{ handler: string; name?: string; message?: string }>();
+      const client = await Bun.connect({
         port: server.port!,
         hostname: server.hostname!,
         socket: {
@@ -410,19 +562,18 @@ describe.concurrent("socket", () => {
             socket.write(bytes);
           },
           error(socket, error) {
-            clearTimeout(timeout);
-            resolve(error);
+            resolve({ handler: "error", name: error.name, message: error.message });
           },
           close(socket) {
             // we need the close handler
-            resolve({ message: "Closed" });
+            resolve({ handler: "close" });
           },
           data(socket, data) {},
         },
       });
 
-      const result: any = await promise;
-      expect(result?.message).toBe("bytes is not defined");
+      expect(await promise).toEqual({ handler: "error", name: "ReferenceError", message: "bytes is not defined" });
+      client.end();
     }
   });
 
@@ -435,13 +586,8 @@ describe.concurrent("socket", () => {
       },
     });
     {
-      const { resolve, reject, promise } = Promise.withResolvers();
-      let client: Socket<undefined> | null = null;
-      const timeout = setTimeout(() => {
-        client?.end();
-        reject(new Error("Timeout"));
-      }, 1000);
-      client = await Bun.connect({
+      const { resolve, promise } = Promise.withResolvers<{ handler: string; name?: string; message?: string }>();
+      const client = await Bun.connect({
         port: server.port,
         hostname: server.hostname,
         socket: {
@@ -450,19 +596,18 @@ describe.concurrent("socket", () => {
             return new Error("CustomError");
           },
           error(socket, error) {
-            clearTimeout(timeout);
-            resolve(error);
+            resolve({ handler: "error", name: error.name, message: error.message });
           },
           close(socket) {
             // we need the close handler
-            resolve({ message: "Closed" });
+            resolve({ handler: "close" });
           },
           data(socket, data) {},
         },
       });
 
-      const result: any = await promise;
-      expect(result?.message).toBe("CustomError");
+      expect(await promise).toEqual({ handler: "error", name: "Error", message: "CustomError" });
+      client.end();
     }
   });
 
@@ -478,30 +623,32 @@ describe.concurrent("socket", () => {
       },
     });
 
-    const { resolve, reject, promise } = Promise.withResolvers();
+    const { resolve, promise } = Promise.withResolvers<void>();
 
-    let client: Socket<undefined> | null = null;
-    let opened = false;
-    client = await Bun.connect({
+    let opens = 0;
+    let connectErrors = 0;
+    let received = "";
+    await Bun.connect({
       port: server.port,
       hostname: "localhost",
       socket: {
         open(socket) {
-          expect(opened).toBe(false);
-          opened = true;
+          opens++;
         },
         connectError(socket, error) {
-          expect().fail("connectError should not be called");
+          connectErrors++;
         },
         close(socket) {
           resolve();
         },
-        data(socket, data) {},
+        data(socket, data) {
+          received += data.toString();
+        },
       },
     });
 
     await promise;
-    expect(opened).toBe(true);
+    expect({ opens, connectErrors, received }).toEqual({ opens: 1, connectErrors: 0, received: "Hello" });
   });
 
   it.skipIf(isWindows)("should not leak file descriptors when connecting", async () => {
@@ -520,34 +667,32 @@ describe.concurrent("socket", () => {
       },
     });
 
-    const { resolve, reject, promise } = Promise.withResolvers();
-
-    let client: Socket<undefined> | null = null;
-    let hadError = false;
-    try {
-      client = await Bun.connect({
-        port: server.port,
-        hostname: "::1",
-        socket: {
-          open(socket) {
-            expect().fail("open should not be called, the connection should fail");
-          },
-          connectError(socket, error) {
-            expect(hadError).toBe(false);
-            hadError = true;
-            resolve();
-          },
-          close(socket) {
-            expect().fail("close should not be called, the connection should fail");
-          },
-          data(socket, data) {},
+    const events: string[] = [];
+    const rejection = await Bun.connect({
+      port: server.port,
+      hostname: "::1",
+      socket: {
+        open(socket) {
+          events.push("open");
         },
-      });
-    } catch (e) {}
+        connectError(socket, error) {
+          events.push("connectError");
+        },
+        close(socket) {
+          events.push("close");
+        },
+        data(socket, data) {},
+      },
+    }).then(
+      () => null,
+      error => errorShape(error),
+    );
 
-    await Bun.sleep(50);
-    await promise;
-    expect(hadError).toBe(true);
+    // Don't pin the code. A host without IPv6 fails this connect with a different errno.
+    expect({ events, rejection }).toMatchObject({
+      events: ["connectError"],
+      rejection: { name: "Error", message: "Failed to connect" },
+    });
   });
 
   it("should connect directly when using an ip address", async () => {
@@ -562,50 +707,64 @@ describe.concurrent("socket", () => {
       },
     });
 
-    const { resolve, reject, promise } = Promise.withResolvers();
+    const { resolve, promise } = Promise.withResolvers<void>();
 
-    let client: Socket<undefined> | null = null;
-    let opened = false;
-    client = await Bun.connect({
+    let opens = 0;
+    let connectErrors = 0;
+    let received = "";
+    await Bun.connect({
       port: server.port,
       hostname: "127.0.0.1",
       socket: {
         open(socket) {
-          expect(opened).toBe(false);
-          opened = true;
+          opens++;
         },
         connectError(socket, error) {
-          expect().fail("connectError should not be called");
+          connectErrors++;
         },
         close(socket) {
           resolve();
         },
-        data(socket, data) {},
+        data(socket, data) {
+          received += data.toString();
+        },
       },
     });
 
     await promise;
-    expect(opened).toBe(true);
+    expect({ opens, connectErrors, received }).toEqual({ opens: 1, connectErrors: 0, received: "Hello" });
   });
 
   it("should not call drain before handshake", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    using socket = await Bun.connect({
-      hostname: "www.example.com",
-      tls: true,
-      port: 443,
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
       socket: {
-        drain() {
-          if (!socket.authorized) {
-            reject(new Error("Socket not authorized"));
-          }
-        },
-        handshake() {
-          resolve();
-        },
+        data() {},
+        error() {},
       },
     });
-    await promise;
+    const { promise, resolve } = Promise.withResolvers<{ success: boolean; authorized: boolean }>();
+    let handshook = false;
+    let drainsBeforeHandshake = 0;
+    using socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      tls: { ca: tls.cert },
+      port: server.port,
+      socket: {
+        drain() {
+          if (!handshook) drainsBeforeHandshake++;
+        },
+        handshake(socket, success) {
+          handshook = true;
+          resolve({ success, authorized: socket.authorized });
+        },
+        data() {},
+      },
+    });
+    expect(await promise).toEqual({ success: true, authorized: true });
+    expect(drainsBeforeHandshake).toBe(0);
     expect(socket.authorized).toBe(true);
   });
   // A server-side upgradeTLS handed only a SecureContext has no parsed tls
@@ -620,7 +779,7 @@ describe.concurrent("socket", () => {
       requestCert: true,
       rejectUnauthorized: true,
     } as TlsOptions);
-    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const { promise, resolve, reject } = Promise.withResolvers<string | null>();
     const server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
@@ -633,8 +792,8 @@ describe.concurrent("socket", () => {
             data: {},
             socket: {
               handshake(tlsSocket) {
-                const peer = tlsSocket.getPeerCertificate();
-                resolve(!!peer && Object.keys(peer).length > 0);
+                // An empty object means the client sent no certificate.
+                resolve(tlsSocket.getPeerCertificate()?.subject?.CN ?? null);
               },
               data() {},
               close() {},
@@ -659,7 +818,7 @@ describe.concurrent("socket", () => {
         key: tls.key,
       });
       client.on("error", () => {});
-      expect(await promise).toBe(true);
+      expect(await promise).toBe("server-bun");
       client.destroy();
     } finally {
       server.stop(true);
@@ -755,13 +914,6 @@ describe.concurrent("socket", () => {
         }),
       );
 
-      expect(() =>
-        socket.upgradeTLS({
-          ...handlers,
-          tls: {},
-        }),
-      ).toThrow();
-
       expect(handlers.socket.close).not.toHaveBeenCalled();
       expect(handlers.socket.error).not.toHaveBeenCalled();
       expect(handlers.socket.data).not.toHaveBeenCalled();
@@ -834,9 +986,20 @@ describe.concurrent("socket", () => {
         expect(tls_socket).toBeDefined();
       }
       const [tlsData, rawData] = await Promise.all([tlsSocketPromise, rawSocketPromise]);
-      expect(tlsData).toContain("HTTP/1.1 200 OK");
-      expect(tlsData).toContain("Content-Length: 11");
-      expect(tlsData).toContain("\r\nHello World");
+      const [head, responseBody] = (tlsData as string).split("\r\n\r\n");
+      const [statusLine, ...headerLines] = head.split("\r\n");
+      const headers = Object.fromEntries(
+        headerLines.map(line => {
+          const colon = line.indexOf(":");
+          return [line.slice(0, colon).toLowerCase(), line.slice(colon + 1).trim()];
+        }),
+      );
+      expect({ statusLine, contentLength: headers["content-length"], responseBody }).toEqual({
+        statusLine: "HTTP/1.1 200 OK",
+        contentLength: "11",
+        responseBody: "Hello World",
+      });
+      // The raw socket only sees ciphertext.
       expect((rawData as Buffer).byteLength).toBeGreaterThanOrEqual(1980);
     }
   });
@@ -980,40 +1143,44 @@ console.log("completed", done, "cycles without crashing");
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("completed 64 cycles without crashing");
+    expect({ stdout, stderr }).toEqual({ stdout: "completed 64 cycles without crashing\n", stderr: "" });
     expect(exitCode).toBe(0);
   }, 30_000); // subprocess + debug/ASAN startup is slow
 });
 
-it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {
-  const [server, client] = createSocketPair();
-  const open = jest.fn();
-  const close = jest.fn();
-  const data = jest.fn();
-  {
-    const socket = await Bun.connect({
-      fd: server,
-      socket: {
-        open,
-        close,
-        data,
-      },
-    } as any);
-    Bun.gc(true);
-    await Bun.sleep(10);
-    closeSync(client);
-    Bun.gc(true);
-  }
+it.concurrent.skipIf(isWindows)(
+  "should not crash when a socket from a file descriptor is closed after opening",
+  async () => {
+    const [server, client] = createSocketPair();
+    const opened = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const open = jest.fn(() => opened.resolve());
+    const close = jest.fn(() => closed.resolve());
+    const data = jest.fn();
+    {
+      await Bun.connect({
+        fd: server,
+        socket: {
+          open,
+          close,
+          data,
+        },
+      } as any);
+      Bun.gc(true);
+      await opened.promise;
+      closeSync(client);
+      Bun.gc(true);
+    }
 
-  await Bun.sleep(10);
-  expect(open).toHaveBeenCalledTimes(1);
-  expect(close).toHaveBeenCalledTimes(1);
-  expect(data).toHaveBeenCalledTimes(0);
-  open.mockClear();
-  close.mockClear();
-  data.mockClear();
-});
+    // Closing the peer end makes the adopted fd read EOF and close.
+    await closed.promise;
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(data).toHaveBeenCalledTimes(0);
+  },
+);
 
+// Keep the two object-count checks serial. They count live sockets, so no other test can run alongside them.
 it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 or 2 because that's the prototype / structure.
@@ -1030,7 +1197,7 @@ it("should not leak memory when connect() fails again", async () => {
   await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
 });
 
-it("should throw on empty hostname from truthy non-string value", () => {
+it.concurrent("should throw on empty hostname from truthy non-string value", () => {
   const socket = { data() {}, open() {}, close() {} };
   // A truthy value whose toString() returns "" should throw, not crash
   for (const hostname of [[], new String("")]) {
@@ -1041,7 +1208,7 @@ it("should throw on empty hostname from truthy non-string value", () => {
   }
 });
 
-it("should throw on empty unix path from truthy non-string value", () => {
+it.concurrent("should throw on empty unix path from truthy non-string value", () => {
   const socket = { data() {}, open() {}, close() {} };
   // unix uses a strict string type in bindgen, so non-string values are rejected before
   // reaching the empty-string check — the error message differs from hostname
@@ -1080,7 +1247,7 @@ describe.each([
   });
 });
 
-it("reading .listener on a closed client socket does not use-after-free handlers", async () => {
+it.concurrent("reading .listener on a closed client socket does not use-after-free handlers", async () => {
   // Client-mode Handlers is heap-allocated per-connect and freed in
   // markInactive once the socket closes. `socket.listener` read
   // `handlers.mode` through the dangling pointer before the isDetached()
@@ -1133,7 +1300,7 @@ it("reading .listener on a closed client socket does not use-after-free handlers
   expect(exitCode).toBe(0);
 });
 
-it("reading fd of a TLS listener should not crash", () => {
+it.concurrent("reading fd of a TLS listener should not crash", () => {
   using listener = Bun.listen({
     hostname: "localhost",
     port: 0,
@@ -1144,7 +1311,7 @@ it("reading fd of a TLS listener should not crash", () => {
   expect((listener as any).fd).toBeGreaterThanOrEqual(0);
 });
 
-it("getServername on a closed TLS socket should not crash", async () => {
+it.concurrent("getServername on a closed TLS socket should not crash", async () => {
   using listener = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
@@ -1216,12 +1383,14 @@ it("getPeerCertificate and exportKeyingMaterial accept undefined for optional ar
   }
 });
 
-it("exportKeyingMaterial with a context whose toPrimitive terminates the socket does not use-after-free", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+it.concurrent(
+  "exportKeyingMaterial with a context whose toPrimitive terminates the socket does not use-after-free",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
       const tls = ${JSON.stringify(tls)};
       const listener = Bun.listen({
         hostname: "127.0.0.1",
@@ -1256,26 +1425,28 @@ it("exportKeyingMaterial with a context whose toPrimitive terminates the socket 
       console.log(await promise);
       listener.stop(true);
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("undefined\n");
-  if (exitCode !== 0) expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-});
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "undefined\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
 
-it("TLS client: flush() after end() does not double-teardown before deferred onClose", async () => {
-  // `end()` on a TLS client sends close_notify and defers the raw close until the
-  // peer replies, leaving `is_active` set so the eventual onClose can release the
-  // Handlers. A `flush()` in that window must not re-enter markInactive and free
-  // the Handlers early — when the peer's close_notify then arrives, onClose would
-  // deref freed memory (ASAN heap-use-after-free). Run in a subprocess so an ASAN
-  // abort surfaces as a clean test failure rather than taking down the runner.
-  using dir = tempDir("tls-flush-after-end", {
-    "run.ts": `
+it.concurrent(
+  "TLS client: flush() after end() does not double-teardown before deferred onClose",
+  async () => {
+    // `end()` on a TLS client sends close_notify and defers the raw close until the
+    // peer replies, leaving `is_active` set so the eventual onClose can release the
+    // Handlers. A `flush()` in that window must not re-enter markInactive and free
+    // the Handlers early — when the peer's close_notify then arrives, onClose would
+    // deref freed memory (ASAN heap-use-after-free). Run in a subprocess so an ASAN
+    // abort surfaces as a clean test failure rather than taking down the runner.
+    using dir = tempDir("tls-flush-after-end", {
+      "run.ts": `
       const tls = JSON.parse(process.env.TLS_JSON!);
 
       using server = Bun.listen({
@@ -1316,205 +1487,48 @@ it("TLS client: flush() after end() does not double-teardown before deferred onC
       await closed;
       console.log("OK");
     `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run.ts"],
-    env: { ...bunEnv, TLS_JSON: JSON.stringify(tls) },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("OK");
-  expect(exitCode).toBe(0);
-}, 30_000); // debug subprocess startup + ASAN symbolication on failure is slow
-
-it("writing to an established TLS socket from another TLS client's open() does not divert either connection", async () => {
-  // Proxy-style flow: an inbound TLS connection is already established, then an
-  // outbound TLS client is opened and its open() callback synchronously writes a
-  // status frame back to the inbound socket. The outbound socket's handshake must
-  // still be sent to *its own* upstream server (so it completes and the proxy can
-  // report "upstream-ready"), and the inbound client's TLS stream must only ever
-  // carry the proxy's application data — never bytes belonging to the outbound
-  // connection. Previously the per-loop SSL output target was not re-pointed after
-  // the open() dispatch, so the outbound handshake bytes landed in the inbound
-  // client's stream, corrupting its session and stalling the outbound connection.
-  const { promise: clientResult, resolve: resolveClientResult } = Promise.withResolvers<{
-    outcome: string;
-    received: string;
-  }>();
-
-  let clientReceived = "";
-
-  // Upstream TLS server the proxy connects out to.
-  const upstream = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    tls,
-    socket: {
-      open() {},
-      data() {},
-      close() {},
-      error() {},
-    },
-  });
-
-  let outbound: Socket | undefined;
-  let inboundRequest = "";
-
-  // Proxy: TLS server that, when the inbound client asks, opens an outbound TLS
-  // connection and writes to the inbound socket from the outbound open() callback.
-  const proxy = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    tls,
-    socket: {
-      open() {},
-      async data(inbound, chunk) {
-        inboundRequest += chunk.toString();
-        if (!inboundRequest.includes("CONNECT\n") || outbound) return;
-        outbound = await Bun.connect({
-          hostname: "127.0.0.1",
-          port: upstream.port,
-          tls: { ...tls, rejectUnauthorized: false },
-          socket: {
-            open() {
-              // Writes to the already-established inbound TLS socket while the
-              // outbound socket's own handshake has not been flushed to the wire yet.
-              inbound.write("hello-from-proxy\n");
-            },
-            handshake(_socket, success) {
-              inbound.write(success ? "upstream-ready\n" : "upstream-handshake-failed\n");
-            },
-            data() {},
-            close() {},
-            error() {},
-          },
-        });
-      },
-      close() {},
-      error() {},
-    },
-  });
-
-  let client: Socket | undefined;
-  try {
-    // Inbound client talking TLS to the proxy.
-    client = await Bun.connect({
-      hostname: "127.0.0.1",
-      port: proxy.port,
-      tls: { ...tls, rejectUnauthorized: false },
-      socket: {
-        open() {},
-        handshake(socket) {
-          socket.write("CONNECT\n");
-        },
-        data(_socket, chunk) {
-          clientReceived += chunk.toString();
-          if (clientReceived.includes("upstream-ready\n") || clientReceived.includes("upstream-handshake-failed\n")) {
-            resolveClientResult({ outcome: "ok", received: clientReceived });
-          }
-        },
-        close() {
-          resolveClientResult({ outcome: "closed", received: clientReceived });
-        },
-        error(_socket, err) {
-          resolveClientResult({ outcome: `error: ${err}`, received: clientReceived });
-        },
-      },
     });
 
-    // The inbound client's TLS session stays intact (no error/close) and sees
-    // exactly the proxy's two status frames, and the outbound handshake reached
-    // its own upstream server — otherwise "upstream-ready" is never produced.
-    expect(await clientResult).toEqual({
-      outcome: "ok",
-      received: "hello-from-proxy\nupstream-ready\n",
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.ts"],
+      env: { ...bunEnv, TLS_JSON: JSON.stringify(tls) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
     });
-  } finally {
-    client?.end();
-    outbound?.end();
-    proxy.stop(true);
-    upstream.stop(true);
-  }
-}, 30_000);
 
-it("TLS mid-read boundary dispatch: writing to another TLS socket from data() does not corrupt the rest of the stream", async () => {
-  // When SSL_read fills the per-loop 512KiB output buffer exactly, uSockets
-  // dispatches that chunk to the data() callback mid-read and then continues
-  // decrypting the rest of the same TCP read. If the callback does TLS work on
-  // another socket on the same loop (here: write() to a second TLS client),
-  // the per-loop ssl_read_input/offset/length and ssl_socket must be restored
-  // afterwards — otherwise the remaining ciphertext is dropped and the stream
-  // desyncs (bad record MAC / truncated payload).
-  const BOUNDARY_CHUNK = 512 * 1024;
-  const PAYLOAD_SIZE = 12 * 1024 * 1024;
-  const block = Buffer.alloc(64 * 1024);
-  for (let i = 0; i < block.length; i++) block[i] = i & 0xff;
-  const payload = Buffer.concat(Array(PAYLOAD_SIZE / block.length).fill(block));
-  const expectedHash = new Bun.CryptoHasher("sha256").update(payload).digest("hex");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+); // debug subprocess startup + ASAN symbolication on failure is slow
 
-  const downloadDone = Promise.withResolvers<string>();
-  const sideReceived = Promise.withResolvers<void>();
+it.concurrent(
+  "writing to an established TLS socket from another TLS client's open() does not divert either connection",
+  async () => {
+    // Proxy-style flow: an inbound TLS connection is already established, then an
+    // outbound TLS client is opened and its open() callback synchronously writes a
+    // status frame back to the inbound socket. The outbound socket's handshake must
+    // still be sent to *its own* upstream server (so it completes and the proxy can
+    // report "upstream-ready"), and the inbound client's TLS stream must only ever
+    // carry the proxy's application data — never bytes belonging to the outbound
+    // connection. Previously the per-loop SSL output target was not re-pointed after
+    // the open() dispatch, so the outbound handshake bytes landed in the inbound
+    // client's stream, corrupting its session and stalling the outbound connection.
+    const { promise: clientResult, resolve: resolveClientResult } = Promise.withResolvers<{
+      outcome: string;
+      received: string;
+    }>();
 
-  // Server that streams the 12MiB payload once the client asks for it.
-  let sent = 0;
-  const pump = (socket: Socket) => {
-    while (sent < payload.length) {
-      const written = socket.write(payload.subarray(sent, Math.min(sent + 1024 * 1024, payload.length)));
-      if (written <= 0) break;
-      sent += written;
-    }
-    socket.flush();
-  };
-  const payloadServer = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    tls,
-    socket: {
-      open() {},
-      data(socket) {
-        pump(socket);
-      },
-      drain(socket) {
-        pump(socket);
-      },
-      close() {},
-      error() {},
-    },
-  });
+    let clientReceived = "";
 
-  // Second TLS server + client on the same loop; the download's data() handler
-  // writes to this client from inside the boundary dispatch.
-  const sideServer = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    tls,
-    socket: {
-      open() {},
-      data() {
-        sideReceived.resolve();
-      },
-      close() {},
-      error() {},
-    },
-  });
-
-  let sideSocket: Socket | undefined;
-  let downloadSocket: Socket | undefined;
-  const hasher = new Bun.CryptoHasher("sha256");
-  let receivedBytes = 0;
-  let boundaryChunks = 0;
-  let sideWrites = 0;
-
-  try {
-    sideSocket = await Bun.connect({
+    // Upstream TLS server the proxy connects out to.
+    const upstream = Bun.listen({
       hostname: "127.0.0.1",
-      port: sideServer.port,
-      tls: { ...tls, rejectUnauthorized: false },
+      port: 0,
+      tls,
       socket: {
         open() {},
         data() {},
@@ -1523,54 +1537,231 @@ it("TLS mid-read boundary dispatch: writing to another TLS socket from data() do
       },
     });
 
-    downloadSocket = await Bun.connect({
+    let outbound: Socket | undefined;
+    let inboundRequest = "";
+
+    // Proxy: TLS server that, when the inbound client asks, opens an outbound TLS
+    // connection and writes to the inbound socket from the outbound open() callback.
+    const proxy = Bun.listen({
       hostname: "127.0.0.1",
-      port: payloadServer.port,
-      tls: { ...tls, rejectUnauthorized: false },
+      port: 0,
+      tls,
       socket: {
         open() {},
-        handshake(socket) {
-          socket.write("GO\n");
+        async data(inbound, chunk) {
+          inboundRequest += chunk.toString();
+          if (!inboundRequest.includes("CONNECT\n") || outbound) return;
+          outbound = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: upstream.port,
+            tls: { ...tls, rejectUnauthorized: false },
+            socket: {
+              open() {
+                // Writes to the already-established inbound TLS socket while the
+                // outbound socket's own handshake has not been flushed to the wire yet.
+                inbound.write("hello-from-proxy\n");
+              },
+              handshake(_socket, success) {
+                inbound.write(success ? "upstream-ready\n" : "upstream-handshake-failed\n");
+              },
+              data() {},
+              close() {},
+              error() {},
+            },
+          });
         },
-        data(_socket, chunk) {
-          hasher.update(chunk);
-          receivedBytes += chunk.byteLength;
-
-          const isBoundary = chunk.byteLength === BOUNDARY_CHUNK;
-          if (isBoundary) boundaryChunks += 1;
-          // Write to the second TLS socket from the boundary dispatch; if this
-          // run never produces an exact 512KiB chunk, fall back to writing on
-          // every data event so the re-entrancy is still exercised.
-          if (isBoundary || boundaryChunks === 0) {
-            sideWrites += 1;
-            sideSocket!.write("ping\n");
-          }
-
-          if (receivedBytes >= PAYLOAD_SIZE) {
-            downloadDone.resolve("done");
-          }
-        },
-        close() {
-          downloadDone.resolve(`closed after ${receivedBytes} bytes`);
-        },
-        error(_socket, err) {
-          downloadDone.resolve(`error: ${err} after ${receivedBytes} bytes`);
-        },
+        close() {},
+        error() {},
       },
     });
 
-    expect(await downloadDone.promise).toBe("done");
-    expect(receivedBytes).toBe(PAYLOAD_SIZE);
-    expect(hasher.digest("hex")).toBe(expectedHash);
-    expect(sideWrites).toBeGreaterThan(0);
-    await sideReceived.promise;
-  } finally {
-    downloadSocket?.end();
-    sideSocket?.end();
-    payloadServer.stop(true);
-    sideServer.stop(true);
-  }
-}, 60_000);
+    let client: Socket | undefined;
+    try {
+      // Inbound client talking TLS to the proxy.
+      client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: proxy.port,
+        tls: { ...tls, rejectUnauthorized: false },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("CONNECT\n");
+          },
+          data(_socket, chunk) {
+            clientReceived += chunk.toString();
+            if (clientReceived.includes("upstream-ready\n") || clientReceived.includes("upstream-handshake-failed\n")) {
+              resolveClientResult({ outcome: "ok", received: clientReceived });
+            }
+          },
+          close() {
+            resolveClientResult({ outcome: "closed", received: clientReceived });
+          },
+          error(_socket, err) {
+            resolveClientResult({ outcome: `error: ${err}`, received: clientReceived });
+          },
+        },
+      });
+
+      // The inbound client's TLS session stays intact (no error/close) and sees
+      // exactly the proxy's two status frames, and the outbound handshake reached
+      // its own upstream server — otherwise "upstream-ready" is never produced.
+      expect(await clientResult).toEqual({
+        outcome: "ok",
+        received: "hello-from-proxy\nupstream-ready\n",
+      });
+    } finally {
+      client?.end();
+      outbound?.end();
+      proxy.stop(true);
+      upstream.stop(true);
+    }
+  },
+  30_000,
+);
+
+it.concurrent(
+  "TLS mid-read boundary dispatch: writing to another TLS socket from data() does not corrupt the rest of the stream",
+  async () => {
+    // When SSL_read fills the per-loop 512KiB output buffer exactly, uSockets
+    // dispatches that chunk to the data() callback mid-read and then continues
+    // decrypting the rest of the same TCP read. If the callback does TLS work on
+    // another socket on the same loop (here: write() to a second TLS client),
+    // the per-loop ssl_read_input/offset/length and ssl_socket must be restored
+    // afterwards — otherwise the remaining ciphertext is dropped and the stream
+    // desyncs (bad record MAC / truncated payload).
+    const BOUNDARY_CHUNK = 512 * 1024;
+    const PAYLOAD_SIZE = 12 * 1024 * 1024;
+    const block = Buffer.alloc(64 * 1024);
+    for (let i = 0; i < block.length; i++) block[i] = i & 0xff;
+    const payload = Buffer.concat(Array(PAYLOAD_SIZE / block.length).fill(block));
+    const expectedHash = new Bun.CryptoHasher("sha256").update(payload).digest("hex");
+
+    const downloadDone = Promise.withResolvers<string>();
+    const sideReceived = Promise.withResolvers<void>();
+
+    // Server that streams the 12MiB payload once the client asks for it.
+    let sent = 0;
+    const pump = (socket: Socket) => {
+      while (sent < payload.length) {
+        const written = socket.write(payload.subarray(sent, Math.min(sent + 1024 * 1024, payload.length)));
+        if (written <= 0) break;
+        sent += written;
+      }
+      socket.flush();
+    };
+    const payloadServer = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        open() {},
+        data(socket) {
+          pump(socket);
+        },
+        drain(socket) {
+          pump(socket);
+        },
+        close() {},
+        error() {},
+      },
+    });
+
+    // Second TLS server + client on the same loop; the download's data() handler
+    // writes to this client from inside the boundary dispatch.
+    const sideServer = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        open() {},
+        data() {
+          sideReceived.resolve();
+        },
+        close() {},
+        error() {},
+      },
+    });
+
+    let sideSocket: Socket | undefined;
+    let downloadSocket: Socket | undefined;
+    const hasher = new Bun.CryptoHasher("sha256");
+    let receivedBytes = 0;
+    let boundaryChunks = 0;
+    const sideWrites: number[] = [];
+    const sideHandshake = Promise.withResolvers<void>();
+
+    try {
+      sideSocket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: sideServer.port,
+        tls: { ...tls, rejectUnauthorized: false },
+        socket: {
+          open() {},
+          handshake(_socket, success, authorizationError) {
+            if (success) sideHandshake.resolve();
+            else sideHandshake.reject(authorizationError ?? new Error("side handshake failed"));
+          },
+          data() {},
+          close() {},
+          error(_socket, err) {
+            sideHandshake.reject(err);
+          },
+        },
+      });
+      // connect() resolves when the TCP connection opens. write() returns 0 until the handshake completes.
+      await sideHandshake.promise;
+
+      downloadSocket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: payloadServer.port,
+        tls: { ...tls, rejectUnauthorized: false },
+        socket: {
+          open() {},
+          handshake(socket) {
+            socket.write("GO\n");
+          },
+          data(_socket, chunk) {
+            hasher.update(chunk);
+            receivedBytes += chunk.byteLength;
+
+            const isBoundary = chunk.byteLength === BOUNDARY_CHUNK;
+            if (isBoundary) boundaryChunks += 1;
+            // Write to the second TLS socket from the boundary dispatch; if this
+            // run never produces an exact 512KiB chunk, fall back to writing on
+            // every data event so the re-entrancy is still exercised.
+            if (isBoundary || boundaryChunks === 0) {
+              sideWrites.push(sideSocket!.write("ping\n"));
+            }
+
+            if (receivedBytes >= PAYLOAD_SIZE) {
+              downloadDone.resolve("done");
+            }
+          },
+          close() {
+            downloadDone.resolve(`closed after ${receivedBytes} bytes`);
+          },
+          error(_socket, err) {
+            downloadDone.resolve(`error: ${err} after ${receivedBytes} bytes`);
+          },
+        },
+      });
+
+      expect(await downloadDone.promise).toBe("done");
+      expect(receivedBytes).toBe(PAYLOAD_SIZE);
+      expect(hasher.digest("hex")).toBe(expectedHash);
+      // write() returns 0 when it buffers the bytes instead of sending them.
+      expect(sideWrites.length).toBeGreaterThan(0);
+      expect(sideWrites.filter(written => written !== "ping\n".length)).toEqual([]);
+      await sideReceived.promise;
+    } finally {
+      downloadSocket?.end();
+      sideSocket?.end();
+      payloadServer.stop(true);
+      sideServer.stop(true);
+    }
+  },
+  60_000,
+);
 
 // write() reports how many bytes it took, and the caller may send anything next: the peer must get
 // exactly the reported bytes, then the next write. While one TLS socket holds the unsent rest of a
@@ -1712,68 +1903,143 @@ describe("TLS write() that ends short while another TLS socket is stalled", () =
 
 // After its close_notify a socket reads on until the peer's. A close ahead of that, over unread input, is a reset,
 // and the kernel drops what it had not sent yet.
-it.each([
-  ["that the kernel took at once", 1024 * 1024],
-  ["that waited for the kernel", 4 * 1024 * 1024],
-])("TLS end() while the peer is still sending delivers a write %s", async (_name, size) => {
+describe("TLS end() while the peer is still sending", () => {
   const upload = 8 * 1024 * 1024;
   const payload = Buffer.alloc(upload, "a");
   type Side = { total: number; reported: number; received: number; events: string[] };
-  const done = Promise.withResolvers<void>();
-  const sides: Side[] = [];
-  const handlers = (total: number, finished: (socket: Socket, side: Side) => void) => {
-    const side: Side = { total, reported: 0, received: 0, events: [] };
-    sides.push(side);
-    const pump = (socket: Socket) => {
-      if (side.reported === total) return;
-      while (side.reported < total) {
-        const wrote = socket.write(payload.subarray(side.reported, total));
-        if (wrote <= 0) return;
-        side.reported += wrote;
-      }
-      finished(socket, side);
+  // Resolves with the side that ended and the side that was still sending. The kernel puts the close_notify off `refusals` times.
+  // With `lastPartWaits`, write() reports all of it, and the kernel hasn't taken the last part when the socket ends.
+  async function endWhilePeerSends(
+    size: number,
+    ender: "accepted" | "client",
+    { refusals = 0, endsAgain = false, lastPartWaits = false } = {},
+  ) {
+    const lastPart = 128 * 1024;
+    const done = Promise.withResolvers<void>();
+    const sides: Side[] = [];
+    const handlers = (total: number, finished: (socket: Socket, side: Side) => void) => {
+      const side: Side = { total, reported: 0, received: 0, events: [] };
+      sides.push(side);
+      const pump = (socket: Socket) => {
+        if (side.reported === total) return;
+        while (side.reported < total) {
+          const first = lastPartWaits && total === size ? total - lastPart : total;
+          const wrote = socket.write(payload.subarray(side.reported, side.reported < first ? first : total));
+          if (wrote <= 0) return;
+          side.reported += wrote;
+          if (side.reported === first && first < total) setSocketOptions(socket, 1, 4096);
+        }
+        finished(socket, side);
+      };
+      return {
+        open: pump,
+        drain: pump,
+        data(socket: Socket, chunk: Buffer) {
+          side.received += chunk.length;
+          if (endsAgain && total === size && side.reported === total) socket.end();
+        },
+        end(socket: Socket) {
+          side.events.push("end");
+          if (side.reported === total) socket.end();
+        },
+        close(_socket: Socket, error?: Error) {
+          side.events.push(error ? `close: ${(error as NodeJS.ErrnoException).code}` : "close");
+          if (sides.every(({ events }) => events.at(-1)?.startsWith("close"))) done.resolve();
+        },
+      };
     };
-    return {
-      open: pump,
-      drain: pump,
-      data: (_socket: Socket, chunk: Buffer) => void (side.received += chunk.length),
-      end(socket: Socket) {
-        side.events.push("end");
-        if (side.reported === total) socket.end();
-      },
-      close(_socket: Socket, error?: Error) {
-        side.events.push(error ? `close: ${(error as NodeJS.ErrnoException).code}` : "close");
-        if (sides.every(({ events }) => events.at(-1)?.startsWith("close"))) done.resolve();
-      },
-    };
-  };
-  using server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    tls,
-    socket: handlers(size, socket => socket.end()),
+    const ends = handlers(size, socket => {
+      const fd: number = (socket as any).fd;
+      if (refusals)
+        socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", fd, repeat: refusals });
+      socket.end();
+    });
+    const sends = handlers(upload, (socket, side) => void (side.events.includes("end") && socket.end()));
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      allowHalfOpen: ender === "client",
+      socket: ender === "accepted" ? ends : sends,
+    });
+    try {
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert },
+        allowHalfOpen: ender === "accepted",
+        socket: ender === "accepted" ? sends : ends,
+      });
+      await done.promise;
+    } finally {
+      if (refusals) socketFaultInjection.clear();
+    }
+    return sides;
+  }
+
+  it.each([
+    ["that the kernel took at once", 1024 * 1024],
+    ["that waited for the kernel", 4 * 1024 * 1024],
+  ])("delivers a write %s", async (_name, size) => {
+    const [accepted, client] = await endWhilePeerSends(size, "accepted");
+    // The server has ended: whether it hears of the client's end ahead of the close is a matter of timing.
+    expect({
+      client: { received: client.received, events: client.events },
+      server: { received: accepted.received, closed: accepted.events.at(-1) },
+    }).toEqual({
+      client: { received: size, events: ["end", "close"] },
+      server: { received: upload, closed: "close" },
+    });
   });
-  await Bun.connect({
-    hostname: "127.0.0.1",
-    port: server.port,
-    tls: { ca: tls.cert },
-    allowHalfOpen: true,
-    socket: handlers(upload, (socket, side) => void (side.events.includes("end") && socket.end())),
+
+  describe.each(["accepted", "client"] as const)("from the %s socket that ends again in data()", ender => {
+    it.each([
+      ["that the kernel took", false],
+      ["whose last part waits for the kernel", true],
+    ])("delivers a write %s", async (_name, lastPartWaits) => {
+      const size = 1024 * 1024;
+      const [ended, sent] = await endWhilePeerSends(size, ender, { endsAgain: true, lastPartWaits });
+      expect({
+        ended: { received: ended.received, closes: ended.events.filter(event => event !== "end") },
+        sent: { received: sent.received, events: sent.events },
+      }).toEqual({
+        ended: { received: upload, closes: ["close"] },
+        sent: { received: size, events: ["end", "close"] },
+      });
+    });
   });
-  await done.promise;
-  const [accepted, client] = sides;
-  // The server has ended: whether it hears of the client's end ahead of the close is a matter of timing.
-  expect({
-    client: { received: client.received, events: client.events },
-    server: { received: accepted.received, closed: accepted.events.at(-1) },
-  }).toEqual({
-    client: { received: size, events: ["end", "close"] },
-    server: { received: upload, closed: "close" },
-  });
+
+  // The close_notify waits for the kernel like the data ahead of it.
+  describe.skipIf(!socketFaultInjection.available()).each(["accepted", "client"] as const)(
+    "from the %s socket",
+    ender => {
+      it.each([
+        { megabytes: 1, refusals: 1, again: "" },
+        { megabytes: 4, refusals: 1, again: "" },
+        { megabytes: 1, refusals: 3, again: "" },
+        { megabytes: 4, refusals: 3, again: "" },
+        { megabytes: 1, refusals: 100, again: ", and ends again in data()" },
+        { megabytes: 4, refusals: 100, again: ", and ends again in data()" },
+      ])("delivers $megabytes MiB and a close_notify that the kernel puts off $refusals time(s)$again", async row => {
+        const size = row.megabytes * 1024 * 1024;
+        const [ended, sent] = await endWhilePeerSends(size, ender, {
+          refusals: row.refusals,
+          endsAgain: row.again !== "",
+        });
+        expect({
+          ended: { received: ended.received, closes: ended.events.filter(event => event !== "end") },
+          sent: { received: sent.received, events: sent.events },
+        }).toEqual({
+          ended: { received: upload, closes: ["close"] },
+          sent: { received: size, events: ["end", "close"] },
+        });
+      });
+    },
+  );
 });
 
 // A close must not cut off ciphertext that write() already reported, so it waits for the kernel to take
-// it. The owner has let go by then: only the deadline (10 s on a 4 s tick) ends the wait for such a peer.
+// it. The owner has let go by then: only the deadline (10 s, so the third sweep) ends the wait for such a peer.
 it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", async () => {
   const step = Buffer.alloc(1024 * 1024, "a");
   const probeStep = Buffer.alloc(64 * 1024, "p");
@@ -1782,8 +2048,16 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     if (!socketFaultInjection.available()) return undefined;
     socketFaultInjection.set({ syscall: "send", action: "zero" });
     const wrote = socket.write(probeStep);
-    socketFaultInjection.clear();
+    refuseSilent();
     return wrote;
+  };
+  // Whether the kernel takes the rest after a while is the kernel's call, unless it's made to refuse. There is one rule at a time.
+  let silentFd = -1;
+  const refuseSilent = () => {
+    if (!socketFaultInjection.available()) return;
+    socketFaultInjection.clear();
+    if (silentFd >= 0)
+      socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", fd: silentFd, repeat: -1 });
   };
   const fdIsOpen = (fd: number) => {
     try {
@@ -1826,7 +2100,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     });
   let timeouts = 0;
   const reported: number[] = [0];
-  const endedAt: number[] = [];
+  let sweeps = 0;
   const fill = (socket: Socket) => {
     let total = 0;
     for (let wrote = step.length; wrote === step.length; total += Math.max(wrote, 0)) wrote = socket.write(step);
@@ -1836,22 +2110,26 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     // The owner's own timeout is over with its close.
     socket.timeout(1);
     socket.end();
-    endedAt.push(performance.now());
   };
-  // A write that ends short leaves ciphertext unsent, and end() in the same tick finds it there.
-  const fillAndEnd = (socket: Socket) => {
-    fill(socket);
-    end(socket);
-  };
-
   const probeReady = Promise.withResolvers<Socket>();
   await connected(probeReady.resolve);
   const probe = await probeReady.promise;
+  // The next sweep that isn't run from here is 4 s away now, and every wait below starts early in those 4 s.
+  sweepSocketTimers(1);
   const closed: Promise<number>[] = [];
-  for (const _peer of [SILENT, DRIPPING, UNANSWERING]) {
+  for (const peer of [SILENT, DRIPPING, UNANSWERING]) {
     const { promise, resolve } = Promise.withResolvers<number>();
     closed.push(promise);
-    await connected(fillAndEnd, () => resolve(performance.now()));
+    await connected(
+      socket => {
+        fill(socket);
+        if (peer === SILENT && socketFaultInjection.available()) silentFd = (socket as any).fd;
+        refuseSilent();
+        // A write that ends short leaves ciphertext unsent, and end() in the same tick finds it there.
+        end(socket);
+      },
+      () => resolve(sweeps),
+    );
   }
   const lateClosed = Promise.withResolvers<number>();
   closed.push(lateClosed.promise);
@@ -1861,7 +2139,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       fill(socket);
       lateFilled.resolve(socket);
     },
-    () => lateClosed.resolve(performance.now()),
+    () => lateClosed.resolve(sweeps),
   );
   const late = await lateFilled.promise;
   const destroyed = tlsConnect({ port: server.port, host: "127.0.0.1", ca: tls.cert });
@@ -1873,27 +2151,32 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   if (refuses) socketFaultInjection.set({ syscall: "send", action: "zero", fd: destroyedFd, repeat: -1 });
   destroyed.destroy();
   const openAfterDestroy = fdIsOpen(destroyedFd);
-  if (refuses) socketFaultInjection.clear();
+  if (refuses) refuseSilent();
   await once(destroyed, "close");
   // The kernel takes the unsent rest after a while, and the next write with it. The close_notify then goes out too, and
   // all that this close waits for is the reply of a peer that reads none of it.
   for (let tries = 0; tries < 200 && late.write("a") !== 1; tries++) await Bun.sleep(10);
   // With no timeout of the owner's that could end the wait by chance.
   late.end();
-  endedAt.push(performance.now());
 
-  // Three reads of at most 512 KiB ahead of the deadline: progress that does not put it off, and well short of what is left.
-  const drip = setInterval(() => {
-    peers[DRIPPING].resume();
-    // Nor does what a peer sends in place of its close_notify.
-    peers[LATE].write("still here");
-  }, 3000);
   try {
     const before = { fdIsOpen: openAfterDestroy, wrote: probeBatching(probe) };
-    const waitedFrom = performance.now();
-    const closedAfterMs = (await Promise.all(closed)).map((at, i) => Math.round(at - endedAt[i]));
-    // Its own deadline: the other closes end early where their peers' kernel buffers took everything.
-    while (fdIsOpen(destroyedFd) && performance.now() - waitedFrom < 16_000) await Bun.sleep(100);
+    // Its peer reads everything, so this close needs no deadline.
+    await closed[UNANSWERING - 1];
+    while (sweeps < 6) {
+      // A read of at most 512 KiB ahead of each of the first three sweeps, well short of what is left. Once they let the
+      // unsent ciphertext out, the wait for that peer's close_notify is a second one. What a peer sends in place of its
+      // close_notify puts nothing off.
+      if (sweeps < 3) {
+        const received = peers[DRIPPING].data.received;
+        peers[DRIPPING].resume();
+        peers[LATE].write("still here");
+        for (let tries = 0; tries < 1000 && peers[DRIPPING].data.received === received; tries++) await Bun.sleep(1);
+      }
+      sweeps++;
+      sweepSocketTimers(1);
+    }
+    const closedAtSweep = await Promise.all(closed);
     const after = { fdIsOpen: fdIsOpen(destroyedFd), wrote: probeBatching(probe) };
     const batches = socketFaultInjection.available();
     const missing = (peer: number) => reported[peer] - peers[peer].data.received;
@@ -1901,7 +2184,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     const measured = {
       reported,
       received: peers.map(peer => peer.data.received),
-      closedAfterMs,
+      closedAtSweep,
     };
     expect(
       {
@@ -1909,11 +2192,12 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
         after,
         timeouts,
         cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
-        // 10 s on a 4 s tick is 8 to 12 s after the end().
-        atTheDeadline: [SILENT, DRIPPING, LATE].map(peer => {
-          const ms = closedAfterMs[peer - 1];
-          return ms > 7_000 && ms < 16_000;
-        }),
+        atTheDeadline: [
+          // Once the kernel has taken the rest, the wait for the peer's close_notify is a second one.
+          closedAtSweep[SILENT - 1] >= 3 && closedAtSweep[SILENT - 1] <= (silentFd >= 0 ? 3 : 5),
+          closedAtSweep[DRIPPING - 1] >= 3 && closedAtSweep[DRIPPING - 1] <= 6,
+          closedAtSweep[LATE - 1] === 3,
+        ],
         missing: missing(UNANSWERING),
       },
       JSON.stringify(measured),
@@ -1928,11 +2212,522 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       missing: 0,
     });
   } finally {
-    clearInterval(drip);
+    silentFd = -1;
+    refuseSilent();
     probe.terminate();
     for (const peer of peers) peer.terminate();
   }
 }, 30_000);
+
+it.each([
+  ["the peer's close_notify", false],
+  ["the kernel to take what was written", true],
+])("a TLS close that waits for %s ends at the fixed deadline when its owner ends it again", async (_name, unsent) => {
+  const heard: string[] = [];
+  const accepted = Promise.withResolvers<Socket>();
+  const ready = Promise.withResolvers<Socket>();
+  let read = 0;
+  // Half-open, with a handler for the end: a peer that reads the close_notify and does not answer it, or that reads nothing.
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    allowHalfOpen: true,
+    socket: {
+      handshake(socket) {
+        if (unsent) socket.pause();
+        accepted.resolve(socket);
+      },
+      data() {},
+      end() {},
+    },
+  });
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    tls: { ca: tls.cert },
+    socket: {
+      handshake: ready.resolve,
+      data(socket) {
+        read++;
+        socket.end();
+      },
+      close: (_socket, error) => void heard.push(error ? `close: ${(error as any).code}` : "close"),
+    },
+  });
+  const [peer, client] = await Promise.all([accepted.promise, ready.promise]);
+  const refuses = unsent && socketFaultInjection.available();
+  const fd: number = (client as any).fd;
+  try {
+    // A write that ends short leaves ciphertext unsent.
+    const step = Buffer.alloc(1024 * 1024, "a");
+    while (unsent && client.write(step) === step.length);
+    // Whether the kernel takes the rest after a while is the kernel's call, unless it's made to refuse.
+    if (refuses) socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", fd, repeat: -1 });
+    // The next sweep that isn't run from here is 4 s away now.
+    sweepSocketTimers(1);
+    client.end();
+    let sweeps = 0;
+    while (sweeps < 8 && !heard.length) {
+      const before = read;
+      peer.write("still here");
+      for (let turn = 0; turn < 1000 && read === before; turn++) await new Promise(resolve => setImmediate(resolve));
+      sweeps++;
+      sweepSocketTimers(1);
+    }
+    // Once the kernel has taken the rest, the wait for the peer's close_notify is a second one, with a deadline of its own.
+    const latest = unsent && !refuses ? 5 : 3;
+    expect(
+      { atTheDeadline: sweeps >= 3 && sweeps <= latest, endedAgain: read === sweeps, heard },
+      `${sweeps} sweeps`,
+    ).toEqual({
+      atTheDeadline: true,
+      endedAgain: true,
+      heard: ["close"],
+    });
+  } finally {
+    if (refuses) socketFaultInjection.clear();
+    peer.terminate();
+    client.terminate();
+  }
+});
+
+// The socket has ended, and the kernel has all of it: stopping the listener ends the wait for the peer, not the delivery.
+it.each(["in the same turn of the loop", "some turns later"])(
+  "a TLS end() delivers what the kernel took when the listener's stop(true) follows %s",
+  async when => {
+    const reply = Buffer.alloc(64 * 1024, "r");
+    const ended = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const heard: string[] = [];
+    let received = 0;
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data(socket) {
+          socket.end(reply);
+          if (when === "in the same turn of the loop") listener.stop(true);
+          ended.resolve();
+        },
+      },
+    });
+    try {
+      // It reads nothing until the listener has stopped, and its kernel has room for little: the rest stays with the sender's.
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { ca: tls.cert },
+        socket: {
+          open: socket => setSocketOptions(socket, 2, 4096),
+          handshake(socket) {
+            socket.write("request");
+            socket.pause();
+          },
+          data: (_socket, chunk) => void (received += chunk.length),
+          end: () => void heard.push("end"),
+          error: (_socket, error) => void heard.push(`error: ${(error as any).code}`),
+          close(_socket, error) {
+            heard.push(error ? `close: ${(error as any).code}` : "close");
+            closed.resolve();
+          },
+        },
+      });
+      await ended.promise;
+      for (let turn = 0; turn < 20; turn++) await new Promise(resolve => setImmediate(resolve));
+      listener.stop(true);
+      client.resume();
+      await closed.promise;
+      expect({ received, heard }).toEqual({ received: reply.length, heard: ["end", "close"] });
+    } finally {
+      listener.stop(true);
+    }
+  },
+);
+
+// A write falls short, and the kernel takes the rest later in the same turn of the loop, with the end of the stream
+// behind it. The reader is another process, because this one's loop stands still meanwhile.
+it.each(["shutdown", "end"] as const)(
+  "a TLS %s() behind a write that fell short delivers what the kernel took when the listener's stop(true) follows",
+  async how => {
+    const room = 256 * 1024;
+    const reader = /* js */ `
+      const { setSocketOptions } = require("bun:internal-for-testing");
+      const { existsSync, writeFileSync } = require("node:fs");
+      let received = 0, held = false;
+      const heard = [];
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: Number(process.argv[1]),
+        tls: { rejectUnauthorized: false },
+        socket: {
+          // Its kernel has room for little, so most of what the sender's kernel took stays there.
+          open: socket => setSocketOptions(socket, 2, 64 * 1024),
+          // It reads nothing until the sender's write has fallen short.
+          handshake(socket) {
+            socket.write("request");
+            socket.pause();
+            const timer = setInterval(() => {
+              if (!existsSync(process.argv[2])) return;
+              clearInterval(timer);
+              socket.resume();
+            }, 1);
+          },
+          data(socket, chunk) {
+            received += chunk.length;
+            // Room for what the sender still holds, and no more until the listener has stopped.
+            if (held || received < ${room}) return;
+            held = true;
+            socket.pause();
+            writeFileSync(process.argv[3], "");
+          },
+          end: () => void heard.push("end"),
+          error: (_socket, error) => void heard.push("error: " + error.code),
+          close(_socket, error) {
+            heard.push(error ? "close: " + error.code : "close");
+            console.log(JSON.stringify({ received, heard }));
+            process.exit(0);
+          },
+        },
+      });
+      process.stdin.once("data", () => socket.resume());
+    `;
+    using dir = tempDir("tls-stop-behind-short-write", {});
+    const fellShort = join(String(dir), "fell-short");
+    const madeRoom = join(String(dir), "made-room");
+    const stopped = Promise.withResolvers<number>();
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data(socket) {
+          let sent = socket.write(Buffer.alloc(8 * 1024 * 1024, "r"));
+          writeFileSync(fellShort, "");
+          // write() takes nothing more until the kernel has taken all of the first one.
+          const deadline = Date.now() + 20_000;
+          while (socket.write("r") <= 0 && Date.now() < deadline);
+          sent++;
+          // The end of the stream fits into the kernel once the reader has made room, and the reader holds still from then on.
+          while (sent >= room && !existsSync(madeRoom) && Date.now() < deadline);
+          socket[how]();
+          listener.stop(true);
+          stopped.resolve(sent);
+        },
+      },
+    });
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", reader, String(listener.port), fellShort, madeRoom],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const sent = await stopped.promise;
+      proc.stdin.write("go");
+      proc.stdin.end();
+      expect(JSON.parse(await proc.stdout.text())).toEqual({ received: sent, heard: ["end", "close"] });
+    } finally {
+      listener.stop(true);
+    }
+  },
+);
+
+// The wait for the kernel to take the close_notify and the wait for the peer's are one wait, with one deadline.
+describe.skipIf(!socketFaultInjection.available())("a TLS close whose close_notify waits for the kernel", () => {
+  const turns = async (count: number) => {
+    for (let turn = 0; turn < count; turn++) await new Promise(resolve => setImmediate(resolve));
+  };
+  const fdIsOpen = (fd: number) => {
+    try {
+      fstatSync(fd);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // A connected pair, both half-open: neither answers a close_notify by itself. `events` has what each side heard.
+  async function connectedPair() {
+    const events = { accepted: [] as string[], client: [] as string[] };
+    const handlers = (heard: string[], ready: (socket: Socket) => void) => ({
+      handshake: ready,
+      data() {},
+      end: () => void heard.push("end"),
+      close: (_socket: Socket, error?: Error) => void heard.push(error ? `close: ${(error as any).code}` : "close"),
+    });
+    const acceptedReady = Promise.withResolvers<Socket>();
+    const clientReady = Promise.withResolvers<Socket>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      allowHalfOpen: true,
+      socket: handlers(events.accepted, acceptedReady.resolve),
+    });
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      allowHalfOpen: true,
+      socket: handlers(events.client, clientReady.resolve),
+    });
+    const [accepted, client] = await Promise.all([acceptedReady.promise, clientReady.promise]);
+    return {
+      events,
+      accepted,
+      client,
+      server,
+      fd: (client as any).fd as number,
+      [Symbol.dispose]() {
+        socketFaultInjection.clear();
+        accepted.terminate();
+        client.terminate();
+        server.stop(true);
+      },
+    };
+  }
+  // Runs sweeps until the client has closed, with time for the loop in between. Returns how many it took.
+  async function sweepsUntilClosed(heard: string[]) {
+    for (let sweeps = 1; sweeps <= 8; sweeps++) {
+      await turns(20);
+      sweepSocketTimers(1);
+      if (heard.includes("close")) return sweeps;
+    }
+    return -1;
+  }
+  const putOff = (fd: number, repeat: number) =>
+    socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", fd, repeat });
+
+  it.each([
+    ["the kernel never takes it", -1],
+    ["the kernel takes it and the peer doesn't answer", 1],
+  ])("ends at the fixed deadline when %s", async (_name, repeat) => {
+    using pair = await connectedPair();
+    // The next sweep that isn't run from here is 4 s away now.
+    sweepSocketTimers(1);
+    putOff(pair.fd, repeat);
+    pair.client.end();
+    const openAfterEnd = fdIsOpen(pair.fd);
+    const sweeps = await sweepsUntilClosed(pair.events.client);
+    const openAfterClose = fdIsOpen(pair.fd);
+    await turns(20);
+    pair.accepted.end();
+    await turns(20);
+    expect({ openAfterEnd, sweeps, openAfterClose, events: pair.events }).toEqual({
+      openAfterEnd: true,
+      sweeps: 3,
+      openAfterClose: false,
+      events: { client: ["close"], accepted: ["end", "close"] },
+    });
+  });
+
+  it("ends with the peer's close_notify once the kernel takes it", async () => {
+    using pair = await connectedPair();
+    putOff(pair.fd, -1);
+    pair.client.end();
+    pair.accepted.end();
+    // The peer's close_notify is read while the client's own still waits.
+    await turns(20);
+    const before = { open: fdIsOpen(pair.fd), client: [...pair.events.client] };
+    socketFaultInjection.clear();
+    await turns(20);
+    expect({ before, open: fdIsOpen(pair.fd), events: pair.events }).toEqual({
+      before: { open: true, client: [] },
+      open: false,
+      events: { client: ["close"], accepted: ["close"] },
+    });
+  });
+
+  it("ends at the deadline after the peer's close_notify when the kernel never takes it", async () => {
+    using pair = await connectedPair();
+    sweepSocketTimers(1);
+    putOff(pair.fd, -1);
+    pair.client.end();
+    pair.accepted.end();
+    const sweeps = await sweepsUntilClosed(pair.events.client);
+    await turns(20);
+    expect({ sweeps, open: fdIsOpen(pair.fd), events: pair.events }).toEqual({
+      sweeps: 3,
+      open: false,
+      events: { client: ["close"], accepted: ["close"] },
+    });
+  });
+
+  // A TLS 1.2 record shows its type to the relay: 23 is data, 21 is an alert.
+  it.each([
+    ["Bun.listen()", "end"],
+    ["Bun.listen()", "shutdown"],
+    ["tls.createServer()", "end"],
+  ] as const)("%s: %s() sends it behind the data and ahead of the FIN", async (kind, leave) => {
+    const leaves = (socket: { write(data: string): unknown; end(): unknown; shutdown?(): unknown }, fd: number) => {
+      socket.write("data");
+      putOff(fd, 3);
+      socket[leave]!();
+    };
+    await using server =
+      kind === "Bun.listen()"
+        ? Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls,
+            allowHalfOpen: true,
+            socket: { data: socket => leaves(socket, (socket as any).fd), end: socket => void socket.end() },
+          })
+        : tlsCreateServer({ ...tls, allowHalfOpen: true }, socket => {
+            socket.on("error", () => {}).once("data", () => leaves(socket, (socket as any)._handle.fd));
+          }).listen(0, "127.0.0.1");
+    if ("listening" in server && !server.listening) await once(server, "listening");
+    const port = "port" in server ? server.port : (server.address() as net.AddressInfo).port;
+    const records: number[] = [];
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    await using relay = net.createServer({ allowHalfOpen: true }, client => {
+      const upstream = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      let unparsed = Buffer.alloc(0);
+      client.on("data", chunk => upstream.write(chunk));
+      client.on("end", () => upstream.end());
+      client.on("error", () => {});
+      upstream.on("data", chunk => {
+        unparsed = Buffer.concat([unparsed, chunk]);
+        for (let length; unparsed.length >= 5 && unparsed.length >= (length = 5 + unparsed.readUInt16BE(3));) {
+          records.push(unparsed[0]);
+          unparsed = unparsed.subarray(length);
+        }
+        client.write(chunk);
+      });
+      upstream.on("end", () => (events.push("end"), client.end()));
+      upstream.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code}`));
+      upstream.on("close", hadError => (events.push(`close ${hadError}`), closed.resolve()));
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+    const client = tlsConnect({
+      port: (relay.address() as net.AddressInfo).port,
+      host: "127.0.0.1",
+      ca: tls.cert,
+      maxVersion: "TLSv1.2",
+    });
+    try {
+      client.on("error", () => {}).resume();
+      client.write("go");
+      await closed.promise;
+    } finally {
+      socketFaultInjection.clear();
+      client.destroy();
+    }
+    expect({ lastRecords: records.slice(-2), events }).toEqual({
+      lastRecords: [23, 21],
+      events: ["end", "close false"],
+    });
+  });
+
+  it.each(["end", "shutdown"] as const)(
+    "%s(): ends with a FIN behind all the data when the listener's stop(true) finds it waiting",
+    async how => {
+      using pair = await connectedPair();
+      const reply = Buffer.alloc(64 * 1024, "r");
+      const over = Promise.withResolvers<void>();
+      let received = 0;
+      const heard = (event: string) => {
+        pair.events.client.push(event);
+        over.resolve();
+      };
+      pair.client.reload({
+        socket: {
+          data: (_socket, chunk) => void (received += chunk.length),
+          end: () => heard("end"),
+          close: (_socket, error) => heard(error ? `close: ${(error as any).code}` : "close"),
+        },
+      });
+      // It reads nothing until the listener has stopped, and its kernel has room for little: the rest stays with the sender's.
+      setSocketOptions(pair.client, 2, 4096);
+      pair.client.pause();
+      const wrote = pair.accepted.write(reply);
+      putOff((pair.accepted as any).fd, -1);
+      pair.accepted[how]();
+      pair.server.stop(true);
+      pair.client.resume();
+      await over.promise;
+      expect({ wrote, received, events: pair.events }).toEqual({
+        wrote: reply.length,
+        received: reply.length,
+        events: { accepted: ["close"], client: ["end"] },
+      });
+    },
+  );
+
+  // Part of what was written can't be delivered any more, so the stream must not look whole.
+  it.each(["end", "shutdown"] as const)(
+    "%s() behind data that still waits for the kernel gives the peer no end of the stream when the listener's stop(true) follows",
+    async how => {
+      using pair = await connectedPair();
+      const over = Promise.withResolvers<void>();
+      let received = 0;
+      const heard = (event: string) => {
+        pair.events.client.push(event);
+        over.resolve();
+      };
+      pair.client.reload({
+        socket: {
+          data: (_socket, chunk) => void (received += chunk.length),
+          end: () => heard("end"),
+          close: (_socket, error) => heard(error ? `close: ${(error as any).code}` : "close"),
+        },
+      });
+      putOff((pair.accepted as any).fd, -1);
+      const wrote = pair.accepted.write(Buffer.alloc(64 * 1024, "r"));
+      pair.accepted[how]();
+      pair.server.stop(true);
+      await over.promise;
+      expect({ wrote, received, events: pair.events }).toEqual({
+        wrote: 64 * 1024,
+        received: 0,
+        events: { accepted: ["close"], client: ["close: ECONNRESET"] },
+      });
+    },
+  );
+
+  it("is cut short by terminate()", async () => {
+    using pair = await connectedPair();
+    putOff(pair.fd, -1);
+    pair.client.end();
+    const openAfterEnd = fdIsOpen(pair.fd);
+    pair.client.terminate();
+    const openAfterTerminate = fdIsOpen(pair.fd);
+    await turns(20);
+    expect({ openAfterEnd, openAfterTerminate, client: pair.events.client }).toEqual({
+      openAfterEnd: true,
+      openAfterTerminate: false,
+      client: ["close"],
+    });
+  });
+
+  it("survives the deadline running from another socket's handler in the same turn of the loop", async () => {
+    using pair = await connectedPair();
+    using other = await connectedPair();
+    putOff(pair.fd, -1);
+    pair.client.end();
+    const openAfterEnd = fdIsOpen(pair.fd);
+    const swept = Promise.withResolvers<void>();
+    other.accepted.reload({
+      socket: {
+        data() {
+          sweepSocketTimers(4);
+          swept.resolve();
+        },
+      },
+    });
+    other.client.write("sweep");
+    await swept.promise;
+    await turns(20);
+    expect({ openAfterEnd, open: fdIsOpen(pair.fd), client: pair.events.client }).toEqual({
+      openAfterEnd: true,
+      open: false,
+      client: ["close"],
+    });
+  });
+});
 
 describe.concurrent("TLS server: write() to the accepted socket from inside its own selection callback", () => {
   // alpnCallback / serverName are the listener hooks node:tls's ALPNCallback /
@@ -2026,13 +2821,51 @@ describe.concurrent("TLS server: write() to the accepted socket from inside its 
   }
 });
 
-it("alpnCallback: a selection whose ToString throws surfaces the thrown Error, not an engine-internal cell", async () => {
-  // The thrown value must reach the `error` handler as a plain Error, not the
-  // JSC::Exception wrapper cell: `Object.prototype.toString.call` on the cell
-  // aborts the process and `instanceof Error` on it is false. The crash fires
-  // on the first property load of the value, so probe it in a subprocess.
-  using dir = tempDir("alpn-tostring-throw", {
-    "fixture.cjs": `
+// serverName is the listener hook behind node:tls's SNICallback: `true` suspends the handshake until resumeSNI().
+it.concurrent("TLS server: closes a socket whose handshake fails right after resumeSNI()", async () => {
+  const events: string[] = [];
+  const asked = Promise.withResolvers<Socket & { resumeSNI(context: unknown, isError: boolean): void }>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      serverName(_data: unknown, _servername: string, socket: Socket) {
+        asked.resolve(socket as never);
+        return true;
+      },
+      handshake: (_, success, error) => void events.push(`handshake(${success}, ${(error as any)?.code})`),
+      data() {},
+      close: () => void events.push("close"),
+    } as SocketHandler,
+  });
+  // The listener's key is RSA, so BoringSSL finds no shared cipher once the server name is settled.
+  const client = tlsConnect({
+    port: server.port,
+    host: "127.0.0.1",
+    servername: "pending.test",
+    ca: tls.cert,
+    maxVersion: "TLSv1.2",
+    ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256",
+  });
+  client.on("error", () => {});
+  try {
+    (await asked.promise).resumeSNI(undefined, false);
+    expect(events).toEqual(["handshake(false, EPROTO)", "close"]);
+  } finally {
+    client.destroy();
+  }
+});
+
+it.concurrent(
+  "alpnCallback: a selection whose ToString throws surfaces the thrown Error, not an engine-internal cell",
+  async () => {
+    // The thrown value must reach the `error` handler as a plain Error, not the
+    // JSC::Exception wrapper cell: `Object.prototype.toString.call` on the cell
+    // aborts the process and `instanceof Error` on it is false. The crash fires
+    // on the first property load of the value, so probe it in a subprocess.
+    using dir = tempDir("alpn-tostring-throw", {
+      "fixture.cjs": `
       const tlsMod = require("node:tls");
       const server = Bun.listen({
         hostname: "127.0.0.1",
@@ -2066,23 +2899,24 @@ it("alpnCallback: a selection whose ToString throws surfaces the thrown Error, n
         server.stop(true);
       });
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.cjs"],
-    env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1" },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.cjs"],
+      env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
-    lines: ["error:true:[object Error]:TypeError"],
-    stderr: "",
-    exitCode: 0,
-  });
-});
+    expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+      lines: ["error:true:[object Error]:TypeError"],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 // Bun.connect() on a Windows named pipe takes a dedicated early branch in
 // Listener.connectInner that heap-allocates a standalone Handlers block. That
@@ -2090,7 +2924,7 @@ it("alpnCallback: a selection whose ToString throws surfaces the thrown Error, n
 // close; the `.server` path does `@fieldParentPtr("handlers", ...)` expecting
 // a surrounding Listener struct and would read past the standalone
 // allocation (heap-buffer-overflow under ASAN) and leak the block.
-describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", () => {
+describe.concurrent.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", () => {
   it("open → close cleans up without reading past the Handlers allocation", async () => {
     const src = /* js */ `
       const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-connect-" + Math.random().toString(36).slice(2);
@@ -2201,13 +3035,15 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
   // writer, so closing the writer reported no close, and the native context
   // (which holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX)
   // stayed alive once per failed attempt.
+  // Each attempt has a tls config of its own, and there are more of them than the 16 contexts the cache keeps by itself.
+  // So a context that an attempt still held would show in the count.
   it.concurrent.each([
-    ["plain", "", 0],
-    ["tls", "tls: true,", 1],
+    ["plain", "", 0, 0],
+    ["tls", "tls: { passphrase: String(i) },", 1, 16],
   ])(
     "a connect that fails asynchronously (%s) releases the native context",
-    async (_name, tlsOption, sslCtxPerAttempt) => {
-      const attempts = 8;
+    async (_name, tlsOption, sslCtxPerAttempt, sslCtxKeptByTheCache) => {
+      const attempts = 20;
       const pipePrefix = "\\\\.\\pipe\\bun-test-missing-" + Math.random().toString(36).slice(2) + "-";
       const src = /* js */ `
         const { namedPipeInternals, sslCtxLiveCount } = require("bun:internal-for-testing");
@@ -2281,13 +3117,100 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
           closes: 0,
           outcomes: ["connectError:ENOENT", "rejected:ENOENT"],
           firstAttempt: { contexts: 1, sslCtx: sslCtxPerAttempt },
-          leaked: { contexts: 0, sslCtx: 0 },
+          leaked: { contexts: 0, sslCtx: sslCtxKeptByTheCache },
         },
         stderr: "",
         exitCode: 0,
       });
     },
   );
+});
+
+// A client socket holds no SSL_CTX of its own: the connection attempt and then the SSL do.
+// The program keeps every socket here, so no collection can be what lets the SSL_CTX go.
+// The cache keeps the 16 contexts asked for last by itself. Every connection here has a config of its own,
+// and there are 20 of them, so a context that a done socket still held would show in the count.
+it("a Bun.connect TLS socket that is done lets go of its SSL_CTX", async () => {
+  const src = /* js */ `
+    const { sslCtxLiveCount } = require("bun:internal-for-testing");
+    const tls = ${JSON.stringify(tls)};
+    const before = sslCtxLiveCount();
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: { data() {}, open() {}, close() {}, error() {} },
+    });
+    const port = listener.port;
+
+    const kept = [];
+    let config = 0;
+    // Resolves with the events of 20 connections, once each has finished its handshake or failed.
+    async function connect20() {
+      const seen = new Set();
+      const closed = [];
+      for (let i = 0; i < 20; i++) {
+        const settled = Promise.withResolvers();
+        const close = Promise.withResolvers();
+        closed.push(close.promise);
+        const note = (event, socket) => {
+          seen.add(event);
+          kept.push(socket);
+        };
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port,
+          tls: { ca: tls.cert, serverName: "localhost", passphrase: String(config++) },
+          socket: {
+            data() {},
+            error() {},
+            open(socket) { note("open", socket); },
+            handshake(socket) { note("handshake", socket); settled.resolve(); },
+            close(socket) { note("close", socket); close.resolve(); },
+            connectError(socket) { note("connectError", socket); settled.resolve(); close.resolve(); },
+          },
+        }).catch(() => seen.add("rejected"));
+        await settled.promise;
+      }
+      return { seen, closed };
+    }
+    // uSockets frees a closed socket, and with it the SSL, at the end of the loop iteration.
+    async function live(expected) {
+      for (let i = 0; i < 100 && sslCtxLiveCount() - before > expected; i++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      return sslCtxLiveCount() - before;
+    }
+
+    const result = {};
+    const { seen, closed } = await connect20();
+    result.open = await live(21);
+    for (const socket of new Set(kept)) socket.end();
+    await Promise.all(closed);
+    result.closed = await live(17);
+    result.events = [...seen];
+    listener.stop(true);
+    if (${!isWindows}) {
+      result.refusedEvents = [...(await connect20()).seen];
+      result.refused = await live(16);
+    }
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+  expect({ result, stderr, exitCode }).toEqual({
+    result: {
+      // The control: an open connection does hold its context. The listener holds one more.
+      open: 21,
+      closed: 17,
+      events: ["open", "handshake", "close"],
+      // Windows retries a refused connect for seconds. The named-pipe rows above cover a failed connect there.
+      ...(isWindows ? {} : { refusedEvents: ["connectError", "rejected"], refused: 16 }),
+    },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // A socket over a Windows named pipe frees its native context from a task
@@ -2369,7 +3292,7 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
   });
 });
 
-it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
+it.concurrent("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
   // socket.reload() reads the new callbacks off the user object property by
   // property, so a getter can run arbitrary JS — including terminating the
   // very socket being reloaded, which releases its current handlers. The
@@ -2459,12 +3382,11 @@ it("reload() backs out cleanly when a handler getter closes the socket mid-reloa
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("reload-with-terminate-ok\nsecond-reload:polo\nDONE\n");
+  expect({ stdout, stderr }).toEqual({ stdout: "reload-with-terminate-ok\nsecond-reload:polo\nDONE\n", stderr: "" });
   expect(exitCode).toBe(0);
-  void stderr;
 });
 
-it("reload() does nothing when the top-level socket getter closes the socket", async () => {
+it.concurrent("reload() does nothing when the top-level socket getter closes the socket", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2497,7 +3419,7 @@ it("reload() does nothing when the top-level socket getter closes the socket", a
   expect(exitCode).toBe(0);
 });
 
-it("upgradeTLS() throws when an option getter re-enters upgradeTLS on the same socket", async () => {
+it.concurrent("upgradeTLS() throws when an option getter re-enters upgradeTLS on the same socket", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2541,7 +3463,7 @@ it("upgradeTLS() throws when an option getter re-enters upgradeTLS on the same s
   expect(exitCode).toBe(0);
 });
 
-it("node:net connect() reusing a server-accepted handle keeps the listener's handlers working", async () => {
+it.concurrent("node:net connect() reusing a server-accepted handle keeps the listener's handlers working", async () => {
   // A Bun.listen()-accepted socket wrapper does not own its handlers — they
   // live inside the listener. Reusing such a wrapper as the handle for an
   // outbound node:net connect must not release the listener's handlers: the
@@ -2656,9 +3578,54 @@ it("node:net connect() reusing a server-accepted handle keeps the listener's han
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("STEP1\nSTEP2:connected+data\nSTEP3:second-accept\nDONE\n");
+  expect({ stdout, stderr }).toEqual({
+    stdout: "STEP1\nSTEP2:connected+data\nSTEP3:second-accept\nDONE\n",
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
-  void stderr;
+});
+
+it.concurrent("write() and end() with a byteOffset and no byteLength send the rest of the buffer", async () => {
+  const received: Buffer[] = [];
+  const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(_socket, chunk) {
+        received.push(chunk);
+      },
+      close() {
+        resolve();
+      },
+      error(_socket, err) {
+        reject(err);
+      },
+    },
+  });
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    socket: { data() {} },
+  });
+
+  const buf = Buffer.from("0123456789");
+  expect(() => client.write(buf, 11)).toThrow(
+    expect.objectContaining({ code: "ERR_OUT_OF_RANGE", message: expect.stringContaining('"byteOffset"') }),
+  );
+  const wrote = {
+    fromOffset: client.write(buf, 4),
+    // The offset counts from the start of the view, not of its ArrayBuffer.
+    fromOffsetInView: client.write(buf.subarray(2, 8), 3),
+    fromEnd: client.write(buf, 10),
+    end: client.end(buf, 7),
+  };
+  await closed;
+
+  expect({ wrote, received: Buffer.concat(received).toString() }).toEqual({
+    wrote: { fromOffset: 6, fromOffsetInView: 3, fromEnd: 0, end: 3 },
+    received: "456789" + "567" + "789",
+  });
 });
 
 it.concurrent("setTypeOfService validates its argument instead of asserting", async () => {
@@ -2720,7 +3687,7 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+  expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
     stdout: [
       "object=ERR_INVALID_ARG_TYPE",
       "string=ERR_INVALID_ARG_TYPE",
@@ -2731,9 +3698,9 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
       "ok=no-throw",
       "get=no-throw",
     ],
-    exitCode: 0,
+    stderr: "",
   });
-  void stderr;
+  expect(exitCode).toBe(0);
 });
 
 // initialDelay is ms; TCP_KEEPIDLE is seconds. 0 = enable SO_KEEPALIVE and
@@ -2821,7 +3788,7 @@ it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
     out: {
       a_ret: true,
       a_keepalive: 1,
@@ -2833,12 +3800,12 @@ it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 
       b_keepidle: 4,
       net_keepidle: 4,
     },
-    exitCode: 0,
+    stderr: "",
   });
-  void stderr;
+  expect(exitCode).toBe(0);
 });
 
-it("socket handler validation errors throw instead of crashing", async () => {
+it.concurrent("socket handler validation errors throw instead of crashing", async () => {
   // Handlers protects its callbacks only after validation succeeds, so the
   // validation error paths must throw without tearing down a never-protected
   // Handlers (debug builds assert on the protect/unprotect balance). Run in
@@ -2867,29 +3834,32 @@ it("socket handler validation errors throw instead of crashing", async () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe(
-    'connect:Expected at least "data" or "drain" callback\n' +
+  expect({ stdout, stderr }).toEqual({
+    stdout:
+      'connect:Expected at least "data" or "drain" callback\n' +
       'listen:Expected at least "data" or "drain" callback\n' +
       'connect:Expected "onEnd" callback to be a function\n' +
       'listen:Expected "onEnd" callback to be a function\n',
-  );
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
-  void stderr;
 });
 
 // https://bun-p9.sentry.io/issues/7573683042/ (BUN-3PK7)
-it("socket handler validation errors don't steal GC protection from live sockets sharing the same callbacks", async () => {
-  // node:net passes one module-level handler table to every connection, so
-  // every live socket protects the same JSFunction identities. A Handlers
-  // dropped on a validation error before protect() ran must not gcUnprotect
-  // those shared functions, or GC collects them while a live socket's
-  // Handlers still points at the freed cells and the socket's finalizer
-  // later dereferences cell->vm() inside Bun__JSValue__unprotect.
-  await using proc = spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+it.concurrent(
+  "socket handler validation errors don't steal GC protection from live sockets sharing the same callbacks",
+  async () => {
+    // node:net passes one module-level handler table to every connection, so
+    // every live socket protects the same JSFunction identities. A Handlers
+    // dropped on a validation error before protect() ran must not gcUnprotect
+    // those shared functions, or GC collects them while a live socket's
+    // Handlers still points at the freed cells and the socket's finalizer
+    // later dereferences cell->vm() inside Bun__JSValue__unprotect.
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         let listener;
         let errors = 0;
         (function setup() {
@@ -2954,19 +3924,19 @@ it("socket handler validation errors don't steal GC protection from live sockets
         for (let i = 0; i < 20; i++) Bun.gc(true);
         console.log("done");
       `,
-    ],
-    env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("errors=8\nreceived=hello\ndone\n");
-  expect(exitCode).toBe(0);
-  void stderr;
-});
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "errors=8\nreceived=hello\ndone\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
 
-describe("TLS rejectUnauthorized", () => {
+describe.concurrent("TLS rejectUnauthorized", () => {
   // Regenerate with: openssl req -x509 -newkey rsa:2048 -nodes -days 3650 for
   // each CA, then sign two "localhost" leaves (SAN localhost,127.0.0.1,::1):
   // one by CA_CRT (SERVER_*) and one by a second, untrusted CA (ROGUE_*).
@@ -3175,10 +4145,13 @@ Reo=
       };
     }
 
-    it("closes a connection whose server certificate is not trusted", async () => {
-      using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT });
-      // A rejecting client reports the failed verdict at the callback, like
-      // node v26.3.0 (secureConnect never fires; socket.authorized is false).
+    // A rejecting client reports the failed verdict at the callback, like
+    // node v26.3.0 (secureConnect never fires; socket.authorized is false).
+    it.each([
+      ["closes a connection whose server certificate is not trusted", { ca: CA_CRT }],
+      ["closes an untrusted connection with tls: true", true],
+    ] as const)("%s", async (_name, clientTls) => {
+      using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, clientTls);
       expect(await t.handshake.promise).toEqual({
         authorizedArg: false,
         authorizedGetter: false,
@@ -3189,20 +4162,6 @@ Reo=
       expect(t.received).toEqual([]);
       // The verdict must stay readable after the forced close.
       expect(t.client.getAuthorizationError()?.message).toBe(UNTRUSTED_MESSAGE);
-    });
-
-    it("closes an untrusted connection with tls: true", async () => {
-      using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, true);
-      // Same node v26.3.0 contract as above: the rejected handshake reports
-      // authorized=false at the callback.
-      expect(await t.handshake.promise).toEqual({
-        authorizedArg: false,
-        authorizedGetter: false,
-        callbackError: UNTRUSTED_MESSAGE,
-        getterError: UNTRUSTED_MESSAGE,
-      });
-      await t.closed.promise;
-      expect(t.received).toEqual([]);
     });
 
     it("reports authorized=false but keeps the connection with rejectUnauthorized: false", async () => {
@@ -3218,61 +4177,13 @@ Reo=
       expect(t.received.join("")).toBe("hello-from-server\nping");
     });
 
-    it("closes an untrusted connection upgraded with only a secureContext", async () => {
-      using server = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
-        socket: {
-          open() {},
-          handshake(socket) {
-            socket.write("hello-from-server\n");
-          },
-          data(socket, data) {
-            socket.write(data);
-          },
-          close() {},
-          error() {},
-        },
-      });
-
-      const received: string[] = [];
-      const handshake = Promise.withResolvers<{ authorized: boolean; error: string | null }>();
-      const closed = Promise.withResolvers<void>();
-
-      using tcp = await Bun.connect({
-        hostname: "127.0.0.1",
-        port: server.port,
-        socket: { data() {}, close() {}, error() {} },
-      });
-      const { context } = createSecureContext({ ca: CA_CRT }) as any;
-      const [raw, secure] = tcp.upgradeTLS({
-        secureContext: context,
-        socket: {
-          handshake(socket: Socket, _success: boolean, authorizationError: Error | null) {
-            handshake.resolve({
-              authorized: socket.authorized,
-              error: authorizationError?.message ?? null,
-            });
-          },
-          data(_socket: Socket, data: Buffer) {
-            received.push(data.toString());
-          },
-          close() {
-            closed.resolve();
-          },
-          error() {},
-        },
-      } as any);
-      using _raw = raw;
-      using _secure = secure;
-
-      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE });
-      await closed.promise;
-      expect(received).toEqual([]);
-    });
-
-    it("closes an untrusted connection upgraded with tls: true", async () => {
+    it.each([
+      [
+        "closes an untrusted connection upgraded with only a secureContext",
+        () => ({ secureContext: (createSecureContext({ ca: CA_CRT }) as any).context }),
+      ],
+      ["closes an untrusted connection upgraded with tls: true", () => ({ tls: true })],
+    ] as const)("%s", async (_name, upgradeOptions) => {
       using server = Bun.listen({
         hostname: "127.0.0.1",
         port: 0,
@@ -3300,7 +4211,7 @@ Reo=
         socket: { data() {}, close() {}, error() {} },
       });
       const [raw, secure] = tcp.upgradeTLS({
-        tls: true,
+        ...upgradeOptions(),
         socket: {
           handshake(socket: Socket, _success: boolean, authorizationError: Error | null) {
             handshake.resolve({
@@ -3984,18 +4895,30 @@ Reo=
 
     // A bare `secureContext` carries no parsed config; the policy comes from
     // the context's own verify mode.
-    it("closes an untrusted client certificate on an isServer upgrade with only a secureContext", async () => {
+    it.each([
+      [
+        "closes an untrusted client certificate on an isServer upgrade with only a secureContext",
+        () => ({
+          secureContext: (
+            createSecureContext({
+              key: SERVER_KEY,
+              cert: SERVER_CRT,
+              ca: CA_CRT,
+              requestCert: true,
+              rejectUnauthorized: true,
+            } as any) as any
+          ).context,
+        }),
+      ],
+      [
+        "closes an untrusted client certificate on a socket upgraded with isServer: true",
+        () => ({ tls: { key: SERVER_KEY, cert: SERVER_CRT, ca: CA_CRT, requestCert: true } }),
+      ],
+    ] as const)("%s", async (_name, upgradeOptions) => {
       const serverReceived: string[] = [];
       const handshake = Promise.withResolvers<{ authorized: boolean; error: string | null; writeResult: number }>();
       const serverClosed = Promise.withResolvers<void>();
       const clientClosed = Promise.withResolvers<void>();
-      const { context } = createSecureContext({
-        key: SERVER_KEY,
-        cert: SERVER_CRT,
-        ca: CA_CRT,
-        requestCert: true,
-        rejectUnauthorized: true,
-      } as any) as any;
       using listener = Bun.listen({
         hostname: "127.0.0.1",
         port: 0,
@@ -4005,76 +4928,7 @@ Reo=
             raw.upgradeTLS({
               isServer: true,
               initialData: chunk,
-              secureContext: context,
-              socket: {
-                handshake(secure: Socket, _success: boolean, authorizationError: Error | null) {
-                  handshake.resolve({
-                    authorized: secure.authorized,
-                    error: authorizationError?.message ?? null,
-                    writeResult: secure.write("hello-from-server\n"),
-                  });
-                },
-                data(_secure: Socket, payload: Buffer) {
-                  serverReceived.push(payload.toString());
-                },
-                close() {
-                  serverClosed.resolve();
-                },
-                error() {},
-              },
-            } as any);
-          },
-          error(_raw, err) {
-            handshake.reject(err);
-            serverClosed.reject(err);
-          },
-          close() {},
-        },
-      });
-      using client = await Bun.connect({
-        hostname: "127.0.0.1",
-        port: listener.port,
-        tls: { ca: CA_CRT, serverName: "localhost", key: ROGUE_KEY, cert: ROGUE_CRT },
-        socket: {
-          open() {},
-          handshake(socket) {
-            socket.write("client-app-data\n");
-          },
-          data() {},
-          close() {
-            clientClosed.resolve();
-          },
-          error() {},
-          connectError(_socket, err) {
-            handshake.reject(err);
-            clientClosed.reject(err);
-            serverClosed.reject(err);
-          },
-        },
-      });
-      void client;
-      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, writeResult: -1 });
-      await serverClosed.promise;
-      expect(serverReceived).toEqual([]);
-      await clientClosed.promise;
-    });
-
-    it("closes an untrusted client certificate on a socket upgraded with isServer: true", async () => {
-      const serverReceived: string[] = [];
-      const handshake = Promise.withResolvers<{ authorized: boolean; error: string | null; writeResult: number }>();
-      const serverClosed = Promise.withResolvers<void>();
-      const clientClosed = Promise.withResolvers<void>();
-      const serverTls = { key: SERVER_KEY, cert: SERVER_CRT, ca: CA_CRT, requestCert: true };
-      using listener = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        socket: {
-          open() {},
-          data(raw, chunk) {
-            raw.upgradeTLS({
-              isServer: true,
-              initialData: chunk,
-              tls: serverTls,
+              ...upgradeOptions(),
               socket: {
                 open() {},
                 handshake(secure: Socket, _success: boolean, authorizationError: Error | null) {
@@ -4122,6 +4976,7 @@ Reo=
           },
         },
       });
+      void client;
       expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, writeResult: -1 });
       await serverClosed.promise;
       expect(serverReceived).toEqual([]);
@@ -4699,8 +5554,9 @@ Reo=
           open(socket) {
             setImmediate(() => socket.shutdown());
           },
-          handshake(_socket, success) {
-            events.push(`handshake success=${success}`);
+          handshake(_socket, success, authorizationError) {
+            const code = (authorizationError as NodeJS.ErrnoException | null)?.code ?? null;
+            events.push(`handshake success=${success} code=${code}`);
           },
           data() {},
           close() {
@@ -4713,14 +5569,23 @@ Reo=
           },
         },
       });
+      const chainCheck = () => (client.getAuthorizationError() as NodeJS.ErrnoException | null)?.code ?? null;
       try {
         await flightForwarded.promise;
-        await pendingReadsDone();
+        // The client has read the server's flight once it has a chain verification result.
+        const deadline = Date.now() + 3000;
+        do {
+          await pendingReadsDone();
+        } while (chainCheck() !== "UNABLE_TO_VERIFY_LEAF_SIGNATURE" && events.length === 0 && Date.now() < deadline);
         // The server waits for the client's flight, so the handshake is still pending.
-        expect(events).toEqual([]);
+        expect({ chainCheck: chainCheck(), events }).toEqual({
+          chainCheck: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+          events: [],
+        });
         client.end();
         await closed.promise;
-        expect(events).toEqual(["handshake success=false", "close"]);
+        // The failed handshake reports the chain verification error.
+        expect(events).toEqual(["handshake success=false code=UNABLE_TO_VERIFY_LEAF_SIGNATURE", "close"]);
       } finally {
         client.terminate();
         relay.close();
@@ -4969,19 +5834,19 @@ Reo=
   });
 });
 
+// A connection that the peer answers: the events that were due before it
+// have run by the time it resolves.
+async function pendingEventsDone() {
+  const server = net.createServer(socket => socket.end("x"));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  await once(socket, "data");
+  socket.destroy();
+  server.close();
+}
+
 // What a TLS socket does on Windows is not measured.
 describe("shutdown(true)", () => {
-  // A connection that the peer answers: the events that were due before it
-  // have run by the time it resolves.
-  async function pendingEventsDone() {
-    const server = net.createServer(socket => socket.end("x"));
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
-    await once(socket, "data");
-    socket.destroy();
-    server.close();
-  }
-
   type Role = "connected" | "accepted";
   type Subject = { role: Role; allowHalfOpen: boolean; secure: boolean; handshakeDone: boolean };
 
@@ -5100,7 +5965,7 @@ describe("shutdown(true)", () => {
 
 // Linux-only: uses /proc/self/fd to find and close the connected socket's fd
 // so getsockname()/getpeername() fail with EBADF.
-it.skipIf(!isLinux)(
+it.concurrent.skipIf(!isLinux)(
   "socket.localPort / socket.remotePort return undefined when the underlying fd is gone",
   async () => {
     const script = /* js */ `
@@ -5155,16 +6020,15 @@ it.skipIf(!isLinux)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
+    // If the child died before reporting, the diff shows its raw output.
+    const out = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    if (out?.skipped) return;
+    expect({ out, stderr }).toEqual({ out: { localPort: null, remotePort: null }, stderr: "" });
     expect(exitCode).toBe(0);
-
-    const out = JSON.parse(stdout.trim());
-    if (out.skipped) return;
-    expect(out).toEqual({ localPort: null, remotePort: null });
   },
 );
 
-describe("TLS handshake callback throw", () => {
+describe.concurrent("TLS handshake callback throw", () => {
   // A throw from a Bun-native handshake callback must reach the socket's own
   // error handler (the documented contract), not crash the process — node:tls
   // gets its uncaughtException semantics in net.ts, not in the shared native
@@ -5206,16 +6070,18 @@ describe("TLS handshake callback throw", () => {
   });
 });
 
-it("an unref'd Bun.listen() with no other references keeps accepting across GC", async () => {
-  // Listener.unref() used to downgrade the wrapper's GC ref to weak while the
-  // socket was still listening. GC then collected the wrapper (and the
-  // handlers cell it roots), so the next accepted connection either dispatched
-  // on_open into a swept cell (SIGABRT / type confusion) or, once the
-  // finalizer had closed the socket, got ECONNREFUSED. unref() must only
-  // release the event-loop hold; the wrapper stays reachable until stop().
-  // Raw TCP instead of fetch: the server replies and ends without reading the
-  // request, and on Windows closing with the request unread RSTs the exchange.
-  const src = `
+it.concurrent(
+  "an unref'd Bun.listen() with no other references keeps accepting across GC",
+  async () => {
+    // Listener.unref() used to downgrade the wrapper's GC ref to weak while the
+    // socket was still listening. GC then collected the wrapper (and the
+    // handlers cell it roots), so the next accepted connection either dispatched
+    // on_open into a swept cell (SIGABRT / type confusion) or, once the
+    // finalizer had closed the socket, got ECONNREFUSED. unref() must only
+    // release the event-loop hold; the wrapper stays reachable until stop().
+    // Raw TCP instead of fetch: the server replies and ends without reading the
+    // request, and on Windows closing with the request unread RSTs the exchange.
+    const src = `
     const churnSink = [];
     function churn() {
       let a = [];
@@ -5252,7 +6118,8 @@ it("an unref'd Bun.listen() with no other references keeps accepting across GC",
       churn();
       Bun.gc(true);
       churn();
-      await Bun.sleep(1);
+      // Run one event-loop turn so work the collection deferred to the loop finishes before the next GC.
+      await new Promise(resolve => setImmediate(resolve));
       Bun.gc(true);
       for (const port of ports) {
         const got = await roundTrip(port);
@@ -5261,21 +6128,23 @@ it("an unref'd Bun.listen() with no other references keeps accepting across GC",
     }
     console.log("served " + ports.length + " listeners");
   `;
-  // The subprocess must also exit on its own: unref() still has to release
-  // the listeners' event-loop refs even though their wrappers stay reachable.
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: "served 4 listeners",
-    stderr: "",
-    exitCode: 0,
-  });
-});
+    // The subprocess must also exit on its own: unref() still has to release
+    // the listeners' event-loop refs even though their wrappers stay reachable.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "served 4 listeners",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  30_000,
+); // eight full GCs over 60k live objects take several seconds on a debug build
 
 describe.concurrent("TLS session/keylog handlers", () => {
   // `session`/`keylog` dispatch from the event loop after the SSL stack
@@ -5324,10 +6193,16 @@ describe.concurrent("TLS session/keylog handlers", () => {
       const session = await promise;
       expect(session).toBeInstanceOf(Buffer);
       expect(session.length).toBeGreaterThan(0);
-      // The handshake's key material was logged before the session ticket.
-      expect(keylogLines.length).toBeGreaterThan(0);
-      expect(keylogLines[0]).toBeInstanceOf(Buffer);
-      expect(keylogLines[0].toString()).toContain("_TRAFFIC_SECRET");
+      // One NSS key log line per TLS 1.3 secret, in the order the handshake derives them,
+      // all logged before the session ticket.
+      expect(keylogLines.every(line => line instanceof Buffer)).toBe(true);
+      expect(keylogLines.map(line => line.toString().replace(/^(\S+) [0-9a-f]{64} [0-9a-f]{64}\n$/, "$1"))).toEqual([
+        "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+        "SERVER_HANDSHAKE_TRAFFIC_SECRET",
+        "CLIENT_TRAFFIC_SECRET_0",
+        "SERVER_TRAFFIC_SECRET_0",
+        "EXPORTER_SECRET",
+      ]);
       socket.end();
     } finally {
       server.stop(true);
@@ -5518,16 +6393,13 @@ describe.concurrent("connect() failure promise settlement", () => {
   });
 
   it("an error thrown by connectError() becomes the connect() rejection", async () => {
-    // Grab a port nothing is listening on anymore.
-    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-    const port = probe.port;
-    probe.stop(true);
+    using refused = await refusedPort();
 
     const boom = new Error("boom-connect-error");
     await expect(
       Bun.connect({
         hostname: "127.0.0.1",
-        port,
+        port: refused.port,
         socket: {
           connectError() {
             throw boom;
@@ -5539,7 +6411,75 @@ describe.concurrent("connect() failure promise settlement", () => {
   });
 });
 
-describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
+// The peer runs on a Worker, so it can accept, answer and close while the connecting thread is blocked and can't poll.
+it.skipIf(isWindows).concurrent.each(["Bun.connect", "net.connect"])(
+  "%s reads the answer from a unix socket peer that closed before the first poll",
+  async api => {
+    using dir = tempDir("unix-peer-closes-first", {
+      "peer.mjs": `
+        import { parentPort, workerData as closed } from "node:worker_threads";
+        Bun.listen({
+          unix: "s.sock",
+          socket: {
+            open(socket) {
+              socket.write("hello");
+              socket.terminate();
+              Atomics.store(closed, 0, 1);
+              Atomics.notify(closed, 0);
+            },
+            data() {},
+          },
+        });
+        parentPort.postMessage("listening");
+      `,
+      "client.mjs": `
+        import { once } from "node:events";
+        import net from "node:net";
+        import { Worker } from "node:worker_threads";
+        const closed = new Int32Array(new SharedArrayBuffer(4));
+        const worker = new Worker(new URL("./peer.mjs", import.meta.url), { workerData: closed });
+        await once(worker, "message");
+        const events = [];
+        const done = Promise.withResolvers();
+        if (process.argv[2] === "Bun.connect") {
+          Bun.connect({
+            unix: "s.sock",
+            socket: {
+              open: () => void events.push("open"),
+              data: (_socket, chunk) => void events.push("data " + chunk),
+              end: () => void events.push("end"),
+              close: () => done.resolve(events.push("close")),
+              connectError: (_socket, error) => done.resolve(events.push("connectError " + error.code)),
+            },
+          }).catch(() => {});
+        } else {
+          net
+            .connect("s.sock")
+            .on("connect", () => events.push("open"))
+            .on("data", chunk => events.push("data " + chunk))
+            .on("end", () => events.push("end"))
+            .on("error", error => events.push("error " + error.syscall + " " + error.code))
+            .on("close", () => done.resolve(events.push("close")));
+        }
+        if (Atomics.wait(closed, 0, 0, 30_000) === "timed-out") events.push("the peer never closed");
+        await done.promise;
+        console.log(events.join(", "));
+        await worker.terminate();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "client.mjs", api],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("open, data hello, end, close");
+    expect(exitCode).toBe(0);
+  },
+);
+
+describe.concurrent("allowHalfOpen socket whose peer resets behind pending writes", () => {
   // The full victim matrix (Bun.listen/Bun.serve/node:http(s)/fetch, plain and
   // TLS) runs as test/js/bun/test/parallel/test-net-half-open-peer-reset-*.mjs;
   // this covers the shared usockets core in bun:test form. Unfixed, epoll
@@ -5551,6 +6491,7 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
     const ended = Promise.withResolvers<void>();
     const closed = Promise.withResolvers<void>();
     let endCount = 0;
+    let closeCount = 0;
     const big = Buffer.alloc(4 * 1024 * 1024, 0x78);
 
     using server = Bun.listen({
@@ -5575,6 +6516,7 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
         },
         error() {},
         close() {
+          closeCount++;
           closed.resolve();
         },
       },
@@ -5598,12 +6540,12 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
     await issued.promise; // victim has queued more than the kernel will buffer
     peer.shutdown(); // FIN
     await ended.promise; // victim saw it
-    // The FIN-to-RST gap is where the bug lived; an immediate RST can overtake
-    // the FIN and just read as ECONNRESET on the readable side.
-    await Bun.sleep(50);
+    // Leave a gap between the FIN and the RST. A re-delivered end fires on the victim's next poll,
+    // so a few event-loop turns expose it. An immediate RST can overtake the FIN and read as ECONNRESET.
+    for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setImmediate(resolve));
     peer.terminate(); // RST
     await closed.promise; // victim must tear down, not spin or strand
-    expect(endCount).toBe(1);
+    expect({ endCount, closeCount }).toEqual({ endCount: 1, closeCount: 1 });
   });
 });
 
@@ -5614,7 +6556,7 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
 // samples the usockets loop iteration counter, we send SEGMENTS one-byte writes from here,
 // then it samples again. A loop that wakes per segment reports ~SEGMENTS iterations; one that
 // does not reports the handful caused by our two control lines.
-it("a paused socket does not wake the event loop for every segment its peer sends", async () => {
+it.concurrent("a paused socket does not wake the event loop for every segment its peer sends", async () => {
   const SEGMENTS = 200;
   await using child = spawn({
     cmd: [
@@ -5859,7 +6801,7 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its pee
 
 // A paused socket with a backpressured write of its own must also close on the reset: an owner
 // that resumes only after 'drain' (node:http's flood guard) would otherwise wait forever.
-it("a paused socket with a backpressured write still closes when its peer resets", async () => {
+it.concurrent("a paused socket with a backpressured write still closes when its peer resets", async () => {
   const closedWith = Promise.withResolvers<Error | undefined>();
   let backpressured!: () => void;
   const isBackpressured = new Promise<void>(resolve => (backpressured = resolve));
@@ -5897,7 +6839,49 @@ it("a paused socket with a backpressured write still closes when its peer resets
   await isBackpressured;
   peer.terminate();
   const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
-  expect(error?.code).toBe("ECONNRESET");
+  expect({ reported: error instanceof Error, code: error?.code }).toEqual({ reported: true, code: "ECONNRESET" });
+});
+
+// The raw socketpair peer runs synchronously inside open(), so the first poll event is both writable and readable.
+it.skipIf(isWindows).concurrent("pause() in drain() defers data reported by the same poll event", async () => {
+  const [fd, peerFd] = createSocketPair();
+  const log: string[] = [];
+  const received = Promise.withResolvers<void>();
+  const big = Buffer.alloc(4 * 1024 * 1024, "x");
+  const scratch = Buffer.alloc(1024 * 1024);
+  try {
+    using _socket = await Bun.connect({
+      fd,
+      socket: {
+        open(socket) {
+          // The peer isn't reading yet, so this is a partial write and the socket polls for writable.
+          const written = socket.write(big);
+          writeSync(peerFd, "sent before the pause");
+          for (let read = 0; read < written;) read += readSync(peerFd, scratch);
+        },
+        drain(socket) {
+          // resume() polls for writable again, so drain() runs a second time.
+          if (log.length > 0) return;
+          socket.pause();
+          log.push("drain: pause()");
+          setImmediate(() => {
+            log.push("resume()");
+            socket.resume();
+          });
+        },
+        data(_socket, chunk) {
+          log.push(`data: ${chunk.toString()}`);
+          received.resolve();
+        },
+        error: (_socket, error) => received.reject(error),
+        close: () => received.reject(new Error("the socket closed before the data arrived")),
+      },
+    });
+    await received.promise;
+    expect(log).toEqual(["drain: pause()", "resume()", "data: sent before the pause"]);
+  } finally {
+    closeSync(peerFd);
+  }
 });
 
 it("a tls socket that pauses after shutdown() still reads the peer's reply once resumed", async () => {
@@ -6135,38 +7119,67 @@ describe.concurrent("close() error after the peer resets the connection", () => 
 // socket's error, and its refused connect reported ECONNRESET.
 //
 // The fd arrangement in the fixture is what makes the stale read land on the new socket
-// on POSIX, where a new socket gets the lowest free number. The outcome it checks, a
-// refused connect reports ECONNREFUSED, holds on every platform, so it is not skipped
-// anywhere: on Windows the fixture is only that check.
+// on POSIX, where a new socket gets the lowest free number. The fixture reports whether
+// the arrangement held, so the test fails if the runtime starts opening a different number
+// of fds instead of passing without reaching the stale read. A refused connect reports
+// ECONNREFUSED on every platform, so the test isn't skipped anywhere. Socket handles aren't
+// fd numbers on Windows, so the fixture only reports the outcome there.
 describe.concurrent("a socket closed by data() while its peer's reset is being dispatched", () => {
   it("does not consume the connect error of a socket opened from close()", async () => {
     const source = `
-      import { closeSync, openSync } from "node:fs";
+      import { closeSync, fstatSync, openSync } from "node:fs";
 
-      // A port nothing listens on. The established connection keeps it bound, so no
-      // listener can take it while the test runs.
+      const checkFds = process.platform !== "win32";
+      function isOpen(fd) {
+        try {
+          fstatSync(fd);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      // Same as refusedPort() in the test file.
       const sink = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-      const holder = await Bun.connect({ hostname: "127.0.0.1", port: sink.port, socket: { data() {} } });
+      const holder = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: sink.port,
+        localAddress: "127.0.0.1",
+        socket: { data() {} },
+      });
       const refusedPort = holder.localPort;
 
+      let acceptedFd = -1;
+      const report = {};
+      let connectReturned = false;
       const outcome = Promise.withResolvers();
       const server = Bun.listen({
         hostname: "127.0.0.1",
         port: 0,
         socket: {
           data(socket) {
+            acceptedFd = socket.fd;
             socket.terminate();
           },
           close() {
+            // terminate() already closed the accepted socket's fd.
+            if (checkFds) report.acceptedFdFreeInClose = !isOpen(acceptedFd);
             Bun.connect({
               hostname: "127.0.0.1",
               port: refusedPort,
               socket: {
                 data() {},
                 open: () => outcome.resolve("open"),
-                connectError: (_socket, error) => outcome.resolve(error.code),
+                connectError(_socket, error) {
+                  if (checkFds) report.refusedInsideConnect = !connectReturned;
+                  outcome.resolve(error.code);
+                },
               },
             }).catch(() => {});
+            connectReturned = true;
+            // Bun.connect() to an IP literal creates its socket before it returns, and that
+            // socket has to reuse the accepted socket's fd number for the stale read to hit it.
+            if (checkFds) report.acceptedFdReusedByConnect = isOpen(acceptedFd);
           },
         },
       });
@@ -6184,27 +7197,44 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
       peer.write("x");
       peer.terminate();
 
-      console.log(await outcome.promise);
+      report.outcome = await outcome.promise;
+      console.log(JSON.stringify(report));
       holder.terminate();
       sink.stop(true);
       server.stop(true);
     `;
     // Its own process: the fd numbers have to line up as described in the fixture.
     using dir = tempDir("socket-close-during-reset", { "fixture.ts": source });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "ECONNREFUSED\n", stderr: "" });
-    expect(exitCode).toBe(0);
+    // Another thread of the fixture's process can take or free a number in between, so a run where they didn't line up is
+    // repeated. Its outcome counts all the same, and the last run has to line up.
+    for (let run = 1; ; run++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const report = JSON.parse(stdout);
+      expect(report.outcome).toBe("ECONNREFUSED");
+      expect(exitCode).toBe(0);
+      if (isWindows) return expect(report).toEqual({ outcome: "ECONNREFUSED" });
+      // A BSD kernel can refuse a loopback connect inside connect(2). That socket's fd is closed again before Bun.connect() returns.
+      const refusedInsideConnect = (isMacOS || isFreeBSD) && report.refusedInsideConnect === true;
+      if (!refusedInsideConnect && !report.acceptedFdReusedByConnect && run < 10) continue;
+      return expect(report).toEqual({
+        acceptedFdFreeInClose: true,
+        refusedInsideConnect,
+        acceptedFdReusedByConnect: !refusedInsideConnect,
+        outcome: "ECONNREFUSED",
+      });
+    }
   });
 });
 
-it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async () => {
+it.concurrent("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async () => {
   // Each end() sends close_notify and defers its fd close for the peer's
   // reply. The reply arrives without a FIN, so the ZERO_RETURN path has to
   // complete the deferred close instead of keeping the socket half-open.
@@ -6213,6 +7243,7 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
   const clientClosed = Promise.withResolvers<void>();
   const serverShake = Promise.withResolvers<void>();
   const clientShake = Promise.withResolvers<void>();
+  const closes = { server: 0, client: 0 };
 
   using server = Bun.listen({
     hostname: "127.0.0.1",
@@ -6223,7 +7254,10 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
       open: s => serverOpen.resolve(s),
       handshake: () => serverShake.resolve(),
       data() {},
-      close: () => serverClosed.resolve(),
+      close: () => {
+        closes.server++;
+        serverClosed.resolve();
+      },
     },
   });
   const client = await Bun.connect({
@@ -6234,7 +7268,10 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
     socket: {
       handshake: () => clientShake.resolve(),
       data() {},
-      close: () => clientClosed.resolve(),
+      close: () => {
+        closes.client++;
+        clientClosed.resolve();
+      },
     },
   });
 
@@ -6246,6 +7283,82 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
   serverSock.end();
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
+  expect(closes).toEqual({ server: 1, client: 1 });
+});
+
+it("a socket without a TLS session answers each TLS member the same way, whether it is TCP or closed TLS", async () => {
+  function members(socket: Socket) {
+    return {
+      alpnProtocol: socket.alpnProtocol,
+      disableRenegotiation: socket.disableRenegotiation(),
+      exportKeyingMaterial: socket.exportKeyingMaterial(16, "label"),
+      getCertificate: socket.getCertificate(),
+      getCipher: socket.getCipher(),
+      getEphemeralKeyInfo: socket.getEphemeralKeyInfo(),
+      getPeerCertificate: socket.getPeerCertificate(),
+      // @ts-expect-error
+      getPeerCertificateOfAString: socket.getPeerCertificate("x"),
+      getPeerX509Certificate: socket.getPeerX509Certificate(),
+      getServername: socket.getServername(),
+      getSession: socket.getSession(),
+      getSharedSigalgs: socket.getSharedSigalgs(),
+      getTLSFinishedMessage: socket.getTLSFinishedMessage(),
+      getTLSPeerFinishedMessage: socket.getTLSPeerFinishedMessage(),
+      getTLSTicket: socket.getTLSTicket(),
+      getTLSVersion: socket.getTLSVersion(),
+      getX509Certificate: socket.getX509Certificate(),
+      isSessionReused: socket.isSessionReused(),
+      setMaxSendFragment: socket.setMaxSendFragment(1024),
+      // @ts-expect-error
+      setMaxSendFragmentOfAString: socket.setMaxSendFragment("x"),
+    };
+  }
+  const answers: ReturnType<typeof members>[] = [];
+  for (const options of [undefined, tls]) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: options, socket: { data() {} } });
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: options && { ca: options.cert },
+      socket: {
+        data() {},
+        open(socket) {
+          if (!options) answers.push(members(socket));
+          socket.end();
+        },
+        close(socket) {
+          if (options) answers.push(members(socket));
+          resolve();
+        },
+        error: (_socket, error) => reject(error),
+      },
+    });
+    await promise;
+  }
+  expect(answers[0]).toEqual(answers[1]);
+  expect(answers[0]).toEqual({
+    alpnProtocol: false,
+    disableRenegotiation: undefined,
+    exportKeyingMaterial: undefined,
+    getCertificate: undefined,
+    getCipher: undefined,
+    getEphemeralKeyInfo: null,
+    getPeerCertificate: null,
+    getPeerCertificateOfAString: null,
+    getPeerX509Certificate: undefined,
+    getServername: undefined,
+    getSession: undefined,
+    getSharedSigalgs: null,
+    getTLSFinishedMessage: undefined,
+    getTLSPeerFinishedMessage: undefined,
+    getTLSTicket: undefined,
+    getTLSVersion: null,
+    getX509Certificate: undefined,
+    isSessionReused: false,
+    setMaxSendFragment: false,
+    setMaxSendFragmentOfAString: false,
+  });
 });
 
 // In a process of its own: BoringSSL's SSL_set_session abort()s once the handshake has started.
@@ -6333,6 +7446,11 @@ describe.concurrent("write() that is the first to observe the peer's reset retur
             const deadline = Date.now() + 30000;
             while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
               Atomics.wait(cell, 0, 0, 5);
+            }
+            // The kernel can apply the RST after the peer's close() returns. remotePort calls getpeername(),
+            // which fails on POSIX once the socket is reset.
+            while (process.platform !== "win32" && socket.remotePort !== undefined && Date.now() < deadline) {
+              Atomics.wait(cell, 0, 0, 1);
             }
             writes.push(socket.write("ping"), socket.write("ping"));
           },
@@ -6738,3 +7856,1279 @@ describe.concurrent("a handler that closes its socket and then waits for a promi
     });
   });
 });
+
+describe.concurrent("end(data) larger than the send buffer", () => {
+  const payload = randomFillSync(Buffer.allocUnsafe(8 << 20));
+
+  it.each([
+    ["tcp", "with"],
+    ["tcp", "without"],
+    ["tls", "with"],
+    ["tls", "without"],
+  ] as const)("%s delivers the whole chunk before the FIN %s a drain handler", async (transport, drainHandler) => {
+    const received: Buffer[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+      socket: {
+        data: (_socket, chunk) => void received.push(chunk),
+        close: () => serverClosed.resolve(),
+      },
+    });
+    const clientClosed = Promise.withResolvers<void>();
+    const returned: number[] = [];
+    const errors: Error[] = [];
+    const drain = jest.fn();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: {
+        open(socket) {
+          returned.push(socket.end(payload), socket.write("more"), socket.end("more"));
+        },
+        data() {},
+        ...(drainHandler === "with" ? { drain } : {}),
+        close: () => clientClosed.resolve(),
+        error: (_socket, error) => void errors.push(error),
+      },
+    });
+    await Promise.all([serverClosed.promise, clientClosed.promise]);
+    expect({ returned, errors, drains: drain.mock.calls.length }).toEqual({
+      returned: [payload.length, -1, -1],
+      errors: [],
+      drains: 0,
+    });
+    expect(Buffer.concat(received).equals(payload)).toBe(true);
+  });
+
+  // By the time this resolves, the loop has done every read that was due when it started.
+  async function pendingReadsDone() {
+    await using server = net.createServer(socket => socket.end("x")).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    await once(socket, "data");
+    socket.destroy();
+  }
+
+  describe.each(["tcp", "unix", "tls"] as const)("%s", transport => {
+    // The peer sends its request and its FIN at once, and reads nothing until the socket under test has seen that FIN.
+    it.skipIf(isWindows && transport === "unix").each([
+      ["listen", "data", "without"],
+      ["listen", "data", "with"],
+      ["listen", "end", "with"],
+      ["connect", "data", "without"],
+      ["connect", "data", "with"],
+      ["connect", "end", "with"],
+    ] as const)(
+      "Bun.%s socket sends the tail queued in %s() after the peer's FIN, %s an end handler",
+      async (side, callSite, endHandler) => {
+        const STEP = 256 * 1024;
+        const TAIL = 2 << 20;
+        using dir = transport === "unix" ? tempDir("end-after-fin", {}) : undefined;
+        const requested = Promise.withResolvers<void>();
+        const ended = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<void>();
+        const peerClosed = Promise.withResolvers<void>();
+        const received: Buffer[] = [];
+        const errors: string[] = [];
+        let sent = 0;
+        let endReturned = -2;
+        let peer: Socket<unknown> | undefined;
+
+        // Fills the kernel first, because Windows takes a first send of any size whole.
+        function fillAndEnd(socket: Socket<unknown>) {
+          let took = STEP;
+          while (took === STEP && sent + STEP + TAIL <= payload.length) {
+            took = socket.write(payload.subarray(sent, sent + STEP));
+            sent += Math.max(took, 0);
+          }
+          endReturned = socket.end(payload.subarray(sent, sent + TAIL));
+          sent += TAIL;
+        }
+        const underTest: SocketHandler = {
+          data(socket) {
+            if (callSite === "data") fillAndEnd(socket);
+            requested.resolve();
+          },
+          ...(endHandler === "with"
+            ? {
+                end(socket: Socket<unknown>) {
+                  if (callSite === "end") fillAndEnd(socket);
+                  ended.resolve();
+                },
+              }
+            : {}),
+          close() {
+            requested.resolve();
+            ended.resolve();
+            closed.resolve();
+          },
+          error: (_socket, error) => void errors.push(String(error)),
+        };
+        function sendRequestAndFin(socket: Socket<unknown>) {
+          peer = socket;
+          socket.pause();
+          socket.write("request");
+          socket.shutdown();
+        }
+        const peerHandlers: SocketHandler = {
+          // A TLS socket can't be paused before it has read the handshake.
+          ...(transport === "tls" ? { handshake: sendRequestAndFin } : { open: sendRequestAndFin }),
+          data: (_socket, chunk) => void received.push(chunk),
+          end() {},
+          close: () => peerClosed.resolve(),
+          error() {},
+        };
+
+        const accepting = {
+          allowHalfOpen: side !== "listen",
+          tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+          socket: side === "listen" ? underTest : peerHandlers,
+        };
+        const connecting = {
+          allowHalfOpen: side !== "connect",
+          tls: transport === "tls" ? { ca: tls.cert } : undefined,
+          socket: side === "connect" ? underTest : peerHandlers,
+        };
+        const path = dir && join(String(dir), "s.sock");
+        using listener =
+          path === undefined
+            ? Bun.listen({ hostname: "127.0.0.1", port: 0, ...accepting })
+            : Bun.listen({ unix: path, ...accepting });
+        using _connected = await (path === undefined
+          ? Bun.connect({ hostname: "127.0.0.1", port: (listener as Bun.TCPSocketListener).port, ...connecting })
+          : Bun.connect({ unix: path, ...connecting }));
+
+        await requested.promise;
+        await (endHandler === "with" ? ended.promise : pendingReadsDone());
+        peer?.resume();
+        await Promise.all([closed.promise, peerClosed.promise]);
+
+        expect({ endReturned, errors }).toEqual({ endReturned: TAIL, errors: [] });
+        expect(Buffer.concat(received).equals(payload.subarray(0, sent))).toBe(true);
+      },
+    );
+  });
+
+  // An ended socket takes no more writes. Windows queues no tail.
+  describe.skipIf(isWindows).each(["tcp", "unix", "tls"] as const)("%s", transport => {
+    it.each(["nothing", "flush", "shutdown", "close"] as const)(
+      "write() in data() is refused after end(data) left a tail and %s followed",
+      async second => {
+        using dir = tempDir("write-after-end", {});
+        const writes: number[] = [];
+        let received = Buffer.alloc(0);
+        const opened = Promise.withResolvers<Socket>();
+        const peerOpened = Promise.withResolvers<Socket>();
+        const readOrClosed = Promise.withResolvers<void>();
+        const peerClosed = Promise.withResolvers<void>();
+        const ready = transport === "tls" ? "handshake" : "open";
+        const unix = join(String(dir), "socket");
+        using listener = Bun.listen({
+          ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: 0 }),
+          tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+          socket: {
+            [ready]: (socket: Socket) => opened.resolve(socket),
+            data(socket) {
+              writes.push(socket.write("LATE"));
+              readOrClosed.resolve();
+            },
+            close: () => readOrClosed.resolve(),
+          },
+        });
+        await Bun.connect({
+          ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: listener.port }),
+          tls: transport === "tls" ? { ca: tls.cert } : undefined,
+          socket: {
+            [ready](socket: Socket) {
+              socket.pause();
+              peerOpened.resolve(socket);
+            },
+            data: (_, chunk) => void (received = Buffer.concat([received, chunk])),
+            error() {},
+            close: () => peerClosed.resolve(),
+          },
+        });
+        const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
+        try {
+          // More than the kernel takes for a peer that doesn't read.
+          const size = 4 << 20;
+          expect(socket.end(Buffer.alloc(size, "a"))).toBe(size);
+          if (second !== "nothing") socket[second]();
+          peer.write("x");
+          await readOrClosed.promise;
+          peer.resume();
+          await peerClosed.promise;
+          // A closed socket may read nothing more.
+          expect(writes).toEqual(second === "close" ? writes.map(() => -1) : [-1]);
+          expect(received.equals(Buffer.alloc(received.length, "a"))).toBe(true);
+        } finally {
+          socket.terminate();
+          peer.terminate();
+        }
+      },
+    );
+  });
+
+  // In its own process: the rule that refuses the sends is process-wide.
+  it.skipIf(isWindows || !socketFaultInjection.available())(
+    "write() in data() is refused while close() still sends what the TLS layer holds",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+          import { socketFaultInjection } from "bun:internal-for-testing";
+          const { key, cert } = JSON.parse(process.env.TEST_TLS);
+          const writes = [];
+          let onlyTheChunk = true;
+          const opened = Promise.withResolvers();
+          const peerOpened = Promise.withResolvers();
+          const read = Promise.withResolvers();
+          const peerClosed = Promise.withResolvers();
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: { key, cert },
+            socket: {
+              handshake: socket => opened.resolve(socket),
+              data(socket) {
+                writes.push(socket.write("LATE"));
+                read.resolve();
+              },
+            },
+          });
+          await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            tls: { ca: cert },
+            socket: {
+              handshake(socket) {
+                socket.pause();
+                peerOpened.resolve(socket);
+              },
+              data: (socket, chunk) => void (onlyTheChunk &&= chunk.equals(Buffer.alloc(chunk.length, "a"))),
+              error() {},
+              close: () => peerClosed.resolve(),
+            },
+          });
+          const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
+          socket.end(Buffer.alloc(4 << 20, "a"));
+          socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: socket.fd });
+          socket.close();
+          peer.write("x");
+          await read.promise;
+          socketFaultInjection.clear();
+          peer.resume();
+          await peerClosed.promise;
+          console.log(JSON.stringify({ writes, onlyTheChunk }));
+          `,
+        ],
+        env: { ...bunEnv, TEST_TLS: JSON.stringify({ key: tls.key, cert: tls.cert }) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: '{"writes":[-1],"onlyTheChunk":true}\n', stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // In its own process: an uncaught error sets the exit code.
+  it.skipIf(isWindows)(
+    "closes without an uncaught error when the peer disconnects before the tail is sent",
+    async () => {
+      using dir = tempDir("end-peer-gone", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+        const closed = Promise.withResolvers();
+        const server = Bun.listen({
+          unix: "s.sock",
+          socket: {
+            data: socket => console.log("end", socket.end(Buffer.alloc(16 << 20))),
+            close: () => (console.log("close"), closed.resolve()),
+          },
+        });
+        await Bun.connect({
+          unix: "s.sock",
+          socket: { open: socket => void socket.write("request"), data: socket => socket.close() },
+        });
+        await closed.promise;
+        server.stop(true);
+        `,
+        ],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `end ${16 << 20}\nclose\n`, stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // In its own process: the sweeps also advance every other socket's timeout on the thread.
+  // Windows takes a first send of any size whole, so nothing is queued there.
+  it.skipIf(isWindows)(
+    "calls timeout() while the tail waits on a peer that sent its FIN and stopped reading",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const ended = Promise.withResolvers();
+        const closed = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data: socket => console.log("end", socket.end(Buffer.alloc(16 << 20))),
+            end: () => (console.log("peer's FIN"), ended.resolve()),
+            timeout: socket => (console.log("timeout"), socket.terminate()),
+            close: () => (console.log("close"), closed.resolve()),
+          },
+        });
+        using peer = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          allowHalfOpen: true,
+          socket: {
+            open(socket) {
+              socket.pause();
+              socket.write("request");
+              socket.shutdown();
+            },
+            data() {},
+          },
+        });
+        await ended.promise;
+        // An accepted socket starts with a 120 second timeout. One sweep is 4 seconds, and the 30th may come a moment too early.
+        sweepSocketTimers(31);
+        await closed.promise;
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `end ${16 << 20}\npeer's FIN\ntimeout\nclose\n`, stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // In its own process, and not on Windows, for the same reasons.
+  const timeoutHandlers = {
+    "a timeout() that calls end()": `socket => (console.log("timeout"), void socket.end())`,
+    "an async timeout() that calls end() later": `async socket => (console.log("timeout"), await 0, void socket.end())`,
+    "a timeout() that does nothing": `() => console.log("timeout")`,
+    "no timeout()": "undefined",
+  };
+  it
+    .skipIf(isWindows)
+    .each(
+      (["tcp", "tls"] as const).flatMap(transport =>
+        Object.keys(timeoutHandlers).map(handler => [transport, handler as keyof typeof timeoutHandlers] as const),
+      ),
+    )(
+    "%s with %s: the timeout closes an ended socket whose peer stopped reading the tail",
+    async (transport, handler) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+          import { sweepSocketTimers } from "bun:internal-for-testing";
+          const { key, cert } = JSON.parse(process.env.TEST_TLS);
+          const queued = Promise.withResolvers();
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: key ? { key, cert } : undefined,
+            socket: {
+              data: socket => (console.log("end", socket.end(Buffer.alloc(16 << 20))), queued.resolve()),
+              timeout: ${timeoutHandlers[handler]},
+              close: (socket, error) => console.log("close", error?.code, error?.syscall),
+            },
+          });
+          function sendRequest(socket) {
+            socket.write("request");
+            socket.pause();
+          }
+          using peer = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            tls: key ? { ca: cert } : undefined,
+            // A TLS socket can't be paused before it has read the handshake.
+            socket: { ...(key ? { handshake: sendRequest } : { open: sendRequest }), data() {} },
+          });
+          await queued.promise;
+          // An accepted socket starts with a 120 second timeout, and a TLS close waits 10 more for unsent records.
+          // One sweep is 4 seconds, and a timeout is due at the first sweep that isn't early: 31 and 4 at most.
+          sweepSocketTimers(31 + 4);
+          console.log("done");
+          `,
+        ],
+        env: { ...bunEnv, TEST_TLS: JSON.stringify(transport === "tls" ? { key: tls.key, cert: tls.cert } : {}) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const timeout = handler === "no timeout()" ? "" : "timeout\n";
+      expect({ stdout, stderr }).toEqual({
+        stdout: `end ${16 << 20}\n${timeout}close ETIMEDOUT write\ndone\n`,
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // In its own process, and not on Windows, for the same reasons.
+  it.skipIf(isWindows).each(["tcp", "tls"] as const)(
+    "%s: end(data) made in timeout() with nothing queued before closes at once, without an error",
+    async transport => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+          import { sweepSocketTimers } from "bun:internal-for-testing";
+          const { key, cert } = JSON.parse(process.env.TEST_TLS);
+          const full = Promise.withResolvers();
+          const chunk = Buffer.alloc(1 << 20);
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: key ? { key, cert } : undefined,
+            socket: {
+              data(socket) {
+                while (socket.write(chunk) === chunk.length) {}
+                full.resolve();
+              },
+              timeout: socket => console.log("timeout", socket.end(Buffer.alloc(16 << 20))),
+              close: (socket, error) => console.log("close", error?.code),
+            },
+          });
+          function sendRequest(socket) {
+            socket.write("request");
+            socket.pause();
+          }
+          using peer = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            tls: key ? { ca: cert } : undefined,
+            socket: { ...(key ? { handshake: sendRequest } : { open: sendRequest }), data() {} },
+          });
+          await full.promise;
+          // The accepted socket's 120 seconds, and the 10 a TLS close waits for unsent records. Less than a second timeout.
+          sweepSocketTimers(31 + 4);
+          console.log("done");
+          `,
+        ],
+        env: { ...bunEnv, TEST_TLS: JSON.stringify(transport === "tls" ? { key: tls.key, cert: tls.cert } : {}) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `timeout ${16 << 20}\nclose undefined\ndone\n`, stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Windows takes a first send of any size whole, so nothing is queued there.
+  it.skipIf(isWindows || !socketFaultInjection.available())(
+    "end(data) on the raw half of an upgradeTLS() pair leaves the TLS half's tail alone",
+    async () => {
+      const size = 12 << 20;
+      let received = 0;
+      let rawSent = -1;
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: { data: (_socket, chunk) => void (received += chunk.length), close: () => closed.resolve() },
+      });
+      const plain = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+      const [raw] = plain.upgradeTLS({
+        tls: { ca: tls.cert },
+        socket: {
+          data() {},
+          handshake(socket) {
+            socket.end(Buffer.alloc(size));
+            // The kernel may have room again by now, and two raw bytes in the middle of a record would end the connection.
+            socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", fd: (socket as any).fd });
+            rawSent = raw.end("zz");
+            socketFaultInjection.clear();
+          },
+        },
+      });
+      await closed.promise;
+      expect({ rawSent, received }).toEqual({ rawSent: 0, received: size });
+    },
+  );
+
+  it.each(["end", "shutdown"] as const)(
+    "%s() on the raw half of an upgradeTLS() pair leaves the TLS half's tail alone",
+    async method => {
+      const size = 12 << 20;
+      let received = 0;
+      let taken = -1;
+      let closeError: Error | undefined;
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: { data: (_socket, chunk) => void (received += chunk.length), close: () => closed.resolve() },
+      });
+      const plain = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+      const [raw] = plain.upgradeTLS({
+        tls: { ca: tls.cert },
+        socket: {
+          data() {},
+          close: (_socket, error) => void (closeError = error),
+          handshake(socket) {
+            taken = socket.end(Buffer.alloc(size));
+            raw[method]();
+          },
+        },
+      });
+      await closed.promise;
+      expect({ taken, received, closeError }).toEqual({ taken: size, received: size, closeError: undefined });
+    },
+  );
+
+  it.each(["tcp", "tls"] as const)("%s: shutdown() after end(data) leaves the tail alone", async transport => {
+    const size = 12 << 20;
+    let received = 0;
+    let taken = -1;
+    const closed = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: transport === "tls" ? tls : undefined,
+      socket: {
+        data(socket) {
+          taken = socket.end(Buffer.alloc(size));
+          socket.shutdown();
+        },
+      },
+    });
+    const sendRequest = (socket: Socket) => void socket.write("request");
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: {
+        ...(transport === "tls" ? { handshake: sendRequest } : { open: sendRequest }),
+        data: (_socket, chunk) => void (received += chunk.length),
+        close: () => closed.resolve(),
+      },
+    });
+    await closed.promise;
+    expect({ taken, received }).toEqual({ taken: size, received: size });
+  });
+
+  // Windows takes a first send of any size whole, so nothing is queued there.
+  it.skipIf(isWindows).each(["tcp", "tls"] as const)(
+    "%s: close() gets an error for the tail that stop(true) drops",
+    async transport => {
+      const size = 12 << 20;
+      let taken = -1;
+      const closed = Promise.withResolvers<Error | undefined>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: transport === "tls" ? tls : undefined,
+        socket: {
+          data(socket) {
+            taken = socket.end(Buffer.alloc(size));
+            server.stop(true);
+          },
+          close: (_socket, error) => closed.resolve(error),
+        },
+      });
+      const sendRequest = (socket: Socket) => void socket.write("request");
+      using client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: transport === "tls" ? { ca: tls.cert } : undefined,
+        socket: { ...(transport === "tls" ? { handshake: sendRequest } : { open: sendRequest }), data() {} },
+      });
+      expect(await closed.promise).toMatchObject({ code: "ECANCELED", syscall: "write" });
+      expect(taken).toBe(size);
+    },
+  );
+
+  it.skipIf(isWindows)(
+    "upgradeTLS() throws while the tail of end(data) is being sent, and the tail arrives",
+    async () => {
+      const size = 12 << 20;
+      let received = 0;
+      let taken = -1;
+      let thrown: Error | undefined;
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { data: (_socket, chunk) => void (received += chunk.length), close: () => closed.resolve() },
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          data() {},
+          open(socket) {
+            taken = socket.end(Buffer.alloc(size));
+            try {
+              socket.upgradeTLS({ tls: { ca: tls.cert }, socket: { data() {} } });
+            } catch (error) {
+              thrown = error as Error;
+            }
+          },
+        },
+      });
+      await closed.promise;
+      expect(thrown?.message).toBe("upgradeTLS requires a socket that has not ended");
+      expect({ taken, received }).toEqual({ taken: size, received: size });
+    },
+  );
+
+  it.skipIf(isWindows)("the timeout set before upgradeTLS() bounds the tail of the TLS socket", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const { key, cert } = JSON.parse(process.env.TEST_TLS);
+        const queued = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { key, cert },
+          socket: { data: socket => socket.pause() },
+        });
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            data() {},
+            open(socket) {
+              socket.timeout(20);
+              socket.upgradeTLS({
+                tls: { ca: cert },
+                socket: {
+                  data() {},
+                  handshake: socket => (socket.end(Buffer.alloc(16 << 20)), queued.resolve()),
+                  close: (socket, error) => console.log("close", error?.code, error?.syscall),
+                },
+              });
+            },
+          },
+        });
+        await queued.promise;
+        // 20 seconds, then the 10 a TLS close waits for unsent records. One sweep is 4 seconds, and a timeout is due at the first sweep that isn't early: 6 and 4 at most.
+        sweepSocketTimers(6 + 4);
+        console.log("done");
+        `,
+      ],
+      env: { ...bunEnv, TEST_TLS: JSON.stringify({ key: tls.key, cert: tls.cert }) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "close ETIMEDOUT write\ndone\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)(
+    "starts the timeout of an ended socket again each time the peer takes some of the tail",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const queued = Promise.withResolvers();
+        const tookHalf = Promise.withResolvers();
+        let received = 0;
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data: socket => (socket.end(Buffer.alloc(64 << 20)), queued.resolve()),
+            close: (socket, error) => console.log("close", error?.code),
+          },
+        });
+        using peer = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open(socket) {
+              socket.write("request");
+              socket.pause();
+            },
+            data(socket, chunk) {
+              // More than the kernel held when the peer stopped reading, so the server has sent since.
+              if ((received += chunk.length) < 32 << 20) return;
+              socket.pause();
+              tookHalf.resolve();
+            },
+          },
+        });
+        await queued.promise;
+        // 100 of the accepted socket's 120 seconds. One sweep is 4 seconds.
+        sweepSocketTimers(25);
+        peer.resume();
+        await tookHalf.promise;
+        sweepSocketTimers(25);
+        console.log("open after 200 seconds");
+        sweepSocketTimers(7);
+        console.log("done");
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "open after 200 seconds\nclose ETIMEDOUT\ndone\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
+describe.concurrent.each(["tcp", "tls"] as const)(
+  "%s socket whose peer sends its FIN with nothing queued",
+  transport => {
+    async function peerEndsFirst(side: "listen" | "connect", allowHalfOpen: boolean) {
+      const events: string[] = [];
+      const sawEnd = Promise.withResolvers<Socket<unknown>>();
+      const closed = Promise.withResolvers<void>();
+      const peerClosed = Promise.withResolvers<void>();
+      const underTest: SocketHandler = {
+        data() {},
+        end(socket) {
+          events.push("end");
+          sawEnd.resolve(socket);
+        },
+        close() {
+          events.push("close");
+          closed.resolve();
+        },
+        error: (_socket, error) => void events.push(`error ${error}`),
+      };
+      const peerHandlers: SocketHandler = {
+        open: socket => void socket.shutdown(),
+        data: (_socket, chunk) => void events.push(`peer got ${chunk}`),
+        end() {},
+        close: () => peerClosed.resolve(),
+        error() {},
+      };
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        allowHalfOpen: side === "listen" ? allowHalfOpen : true,
+        tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+        socket: side === "listen" ? underTest : peerHandlers,
+      });
+      using _connected = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        allowHalfOpen: side === "connect" ? allowHalfOpen : true,
+        tls: transport === "tls" ? { ca: tls.cert } : undefined,
+        socket: side === "connect" ? underTest : peerHandlers,
+      });
+      const socket = await sawEnd.promise;
+      if (allowHalfOpen) socket.end("still open");
+      await Promise.all([closed.promise, peerClosed.promise]);
+      return events;
+    }
+
+    it.each(["listen", "connect"] as const)("Bun.%s closes a default socket after its end handler", async side => {
+      expect(await peerEndsFirst(side, false)).toEqual(["end", "close"]);
+    });
+
+    it.each(["listen", "connect"] as const)("Bun.%s keeps an allowHalfOpen socket open until end()", async side => {
+      expect((await peerEndsFirst(side, true)).sort()).toEqual(["close", "end", "peer got still open"]);
+    });
+  },
+);
+
+// With a `handshake` handler, `open` runs when the TCP connection opens, before the TLS handshake.
+it.concurrent("a TLS socket ended from open() reports the failed handshake and closes", async () => {
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { key: tls.key, cert: tls.cert },
+    socket: { data() {}, error() {} },
+  });
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    tls: { ca: tls.cert },
+    socket: {
+      open(socket) {
+        events.push("open");
+        socket.end();
+      },
+      handshake: (_socket, success, error) => void events.push(`handshake ${success} ${error?.code}`),
+      close() {
+        events.push("close");
+        closed.resolve();
+      },
+      data() {},
+      error: (_socket, error) => closed.reject(error),
+      connectError: (_socket, error) => closed.reject(error),
+    },
+  });
+  await closed.promise;
+  expect(events).toEqual(["open", "handshake false ECONNRESET", "close"]);
+});
+
+it.concurrent("closes an allowHalfOpen socket when shutdown() runs after its poll went idle", async () => {
+  const ended = Promise.withResolvers<Socket<unknown>>();
+  const drained = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<void>();
+  const peerClosed = Promise.withResolvers<void>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    socket: {
+      data() {},
+      end: socket => ended.resolve(socket),
+      // The EOF path arms one writable wakeup, so drain is the last event before the poll goes idle.
+      drain: () => drained.resolve(),
+      close: () => closed.resolve(),
+      error: (_socket, error) => closed.reject(error),
+    },
+  });
+  using _peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    allowHalfOpen: true,
+    socket: {
+      open: socket => void socket.shutdown(),
+      data() {},
+      end() {},
+      close: () => peerClosed.resolve(),
+      error: (_socket, error) => peerClosed.reject(error),
+    },
+  });
+  const socket = await ended.promise;
+  await drained.promise;
+  // Windows reports the FIN once more after drain. Two loop turns get past that report.
+  for (let i = 0; i < 2; i++) await new Promise<void>(resolve => setImmediate(resolve));
+  socket.shutdown();
+  await Promise.all([closed.promise, peerClosed.promise]);
+});
+
+it.concurrent("the TLS half of an upgraded default socket closes after the peer's FIN", async () => {
+  const peerClosed = Promise.withResolvers<void>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { key: tls.key, cert: tls.cert },
+    allowHalfOpen: true,
+    socket: {
+      open: socket => void socket.shutdown(),
+      data() {},
+      end: socket => void socket.end(),
+      close: () => peerClosed.resolve(),
+      error() {},
+    },
+  });
+  const raw = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  raw.upgradeTLS({
+    tls: { ca: tls.cert },
+    socket: {
+      data() {},
+      end: () => void events.push("end"),
+      close() {
+        events.push("close");
+        closed.resolve();
+      },
+      error: (_socket, error) => void events.push(`error ${error}`),
+    },
+  });
+  await Promise.all([closed.promise, peerClosed.promise]);
+  expect(events).toEqual(["end", "close"]);
+});
+
+it.concurrent.each(["tcp", "tls"] as const)(
+  "%s frees end(data)'s queued tail when the peer closes without reading it",
+  async transport => {
+    const N = 8 << 20;
+    let accepted = 0;
+    const queued = Promise.withResolvers<number>();
+    const closed = Promise.withResolvers<{ held: number; bytesWritten: number }>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+      socket: {
+        data(socket) {
+          // Fills the kernel first, because Windows takes a first send of any size whole.
+          const step = Buffer.alloc(256 * 1024);
+          for (let took = step.length, steps = 0; took === step.length && steps < 64; steps++) {
+            took = socket.write(step);
+            accepted += Math.max(took, 0);
+          }
+          accepted += socket.end(Buffer.alloc(N));
+          queued.resolve(estimateShallowMemoryUsageOf(socket));
+        },
+        close: socket =>
+          closed.resolve({ held: estimateShallowMemoryUsageOf(socket), bytesWritten: socket.bytesWritten }),
+        error() {},
+      },
+    });
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: {
+        open(socket) {
+          socket.pause();
+          socket.write("request");
+        },
+        data() {},
+        error() {},
+      },
+    });
+    expect(await queued.promise).toBeGreaterThan(1 << 20);
+    peer.terminate();
+    const { held, bytesWritten } = await closed.promise;
+    expect(held).toBeLessThan(64 * 1024);
+    expect(bytesWritten).toBe(accepted);
+  },
+);
+
+describe.concurrent("Bun.connect with a tls object that sets no option", () => {
+  const CLIENT_HELLO_RECORD = 22;
+
+  // Resolves with the first bytes a raw peer gets from a client whose open() writes "SECRET".
+  async function firstChunkSent(options: { tls?: unknown }, transport: "tcp" | "unix" = "tcp") {
+    using dir = transport === "unix" ? tempDir("tls-unset-connect", {}) : undefined;
+    const firstChunk = Promise.withResolvers<Buffer>();
+    const peer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", chunk => {
+        firstChunk.resolve(chunk);
+        socket.destroy();
+      });
+    });
+    await once(dir ? peer.listen(join(String(dir), "s.sock")) : peer.listen(0, "127.0.0.1"), "listening");
+    const address = peer.address()!;
+    const client = await Bun.connect({
+      ...(typeof address === "string" ? { unix: address } : { hostname: "127.0.0.1", port: address.port }),
+      ...options,
+      socket: {
+        open(socket: Socket) {
+          socket.write("SECRET");
+        },
+        handshake() {},
+        data() {},
+        error() {},
+      },
+    } as any);
+    try {
+      return await firstChunk.promise;
+    } finally {
+      client.end();
+      peer.close();
+    }
+  }
+  const sentClientHello = (chunk: Buffer) => ({ firstByte: chunk[0], cleartext: chunk.includes("SECRET") });
+
+  it.each([
+    ["{}", () => ({})],
+    ["{ rejectUnauthorized: undefined }", () => ({ rejectUnauthorized: undefined })],
+    ["{ requestCert: false }", () => ({ requestCert: false })],
+    ["{ ca: undefined, cert: undefined, key: undefined }", () => ({ ca: undefined, cert: undefined, key: undefined })],
+    ["{ unknownKey: 1 }", () => ({ unknownKey: 1 })],
+    ["Object.create(null)", () => Object.create(null)],
+  ] as [string, () => object][])("tls: %s sends a ClientHello and no cleartext", async (_, makeTls) => {
+    expect(sentClientHello(await firstChunkSent({ tls: makeTls() }))).toEqual({
+      firstByte: CLIENT_HELLO_RECORD,
+      cleartext: false,
+    });
+  });
+
+  it.skipIf(isWindows)("tls: {} sends a ClientHello and no cleartext over a unix socket", async () => {
+    expect(sentClientHello(await firstChunkSent({ tls: {} }, "unix"))).toEqual({
+      firstByte: CLIENT_HELLO_RECORD,
+      cleartext: false,
+    });
+  });
+
+  it.each([
+    ["absent", {}],
+    ["undefined", { tls: undefined }],
+    ["null", { tls: null }],
+    ["false", { tls: false }],
+  ] as [string, { tls?: unknown }][])("tls %s still connects without TLS", async (_, options) => {
+    expect((await firstChunkSent(options)).toString()).toBe("SECRET");
+  });
+
+  it("rejects an untrusted certificate, like tls: true", async () => {
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: { data() {}, error() {} },
+    });
+    async function handshakeWith(tlsOption: unknown) {
+      const events: unknown[] = [];
+      const closed = Promise.withResolvers<void>();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: tlsOption,
+        socket: {
+          // Without TLS the server can't parse this and closes, so the test fails right away instead of timing out.
+          open(socket: Socket) {
+            socket.write("SECRET");
+          },
+          handshake(socket: Socket, success: boolean, error: (Error & { code?: string }) | null) {
+            events.push({ success, code: error?.code, authorized: socket.authorized });
+          },
+          data() {},
+          error() {},
+          close() {
+            closed.resolve();
+          },
+        },
+      } as any);
+      await closed.promise;
+      return events;
+    }
+    const rejected = [{ success: false, code: "DEPTH_ZERO_SELF_SIGNED_CERT", authorized: false }];
+    expect({ object: await handshakeWith({}), shorthand: await handshakeWith(true) }).toEqual({
+      object: rejected,
+      shorthand: rejected,
+    });
+  });
+
+  it("completes a verified handshake when the certificate is trusted", async () => {
+    using dir = tempDir("tls-unset-trusted", { "ca.pem": tls.cert });
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: { data() {}, error() {} },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          await Bun.connect({
+            hostname: "127.0.0.1",
+            port: ${listener.port},
+            tls: {},
+            socket: {
+              open(socket) {
+                socket.write("SECRET");
+              },
+              handshake(socket, success, error) {
+                console.log(JSON.stringify({ success, code: error?.code ?? null, authorized: socket.authorized }));
+                socket.end();
+              },
+              data() {},
+              error() {},
+            },
+          });
+        `,
+      ],
+      env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ success: true, code: null, authorized: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("upgradeTLS({ tls: {} }) upgrades a client socket and still throws on a server socket", async () => {
+    const accepted = Promise.withResolvers<Socket>();
+    const firstChunk = Promise.withResolvers<Buffer>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open: socket => accepted.resolve(socket),
+        data: (_socket, chunk) => firstChunk.resolve(chunk),
+        error() {},
+      },
+    });
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { data() {}, error() {} },
+    });
+    const handlers = { data() {}, error() {} };
+    const [, upgraded] = client.upgradeTLS({ tls: {}, socket: handlers });
+    try {
+      expect((await firstChunk.promise)[0]).toBe(CLIENT_HELLO_RECORD);
+      const server = await accepted.promise;
+      expect(() => server.upgradeTLS({ tls: {}, socket: handlers })).toThrow('Expected "tls" option');
+    } finally {
+      upgraded.terminate();
+    }
+  });
+
+  it("Bun.listen({ tls: {} }) still listens without TLS", async () => {
+    const received = Promise.withResolvers<string>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: {},
+      socket: {
+        data(_socket, chunk) {
+          received.resolve(chunk.toString());
+        },
+        error() {},
+      },
+    });
+    using client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: {
+        open(socket) {
+          socket.write("plain");
+        },
+        data() {},
+        error() {},
+      },
+    });
+    expect(await received.promise).toBe("plain");
+  });
+});
+
+it.concurrent("end(data) from a drain handler sends the tail it queues", async () => {
+  const payload = randomFillSync(Buffer.allocUnsafe(8 << 20));
+  const received: Buffer[] = [];
+  const serverClosed = Promise.withResolvers<void>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data: (_socket, chunk) => void received.push(chunk),
+      close: () => serverClosed.resolve(),
+    },
+  });
+  let took = 0;
+  let endReturned = -2;
+  const endWithTheRest = (socket: Socket<unknown>) => void (endReturned = socket.end(payload.subarray(took)));
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(socket) {
+        took = socket.write(payload);
+        // Windows takes a first send of any size whole, so no drain follows.
+        if (took === payload.length) endWithTheRest(socket);
+      },
+      drain: endWithTheRest,
+      data() {},
+    },
+  });
+  await serverClosed.promise;
+  expect(endReturned).toBe(payload.length - took);
+  expect(Buffer.concat(received).equals(payload)).toBe(true);
+});
+
+describe.concurrent.each(["listen", "connect"] as const)(
+  "terminate() on a Bun.%s TLS socket whose peer stopped reading",
+  side => {
+    const payload = Buffer.alloc(256 * 1024);
+
+    const routes = [
+      ["write() and end()", ["close"]],
+      ["write() and close()", ["close"]],
+      ["shutdown(true) and write()", ["end", "close"]],
+    ] as const;
+    // On Windows shutdown(true) brings no `end`, so the socket never starts a close of its own.
+    const measured = routes.filter(([route]) => !isWindows || route !== "shutdown(true) and write()");
+
+    it.each(measured)("closes the socket after %s", async (route, expected) => {
+      const events: string[] = [];
+      const opened = Promise.withResolvers<Socket<unknown>>();
+      const peerOpened = Promise.withResolvers<Socket<unknown>>();
+      const ended = Promise.withResolvers<void>();
+      const underTest: SocketHandler = {
+        open: socket => opened.resolve(socket),
+        data() {},
+        end() {
+          events.push("end");
+          ended.resolve();
+        },
+        close: (_socket, error) => void events.push(error ? `close ${(error as any).code}` : "close"),
+        error: (_socket, error) => void events.push(`error ${(error as any).code}`),
+      };
+      const peerHandlers: SocketHandler = {
+        open(socket) {
+          socket.pause();
+          peerOpened.resolve(socket);
+        },
+        data() {},
+        error() {},
+      };
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: tls.key, cert: tls.cert },
+        socket: side === "listen" ? underTest : peerHandlers,
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { ca: tls.cert },
+        socket: side === "connect" ? underTest : peerHandlers,
+      });
+      const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
+      try {
+        // Small buffers on both ends, so part of the TLS records stays in user space until the peer reads.
+        setSocketOptions(socket, 1, 4096);
+        setSocketOptions(peer, 2, 4096);
+        if (route === "shutdown(true) and write()") {
+          socket.shutdown(true);
+          socket.write(payload);
+          const noEnd = pendingEventsDone().then(() => Promise.reject(new Error("shutdown(true) brought no end")));
+          await Promise.race([ended.promise, noEnd]);
+          // The socket starts its own close once the `end` dispatch is over.
+          await new Promise(resolve => setImmediate(resolve));
+        } else {
+          socket.write(payload);
+          if (route === "write() and end()") socket.end();
+          else socket.close();
+        }
+        socket.terminate();
+        expect(events).toEqual([...expected]);
+      } finally {
+        peer.terminate();
+      }
+    });
+  },
+);

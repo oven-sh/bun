@@ -75,7 +75,7 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
 pub(crate) fn file_blob(file: &File, global: &JSGlobalObject) -> Blob {
     // SAFETY: `template_blob` returns the pointer from `Blob::new`, never
     // freed for the process lifetime; only read here.
-    let blob = unsafe { template_blob(file).cast::<Blob>().as_ref() }.dupe_with_content_type(true);
+    let blob = unsafe { template_blob(file).cast::<Blob>().as_ref() }.dupe();
     blob.global_this.set(global);
     blob
 }

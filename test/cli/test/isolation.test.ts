@@ -113,6 +113,49 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("with --isolate, a file's tls.DEFAULT_CIPHERS and default CA list are undone before the next file", async () => {
+    using dir = tempDir("isolate-tls-defaults", {
+      "ca.pem": tls.cert,
+      "a-defaults.test.ts": `
+        import { test } from "bun:test";
+        import tls from "node:tls";
+        test("replace the TLS defaults", () => {
+          tls.DEFAULT_CIPHERS = "ECDHE-RSA-AES256-GCM-SHA384";
+          tls.setDefaultCACertificates([]);
+        });
+      `,
+      "b-fetch.test.ts": `
+        import { test, expect } from "bun:test";
+        import { once } from "node:events";
+        import tls from "node:tls";
+        test("fetch uses the stock defaults", async () => {
+          // The server prefers a cipher the previous file's list leaves out, and only NODE_EXTRA_CA_CERTS trusts it.
+          const ciphers = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384";
+          const server = tls.createServer({ ...JSON.parse(process.env.SERVER_CERT), maxVersion: "TLSv1.2", ciphers }, socket => {
+            const { name } = socket.getCipher();
+            socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: " + name.length + "\\r\\nConnection: close\\r\\n\\r\\n" + name);
+          });
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          try {
+            const response = await fetch("https://127.0.0.1:" + server.address().port);
+            expect(await response.text()).toBe("ECDHE-RSA-AES128-GCM-SHA256");
+            expect(tls.DEFAULT_CIPHERS).toContain("ECDHE-RSA-AES128-GCM-SHA256");
+          } finally {
+            server.close();
+          }
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-defaults.test.ts", "./b-fetch.test.ts"],
+      { ...bunEnv, SERVER_CERT: JSON.stringify(tls), NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem") },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   // TZ, NODE_TLS_REJECT_UNAUTHORIZED, BUN_CONFIG_VERBOSE_FETCH and the proxy
   // keys have process.env setters with a native side effect outside the global
   // (the WTF time zone override, per-VM caches, the env map the next

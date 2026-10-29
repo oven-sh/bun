@@ -45,7 +45,6 @@ fn engine_of(heap: &JsHeap<'_>) -> *mut boring_ssl::ENGINE {
 fn crypto_error<'a>(heap: &JsHeap<'a>, code: u32) -> bindgen::Error<'a> {
     // SAFETY: makes an `Error`.
     let error = create_crypto_error(unsafe { heap.global() }, code);
-    boring_ssl::ERR_clear_error();
     bindgen::Error::from_value(JsLocal::new(heap, error))
 }
 
@@ -726,8 +725,7 @@ macro_rules! static_hasher {
                 output: Option<DigestOutput<'a>>,
             ) -> bindgen::Result<'a, JsLocal<'a>> {
                 let mut digest = [0; hashers::$name::DIGEST];
-                // SAFETY: the engine is the VM's.
-                unsafe { hashers::$name::hash(input, &mut digest, engine_of(heap)) };
+                hashers::$name::hash(input, &mut digest);
                 finish_with(heap, output, JsHeap::create_uint8_array, &digest)
             }
         }

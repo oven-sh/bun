@@ -23,11 +23,15 @@
 # ships ClangCL. Runs everywhere else. (Verified still failing, build 87834.)
 [ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
-# Windows-only gap in named-pipe half-close: WindowsNamedPipe::shutdown() /
-# on_read_error(EOF) issue a full uv_close instead of uv_shutdown, so the
-# final write after the peer half-closes is lost. Passes on Linux and macOS.
-# (Verified still failing on both Windows lanes, build 87834.)
-[ WINDOWS ] test/js/node/test/parallel/test-net-pingpong.js [ FAIL ] # named-pipe half-close: count 1000 !== 1001 at close
+# The test passes an accepted named-pipe connection as a child's stdout.
+# spawn() can only hand a net.Socket's descriptor to a child on POSIX.
+# Passes on Linux and macOS. (Fails on both Windows lanes, build 130937.)
+[ WINDOWS ] test/js/node/test/parallel/test-child-process-server-close.js [ FAIL ] # a named-pipe net.Socket can't be a child's stdio yet
+
+# An http.Server in a cluster worker asks the primary to bind only on POSIX. On
+# Windows each worker still binds for itself, so the second bind of the same
+# port succeeds where this test expects EADDRINUSE. The file is that one case.
+[ WINDOWS ] test/js/node/test/parallel/test-cluster-bind-twice.js [ FAIL ] # http.Server#listen() in a worker doesn't go through the primary on Windows
 
 # Cluster workers sharing a listen port behave differently on Linux, where
 # SO_REUSEPORT load-balances across the workers' own listeners instead of the
@@ -35,8 +39,3 @@
 # only hold on the distributing model. Passes on macOS and Windows.
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
-
-# `bun lint` is a command in canary builds only (IS_ENABLED in
-# src/runtime/cli/lint_command.rs), so nothing in this directory can run on a
-# release build. Remove when a release has `bun lint`.
-[ STABLE ] test/cli/lint/ [ SKIP ] # a release build has no `bun lint`

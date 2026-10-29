@@ -12,6 +12,7 @@ const Writable = require("internal/streams/writable");
 const Readable = require("internal/streams/readable");
 const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");
+const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { kEmptyObject } = require("internal/shared");
 const { validateBoolean, validateObject, validateOneOf } = require("internal/validators");
@@ -19,7 +20,10 @@ const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
 
-const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
+const normalizeEncoding: (encoding: unknown) => string | undefined = $bindgen(
+  "node_util_binding.bind.ts",
+  "normalizeEncoding",
+);
 
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeMap = Array.prototype.map;
@@ -33,53 +37,53 @@ const SafePromisePrototypeFinally = $Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 
-function tryTransferToNativeReadable(stream, options) {
-  const ptr = stream.$bunNativePtr;
-  if (!ptr || ptr === -1) {
-    return undefined;
-  }
-  return require("internal/streams/native-readable").constructNativeReadable(stream, options);
-}
+type DefaultReader = ReturnType<ReadableStream["getReader"]>;
 
 class ReadableFromWeb extends Readable {
-  #reader;
-  #closed;
-  #stream;
+  #reader: DefaultReader | undefined;
+  #closed: boolean;
+  #stream: ReadableStream | undefined;
   // node-fetch, undici: `stream` is a Response body, which text(), json(), ... lock for good.
-  #responseBody;
+  #responseBody: boolean;
+  // Readable.fromWeb() of a native stream passes the reader it took at the call, which is never released, as in Node.
+  #lockedForGood: boolean;
 
-  constructor(options, stream) {
+  constructor(options: StreamReadableFromReadableStreamOptions, stream: ReadableStream, reader?: DefaultReader) {
     const { objectMode, highWaterMark, encoding, signal, responseBody = false } = options;
     super({
       objectMode,
       highWaterMark,
       encoding,
-      signal,
     });
-    this.#reader = undefined;
-    this.#stream = stream;
+    this.#reader = reader;
+    this.#stream = reader ? undefined : stream;
     this.#closed = false;
     this.#responseBody = responseBody;
+    this.#lockedForGood = reader !== undefined;
+    // Not through super(): an aborted signal calls _destroy() at once, which reads the fields above.
+    if (signal) addAbortSignal(signal, this);
   }
 
   // Locked before this wrapper opened it: a body method has the contents, nothing to read or cancel.
-  #takenByResponse(stream) {
+  #takenByResponse(stream: ReadableStream) {
     return this.#responseBody && stream.locked;
   }
 
-  #handleDone(reader) {
-    reader.releaseLock();
+  #handleDone(reader: DefaultReader) {
+    if (!this.#lockedForGood) reader.releaseLock();
     this.#reader = undefined;
     this.#closed = true;
     this.push(null);
   }
 
-  #handleError(reader, error) {
+  #handleError(reader: DefaultReader | undefined, error: Error) {
     if (reader) {
       this.#reader = undefined;
-      try {
-        reader.releaseLock();
-      } catch {}
+      if (!this.#lockedForGood) {
+        try {
+          reader.releaseLock();
+        } catch {}
+      }
     }
     this.#closed = true;
     this.destroy(error);
@@ -104,11 +108,11 @@ class ReadableFromWeb extends Readable {
       this.#stream = undefined;
     }
     PromisePrototypeThen.$call(
-      reader.read(),
+      reader!.read(),
       chunk => {
         if (this.#closed) return;
         if (chunk.done) {
-          this.#handleDone(reader);
+          this.#handleDone(reader!);
         } else {
           this.push(chunk.value);
         }
@@ -117,7 +121,7 @@ class ReadableFromWeb extends Readable {
     );
   }
 
-  _destroy(error, callback) {
+  _destroy(error: Error | null, callback: $Node.ErrorCallback) {
     if (!this.#closed) {
       this.#closed = true;
       // As in Node, a cancel() that rejects doesn't error the Readable.
@@ -156,7 +160,7 @@ const ZLIB_FAILURES: Set<string | undefined> = new SafeSet([
   "Z_NEED_DICT",
 ]);
 
-function handleKnownInternalErrors(cause: Error | null): Error | null {
+function handleKnownInternalErrors(cause: Error | null | undefined): Error | null | undefined {
   const causeCode = cause?.code;
   switch (true) {
     case causeCode === "ERR_STREAM_PREMATURE_CLOSE": {
@@ -198,7 +202,7 @@ function handleKnownInternalErrors(cause: Error | null): Error | null {
 
 const noop = () => {};
 
-function newWritableStreamFromStreamWritable(streamWritable) {
+function newWritableStreamFromStreamWritable(streamWritable: $Node.Writable) {
   // Not using the internal/streams/utils isWritableNodeStream utility
   // here because it will return false if streamWritable is a Duplex
   // whose writable option is false. For a Duplex that is not writable,
@@ -228,9 +232,9 @@ function newWritableStreamFromStreamWritable(streamWritable) {
         },
       };
 
-  let controller;
-  let backpressurePromise;
-  let closed;
+  let controller: WritableStreamDefaultController | undefined;
+  let backpressurePromise: PromiseWithResolvers<void> | undefined;
+  let closed: PromiseWithResolvers<void> | undefined;
 
   function onDrain() {
     if (backpressurePromise !== undefined) backpressurePromise.resolve();
@@ -294,7 +298,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
       },
 
       abort(reason) {
-        destroyer(streamWritable, reason);
+        destroyer(streamWritable, reason as Error);
       },
 
       close() {
@@ -312,7 +316,17 @@ function newWritableStreamFromStreamWritable(streamWritable) {
   );
 }
 
-function newStreamWritableFromWritableStream(writableStream, options = kEmptyObject) {
+interface StreamWritableFromWritableStreamOptions {
+  highWaterMark?: number;
+  decodeStrings?: boolean;
+  objectMode?: boolean;
+  signal?: AbortSignal;
+}
+
+function newStreamWritableFromWritableStream(
+  writableStream: WritableStream,
+  options: StreamWritableFromWritableStreamOptions = kEmptyObject,
+) {
   if (!$inheritsWritableStream(writableStream)) {
     throw $ERR_INVALID_ARG_TYPE("writableStream", "WritableStream", writableStream);
   }
@@ -333,7 +347,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
     signal,
 
     writev(chunks, callback) {
-      function done(error) {
+      function done(error?: Error | null) {
         try {
           callback(error);
         } catch (error) {
@@ -342,7 +356,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
           // thrown we don't want those to cause an unhandled
           // rejection. Let's just escape the promise and
           // handle it separately.
-          process.nextTick(() => destroyer(writable, error));
+          process.nextTick(() => destroyer(writable, error as Error));
         }
       }
 
@@ -375,11 +389,11 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
         }
       }
 
-      function done(error) {
+      function done(error?: Error | null) {
         try {
           callback(error);
         } catch (error) {
-          destroyer(writable, error);
+          destroyer(writable, error as Error);
         }
       }
 
@@ -421,7 +435,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
     },
 
     final(callback) {
-      function done(error) {
+      function done(error?: Error | null) {
         try {
           callback(error);
         } catch (error) {
@@ -430,7 +444,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
           // thrown we don't want those to cause an unhandled
           // rejection. Let's just escape the promise and
           // handle it separately.
-          process.nextTick(() => destroyer(writable, error));
+          process.nextTick(() => destroyer(writable, error as Error));
         }
       }
 
@@ -469,7 +483,16 @@ interface StreamReadableUnderlyingSource {
   pull?(): void;
 }
 
-function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObject) {
+interface ReadableStreamFromStreamReadableOptions {
+  __proto__?: null;
+  type?: "bytes";
+  strategy?: { highWaterMark?: number; size?(chunk: unknown): number };
+}
+
+function newReadableStreamFromStreamReadable(
+  streamReadable: $Node.Readable,
+  options: ReadableStreamFromStreamReadableOptions = kEmptyObject,
+) {
   // Not using the internal/streams/utils isReadableNodeStream utility
   // here because it will return false if streamReadable is a Duplex
   // whose readable option is false. For a Duplex that is not readable,
@@ -484,9 +507,9 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   }
 
   const isBYOB = optionsType === "bytes";
-  let controller;
+  let controller: ReadableStreamDefaultController | ReadableByteStreamController | undefined;
   let wasCanceled = false;
-  let strategy;
+  let strategy: ReadableStreamFromStreamReadableOptions["strategy"];
 
   const underlyingSource: StreamReadableUnderlyingSource = {
     __proto__: null,
@@ -496,7 +519,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     },
     cancel(reason) {
       wasCanceled = true;
-      destroyer(streamReadable, reason);
+      destroyer(streamReadable, reason as Error);
     },
   };
 
@@ -540,9 +563,9 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
         return;
       }
       wasCanceled = true;
-      if (error) return controller.error(error);
-      controller.close();
-      if (isBYOB) controller.byobRequest?.respond(0);
+      if (error) return controller!.error(error);
+      controller!.close();
+      if (isBYOB) (controller as ReadableByteStreamController).byobRequest?.respond(0);
     },
   );
 
@@ -557,8 +580,8 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
       if (wasCanceled) return;
       // Copy the Buffer to detach it from the pool.
       if (Buffer.isBuffer(chunk) && !objectMode) chunk = new Uint8Array(chunk);
-      controller.enqueue(chunk);
-      if (controller.desiredSize <= 0) streamReadable.pause();
+      controller!.enqueue(chunk);
+      if (controller!.desiredSize! <= 0) streamReadable.pause();
     });
   }
 
@@ -574,7 +597,7 @@ interface StreamReadableFromReadableStreamOptions {
 }
 
 function newStreamReadableFromReadableStream(
-  readableStream,
+  readableStream: ReadableStream,
   options: StreamReadableFromReadableStreamOptions = kEmptyObject,
 ) {
   if (!$inheritsReadableStream(readableStream)) {
@@ -591,20 +614,22 @@ function newStreamReadableFromReadableStream(
   // Node acquires the reader at this point, so a locked stream throws here too.
   if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
 
-  const nativeStream = tryTransferToNativeReadable(readableStream, options);
-
-  return (
-    nativeStream ||
-    new ReadableFromWeb(
-      {
-        highWaterMark,
-        encoding,
-        objectMode,
-        signal,
-      },
-      readableStream,
-    )
+  const nativeReadable = require("internal/streams/native-readable").tryConstructNativeReadable(
+    readableStream,
+    { highWaterMark, encoding, objectMode },
+    signal,
   );
+  if (nativeReadable) return nativeReadable;
+
+  // A native stream that something has started is locked from here on too, like one that gave up its handle.
+  const reader = readableStream.$bunNativePtr !== undefined ? readableStream.getReader() : undefined;
+  try {
+    return new ReadableFromWeb({ highWaterMark, encoding, objectMode, signal }, readableStream, reader);
+  } catch (error) {
+    // Nothing else can close the source of a stream that stays locked.
+    reader?.cancel(error);
+    throw error;
+  }
 }
 
 let dep0201Warned = false;
@@ -619,7 +644,10 @@ function emitDEP0201() {
   );
 }
 
-function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
+function newReadableWritablePairFromDuplex(
+  duplex: $Node.Duplex,
+  options: { readableType?: "bytes"; type?: "bytes" } = kEmptyObject,
+) {
   // Not using the internal/streams/utils isWritableNodeStream and
   // isReadableNodeStream utilities here because they will return false
   // if the duplex was created with writable or readable options set to
@@ -632,7 +660,7 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
 
   validateObject(options, "options");
 
-  const readableOptions = {
+  const readableOptions: ReadableStreamFromStreamReadableOptions = {
     __proto__: null,
     type: options.readableType,
   };
@@ -665,7 +693,15 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
   return { writable, readable };
 }
 
-function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = kEmptyObject) {
+interface StreamDuplexFromPairOptions extends StreamWritableFromWritableStreamOptions {
+  allowHalfOpen?: boolean;
+  encoding?: string;
+}
+
+function newStreamDuplexFromReadableWritablePair(
+  pair: { readable: ReadableStream; writable: WritableStream } = kEmptyObject,
+  options: StreamDuplexFromPairOptions = kEmptyObject,
+) {
   validateObject(pair, "pair");
   const { readable: readableStream, writable: writableStream } = pair;
 
@@ -697,7 +733,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
     signal,
 
     writev(chunks, callback) {
-      function done(error) {
+      function done(error?: Error | null) {
         try {
           callback(error);
         } catch (error) {
@@ -706,7 +742,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
           // thrown we don't want those to cause an unhandled
           // rejection. Let's just escape the promise and
           // handle it separately.
-          process.nextTick(() => destroyer(duplex, error));
+          process.nextTick(() => destroyer(duplex, error as Error));
         }
       }
 
@@ -739,11 +775,11 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
         }
       }
 
-      function done(error) {
+      function done(error?: Error | null) {
         try {
           callback(error);
         } catch (error) {
-          destroyer(duplex, error);
+          destroyer(duplex, error as Error);
         }
       }
 
@@ -757,7 +793,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
     },
 
     final(callback) {
-      function done(error) {
+      function done(error?: Error | null) {
         try {
           callback(error);
         } catch (error) {
@@ -766,7 +802,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
           // thrown we don't want those to cause an unhandled
           // rejection. Let's just escape the promise and
           // handle it separately.
-          process.nextTick(() => destroyer(duplex, error));
+          process.nextTick(() => destroyer(duplex, error as Error));
         }
       }
 

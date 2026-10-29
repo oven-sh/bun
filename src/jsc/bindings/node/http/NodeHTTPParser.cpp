@@ -257,6 +257,8 @@ JSValue HTTPParser::remove(JSGlobalObject* globalObject, JSCell* thisParser)
         RETURN_IF_EXCEPTION(scope, {});
         connections->popActive(globalObject, thisParser);
         RETURN_IF_EXCEPTION(scope, {});
+        // remove() can run inside execute(), and the callbacks for the rest of the buffer would add the parser again.
+        m_connectionsList.clear();
     }
 
     return jsUndefined();
@@ -271,6 +273,7 @@ JSValue HTTPParser::initialize(JSGlobalObject* globalObject, JSCell* thisParser,
 
     if (connections) {
         m_connectionsList.set(vm, thisParser, connections);
+        m_receivedData = false;
 
         // This protects from a DoS attack where an attacker establishes
         // the connection without sending any data on applications where
@@ -355,6 +358,7 @@ int HTTPParser::onMessageBegin()
     m_numValues = 0;
     m_headersCompleted = false;
     m_chunkExtensionsNread = 0;
+    m_receivedData = true;
     m_lastMessageStart = uv_hrtime();
     m_url.reset();
     m_statusMessage.reset();
@@ -367,7 +371,7 @@ int HTTPParser::onMessageBegin()
         RETURN_IF_EXCEPTION(scope, stopForPendingException());
     }
 
-    JSValue onMessageBeginCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageBegin));
+    JSValue onMessageBeginCallback = thisParser->get(globalObject, kOnMessageBegin);
     RETURN_IF_EXCEPTION(scope, stopForPendingException());
     if (onMessageBeginCallback.isCallable()) {
         CallData callData = getCallData(onMessageBeginCallback);
@@ -513,7 +517,7 @@ int HTTPParser::onHeadersComplete()
         }
     });
 
-    JSValue onHeadersCompleteCallback = thisParser->get(globalObject, Identifier::from(vm, kOnHeadersComplete));
+    JSValue onHeadersCompleteCallback = thisParser->get(globalObject, kOnHeadersComplete);
     RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     if (!onHeadersCompleteCallback.isCallable()) {
@@ -576,7 +580,7 @@ int HTTPParser::onBody(const char* at, size_t length)
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, Identifier::from(vm, kOnBody));
+    JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, kOnBody);
     RETURN_IF_EXCEPTION(scope, stopForPendingException());
     if (!onBodyCallback.isCallable()) {
         return 0;
@@ -625,7 +629,7 @@ int HTTPParser::onMessageComplete()
 
     m_headerPairs = 0;
 
-    JSValue onMessageCompleteCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageComplete));
+    JSValue onMessageCompleteCallback = thisParser->get(globalObject, kOnMessageComplete);
     RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     if (!onMessageCompleteCallback.isCallable()) {
@@ -700,7 +704,7 @@ void HTTPParser::flush()
 
     JSHTTPParser* thisParser = m_thisParser;
 
-    JSValue onHeadersCallback = thisParser->get(globalObject, Identifier::from(vm, kOnHeaders));
+    JSValue onHeadersCallback = thisParser->get(globalObject, kOnHeaders);
     RETURN_IF_EXCEPTION(scope, );
 
     if (!onHeadersCallback.isCallable()) {

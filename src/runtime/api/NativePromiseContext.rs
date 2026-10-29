@@ -30,22 +30,16 @@ use crate::api::html_rewriter;
 use crate::api::server;
 
 // Request contexts are a single generic
-// `NewRequestContext<ThisServer, SSL, DEBUG, MUX>`; alias the eight
+// `NewRequestContext<SSL, DEBUG, MUX>`; alias the eight
 // concrete monomorphizations here so the tag↔type mapping stays readable.
-type HTTPServerRequestContext = server::NewRequestContext<server::HTTPServer, false, false, false>;
-type HTTPSServerRequestContext = server::NewRequestContext<server::HTTPSServer, true, false, false>;
-type DebugHTTPServerRequestContext =
-    server::NewRequestContext<server::DebugHTTPServer, false, true, false>;
-type DebugHTTPSServerRequestContext =
-    server::NewRequestContext<server::DebugHTTPSServer, true, true, false>;
-type HTTPServerMuxRequestContext =
-    server::NewRequestContext<server::HTTPServer, false, false, true>;
-type HTTPSServerMuxRequestContext =
-    server::NewRequestContext<server::HTTPSServer, true, false, true>;
-type DebugHTTPServerMuxRequestContext =
-    server::NewRequestContext<server::DebugHTTPServer, false, true, true>;
-type DebugHTTPSServerMuxRequestContext =
-    server::NewRequestContext<server::DebugHTTPSServer, true, true, true>;
+type HTTPServerRequestContext = server::NewRequestContext<false, false, false>;
+type HTTPSServerRequestContext = server::NewRequestContext<true, false, false>;
+type DebugHTTPServerRequestContext = server::NewRequestContext<false, true, false>;
+type DebugHTTPSServerRequestContext = server::NewRequestContext<true, true, false>;
+type HTTPServerMuxRequestContext = server::NewRequestContext<false, false, true>;
+type HTTPSServerMuxRequestContext = server::NewRequestContext<true, false, true>;
+type DebugHTTPServerMuxRequestContext = server::NewRequestContext<false, true, true>;
+type DebugHTTPSServerMuxRequestContext = server::NewRequestContext<true, true, true>;
 
 /// Must match Bun::NativePromiseContext::Tag in NativePromiseContext.h.
 /// One entry per concrete native type — the tag is packed into the pointer's
@@ -101,9 +95,6 @@ pub(crate) trait NativePromiseContextType {
     const TAG: Tag;
 }
 
-// Layering note: blanket-impl over `ThisServer` so that ANY server
-// type (mod.rs::NewServer or server_body::NewServer) yields the same Tag —
-// the tag depends only on (SSL, DBG, MUX), never on the server type.
 const fn npc_tag_for(ssl: bool, dbg: bool, mux: bool) -> Tag {
     match (ssl, dbg, mux) {
         (false, false, false) => Tag::HTTPServerRequestContext,
@@ -116,8 +107,8 @@ const fn npc_tag_for(ssl: bool, dbg: bool, mux: bool) -> Tag {
         (true, true, true) => Tag::DebugHTTPSServerMuxRequestContext,
     }
 }
-impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromiseContextType
-    for server::NewRequestContext<ThisServer, SSL, DBG, MUX>
+impl<const SSL: bool, const DBG: bool, const MUX: bool> NativePromiseContextType
+    for server::NewRequestContext<SSL, DBG, MUX>
 {
     const TAG: Tag = npc_tag_for(SSL, DBG, MUX);
 }
@@ -180,8 +171,13 @@ pub(crate) fn take_held(cell: JSValue) -> JSValue {
 /// deinit() which detaches responses, unrefs bodies, and calls back into
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.
+#[inline(never)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
+    bun_removable_features::removable_definition!(Serve, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(HtmlRewriter, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(S3Client, Bun__NativePromiseContext__destroy);
+    bun_removable_features::removable_definition!(Cron, Bun__NativePromiseContext__destroy);
     let tag = Tag::from_raw(tag);
     clear_remembered_cell(ctx, tag);
     DeferredDerefTask::schedule(ctx, tag);

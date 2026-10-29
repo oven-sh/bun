@@ -81,6 +81,15 @@ extern "C" int32_t ReadableStreamTag__taggedStream(JSC::EncodedJSValue value, vo
     return stream ? tagOfStream(stream, ptr) : -1;
 }
 
+// The tag for a consumer that would read the native source itself. A stream that was started or locked reads as a JS stream.
+extern "C" int32_t ReadableStreamTag__unstarted(JSC::EncodedJSValue value, void** ptr)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(value));
+    if (!stream)
+        return -1;
+    return stream->hasPendingNativeSource() ? tagOfStream(stream, ptr) : 0;
+}
+
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
     JSValue value = JSValue::decode(*possibleReadableStream);
@@ -117,10 +126,8 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Body clone tees with cloneForBranch2 = false (share chunk refs) like Node/Chrome/Firefox;
-    // the spec's per-chunk StructuredClone makes an N-deep clone chain retain N copies of the body
-    // (whatwg/streams#1156).
-    auto branches = readableStreamTee(globalObject, stream);
+    // A branch copies a chunk when script reads it, not at tee time, so an N-deep clone chain keeps one copy of the body.
+    auto branches = readableStreamTee(globalObject, stream, /* cloneForBranch2 */ true);
     RETURN_IF_EXCEPTION(scope, false);
 
     *possibleReadableStream1 = JSValue::encode(branches.first);
@@ -188,6 +195,18 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSV
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
 }
 
+extern "C" uint8_t ReadableStream__bodyFacts(JSC::EncodedJSValue possibleReadableStream)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    return stream ? stream->m_bodyFacts : 0;
+}
+
+extern "C" void ReadableStream__setBodyFacts(JSC::EncodedJSValue possibleReadableStream, uint8_t facts)
+{
+    if (auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream)))
+        stream->m_bodyFacts = facts & 0x7;
+}
+
 // Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.
 extern "C" bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
@@ -238,30 +257,17 @@ static void lockNative(JSC::VM& vm, JSReadableStream* stream)
         slot->set(vm, handle.asCell(), stream);
 }
 
-// A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
-// Mark the stream disturbed+locked so .locked, .getReader(), and the body-mixin
-// disturbed checks behave as they do after readStreamIntoSink acquires a reader.
-extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
-{
-    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
-    if (!stream) [[unlikely]]
-        return;
-    lockNative(JSC::getVM(globalObject), stream);
-}
-
-// Like ReadableStream__lockNative, for a sink that's about to connect itself to the native source. It only
-// locks a stream that hasn't started and isn't locked, because a started source already feeds a controller.
-// Otherwise it returns false without changing anything, and the caller falls back to readStreamIntoSink.
+// Locks the stream for a native sink about to attach to its source. Returns false, changing nothing, if it was started or locked: the caller reads it through a reader.
 extern "C" bool ReadableStream__tryLockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
-    if (!stream || stream->m_bunMode != BunStreamMode::NativePending || isReadableStreamLocked(stream))
+    if (!stream || !stream->hasPendingNativeSource())
         return false;
     lockNative(JSC::getVM(globalObject), stream);
     return true;
 }
 
-// The source of a stream that ReadableStream__lockNative locked dropped its sink: error the stream with `reason`, or close it if `reason` is empty.
+// The source of a stream that ReadableStream__tryLockNative locked dropped its sink: error the stream with `reason`, or close it if `reason` is empty.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__NativeStreamSource__endLockedStream(JSC::EncodedJSValue encodedHandle, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto* slot = lockedStreamSlot(JSValue::decode(encodedHandle).asCell());
@@ -300,7 +306,7 @@ extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObj
         readableStreamClose(globalObject, stream);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    acquireReadableStreamDefaultReader(globalObject, stream);
+    acquireReadableStreamDefaultReader(globalObject, stream, ReaderOwner::Native);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(stream);
 }
@@ -407,13 +413,22 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::Global
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToJSON(globalObject, stream)));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSONSource(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = toReadableStream(globalObject, scope, streamValue);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBlob(globalObject, stream)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToJSONSource(globalObject, stream)));
+}
+
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBodyBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue contentType)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = toReadableStream(globalObject, scope, streamValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBodyBlob(globalObject, stream, JSValue::decode(contentType))));
 }
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue contentType)

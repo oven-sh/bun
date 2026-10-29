@@ -9,14 +9,13 @@ use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
+    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
+    MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
-use bun_core::StringView;
 
-use bun_core::String as BunString;
 use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{String as BunString, StringView};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -718,10 +717,10 @@ impl JSGlobalObject {
         let Some((namespace_, path)) = crate::module_loader::plugin_namespace_and_path(key) else {
             return Ok(false);
         };
-        let namespace_ = BunString::from_bytes(namespace_);
-        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        let namespace_ = StringView::from_bytes(namespace_);
+        let ns = (namespace_.length() > 0).then_some(&*namespace_);
         crate::from_js_host_call_generic(self, || {
-            Bun__hasOnLoad(self, ns, &BunString::from_bytes(path))
+            Bun__hasOnLoad(self, ns, &StringView::from_bytes(path))
         })
     }
 
@@ -1005,6 +1004,16 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__bunVM(self)
     }
 
+    /// What [`Self::bun_vm`] and [`Self::bun_vm_ptr`] assert: this global object
+    /// names `vm`, the calling thread's VM. Not asked once teardown has gone on
+    /// to destroy the JSC VM: finalizers still come here, and the global object
+    /// goes in no particular order with them.
+    fn names_bun_vm(&self, vm: *mut VirtualMachine) -> bool {
+        // SAFETY: the calling thread's VM, which outlives its JSC VM.
+        let global_is_going = unsafe { (*vm).regular_event_loop.global_is_going() };
+        global_is_going || self.bun_vm_unsafe() == vm.cast::<c_void>()
+    }
+
     /// Raw-pointer variant of [`Self::bun_vm`]. Returns the per-thread
     /// `*mut VirtualMachine` so callers that need to mutate VM fields don't
     /// launder provenance through `&VirtualMachine -> *mut` (UB under Stacked
@@ -1020,7 +1029,7 @@ impl JSGlobalObject {
     #[inline]
     pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
         debug_assert!(
-            self.bun_vm_unsafe() == VirtualMachine::get_mut_ptr().cast::<c_void>(),
+            self.names_bun_vm(VirtualMachine::get_mut_ptr()),
             "bun_vm_ptr called off the JS thread",
         );
         VirtualMachine::get_mut_ptr()
@@ -1054,8 +1063,7 @@ impl JSGlobalObject {
             //   make clean-jsc-bindings
             //   make bindings -j10
             if let Some(vm_) = VirtualMachine::get_or_null() {
-                // SAFETY: address-equality only — neither pointer is dereferenced.
-                debug_assert!(self.bun_vm_unsafe() == vm_.cast::<c_void>());
+                debug_assert!(self.names_bun_vm(vm_));
             } else {
                 panic!("This thread lacks a Bun VM");
             }
@@ -1089,8 +1097,21 @@ impl JSGlobalObject {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
-    pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
-        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
+    pub fn readable_stream_to_json_source(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToJSONSource(self, value)
+        })
+    }
+
+    /// `blob()` of a body that is a stream. `content_type` is its owner's, or undefined.
+    pub fn readable_stream_to_body_blob(
+        &self,
+        value: JSValue,
+        content_type: JSValue,
+    ) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToBodyBlob(self, value, content_type)
+        })
     }
 
     pub fn readable_stream_to_form_data(
@@ -1109,6 +1130,12 @@ impl JSGlobalObject {
     /// callers in `bun_runtime` cast to `*mut NapiEnv`.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         ZigGlobalObject__makeNapiEnvForFFI(self)
+    }
+
+    /// Returns the `process.env` object, or `None` if JavaScript hasn't read `process.env` yet.
+    pub fn process_env_if_created(&self) -> Option<JSValue> {
+        let env = Bun__Process__getEnvObjectIfCreated(self);
+        (!env.is_empty()).then_some(env)
     }
 
     // returns false if it throws
@@ -1198,7 +1225,7 @@ impl JSGlobalObject {
             return Err(self.throw_invalid_property_type_value(field_name, b"integer", value));
         }
         // @floatFromInt — i128→f64 (rounds beyond 2^53; bounds are already clamped to safe-integer range).
-        if f64_val < (min_t as f64) || f64_val > (max_t as f64) {
+        if f64_val < (min_t as i64 as f64) || f64_val > (max_t as i64 as f64) {
             return Err(self.throw_range_error(
                 f64_val,
                 bun_fmt::OutOfRangeOptions {
@@ -1324,16 +1351,6 @@ extern "C" fn Zig__GlobalObject__resolve(
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
-    global: *const JSGlobalObject,
-    exception: *mut Exception,
-) -> JSValue {
-    crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
-}
-
-#[unsafe(no_mangle)]
 extern "C" fn Zig__GlobalObject__onCrash() {
     crate::mark_binding();
     Output::flush();
@@ -1398,6 +1415,7 @@ unsafe extern "C" {
         path: &BunString,
     ) -> bool;
 
+    safe fn Bun__Process__getEnvObjectIfCreated(global_object: &JSGlobalObject) -> JSValue;
     safe fn Bun__Process__emitWarning(
         global_object: &JSGlobalObject,
         warning: JSValue,
@@ -1441,13 +1459,20 @@ unsafe extern "C" {
     -> JSValue;
     safe fn ZigGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToJSONSource(
+        this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JSValue;
     safe fn ZigGlobalObject__readableStreamToFormData(
         this: &JSGlobalObject,
         value: JSValue,
         content_type: JSValue,
     ) -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue)
-    -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToBodyBlob(
+        this: &JSGlobalObject,
+        value: JSValue,
+        content_type: JSValue,
+    ) -> JSValue;
 
     safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
 

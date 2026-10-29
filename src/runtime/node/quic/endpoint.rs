@@ -1103,6 +1103,80 @@ impl QuicEndpoint {
         });
         lsquic::debug_assert_layout();
 
+        let mut bind_config = BindConfig::default();
+        let mut block_list = None;
+        let mut block_list_js = None;
+        let mut block_list_allow = false;
+        let mut disable_stateless_reset = false;
+        let mut stateless_reset_burst = 0;
+        let mut stateless_reset_rate = 0.0;
+        let options = options.to_js();
+        if options.is_object() {
+            let global = cx.global();
+            if let Some(addr_js) = options
+                .get(global, "address")?
+                .filter(|v| !v.is_empty_or_undefined_or_null())
+            {
+                if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
+                    let stored = StoredAddr::from_socket_address(addr);
+                    if let Some((_, port, ip)) = stored.decode() {
+                        use core::fmt::Write;
+                        let mut host = String::new();
+                        match ip.len() {
+                            4 => {
+                                let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
+                            }
+                            16 => {
+                                let segs: [u16; 8] = core::array::from_fn(|i| {
+                                    u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
+                                });
+                                let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
+                            }
+                            _ => {}
+                        }
+                        let mut host_nul = host.into_bytes();
+                        host_nul.push(0);
+                        bind_config = BindConfig {
+                            host: host_nul,
+                            port,
+                        };
+                    }
+                }
+            }
+            if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
+                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
+                {
+                    block_list = Some(bl.as_ptr());
+                    block_list_js = Some(bun_jsc::Strong::create(bl_js, global));
+                }
+            }
+            if let Some(policy) = options
+                .get(global, "blockListPolicy")?
+                .filter(|v| v.is_string())
+            {
+                let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
+                block_list_allow = policy == b"allow";
+            }
+            if let Some(v) = options
+                .get(global, "disableStatelessReset")?
+                .filter(|v| v.is_boolean())
+            {
+                disable_stateless_reset = v.to_boolean();
+            }
+            if let Some(v) = options
+                .get(global, "statelessResetBurst")?
+                .filter(|v| v.is_number())
+            {
+                stateless_reset_burst = v.as_number().max(0.0).min(u32::MAX as f64) as u32;
+            }
+            if let Some(v) = options
+                .get(global, "statelessResetRate")?
+                .filter(|v| v.is_number())
+            {
+                stateless_reset_rate = v.as_number().max(0.0);
+            }
+        }
+
         let this = QuicEndpoint {
             vtable_ptr: null(),
             vtable: JsCell::new(None),
@@ -1111,7 +1185,7 @@ impl QuicEndpoint {
             closing: Cell::new(false),
             closed: Cell::new(false),
             socket: Cell::new(None),
-            bind_config: JsCell::new(BindConfig::default()),
+            bind_config: JsCell::new(bind_config),
             local_addr: Cell::new(StoredAddr::default()),
             poll_ref: JsCell::new(KeepAlive::init()),
             this_value: JsCell::new(JsRef::empty()),
@@ -1127,10 +1201,10 @@ impl QuicEndpoint {
             server_is_http: Cell::new(false),
             server_verify_client: Cell::new(false),
             server_session_options: JsCell::new(None),
-            disable_stateless_reset: Cell::new(false),
+            disable_stateless_reset: Cell::new(disable_stateless_reset),
             origin_blob: JsCell::new(Vec::new()),
-            stateless_reset_burst: Cell::new(0),
-            stateless_reset_rate: Cell::new(0.0),
+            stateless_reset_burst: Cell::new(stateless_reset_burst),
+            stateless_reset_rate: Cell::new(stateless_reset_rate),
             client_is_http: Cell::new(false),
             processing: Cell::new(false),
             followup_due: Cell::new(false),
@@ -1141,10 +1215,10 @@ impl QuicEndpoint {
             provisional: JsCell::new(Vec::new()),
             pending_verneg: JsCell::new(Vec::new()),
             dead_provisional_peers: JsCell::new(Vec::new()),
-            block_list: Cell::new(None),
+            block_list: Cell::new(block_list),
             early_keylog: JsCell::new(Vec::new()),
-            block_list_js: JsCell::new(None),
-            block_list_allow: Cell::new(false),
+            block_list_js: JsCell::new(block_list_js),
+            block_list_allow: Cell::new(block_list_allow),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::QuicEndpoint,
             )),
@@ -1191,87 +1265,6 @@ impl QuicEndpoint {
         unsafe {
             (*raw).vtable_ptr = &raw const *vt;
             (*raw).vtable.set(Some(vt));
-        }
-
-        let options = options.to_js();
-        if options.is_object() {
-            if let Some(addr_js) = options
-                .get(global, "address")?
-                .filter(|v| !v.is_empty_or_undefined_or_null())
-            {
-                if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
-                    let stored = StoredAddr::from_socket_address(addr);
-                    if let Some((_, port, ip)) = stored.decode() {
-                        use core::fmt::Write;
-                        let mut host = String::new();
-                        match ip.len() {
-                            4 => {
-                                let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
-                            }
-                            16 => {
-                                let segs: [u16; 8] = core::array::from_fn(|i| {
-                                    u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
-                                });
-                                let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
-                            }
-                            _ => {}
-                        }
-                        let mut host_nul = host.into_bytes();
-                        host_nul.push(0);
-                        // SAFETY: `raw` is uniquely owned here.
-                        unsafe {
-                            (*raw).bind_config.set(BindConfig {
-                                host: host_nul,
-                                port,
-                            })
-                        };
-                    }
-                }
-            }
-            if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
-                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
-                {
-                    // SAFETY: `raw` is uniquely owned here; the Strong keeps
-                    // the BlockList wrapper (and thus the native object)
-                    // alive for the endpoint's lifetime.
-                    unsafe {
-                        (*raw).block_list.set(Some(bl.as_ptr()));
-                        (*raw)
-                            .block_list_js
-                            .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js, global)));
-                    }
-                }
-            }
-            if let Some(policy) = options
-                .get(global, "blockListPolicy")?
-                .filter(|v| v.is_string())
-            {
-                let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
-                // SAFETY: as above.
-                unsafe { (*raw).block_list_allow.set(policy == b"allow") };
-            }
-            if let Some(v) = options
-                .get(global, "disableStatelessReset")?
-                .filter(|v| v.is_boolean())
-            {
-                // SAFETY: as above.
-                unsafe { (*raw).disable_stateless_reset.set(v.to_boolean()) };
-            }
-            if let Some(v) = options
-                .get(global, "statelessResetBurst")?
-                .filter(|v| v.is_number())
-            {
-                let burst = v.as_number().max(0.0).min(u32::MAX as f64) as u32;
-                // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_burst.set(burst) };
-            }
-            if let Some(v) = options
-                .get(global, "statelessResetRate")?
-                .filter(|v| v.is_number())
-            {
-                // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
-            }
         }
 
         let state_ptr = alloc_exposed_array_buffer(

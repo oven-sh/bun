@@ -840,7 +840,7 @@ impl AnyResponse {
     /// HTTP/2: widen the stream receive window once the body is wanted.
     pub fn grow_request_window(self) {
         if let AnyResponse::H2(r) = self {
-            bun_opaque::opaque_deref_mut(r).grow_request_window();
+            opaque_deref_mut(r).grow_request_window();
         }
     }
     pub fn pause(self) {

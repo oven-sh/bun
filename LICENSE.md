@@ -39,7 +39,7 @@ Bun statically links these libraries:
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
-| [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) (not linked: `src/jpeg` is derived from parts of it) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
+| [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) (not linked: `src/jpeg` is derived from parts of it). This software is based in part on the work of the Independent JPEG Group | [BSD 3-Clause / IJG / zlib](src/jpeg/LICENSE.md) |
 | [`libspng`](https://github.com/randy408/libspng) | BSD 2-Clause |
 | [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |

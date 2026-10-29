@@ -802,10 +802,7 @@ impl ServerWebSocket {
                     return Err(bun_jsc::JsError::OutOfMemory);
                 }
                 bytes.extend_from_slice(data);
-                let blob = Blob::new(Blob::init(bytes, global_this));
-                // SAFETY: `blob` is the live allocation `Blob::new` just made. `BlobExt::to_js`
-                // reports the payload size to the GC, which the by-value `JsClass::to_js` skips.
-                Ok(unsafe { BlobExt::to_js(&*blob, global_this) })
+                Ok(Blob::init(bytes, global_this).into_js(global_this))
             }
         }
     }

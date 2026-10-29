@@ -265,16 +265,6 @@ fn finish_s3_blob(
     Ok(blob)
 }
 
-fn construct_s3_file_internal(
-    global: &JSGlobalObject,
-    path: PathLike<'static>,
-    options: Option<JSValue>,
-) -> JsResult<*mut Blob> {
-    Ok(Blob::new(construct_s3_file_internal_store(
-        global, path, options,
-    )?))
-}
-
 pub(crate) struct S3BlobStatTask {
     promise: bun_jsc::JSPromiseStrong,
     // LIFETIMES.tsv: JSC_BORROW (&JSGlobalObject). `BackRef` so the heap task
@@ -561,9 +551,7 @@ pub(crate) fn construct_internal_js(
     path: PathLike<'static>,
     options: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    let blob = construct_s3_file_internal(global, path, options)?;
-    // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`; the wrapper adopts it.
-    Ok(BlobExt::to_js(unsafe { &mut *blob }, global))
+    Ok(construct_s3_file_internal_store(global, path, options)?.into_js(global))
 }
 
 pub(crate) fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {

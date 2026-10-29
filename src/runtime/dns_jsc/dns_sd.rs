@@ -830,7 +830,7 @@ pub(crate) fn lookup(
     };
 
     let protocol = protocol_for_family(query.options.family);
-    let request = GetAddrInfoRequest::init(
+    let (request, promise_value) = GetAddrInfoRequest::init(
         cache,
         get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
         this,
@@ -838,8 +838,6 @@ pub(crate) fn lookup(
         context,
         PendingCacheField::PendingHostCacheNative,
     );
-    // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
-    let promise_value = unsafe { (*request).head.promise.value() };
 
     let name_z = bun::ZBox::from_bytes(query.name.as_ref());
     if !shared.start(Inflight::Jsc(request), protocol, &name_z) {

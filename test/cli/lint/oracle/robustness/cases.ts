@@ -477,8 +477,8 @@ export const cases: Case[] = [
     exitCode: 1,
   },
   // `stylish` pads a message to its length without escape sequences. Each file has a long duplicate key that ends with
-  // a sequence, and the duplicate key `ab`, which is padded to the long one's length. The lengths are those of
-  // `util.stripVTControlCharacters` in Node.js v26.12.1.
+  // a sequence, and the duplicate key `ab`. The shorter of the two messages is padded to the longer one. The lengths
+  // are those of `util.stripVTControlCharacters` in Node.js v26.12.1.
   ...(
     [
       // Node.js's regular expression reads the rest of the text from each `ESC ]` that has no terminator after it.
@@ -500,8 +500,10 @@ export const cases: Case[] = [
     text: () => `({ "${key()}\\x1b[0m": 1, "${key()}\\x1b[0m": 2, ab: 1, ab: 2 });\n`,
     rules: { "no-dupe-keys": "error" },
     args: ["-f", "stylish"],
-    // The padding of `ab`, then the two spaces between the columns.
-    matches: new RegExp(`  error  Duplicate key 'ab' {${Math.max(length - 2, 0) + 2}}no-dupe-keys\n`),
+    // The padding of each message, then the two spaces between the columns.
+    matches: new RegExp(
+      `\\x1b\\[0m' {${Math.max(2 - length, 0) + 2}}no-dupe-keys\n.* 'ab' {${Math.max(length - 2, 0) + 2}}no-dupe-keys\n`,
+    ),
     exitCode: 1,
   })),
   // Nothing is removed from this message, so giving up on it printed the right length, after three seconds for each

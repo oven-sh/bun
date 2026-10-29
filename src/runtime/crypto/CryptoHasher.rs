@@ -1,13 +1,14 @@
 use core::any::Any;
 use core::ffi::c_char;
+use core::ops::ControlFlow;
 
 use bun_boringssl_sys as boring_ssl;
-use bun_jsc::ErrorCode;
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsPayload as _, JsWrapper};
+use bun_jsc::{ErrorCode, JSGlobalObject, StringJsc as _};
 
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::crypto::{HMAC, create_crypto_error, evp};
-use crate::generated_bindgen::crypto_hasher::DigestOutput;
+use crate::generated_bindgen::crypto_hasher::{DigestOutput, HashOptions, HashOutput};
 use crate::node::Encoding;
 use crate::webcore::encoding::BunStringEncode as _;
 use bun_sha_hmac::sha as hashers;
@@ -69,6 +70,15 @@ fn encoded<'a>(
     let global = unsafe { heap.global() };
     let value = encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, digest)?;
     Ok(JsLocal::new(heap, value))
+}
+
+/// node's error for an `outputLength` that the digests of `algorithm` do not have: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_hash.cc#L377-L389
+#[cold]
+fn not_an_xof<'a>(heap: &JsHeap<'a>, algorithm: &[u8], wanted: u32) -> bindgen::Error<'a> {
+    heap.error(format_args!(
+        "Output length {wanted} is invalid for {}, which does not support XOF",
+        bstr::BStr::new(algorithm)
+    ))
 }
 
 /// `write` runs once `output` is valid, and returns the length of the digest.
@@ -412,8 +422,23 @@ impl CryptoHasher {
         heap: &JsHeap<'a>,
         algorithm: &bun_core::String,
         input: &'a [u8],
-        output: Option<DigestOutput<'a>>,
+        output: Option<HashOutput<'a>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
+        let output = match output {
+            None => None,
+            Some(HashOutput::Encoding(name)) => Some(DigestOutput::Encoding(name)),
+            Some(HashOutput::Into(buffer)) => Some(DigestOutput::Into(buffer)),
+            Some(HashOutput::Function(function)) => {
+                return Err(Self::not_options(heap, Some(function)));
+            }
+            Some(HashOutput::Array(_)) => return Err(Self::not_options(heap, None)),
+            Some(HashOutput::Options(options)) => {
+                match Self::hash_with_options(heap, algorithm, input, &options)? {
+                    ControlFlow::Break(digest) => return Ok(digest),
+                    ControlFlow::Continue(encoding) => Some(DigestOutput::Encoding(encoding)),
+                }
+            }
+        };
         let algorithm = &*algorithm.to_utf8();
         let mut digest: evp::Digest = [0; EVP_MAX_MD_SIZE_USIZE];
         let length = if let Some(mut evp) = EVP::by_name(algorithm) {
@@ -430,6 +455,132 @@ impl CryptoHasher {
             )));
         };
         finish_with(heap, output, JsHeap::create_buffer, &digest[..length])
+    }
+
+    /// What node's `validateObject` throws for the two kinds of object that it refuses: `function`, or else an array.
+    #[cold]
+    #[inline(never)]
+    fn not_options<'a>(
+        heap: &JsHeap<'a>,
+        function: Option<JsLocal<'a, bindgen::Callable>>,
+    ) -> bindgen::Error<'a> {
+        let received = match function {
+            None => bun_core::String::static_("an instance of Array"),
+            Some(function) => {
+                // SAFETY: a function is described by its name, which is read without running JavaScript.
+                let global = unsafe { heap.global() };
+                match JSGlobalObject::determine_specific_type(global, function.to_js()) {
+                    Ok(received) => received,
+                    Err(error) => return error.into(),
+                }
+            }
+        };
+        heap.invalid_arguments(format_args!(
+            "The \"options\" argument must be of type object. Received {received}"
+        ))
+    }
+
+    /// node's `ERR_INVALID_ARG_VALUE('outputEncoding', name)`. `name` is quoted as the C++ that throws this error quotes a string.
+    #[cold]
+    fn unknown_output_encoding<'a>(
+        heap: &JsHeap<'a>,
+        name: &bun_core::String,
+    ) -> bindgen::Error<'a> {
+        // SAFETY: a string is made and described without running JavaScript.
+        let global = unsafe { heap.global() };
+        let described = name
+            .to_js(global)
+            .and_then(|name| JSGlobalObject::inspect_for_error_message(global, name));
+        match described {
+            Ok(received) => heap.error_with_code(
+                ErrorCode::INVALID_ARG_VALUE,
+                format_args!("The argument 'outputEncoding' is invalid. Received {received}"),
+            ),
+            Err(error) => error.into(),
+        }
+    }
+
+    /// `Break` is a SHAKE digest of the length asked for. `Continue` is the encoding that `hash` goes on with, as if given its name.
+    #[cold]
+    #[inline(never)]
+    fn hash_with_options<'a>(
+        heap: &JsHeap<'a>,
+        algorithm: &bun_core::String,
+        input: &'a [u8],
+        options: &HashOptions<'a>,
+    ) -> bindgen::Result<'a, ControlFlow<JsLocal<'a>, &'static [u8]>> {
+        let encoding = match &options.output_encoding {
+            None => Encoding::Hex,
+            // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util.js#L313
+            Some(name) if name.is_empty() => Encoding::Utf8,
+            Some(name) => match Encoding::from_bun_string(name) {
+                Some(encoding) => encoding,
+                None => return Err(Self::unknown_output_encoding(heap, name)),
+            },
+        };
+        let encoding_name = <&'static str>::from(encoding).as_bytes();
+        let cshake = !options.function_name.is_undefined() || !options.customization.is_undefined();
+        if options.output_length.is_none() && !cshake {
+            return Ok(ControlFlow::Continue(encoding_name));
+        }
+        let algorithm = &*algorithm.to_utf8();
+        let xof = CryptoHasherZig::xof_by_name(algorithm);
+        if xof.is_none() {
+            let length = match EVP::by_name(algorithm) {
+                Some(evp) => Some(usize::from(evp.size())),
+                None => CryptoHasherZig::digest_length_by_name(algorithm),
+            };
+            // `hash` refuses a name that is no algorithm's.
+            let Some(length) = length else {
+                return Ok(ControlFlow::Continue(encoding_name));
+            };
+            if let Some(wanted) = options.output_length
+                && wanted as usize != length
+            {
+                return Err(not_an_xof(heap, algorithm, wanted));
+            }
+        }
+        // node refuses these last of all: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_hash.cc#L460-L464
+        if cshake {
+            return Err(heap.error(format_args!("Digest options are not supported")));
+        }
+        let (Some(squeeze), Some(wanted)) = (xof, options.output_length) else {
+            return Ok(ControlFlow::Continue(encoding_name));
+        };
+        let length = wanted as usize;
+
+        let characters = match encoding {
+            Encoding::Hex => length.saturating_mul(2),
+            Encoding::Base64 => length.div_ceil(3).saturating_mul(4),
+            Encoding::Base64url => length.saturating_mul(4).div_ceil(3),
+            // UTF-16 has no more units than UTF-8 has bytes, so this is the most that it can be.
+            Encoding::Latin1 | Encoding::Ascii | Encoding::Utf8 => length,
+            Encoding::Ucs2 | Encoding::Utf16le => length / 2,
+            Encoding::Buffer => 0,
+        };
+        if characters > bun_core::String::max_length() {
+            return Err(heap.string_too_long());
+        }
+
+        let mut short: evp::Digest = [0; EVP_MAX_MD_SIZE_USIZE];
+        if let Some(out) = short.get_mut(..length) {
+            squeeze(input, out);
+            return encoded(heap, encoding, out).map(ControlFlow::Break);
+        }
+        let mut long = Vec::new();
+        if long.try_reserve_exact(length).is_err() {
+            return Err(heap.memory_allocation_failed());
+        }
+        long.resize(length, 0);
+        squeeze(input, &mut long);
+        if encoding == Encoding::Buffer {
+            let buffer = heap.create_buffer_from_box(long.into_boxed_slice())?;
+            return Ok(ControlFlow::Break(buffer.as_value()));
+        }
+        // SAFETY: makes a string.
+        let global = unsafe { heap.global() };
+        let value = encoding.encode_with_max_size(global, length, &long)?;
+        Ok(ControlFlow::Break(JsLocal::new(heap, value)))
     }
 }
 
@@ -550,6 +701,34 @@ impl CryptoHasherZig {
         }
         for_each_zig_algo!(arm);
         None
+    }
+
+    /// How many bytes `hash_by_name` writes. `None` when `algorithm` is not one of these.
+    fn digest_length_by_name(algorithm: &[u8]) -> Option<usize> {
+        let algorithm = evp::lookup_ignore_case(algorithm)?;
+        macro_rules! arm {
+            ($ty:ty) => {
+                if algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
+                    return Some(<$ty as ZigHashAlgo>::DIGEST_LENGTH as usize);
+                }
+            };
+        }
+        for_each_zig_algo!(arm);
+        None
+    }
+
+    /// What fills `out`, of any length, with the output of shake128 or shake256 for `input`. `None` for any other algorithm.
+    fn xof_by_name(algorithm: &[u8]) -> Option<fn(input: &[u8], out: &mut [u8])> {
+        fn squeeze<Xof: ZigHashAlgo>(input: &[u8], out: &mut [u8]) {
+            let mut hasher = Xof::init();
+            hasher.update(input);
+            hasher.final_(out);
+        }
+        match evp::lookup_ignore_case(algorithm)? {
+            evp::Algorithm::Shake128 => Some(squeeze::<Shake128>),
+            evp::Algorithm::Shake256 => Some(squeeze::<Shake256>),
+            _ => None,
+        }
     }
 
     pub(crate) fn init(name: &[u8]) -> Option<CryptoHasherZig> {

@@ -207,6 +207,67 @@ test("static hash requires the algorithm to be a string primitive", () => {
   );
 });
 
+test("static hash takes the options of node's crypto.hash in place of an encoding", () => {
+  const sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+  // As in node, an options object without `outputEncoding` gives a hex string:
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L356
+  expect(Bun.CryptoHasher.hash("sha256", "abc", {})).toBe(sha256);
+  expect(Bun.CryptoHasher.hash("sha256", "abc", { outputEncoding: "base64" })).toBe(
+    "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=",
+  );
+  const fixed = Bun.CryptoHasher.hash("sha256", "abc", { outputEncoding: "buffer" });
+  expect(fixed).toBeInstanceOf(Buffer);
+  expect(fixed).toEqual(Buffer.from(sha256, "hex"));
+  expect(Bun.CryptoHasher.hash("shake128", "abc", { outputLength: 8 })).toBe("5881092dd818bf5c");
+  // 16 bytes are made in a local array. 100 bytes are an allocation, which the Buffer takes over.
+  for (const outputLength of [16, 100]) {
+    const digest = Bun.CryptoHasher.hash("shake256", "abc", { outputLength, outputEncoding: "buffer" });
+    expect(digest).toBeInstanceOf(Buffer);
+    expect(digest).toEqual(createHash("shake256", { outputLength }).update("abc").digest());
+  }
+  expect(nodeHash("shake128", "abc", { outputLength: 8 })).toBe("5881092dd818bf5c");
+
+  class Subclass extends Bun.CryptoHasher {}
+  expect(Subclass.hash("shake128", "abc", { outputLength: 8 })).toBe("5881092dd818bf5c");
+
+  // Without a third argument the digest is a Buffer, and of shake128 it is 16 bytes.
+  expect(Bun.CryptoHasher.hash("shake128", "abc")).toEqual(Buffer.from("5881092dd818bf5cf8a3ddb793fbcba7", "hex"));
+
+  // `digest` and the hashers of one algorithm take no options.
+  const refused = expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+  // @ts-expect-error
+  expect(() => new Bun.CryptoHasher("shake128").update("abc").digest({ outputLength: 8 })).toThrow(refused);
+  // @ts-expect-error
+  expect(() => Bun.SHA256.hash("abc", { outputEncoding: "hex" })).toThrow(refused);
+});
+
+test("static hash writes into a buffer of any class, which is not read as options", () => {
+  const sha256 = Buffer.from("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "hex");
+  for (const into of [
+    new Uint8Array(40),
+    Buffer.alloc(40),
+    new Float64Array(5),
+    new DataView(new ArrayBuffer(48), 8),
+    new ArrayBuffer(40),
+    new SharedArrayBuffer(40),
+    new Uint8Array(new SharedArrayBuffer(40)),
+  ]) {
+    const bytes = ArrayBuffer.isView(into)
+      ? new Uint8Array(into.buffer, into.byteOffset, into.byteLength)
+      : new Uint8Array(into);
+    const label = into.constructor.name;
+    for (const hash of [Bun.CryptoHasher.hash, nodeHash] as ((...args: unknown[]) => unknown)[]) {
+      bytes.fill(0xa5);
+      expect(hash("sha256", "abc", into), label).toBe(into);
+      expect(Buffer.from(bytes.subarray(0, 32)), label).toEqual(sha256);
+      expect(
+        bytes.subarray(32).every(byte => byte === 0xa5),
+        label,
+      ).toBe(true);
+    }
+  }
+});
+
 test("hash functions read their buffers and hasher state only after every argument has been coerced", async () => {
   // A toString() hook on one argument detaches the buffer behind another argument, or digests the
   // hasher, before the hash runs. transfer(0) frees the old backing store at once, so no GC is

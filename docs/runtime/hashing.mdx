@@ -269,6 +269,35 @@ console.log(arr);
 // => Uint8Array(32) [ 185, 77, 39, 185, 147, ... ]
 ```
 
+### Hash in one call with `Bun.CryptoHasher.hash`
+
+`Bun.CryptoHasher.hash()` hashes one input without a hasher object. Pass the algorithm and the data. The third argument is optional.
+
+- Without it, Bun returns the hash in a new `Buffer`.
+- With an encoding, Bun returns the hash as a string.
+- With a `TypedArray`, Bun writes the hash to the start of the array and returns the array. The array must hold at least as many bytes as the hash.
+
+```ts
+Bun.CryptoHasher.hash("sha256", "hello world");
+// => <Buffer b9 4d 27 b9 93 ...>
+
+Bun.CryptoHasher.hash("sha256", "hello world", "hex");
+// => "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+```
+
+The third argument can also be an object with the `outputEncoding` and `outputLength` options of [`crypto.hash()`](https://nodejs.org/api/crypto.html#cryptohashalgorithm-data-options) in `node:crypto`.
+
+- `outputEncoding` is the encoding of the returned string. `"buffer"` returns a `Buffer`. With an options object the default is `"hex"`, as in Node.js.
+- `outputLength` is the length in bytes of a `"shake128"` or `"shake256"` hash. Pass it for those two algorithms. Without it, their hashes are 16 and 32 bytes long. Node.js deprecates that default. A `TypedArray` third argument also receives 16 or 32 bytes.
+
+```ts
+Bun.CryptoHasher.hash("shake256", "hello world", { outputLength: 8 });
+// => "369771bb2cb9d2b0"
+
+Bun.CryptoHasher.hash("shake256", "hello world", { outputLength: 8, outputEncoding: "buffer" });
+// => <Buffer 36 97 71 bb 2c b9 d2 b0>
+```
+
 ### HMAC in `Bun.CryptoHasher`
 
 `Bun.CryptoHasher` can compute HMAC digests. Pass the key to the constructor.

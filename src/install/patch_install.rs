@@ -43,15 +43,7 @@ pub struct PatchTask {
 }
 
 bun_threading::intrusive_work_task!(PatchTask, task);
-
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(PatchTask, .next)`.
-unsafe impl bun_threading::Linked for PatchTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(PatchTask, next: bun_threading::Link<PatchTask>);
 
 pub enum Callback {
     CalcHash(CalcPatchHash),

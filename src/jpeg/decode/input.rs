@@ -125,3 +125,39 @@ impl<'a> Input<'a> {
         }
     }
 }
+
+/// Counts down to the next restart marker.
+#[derive(Default)]
+pub(crate) struct Restarts {
+    /// In MCUs, or rows of MCUs in a lossless stream. 0 if the scan has no restart markers.
+    interval: u32,
+    to_go: u32,
+}
+
+impl Restarts {
+    pub(crate) fn new(interval: u32) -> Self {
+        Restarts {
+            interval,
+            to_go: interval,
+        }
+    }
+
+    pub(crate) fn in_use(&self) -> bool {
+        self.interval != 0
+    }
+
+    /// Called before each MCU. Returns whether a restart marker was due, which has then been read.
+    #[inline(always)]
+    pub(crate) fn due(&mut self, input: &mut Input) -> bool {
+        if self.interval == 0 {
+            return false;
+        }
+        let due = self.to_go == 0;
+        if due {
+            input.read_restart_marker();
+            self.to_go = self.interval;
+        }
+        self.to_go -= 1;
+        due
+    }
+}

@@ -5,7 +5,7 @@ use super::bits::{
     huff_extend,
 };
 use super::coef::McuBlocks;
-use super::input::Input;
+use super::input::{Input, Restarts};
 use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
 use crate::alloc::try_box;
 use crate::error::{Error, Result};
@@ -15,9 +15,7 @@ use crate::tables;
 pub(crate) struct HuffDecoder {
     bits: BitReader,
     last_dc_val: [i32; MAX_COMPONENTS_IN_SCAN],
-    /// MCUs left in this restart interval.
-    restarts_to_go: u32,
-    restart_interval: u32,
+    restarts: Restarts,
     dc_tables: DerivedTables,
     ac_tables: DerivedTables,
     blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
@@ -43,7 +41,7 @@ impl HuffDecoder {
         Ok(Self::default())
     }
 
-    pub(crate) fn start_pass(&mut self, decoder: &mut Decoder) -> Result<()> {
+    pub(crate) fn start_pass(&mut self, decoder: &Decoder) -> Result<()> {
         for i in 0..decoder.components_in_scan {
             let comp = decoder.scan_component(i)?;
             let dc_tables = &mut self.dc_tables;
@@ -57,17 +55,8 @@ impl HuffDecoder {
         self.blocks_in_mcu = decoder.blocks_in_mcu;
 
         self.bits.reset();
-        decoder.input.insufficient_data = false;
-        self.restart_interval = decoder.restart_interval;
-        self.restarts_to_go = decoder.restart_interval;
+        self.restarts = Restarts::new(decoder.restart_interval);
         Ok(())
-    }
-
-    fn process_restart(&mut self, input: &mut Input) {
-        self.bits.reset();
-        input.read_restart_marker();
-        self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
-        self.restarts_to_go = self.restart_interval;
     }
 
     /// Decodes one MCU into blocks that the caller has zeroed.
@@ -89,10 +78,6 @@ impl HuffDecoder {
                 self.decode_mcu_slow(input, mcu)?;
             }
         }
-
-        if self.restart_interval != 0 {
-            self.restarts_to_go -= 1;
-        }
         Ok(())
     }
 
@@ -103,13 +88,13 @@ impl HuffDecoder {
         /// The most that a block can take up, generously.
         const BUFSIZE: usize = 64 * 8;
 
-        if self.restart_interval != 0 {
-            if self.restarts_to_go == 0 {
-                self.process_restart(input);
-            }
-            return false;
+        if self.restarts.due(input) {
+            self.bits.reset();
+            self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
         }
-        input.remaining().len() >= BUFSIZE * self.blocks_in_mcu && input.unread_marker == 0
+        !self.restarts.in_use()
+            && input.remaining().len() >= BUFSIZE * self.blocks_in_mcu
+            && input.unread_marker == 0
     }
 
     /// The blocks of an MCU, from either source of bits. Returns the new DC predictions.

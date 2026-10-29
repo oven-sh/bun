@@ -30,7 +30,7 @@ pub(crate) enum Entropy {
 }
 
 impl Entropy {
-    pub(crate) fn start_pass(&mut self, decoder: &mut Decoder) -> Result<()> {
+    pub(crate) fn start_pass(&mut self, decoder: &Decoder) -> Result<()> {
         match self {
             Entropy::Huff(e) => e.start_pass(decoder),
             Entropy::PHuff(e) => e.start_pass(decoder),

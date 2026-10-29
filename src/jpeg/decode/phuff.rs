@@ -2,7 +2,7 @@
 
 use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
 use super::coef::{CoefBits, McuBlocks};
-use super::input::Input;
+use super::input::{Input, Restarts};
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
 use crate::error::{Error, Result};
 use crate::zigzag::nonzero;
@@ -22,8 +22,7 @@ pub(crate) struct PHuffDecoder {
     /// Blocks still to come whose band is all zero.
     eobrun: u32,
     last_dc_val: [i32; MAX_COMPONENTS_IN_SCAN],
-    restarts_to_go: u32,
-    restart_interval: u32,
+    restarts: Restarts,
     /// DC or AC: a scan has only one kind.
     tables: DerivedTables,
     coef_bits: CoefBits,
@@ -91,7 +90,7 @@ impl PHuffDecoder {
         &self.coef_bits
     }
 
-    pub(crate) fn start_pass(&mut self, decoder: &mut Decoder) -> Result<()> {
+    pub(crate) fn start_pass(&mut self, decoder: &Decoder) -> Result<()> {
         validate_progression(decoder)?;
         update_progression(decoder, &mut self.coef_bits)?;
 
@@ -125,35 +124,23 @@ impl PHuffDecoder {
         self.blocks = decoder.mcu_blocks;
 
         self.bits.reset();
-        decoder.input.insufficient_data = false;
         self.eobrun = 0;
-        self.restart_interval = decoder.restart_interval;
-        self.restarts_to_go = decoder.restart_interval;
+        self.restarts = Restarts::new(decoder.restart_interval);
         Ok(())
-    }
-
-    fn process_restart(&mut self, input: &mut Input) {
-        self.bits.reset();
-        input.read_restart_marker();
-        self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
-        self.eobrun = 0;
-        self.restarts_to_go = self.restart_interval;
     }
 
     pub(crate) fn decode_mcu(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
-        if self.restart_interval != 0 && self.restarts_to_go == 0 {
-            self.process_restart(input);
+        if self.restarts.due(input) {
+            self.bits.reset();
+            self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
+            self.eobrun = 0;
         }
         match self.pass {
-            Pass::DcFirst => self.decode_dc_first(input, mcu)?,
-            Pass::AcFirst => self.decode_ac_first(input, mcu)?,
-            Pass::DcRefine => self.decode_dc_refine(input, mcu)?,
-            Pass::AcRefine => self.decode_ac_refine(input, mcu)?,
+            Pass::DcFirst => self.decode_dc_first(input, mcu),
+            Pass::AcFirst => self.decode_ac_first(input, mcu),
+            Pass::DcRefine => self.decode_dc_refine(input, mcu),
+            Pass::AcRefine => self.decode_ac_refine(input, mcu),
         }
-        if self.restart_interval != 0 {
-            self.restarts_to_go -= 1;
-        }
-        Ok(())
     }
 
     fn decode_dc_first(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {

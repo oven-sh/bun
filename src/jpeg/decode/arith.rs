@@ -1,7 +1,7 @@
 //! Arithmetic decoding of sequential and progressive scans (jdarith.c, jaricom.c).
 
 use super::coef::{CoefBits, McuBlocks};
-use super::input::Input;
+use super::input::{Input, Restarts};
 use super::phuff::{update_progression, validate_progression};
 use super::{
     Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, NUM_ARITH_TABLES, coef_at,
@@ -166,8 +166,7 @@ pub(crate) struct ArithDecoder {
     last_dc_val: [i32; MAX_COMPONENTS_IN_SCAN],
     /// Which bins the next DC difference of a component starts from. It depends on the size of the last one.
     dc_context: [usize; MAX_COMPONENTS_IN_SCAN],
-    restarts_to_go: u32,
-    restart_interval: u32,
+    restarts: Restarts,
     dc_stats: Box<[[u8; DC_STAT_BINS]; NUM_ARITH_TABLES]>,
     ac_stats: Box<[[u8; AC_STAT_BINS]; NUM_ARITH_TABLES]>,
     fixed_bin: u8,
@@ -194,8 +193,7 @@ impl ArithDecoder {
             },
             last_dc_val: [0; MAX_COMPONENTS_IN_SCAN],
             dc_context: [0; MAX_COMPONENTS_IN_SCAN],
-            restarts_to_go: 0,
-            restart_interval: 0,
+            restarts: Restarts::default(),
             dc_stats: try_box([[0; DC_STAT_BINS]; NUM_ARITH_TABLES])?,
             ac_stats: try_box([[0; AC_STAT_BINS]; NUM_ARITH_TABLES])?,
             fixed_bin: 113,
@@ -227,7 +225,7 @@ impl ArithDecoder {
         matches!(self.pass, Pass::Sequential | Pass::AcFirst | Pass::AcRefine)
     }
 
-    pub(crate) fn start_pass(&mut self, decoder: &mut Decoder) -> Result<()> {
+    pub(crate) fn start_pass(&mut self, decoder: &Decoder) -> Result<()> {
         if let Some(coef_bits) = &mut self.coef_bits {
             validate_progression(decoder)?;
             update_progression(decoder, coef_bits)?;
@@ -254,9 +252,7 @@ impl ArithDecoder {
         self.ac_k = decoder.arith_ac_k;
 
         self.reset_statistics();
-        decoder.input.insufficient_data = false;
-        self.restart_interval = decoder.restart_interval;
-        self.restarts_to_go = decoder.restart_interval;
+        self.restarts = Restarts::new(decoder.restart_interval);
         Ok(())
     }
 
@@ -278,13 +274,8 @@ impl ArithDecoder {
     }
 
     pub(crate) fn decode_mcu(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
-        if self.restart_interval != 0 {
-            if self.restarts_to_go == 0 {
-                input.read_restart_marker();
-                self.reset_statistics();
-                self.restarts_to_go = self.restart_interval;
-            }
-            self.restarts_to_go -= 1;
+        if self.restarts.due(input) {
+            self.reset_statistics();
         }
 
         match self.pass {

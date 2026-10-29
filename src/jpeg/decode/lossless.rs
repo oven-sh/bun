@@ -2,6 +2,7 @@
 
 use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
 use super::coef::Plane;
+use super::input::Restarts;
 use super::{Decoder, MAX_BLOCKS_IN_MCU};
 use crate::alloc::{try_vec, try_vec_with_capacity};
 use crate::error::{Error, Result};
@@ -45,8 +46,7 @@ pub(crate) struct DiffController {
     first_row: Vec<bool>,
 
     input_imcu_row: u32,
-    /// MCU rows left in this restart interval.
-    restart_rows_to_go: u32,
+    restarts: Restarts,
     diff_buf: Vec<Rows>,
     undiff_buf: Vec<Rows>,
     /// The samples of the whole image, if the stream has several scans. Empty until the component's first scan.
@@ -69,14 +69,14 @@ impl DiffController {
             num_runs: 0,
             first_row: try_vec(true, decoder.components.len())?,
             input_imcu_row: 0,
-            restart_rows_to_go: 0,
+            restarts: Restarts::default(),
             diff_buf,
             undiff_buf,
             whole_image: Vec::new(),
         })
     }
 
-    pub(crate) fn start_input_pass(&mut self, decoder: &mut Decoder) -> Result<()> {
+    pub(crate) fn start_input_pass(&mut self, decoder: &Decoder) -> Result<()> {
         for i in 0..decoder.components_in_scan {
             let selector = decoder.scan_component(i)?.dc_selector;
             let tables = &mut self.tables;
@@ -97,7 +97,6 @@ impl DiffController {
             }
         }
         self.bits.reset();
-        decoder.input.insufficient_data = false;
 
         // Ss selects the predictor and Al is the point transform.
         if !(1..=7).contains(&decoder.ss)
@@ -119,7 +118,7 @@ impl DiffController {
                 decoder.mcus_per_row,
             ));
         }
-        self.restart_rows_to_go = decoder.restart_interval / decoder.mcus_per_row;
+        self.restarts = Restarts::new(decoder.restart_interval / decoder.mcus_per_row);
         self.input_imcu_row = 0;
         Ok(())
     }
@@ -186,16 +185,11 @@ impl DiffController {
         planes: Option<&mut [Plane]>,
     ) -> Result<()> {
         for yoffset in 0..decoder.mcu_rows_in_imcu_row(self.input_imcu_row)? {
-            if decoder.restart_interval != 0 && self.restart_rows_to_go == 0 {
+            if self.restarts.due(&mut decoder.input) {
                 self.bits.reset();
-                decoder.input.read_restart_marker();
                 self.first_row.fill(true);
-                self.restart_rows_to_go = decoder.restart_interval / decoder.mcus_per_row;
             }
             self.decode_mcus(decoder, yoffset as usize)?;
-            if decoder.restart_interval != 0 {
-                self.restart_rows_to_go -= 1;
-            }
         }
 
         let (planes, first_imcu_row) = match planes {

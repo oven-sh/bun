@@ -28,7 +28,7 @@ Programs:
 - `bench [file.jpg]...`: times both.
 - `tools/kernels.sh`: checks the kernels alone, for every target of this machine and under qemu for those of arm64.
 
-`HWY_TARGET=SSSE3` (or `AVX2`, `AVX3`) in the environment makes any of the programs use the kernels for that target and not
+`HWY_TARGET=SSSE3` (or `AVX2`) in the environment makes any of the programs use the kernels for that target and not
 for the best one that the CPU has.
 
 `src/reference.rs` replays what `src/runtime/image/codec_jpeg.rs` did at 92e819d8. `tools/gen_corpus.sh` makes the seed

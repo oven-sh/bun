@@ -1,4 +1,4 @@
-// HWY_TARGET=<name> in the environment makes every program here use the kernels for that target (SSSE3, AVX2, AVX3) and not
+// HWY_TARGET=<name> in the environment makes every program here use the kernels for that target (SSSE3, AVX2) and not
 // the best one the CPU has. The CPU has to have it. For a target that highway_jpeg.cpp leaves out, that is SSSE3.
 #include <hwy/targets.h>
 

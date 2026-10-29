@@ -10,10 +10,9 @@
 // Derived from libjpeg-turbo's jdcolor.c, jccolor.c, jcsample.c and jdsample.c, and from simd/x86_64/jdcolext-sse2.asm and
 // jccolext-sse2.asm: see src/jpeg/NOTICE.md.
 
-// Left are SSSE3, AVX2 and AVX3 (AVX-512), and one kind of NEON. The others have the same vectors, and what they add to the
-// instructions makes these kernels no faster, or with SVE2_128 slower.
+// Left are SSSE3, AVX2 and one kind of NEON. The others make these kernels no faster, and SVE2_128 makes them slower.
 #undef HWY_DISABLED_TARGETS
-#define HWY_DISABLED_TARGETS (HWY_SSE4 | HWY_AVX3_DL | HWY_AVX3_ZEN4 | HWY_AVX3_SPR | HWY_AVX10_2 | HWY_NEON | HWY_NEON_BF16 | HWY_ALL_SVE)
+#define HWY_DISABLED_TARGETS (HWY_SSE4 | HWY_AVX3 | HWY_AVX3_DL | HWY_AVX3_ZEN4 | HWY_AVX3_SPR | HWY_AVX10_2 | HWY_NEON | HWY_NEON_BF16 | HWY_ALL_SVE)
 #ifndef __OPTIMIZE__
 #error "With targets of its own this file needs hwy::ChosenTarget::GetIndex() inlined, which Highway only does in an optimized build: see fileOverrides in scripts/build/flags.ts"
 #endif

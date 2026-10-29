@@ -1230,15 +1230,10 @@ bun::N_AVX3_ZEN4::OddBlocksImpl        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, 
 # ----------------------------------------------------------------------------
 # Row kernels of the JPEG codec (highway_jpeg.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
-# (10 symbols; PDB demangles these to bun::N_*::*)
+# (5 symbols; PDB demangles these to bun::N_*::*)
 # ----------------------------------------------------------------------------
 bun::N_AVX2::JpegFromYccImpl         [AVX, AVX2]
 bun::N_AVX2::JpegH2V1FancyImpl       [AVX, AVX2]
 bun::N_AVX2::JpegH2V2DownsampleImpl  [AVX, AVX2]
 bun::N_AVX2::JpegH2V2FancyImpl       [AVX, AVX2]
 bun::N_AVX2::JpegToYccImpl           [AVX, AVX2]
-bun::N_AVX3::JpegFromYccImpl         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX3::JpegH2V1FancyImpl       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX3::JpegH2V2DownsampleImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX3::JpegH2V2FancyImpl       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-bun::N_AVX3::JpegToYccImpl           [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]

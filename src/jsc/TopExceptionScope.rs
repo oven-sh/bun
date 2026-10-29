@@ -24,16 +24,6 @@ pub struct SourceLocation {
     pub line: u32,
 }
 
-// SAFETY: both pointers always reference `'static` data — either compile-time literals
-// from `concat!(file!(), "\0")` / `c"…"`, or interned `CString`s owned by
-// `intern_location_file`'s process-level `static` cache. The cache only ever inserts
-// (never removes or shrinks), and Rust never drops `static`s, so the boxed bytes live
-// for the rest of the process and are never written through. Sharing across threads is
-// therefore sound.
-unsafe impl Send for SourceLocation {}
-// SAFETY: same invariant as `Send` above — both pointers reference immutable `'static` data.
-unsafe impl Sync for SourceLocation {}
-
 impl SourceLocation {
     /// Build from the runtime `#[track_caller]` location. The `file()` string is not
     /// NUL-terminated, so we intern it (leaked, bounded by the number of distinct call
@@ -61,9 +51,7 @@ impl SourceLocation {
 /// their TLS destructors never run and LSan does not trace those threads' TLS slots as
 /// roots — every `Box<CStr>` interned from a worker was reported as leaked. A `static`
 /// lives in `.data`/`.bss` (a built-in LSan root), is never dropped, and reaches the
-/// boxed `CStr` data transitively via the `HashMap`'s bucket allocation. It also closes
-/// a latent UAF: `SourceLocation` is `Copy + Send + Sync`, so a value handed across
-/// threads could outlive a per-thread cache that *did* run its destructor. The returned
+/// boxed `CStr` data transitively via the `HashMap`'s bucket allocation. The returned
 /// pointer is stable across rehash because the `HashMap` value is `Box<CStr>` — the
 /// boxed bytes never move.
 ///

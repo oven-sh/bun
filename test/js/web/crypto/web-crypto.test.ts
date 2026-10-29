@@ -524,7 +524,7 @@ describe("RsaKeyAlgorithm.modulusLength of an imported key", () => {
         true,
         ["encrypt"],
       )
-      .then(k => (k.algorithm as RsaKeyAlgorithm).modulusLength);
+      .then(k => (k.algorithm as webcrypto.RsaKeyAlgorithm).modulusLength);
 
   it("is the bit length of n, not its byte length times 8", async () => {
     expect({

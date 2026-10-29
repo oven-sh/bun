@@ -224,15 +224,6 @@ pub mod dir_iterator {
         ptr: core::ptr::NonNull<u8>,
         len: usize,
     }
-    #[cfg(not(windows))]
-    // SAFETY: `Name` is a lifetime-erased `&[u8]`; the borrowed bytes are
-    // immutable kernel-filled data and the iterator is not shared across
-    // threads while a `Name` is outstanding.
-    unsafe impl Send for Name {}
-    // SAFETY: see `Send` above — `Name` only exposes shared reads of
-    // immutable kernel-filled bytes, so `&Name` is safe to share.
-    #[cfg(not(windows))]
-    unsafe impl Sync for Name {}
     #[cfg(windows)]
     pub struct Name {
         native: Vec<OSPathChar>,

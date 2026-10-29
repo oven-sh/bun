@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use bun_aot::ir::generated::{AdmittedCode, ImageVerdict};
 #[cfg(bun_locked_environment)]
 use bun_core::ZBox;
+use bun_core::ffi::FfiSlice;
 use bun_exe_format::identity::{HostDescription, IdentityError, find_process_identity};
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_resolver::StandaloneModuleGraph;
@@ -35,16 +36,17 @@ struct ImageFileArgument {
 
 unsafe extern "C" {
     fn Bun__AOT__useImage(
-        image: Bytes,
-        all_images: Bytes,
+        image: FfiSlice<'static>,
+        all_images: FfiSlice<'static>,
         file_or_null: *const ImageFileArgument,
         identity: *const u8,
     ) -> u32;
-    fn Bun__AOT__admittedCode(image: Bytes, admitted: *mut u32) -> bool;
-    fn Bun__AOT__admitsUnknownJavaScript(image: Bytes) -> bool;
-    fn Bun__AOT__loadsCodeOutsideImage(image: Bytes) -> bool;
-    fn Bun__AOT__omitsFunctionSource(image: Bytes) -> bool;
-    fn Bun__AOT__useNoImageOnThisThread(specifier: Bytes) -> bool;
+    safe fn Bun__AOT__admittedCode(image: FfiSlice<'_>, admitted: &mut u32) -> bool;
+    safe fn Bun__AOT__admitsUnknownJavaScript(image: FfiSlice<'_>) -> bool;
+    safe fn Bun__AOT__loadsCodeOutsideImage(image: FfiSlice<'_>) -> bool;
+    /// Not `safe fn`: past the header check it reads a C++ `bool` from the bytes unvalidated.
+    fn Bun__AOT__omitsFunctionSource(image: FfiSlice<'_>) -> bool;
+    fn Bun__AOT__useNoImageOnThisThread(specifier: FfiSlice<'_>) -> bool;
     safe fn Bun__AOT__imageCode() -> Bytes;
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
@@ -109,42 +111,32 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     }
 }
 
-fn bytes_of(image: &[u8]) -> Bytes {
-    Bytes {
-        ptr: image.as_ptr(),
-        len: image.len(),
-    }
-}
-
 /// What the options of the build say is the same in every image.
-fn image_of(program: &CompiledProgram) -> Bytes {
-    bytes_of(program.first_image())
+fn image_of(program: &CompiledProgram) -> FfiSlice<'_> {
+    FfiSlice::new(program.first_image())
 }
 
 /// Answers before `use_image` has run. `None`: `use_image` refuses the image.
 pub fn admitted_code_of(program: &CompiledProgram) -> Option<AdmittedCode> {
     let mut admitted = 0u32;
-    // SAFETY: the engine reads the image and writes one word through the pointer before it returns.
-    let has_header = unsafe { Bun__AOT__admittedCode(image_of(program), &raw mut admitted) };
+    let has_header = Bun__AOT__admittedCode(image_of(program), &mut admitted);
     has_header.then(|| AdmittedCode::from_wire(admitted).unwrap_or_default())
 }
 
 /// Whether the compiler allowed for script and machine code that it did not see.
 pub fn admits_unknown_javascript(program: &CompiledProgram) -> bool {
-    // SAFETY: the engine reads the image before it returns.
-    let admits = |image: &[u8]| unsafe { Bun__AOT__admitsUnknownJavaScript(bytes_of(image)) };
+    let admits = |image: &[u8]| Bun__AOT__admitsUnknownJavaScript(FfiSlice::new(image));
     program.images().any(admits)
 }
 
 /// Whether the program itself loads files with code that the build has not seen.
 pub fn loads_code_outside_image(program: &CompiledProgram) -> bool {
-    // SAFETY: the engine reads the image before it returns.
-    unsafe { Bun__AOT__loadsCodeOutsideImage(image_of(program)) }
+    Bun__AOT__loadsCodeOutsideImage(image_of(program))
 }
 
 /// Whether the program was built with `--no-compile-function-source`.
 pub fn omits_function_source(program: &CompiledProgram) -> bool {
-    // SAFETY: the engine reads the image before it returns.
+    // SAFETY: an image whose header passes the check was written by the compiler, with 0 or 1 in that `bool`.
     unsafe { Bun__AOT__omitsFunctionSource(image_of(program)) }
 }
 
@@ -566,8 +558,8 @@ fn use_image_on_this_thread(program: &'static CompiledProgram, image: &'static [
     // `identity` outlive the call.
     let raw_verdict = unsafe {
         Bun__AOT__useImage(
-            bytes_of(image),
-            bytes_of(program.image),
+            FfiSlice::new(image),
+            FfiSlice::new(program.image),
             file.as_ref().map_or(core::ptr::null(), core::ptr::from_ref),
             identity.as_ptr(),
         )
@@ -599,8 +591,8 @@ pub(crate) fn runs_worker_of_text_apart() -> bool {
 
 /// On the thread of a Worker that starts from text, before its VM is created. False where this Bun runs nothing but compiled code.
 pub(crate) fn use_no_image_on_this_thread(specifier: &[u8]) -> bool {
-    // SAFETY: `specifier` outlives the call.
-    let uses_none = unsafe { Bun__AOT__useNoImageOnThisThread(bytes_of(specifier)) };
+    // SAFETY: the only caller, `WebWorker::start_vm`, calls this before the thread has a VM.
+    let uses_none = unsafe { Bun__AOT__useNoImageOnThisThread(FfiSlice::new(specifier)) };
     if uses_none {
         bun_core::run_no_compiled_program_on_this_thread();
     }

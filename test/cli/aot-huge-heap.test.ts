@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump, withoutCrashReport } from "../aot/harness/commands";
 import { run as runCommand } from "../aot/harness/run";
-import { withoutCoreDump, withoutCrashReport } from "../aot/run-programs";
 import { describe, test } from "../aot/supported";
 
 // --aot keeps references between objects in 32 bits, which limits each thread to 32 GB of objects. --aot-huge-heap compiles with

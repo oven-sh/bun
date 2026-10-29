@@ -243,6 +243,12 @@ pub fn error_if_code_outside_image_is_refused(
     (!error.is_empty()).then_some(error)
 }
 
+pub(crate) fn refuses_code_at(global: &JSGlobalObject, path: &[u8]) -> bool {
+    let path = bun_core::StringView::from_bytes(path);
+    error_if_code_outside_image_is_refused(global, crate::ErrCode::ERR_MODULE_NOT_FOUND, &path)
+        .is_some()
+}
+
 /// `path` names a file that loads as a database or a page.
 pub fn error_if_host_object_outside_image_is_refused(
     global: &JSGlobalObject,

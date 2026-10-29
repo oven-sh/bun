@@ -393,6 +393,30 @@ fn pieces_take_segment_name() {
 }
 
 #[test]
+fn code_is_found_in_every_piece() {
+    let offset_in_code = |bytes: &[u8], address: u64| {
+        let header = read_header(bytes).unwrap();
+        let commands = &bytes[HEADER_SIZE..][..header.sizeofcmds as usize];
+        bun_sys::macho::offset_in_code(header.ncmds, commands, address)
+    };
+    let cuts = [cut(2, 4), cut(86, 90), cut(99, 101)];
+    let original = toy();
+    let trimmed = remove_and_verify(&original, &cuts);
+    let code = vm_addresses(&parse(&original).unwrap().segments[TEXT_INDEX].command);
+    for index in 0..107 {
+        let page = cut(index, index + 1);
+        let is_removed = cuts.iter().any(|cut| cut.contains(page));
+        for address in [page.start, page.end - 1] {
+            let offset = code.contains(page).then(|| address - IMAGE_BASE);
+            assert_eq!(offset_in_code(&original, address), offset);
+            let offset = offset.filter(|_| !is_removed);
+            assert_eq!(offset_in_code(&trimmed, address), offset);
+        }
+    }
+    assert_eq!(offset_in_code(&trimmed, IMAGE_BASE - 1), None);
+}
+
+#[test]
 fn second_removal_splits_pieces() {
     let (first, second) = (cut(3, 5), cut(8, 9));
     let once = remove_and_verify(&toy(), &[first]);
@@ -624,6 +648,79 @@ fn unsupported_files_have_no_cuts() {
         assert!(mapped_spans(&bytes).is_ok());
         assert_no_cuts(&bytes, NoCutReason::HeadersUnreadable);
         assert_eq!(remove_ranges(&mut bytes, &[cut(3, 5)]), Err(error));
+    }
+}
+
+#[cfg(not(windows))]
+mod files {
+    use super::*;
+    use crate::mapped_file::tests::TemporaryFile;
+    use crate::mapped_file::{FileBytes, MappedFile};
+
+    fn sign_in_memory(template: &[u8], cuts: &[AddressRange]) -> Vec<u8> {
+        let mut template = template.to_vec();
+        let mut signed = Vec::new();
+        remove_ranges(&mut template, cuts).unwrap();
+        let mut file = MachoFile::init(&template, PAYLOAD.len()).unwrap();
+        file.write_section(&PAYLOAD, false).unwrap();
+        file.build_and_sign(&mut signed).unwrap();
+        signed
+    }
+
+    fn sign_into(
+        name: &str,
+        template: &[u8],
+        cuts: &[AddressRange],
+        held: Option<&[u8]>,
+    ) -> Vec<u8> {
+        let template_file = TemporaryFile::create(&format!("{name}-template"), template);
+        let output = TemporaryFile::create(&format!("{name}-output"), held.unwrap_or(&[]));
+        let room = |size| MachoFile::room_for(size, PAYLOAD.len(), 0);
+        let mapped = MappedFile::open_with_room(&template_file.0, room).unwrap();
+        let mut bytes = FileBytes::Mapping(mapped);
+        remove_ranges(&mut bytes, cuts).unwrap();
+        let mut file = MachoFile::over(bytes).unwrap();
+        file.write_section(&PAYLOAD, false).unwrap();
+        let flags = bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
+        let output_file = bun_sys::File::open(&output.0, flags, 0).unwrap();
+        let written = file
+            .build_and_sign_into(&output_file, held.is_some())
+            .unwrap();
+        assert!(template_file.read() == template);
+        let mut signed = output.read();
+        signed.truncate(written);
+        signed
+    }
+
+    #[test]
+    fn mapped_template_is_signed_like_a_vector() {
+        for architecture in [Architecture::X86_64, Architecture::Aarch64] {
+            let template = toy_macho(architecture);
+            let expected = sign_in_memory(&template, &[]);
+            assert!(sign_into("whole", &template, &[], None) == expected);
+            assert!(sign_into("held", &template, &[], Some(&template)) == expected);
+        }
+    }
+
+    #[test]
+    fn what_the_file_holds_is_not_written_again() {
+        let template = toy();
+        let expected = sign_in_memory(&template, &[]);
+        let payload = find_section(&template, KnownSection::Payload).file_offset as usize;
+        let untouched = 2 * PAGE as usize..payload;
+        let mut held = template.clone();
+        held[untouched.clone()].fill(0xEE);
+        let signed = sign_into("marked", &template, &[], Some(&held));
+        assert!(signed[untouched.clone()].iter().all(|byte| *byte == 0xEE));
+        assert!(signed[..untouched.start] == expected[..untouched.start]);
+        assert!(signed[untouched.end..] == expected[untouched.end..]);
+    }
+
+    #[test]
+    fn cut_mapping_is_signed_like_a_cut_vector() {
+        let template = toy();
+        let cuts = [cut(3, 5)];
+        assert!(sign_into("cut", &template, &cuts, None) == sign_in_memory(&template, &cuts));
     }
 }
 

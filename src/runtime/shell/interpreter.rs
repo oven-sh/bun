@@ -1429,7 +1429,7 @@ impl Interpreter {
             });
         }
 
-        // Cannot be safely called multiple times: drops the `Arc<IOReader>`/`Arc<IOWriter>` refs.
+        // Cannot be safely called multiple times: drops the `Rc<IOReader>`/`Rc<IOWriter>` refs.
         self.root_io.set(IO::default());
         self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
 

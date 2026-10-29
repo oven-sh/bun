@@ -10,7 +10,7 @@
 //! `getCandidateForOverloadFailure` in its checker.go. `getJsxNamespaceContainerForImplicitImport` mirrors TypeScript
 //! 7.1.
 
-use super::call::{CallLike, ExpectsReturn};
+use super::call::{CallLike, ExpectsReturn, ResolvedMeanwhile};
 use super::errors_names_and_exports::is_valid_type_only_alias_use_site;
 use super::infer::Inference;
 use super::jsx::{JsxName, JsxReferenceKind};
@@ -438,11 +438,11 @@ impl Checker<'_, '_> {
                 ret: self.sig_return(fake_signature),
             };
             // As in `resolve_call`: expressions checked only to produce an error use the signature.
-            self.resolved_meanwhile.push((file, e, resolved));
+            self.push_resolved_meanwhile(file, e, resolved);
             let relation = Relation::Assignable;
             let at = Some(error_node);
             self.check_jsx_attributes_related_to(file, e, source, result, relation, at);
-            self.resolved_meanwhile.pop();
+            self.pop_resolved_meanwhile();
             if let Some(first) = hir.ids(jsx.type_args).next() {
                 let end = self.end_of_type_argument_list(file, jsx.type_args);
                 let args = [Arg::Number(0), Arg::Number(jsx.type_args.len())];
@@ -512,7 +512,7 @@ impl Checker<'_, '_> {
         // `getContextualTypeForArgumentAtIndex`: `resolvingSignature` isn't resolved again. That state belongs to this
         // checker, so it's read from its own query stack. Like `anySignature` and `unknownSignature`, it has no
         // parameters.
-        let is_this_element = |r: &(FileId, ExprId, ResolvedCall)| r.0 == file && r.1 == e;
+        let is_this_element = |entry: &ResolvedMeanwhile| entry.file == file && entry.call == e;
         if !self.resolved_meanwhile.iter().any(is_this_element)
             && self.stack.contains(&Query::Call(file, e))
         {

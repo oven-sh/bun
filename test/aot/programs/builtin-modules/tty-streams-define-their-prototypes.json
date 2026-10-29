@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks node:tty, which the jsc shell does not provide" }

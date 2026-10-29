@@ -1,0 +1,81 @@
+# Strings are put together piece by piece: pieces of every length round the widths that are moved at once, ropes, substrings, 16-bit text, pieces long enough to be kept by reference, and a buffer that runs full.
+# FORM: AsRead
+# RUN: lower-to-air size f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="strings-all-kinds-length-appended-loop.ts" displayPath="strings-all-kinds-length-appended-loop.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="given" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = GetModuleVariable variable=g0
+    v5 = String string="\"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-_\""
+    v6 = Call v4, -, v5 calleeName="given"
+    v7 = GetModuleVariable variable=g0
+    v8 = String string="[\"\\u03b1\", \"\\u03b1\\u03b2\\u03b3\", \"x\\u4e2d\", \"\\ud83d\\ude00\", \"\\u00e9\", \"\\u00ff\\u0100\"]"
+    v9 = Call v7, -, v8 calleeName="given"
+    v10 = String string="ab"
+    v11 = Integer integer=100000
+    v12 = Call v3, -, v10, v11 calleeName="repeated"
+    v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v14 = Call v1, -, v13 calleeName="checksum"
+    v15 = String string="c"
+    v16 = Integer integer=300000
+    v17 = Call v3, -, v15, v16 calleeName="repeated"
+    v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v19 = Call v1, -, v18 calleeName="checksum"
+    v20 = Integer
+    v21 = Convert v20 declared={type=number}
+    Jump -> next b1(v21)
+  b1(v22: number):
+    LoopHint
+    v24 = Increment v22
+    v25 = Convert v24 declared={type=number}
+    Jump -> next b1(v25)
+}
+function f1 name="given" module=m0 position=213 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="checksum" module=m0 position=282 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Convert v8 declared={type=number} illTypedCause=Assertion
+    v10 = Less v6, v9
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v11):
+    v12 = Integer integer=31
+    v13 = Mul v5, v12
+    v14 = PropGet v0 key="charCodeAt"
+    v15 = Call v14, v0, v11 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+    v16 = Convert v15 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v17 = Add v13, v16
+    v18 = Integer
+    v19 = BitOr v17, v18
+    v20 = Convert v19 declared={type=number}
+    v21 = Increment v11
+    v22 = Convert v21 declared={type=number}
+    Jump -> next b1(v20, v22)
+  b3(v23):
+    v24 = PropGet v0 key="length"
+    v25 = Convert v24 declared={type=number} illTypedCause=Assertion
+    v26 = String string=":"
+    v27 = Add v25, v26
+    v28 = Add v27, v5
+    v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v29
+}
+function f3 name="repeated" module=m0 position=887 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: checksum
+# CHECK-LABEL: function {{*}}name="checksum"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 67, patchpoints: 24, rare instructions: 27
+# CHECK-NEXT: end of function f2

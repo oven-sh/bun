@@ -253,15 +253,13 @@ fn namespace_object_exposes() {
 }
 
 fn is_loaded(case: &Case<'_, '_>, module: RuntimeModule) -> bool {
-    case.resolved
-        .loaded_modules()
-        .any(|loaded| loaded == module)
+    let guessed = case.resolved.guessed_uses().modules.iter().copied();
+    (case.resolved.loaded_modules().chain(guessed)).any(|loaded| loaded == module)
 }
 
 fn is_called(case: &Case<'_, '_>, function: RuntimeFunction) -> bool {
-    case.resolved
-        .called_functions()
-        .any(|called| called == function)
+    let guessed = case.resolved.guessed_uses().functions.iter().copied();
+    (case.resolved.called_functions().chain(guessed)).any(|called| called == function)
 }
 
 #[test]

@@ -220,6 +220,13 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.fd = fd;
 
+  // The descriptor belongs to the process: reading resumes after 'end' (see the
+  // 'resume' handler) and children inherit it. Destroying stdin, which the
+  // 'end' handler below does, must not close it.
+  stream._destroy = function (this: StdinStream, err: Error | null, cb: $Node.ErrorCallback) {
+    cb(err);
+  };
+
   // A pipe stdin is a net.Socket in Node; give the fs.ReadStream its ref/unref.
   if (fdType !== BunProcessStdinFdType.file) {
     stream.ref = function (this: StdinStream) {

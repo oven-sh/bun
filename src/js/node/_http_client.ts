@@ -195,9 +195,7 @@ function ClientRequest(input?, options?, cb?): void {
   let agent = options.agent;
   const defaultAgent = options._defaultAgent || Agent.globalAgent;
   if (agent === false) {
-    // A fresh agent of this module's class. Node makes one of the default agent's class, `new defaultAgent.constructor()`: at that read
-    // the compiler cannot tell an agent from a function, so `new Function()` kept eval in every trimmed executable that uses the client
-    // (#47155). https.request makes its own before this. Another default agent, which only `_defaultAgent` brings, is used as it is.
+    // Not `new defaultAgent.constructor()` as in Node: the compiler cannot tell that read from `Function` (#47155).
     agent = defaultAgent === Agent.globalAgent ? new Agent.Agent() : defaultAgent;
   } else if (agent === null || agent === undefined) {
     if (typeof options.createConnection !== "function") {

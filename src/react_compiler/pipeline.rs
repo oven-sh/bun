@@ -82,7 +82,7 @@ mod timing {
         eprintln!(
             "  {:>10.2}ms total\n  {:>10} entries moved by removes that keep the order",
             total as f64 / 1e6,
-            crate::hir::id_map::MOVED_BY_REMOVE.load(std::sync::atomic::Ordering::Relaxed)
+            crate::hir::id_map::MOVED_BY_REMOVE.load(std::sync::atomic::Ordering::SeqCst)
         );
     }
 

@@ -168,7 +168,7 @@ impl<K: Copy + Into<u32>, A: MapAllocator> IdIndex<K, A> {
         #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         MOVED_BY_REMOVE.fetch_add(
             (self.keys.len() - at) as u64,
-            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::SeqCst,
         );
         if !self.places.is_empty() {
             *self.places.get_mut(key.into()) = 0;

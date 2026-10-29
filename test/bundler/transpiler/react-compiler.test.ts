@@ -3946,7 +3946,7 @@ describe("bundler", () => {
     LabelInALabel [1,[1,2]] [1,[1,2]]* [1,[1,3]]
     LabelsInASwitch [0,[0]] [0,[0]]* [8,[8]] [9,[]]
     CallbacksWithAFoldedTest [3,[1,3]] [3,[1,3]]* "skipped" [5,[3,5]]
-    TriesThatReturn ["none",[1]] ["none",[1]]* "a" "c" ["none",[2]]
+    TriesThatReturn ["none",[1]] ["none",[1]]* "a" "b" "c" ["none",[2]]
     TryThatReturnsBesideOneThatThrows ["none",[1]] "a" ["none",[1,"thrown"]] "b"
     TryThatReturnsInATry ["none",[1]] ["none",[1]]* "inner" ["none",[2]]
   `;
@@ -4050,7 +4050,7 @@ describe("bundler", () => {
           run(LabelInALabel, { x: 1, y: 2 }, { x: 1, y: 2 }, { x: 1, y: 3 });
           run(LabelsInASwitch, { k: 0 }, { k: 0 }, { k: 8 }, { k: 9 });
           run(CallbacksWithAFoldedTest, { x: 1, y: 2 }, { x: 1, y: 2 }, { x: 1, y: 2, skip: true }, { x: 3, y: 2 });
-          run(TriesThatReturn, { x: 1 }, { x: 1 }, { x: 1, a: true }, { x: 2, c: true }, { x: 2 });
+          run(TriesThatReturn, { x: 1 }, { x: 1 }, { x: 1, a: true }, { x: 1, b: true }, { x: 2, c: true }, { x: 2 });
           const f = () => { throw new Error("thrown"); };
           run(
             TryThatReturnsBesideOneThatThrows,

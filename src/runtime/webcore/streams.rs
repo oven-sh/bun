@@ -2506,7 +2506,7 @@ impl NetworkSink {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, self, None)
+        NetworkSinkJSSink::create_object(global_this, NonNull::from(self), None)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {

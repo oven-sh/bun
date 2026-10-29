@@ -2226,7 +2226,7 @@ impl MulticastRequest {
     }
 }
 
-/// The scope id that the `%zone` of an IPv6 address names: the index of the interface of that name, or on Windows the number that the zone is. A zone that names no interface is 0, the default interface (test-dgram-multicast-set-interface.js).
+/// The scope id that the `%zone` of an IPv6 address names: the index of the interface of that name, or on Windows the number that the zone is. A zone that names no interface is 0 and not an error, as in libuv's `uv_ip6_addr`.
 fn zone_scope_id(zone: &[u8]) -> u32 {
     #[cfg(windows)]
     {

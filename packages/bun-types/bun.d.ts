@@ -7950,8 +7950,8 @@ declare module "bun" {
        * An IPv4 interface is its address, written in full: `"192.168.1.100"`.
        * An IPv6 interface is the zone after the `%`: its name, as in
        * `"::%eth0"`, or on Windows its number, as in `"::%12"`. A zone that
-       * names no interface selects the default interface of the system, with no
-       * error.
+       * names no interface is interface 0. Linux and Windows take that as the
+       * default interface, and macOS refuses it with an error.
        * @param interfaceAddress The IP address of the interface to use. A host name, the name of an interface or a shorthand such as `"192.168.1"` is not an address.
        * @returns true on success, false if `interfaceAddress` is not an IP address
        */

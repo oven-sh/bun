@@ -188,14 +188,20 @@ const hasIPv6Loopback = await new Promise<boolean>(resolve => {
 });
 
 // "an invalid Scope gets turned into #0 (default selection)": test-dgram-multicast-set-interface.js
-test("a zone that names no interface is the default interface", { skip: !hasIPv6Loopback }, async () => {
-  assert.deepStrictEqual(
-    [
-      await outcome(s => s.setMulticastInterface("::%nosuchzone0"), "udp6", "::1"),
-      await outcome(s => s.setMulticastInterface("::%nosuchzone0 junk"), "udp6", "::1"),
-    ],
-    [undefined, undefined],
-  );
+test("a zone that names no interface is interface 0", { skip: !hasIPv6Loopback }, async () => {
+  const results: any[] = [
+    await outcome(s => s.setMulticastInterface("::%nosuchzone0"), "udp6", "::1"),
+    await outcome(s => s.setMulticastInterface("::%nosuchzone0 junk"), "udp6", "::1"),
+  ];
+  // macOS does not take interface 0 for IPV6_MULTICAST_IF: the call fails there, in Node.js too.
+  if (process.platform === "darwin") {
+    assert.deepStrictEqual(
+      results.map(result => result?.syscall),
+      ["setMulticastInterface", "setMulticastInterface"],
+    );
+  } else {
+    assert.deepStrictEqual(results, [undefined, undefined]);
+  }
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.

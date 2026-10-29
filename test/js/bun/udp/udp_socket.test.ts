@@ -8,6 +8,7 @@ import {
   expectRssDeltaBelow,
   isIPv6,
   isLinux,
+  isMacOS,
   isWindows,
   randomPort,
   tempDir,
@@ -410,8 +411,11 @@ describe("udpSocket()", () => {
 
     // "an invalid Scope gets turned into #0 (default selection)":
     // test-dgram-multicast-set-interface.js
-    test.skipIf(!canBindIPv6Loopback)("a zone that names no interface is the default interface", async () => {
-      expect(await outcome(s => s.setMulticastInterface("::%nosuchzone0"), "::1")).toBe(true);
+    test.skipIf(!canBindIPv6Loopback)("a zone that names no interface is interface 0", async () => {
+      const result: any = await outcome(s => s.setMulticastInterface("::%nosuchzone0"), "::1");
+      // macOS does not take interface 0 for IPV6_MULTICAST_IF: its setsockopt fails, in Node.js too.
+      if (isMacOS) expect(result?.syscall).toBe("setsockopt");
+      else expect(result).toBe(true);
     });
 
     // The zone is all that an IPv6 interface argument gives. /proc/net/igmp6

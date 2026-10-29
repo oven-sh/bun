@@ -1367,6 +1367,18 @@ fn resolve_offset(sequences: &mut [RawSequence], index: usize) -> u32 {
     this.offset_value
 }
 
+/// What [`Executor::exec_batch`] works on. Positions in these fit in 32 bits, so that the compiler sees that nothing added
+/// to them overflows.
+struct BatchBuffers<'buf, 'a, 'dict> {
+    /// Where in the output buffer `buf` starts.
+    start: usize,
+    buf: &'buf mut [u8],
+    lits: &'a [u8],
+    /// What comes right before `buf`, if anything of the common kind does: this or, of `buf`, `within`.
+    dict: &'dict [u8],
+    within: Range<usize>,
+}
+
 /// Turns sequences into output.
 struct Executor<'buf, 'a> {
     /// What is beyond `oend` is room for copies in chunks.
@@ -1634,6 +1646,33 @@ impl<'a> Executor<'_, 'a> {
         }
     }
 
+    /// `within` is of the whole output buffer.
+    #[inline(always)]
+    fn batch_buffers<'dict>(
+        &mut self,
+        dict: &'dict [u8],
+        within: Range<usize>,
+    ) -> BatchBuffers<'_, 'a, 'dict> {
+        const MAX_BACK: usize = 3 << 30;
+        let start = self.prefix_start.max(self.op.saturating_sub(MAX_BACK));
+        let (dict, within) = if start == self.prefix_start && within.start >= start {
+            (dict, within.start - start..within.end - start)
+        } else {
+            (&[][..], 0..0)
+        };
+        let lits = self.lits.get(..u32::MAX as usize).unwrap_or(self.lits);
+        let buf = self.out.bytes();
+        let end = buf.len().min(start + u32::MAX as usize);
+        let buf = buf.get_mut(start..end).unwrap_or_default();
+        BatchBuffers {
+            start,
+            buf,
+            lits,
+            dict,
+            within,
+        }
+    }
+
     /// Executes `sequences` from `index` on, for as long as nothing is close to its end and they are of the common kind.
     /// Returns the index of the first that is not, whose offset value then is no reference to one of the last offsets:
     /// it is 0 if that is not valid.
@@ -1651,19 +1690,15 @@ impl<'a> Executor<'_, 'a> {
         within: Range<usize>,
         window: usize,
     ) -> usize {
-        // Positions fit in 32 bits, so that the compiler sees that nothing added to them overflows.
-        const MAX_BACK: usize = 3 << 30;
-        let start = self.prefix_start.max(self.op.saturating_sub(MAX_BACK));
-        let (dict, within) = if start == self.prefix_start && within.start >= start {
-            (dict, within.start - start..within.end - start)
-        } else {
-            (&[][..], 0..0)
-        };
-        let buf = self.out.bytes();
-        let end = buf.len().min(start + u32::MAX as usize);
-        let buf = buf.get_mut(start..end).unwrap_or_default();
-        let mut op = self.op.wrapping_sub(start) as u32;
-        let lits = self.lits.get(..u32::MAX as usize).unwrap_or(self.lits);
+        let op = self.op;
+        let BatchBuffers {
+            start,
+            buf,
+            lits,
+            dict,
+            within,
+        } = self.batch_buffers(dict, within);
+        let mut op = op.wrapping_sub(start) as u32;
         let mut lit_pos = 0u32;
 
         while let Some(raw) = sequences.get(index) {

@@ -1165,13 +1165,15 @@ if (isBun) {
   // A search after a miss reads the calling module's directory again, and the listing that it
   // replaces is not freed: about 7 KB for each request. A search of entries elsewhere does not,
   // for a request that the package of the calling module does not claim.
-  test("options.paths: a request that misses does not read the calling module's directory again", async () => {
-    const slow = harness.isASAN || harness.isDebug;
-    const { path: dir, cleanup } = createTempDir("resolve-paths-miss", {
-      "node_modules/keep/index.js": "",
-      "entry/file.js": "",
-      "caller/package.json": JSON.stringify({ name: "caller-pkg", exports: "./main.js" }),
-      "caller/probe.cjs": `
+  test.concurrentIf(!harness.isASAN)(
+    "options.paths: a request that misses does not read the calling module's directory again",
+    async () => {
+      const slow = harness.isASAN || harness.isDebug;
+      const { path: dir, cleanup } = createTempDir("resolve-paths-miss", {
+        "node_modules/keep/index.js": "",
+        "entry/file.js": "",
+        "caller/package.json": JSON.stringify({ name: "caller-pkg", exports: "./main.js" }),
+        "caller/probe.cjs": `
         const paths = [require("node:path").join(__dirname, "..", "entry")];
         const miss = count => {
           for (let i = 0; i < count; i++) {
@@ -1189,16 +1191,20 @@ if (isBun) {
         Bun.gc(true);
         console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
       `,
-    });
+      });
 
-    try {
-      // Release, 20,000 requests: 6 to 11 MiB without the second search, over 100 MiB with it.
-      // Debug with ASAN, 4,000 requests: 4 to 11 MiB without it, 31 MiB with it.
-      await harness.expectRssDeltaBelow(["--no-install", join(dir, "caller", "probe.cjs")], { release: 40, debug: 18 });
-    } finally {
-      cleanup();
-    }
-  });
+      try {
+        // Release, 20,000 requests: 6 to 11 MiB without the second search, over 100 MiB with it.
+        // Debug with ASAN, 4,000 requests: 4 to 11 MiB without it, 31 MiB with it.
+        await harness.expectRssDeltaBelow(["--no-install", join(dir, "caller", "probe.cjs")], {
+          release: 40,
+          debug: 18,
+        });
+      } finally {
+        cleanup();
+      }
+    },
+  );
 
   // Only in Bun: when Node.js runs this file it must not spawn itself again.
   const node = harness.nodeExeAtLeast("26.3.0");

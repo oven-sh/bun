@@ -1438,14 +1438,16 @@ pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
 /// the slots empty) instead of anyone closing them twice.
 #[cfg(windows)]
 impl Subprocess<'_> {
-    pub(crate) fn record_stdio_pipe_ownership(&self) {
-        for item in self.stdio_pipes.get().iter() {
+    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
+        // SAFETY: `this` is the live boxed Subprocess (stable address).
+        let me = unsafe { &*this };
+        for item in me.stdio_pipes.get().iter() {
             if let StdioResult::Buffer(buffer) = item {
                 bun_sys::windows::libuv::open_handles::set_owner(
                     core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer)
                         .cast_mut()
                         .cast(),
-                    self.as_ctx_ptr().cast(),
+                    this.cast(),
                     Some(Self::stop_for_vm_teardown),
                 );
             }

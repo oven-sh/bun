@@ -5,6 +5,18 @@ libjpeg-turbo 3.2.0. `encoded.json.gz` holds what it encoded the pictures of
 `encodeCases()` to. `observe.ts` says what is looked at, and `record.ts` how to add
 a file, take one out and record again.
 
+## What is not libjpeg-turbo's
+
+`src/jpeg` refuses a scan of what an earlier scan has coded, which libjpeg-turbo
+decodes. That changes what is expected of 8 files and of 12 of their damaged copies, all
+from pixels to `ERR_IMAGE_DECODE_FAILED`:
+`history/scanorder/so_16x48_2x2_rand8.jpg`, `history/scanorder/so_40x40_2x2_rand7.jpg`,
+`history/1.2.0-6_k-id/c33x31_ycck422prog_k3.jpg`, `history/scan_params/prog_scan3_0_0_ed.jpg`,
+`jpeg-image-002.jpg` and `jpeg-image-003.jpg` of `history/seed-corpora/mozilla_1050342`,
+`history/seed-corpora/mozilla_891693_CVE-2013-6629_CVE-2013-6630/182.jpg` and
+`lossless/ll_2x2_twice.jpg`. After recording with Bun 1.4.4, `record.ts --accept` with a
+current build has to name these and no others.
+
 ## Where the files come from
 
 - `c<width>x<height>_*`: crops of `testimages/testorig.ppm` of libjpeg-turbo, encoded

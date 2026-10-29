@@ -3,7 +3,8 @@
 //   bunx bun@1.4.4 record.ts [--accept] [--remove <name>]... [<file>]...
 //
 // A file gets the path that is given as its name, so run this from where that path is the name wanted.
-// The results in the repository come from Bun 1.4.4 on x86-64, which used libjpeg-turbo 3.2.0, as 1.4.3 did.
+// The results in the repository come from Bun 1.4.4 on x86-64, which used libjpeg-turbo 3.2.0, as 1.4.3 did, but for
+// those that README.md lists.
 import { join } from "node:path";
 import { encodeCases, load, observeDecodeCase, observeEncode, store, type DecodeCase } from "./observe";
 

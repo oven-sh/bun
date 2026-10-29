@@ -1517,7 +1517,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cancel_timers,
     end_hot_run_timers,
     stop_dns_for_vm_teardown,
-    stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
+    stop_active_handles_for_vm_teardown,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
 };
@@ -1722,15 +1722,6 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
     }
 }
 
-/// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
-///
-/// # Safety
-/// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> SweepResult {
-    // SAFETY: per the contract above.
-    stop_active_handles_for_vm_teardown(unsafe { &mut *vm })
-}
-
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
 unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
     let all = timer_all();
@@ -1777,6 +1768,7 @@ pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = stop_active_handles(vm, bun_jsc::StopReason::Disposed);
 }
 
+/// `RuntimeHooks::stop_active_handles_for_vm_teardown`.
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
     stop_active_handles(vm, bun_jsc::StopReason::VmTeardown)
 }

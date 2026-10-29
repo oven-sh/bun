@@ -2668,7 +2668,7 @@ impl VirtualMachine {
         // SAFETY: fn contract.
         result = result.and(unsafe {
             match hooks {
-                Some(hooks) => (hooks.stop_active_handles_for_vm_teardown)(this),
+                Some(hooks) => (hooks.stop_active_handles_for_vm_teardown)(&mut *this),
                 None => (*this).stop_context_handles(crate::StopReason::VmTeardown),
             }
         });
@@ -3040,10 +3040,7 @@ pub struct RuntimeHooks {
     /// Stop every registered native handle behind a JS object (servers,
     /// listeners, fs watchers) — the stop phase for Rust-side JS classes, run
     /// with the VM alive right after the WebCore stop phase.
-    ///
-    /// # Safety
-    /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-    pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
+    pub stop_active_handles_for_vm_teardown: fn(vm: &mut VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):

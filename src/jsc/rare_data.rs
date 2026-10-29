@@ -902,7 +902,6 @@ impl RareData {
     /// after `WebWorker__teardownJSCVM`, so doing the closeAll there would touch
     /// freed JSC heap.
     pub(crate) fn close_all_socket_groups(
-        &mut self,
         vm: &VirtualMachine,
     ) -> crate::virtual_machine::SweepResult {
         // A native close path can cascade (closing one socket completes or
@@ -914,7 +913,6 @@ impl RareData {
         // fields missed those, leaking one 88-byte us_socket_t per still-open
         // accepted connection at process.exit() (the LSAN cluster on #29932
         // build 49245).
-        let _ = self;
         let mut rounds: u8 = 0;
         while rounds < 8 {
             // `uws_loop_ref()` is the centralised BACKREF accessor for the

@@ -343,8 +343,10 @@ impl CommonJsExports {
         }
         exports.modules = modules;
         for table in &mut exports.files {
-            table.accesses.sort_unstable_by_key(|access| access.node);
-            table.erased.sort_unstable();
+            table
+                .accesses
+                .shared_sort_unstable_by_key(|access| access.node);
+            table.erased.shared_sort_unstable();
             table.exported_bindings.sort_unstable();
             table.exported_bindings.dedup();
         }

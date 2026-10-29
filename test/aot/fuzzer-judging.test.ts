@@ -34,6 +34,9 @@ import { bunTypesFolder, typeChecker } from "./fuzz/type-check";
 
 const options = { baseFlags: [], validate: false, threads: 1, buildSeconds: 60, runSeconds: 60 };
 const timeout = 300_000;
+// A run that asks for a number of programs should end by that number. A slow build with other tests beside it draws few in a
+// minute.
+const untilTheCount = 280;
 // The tests run concurrently: each has its own folders, and none waits for the clock.
 const test = one.concurrent;
 const unless = (condition: boolean) => (condition ? one.skip : one.concurrent);
@@ -195,7 +198,7 @@ test(
       ...settings(String(folder)),
       runners: [{ runner: standIn(programs => builds.push(programs)), jobs: 1 }],
       sources: ["workers-terminated-midway", "number-range-boundaries"],
-      seconds: 60,
+      seconds: untilTheCount,
       programs: 64,
     });
     const isItsOwnWorker = (program: Program) => program.text.includes("new Worker(new URL(import.meta.url)");
@@ -291,7 +294,7 @@ test(
       ...settings(String(folder)),
       runners: [{ runner, jobs: 1 }],
       sources: ["number-range-boundaries"],
-      seconds: 60,
+      seconds: untilTheCount,
       programs: 8,
       batch: 1,
     });
@@ -614,7 +617,7 @@ test(
         runners: [{ runner, jobs: 1 }],
         sources: [source],
         firstSeed,
-        seconds: 60,
+        seconds: untilTheCount,
         programs: 1,
         batch: 1,
         reduceSeconds: 20,
@@ -714,7 +717,7 @@ test(
         },
       ],
       sources: ["number-range-boundaries"],
-      seconds: 60,
+      seconds: untilTheCount,
       programs: 8,
     });
     expect(summary.status).toContain("findings 8: known 8,");

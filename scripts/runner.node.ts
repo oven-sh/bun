@@ -418,7 +418,6 @@ const aotTestsThatAskTheSystem = [
   "aot/parallel/calls/",
   "aot/parallel/errors/",
   "aot/parallel/async/",
-  "aot/parallel/collected-behind-await/",
   "aot/parallel/strings/",
   // What --trim cuts out of the executable of the platform, and the options of the command line.
   "bundler/bundler_compile_aot.",
@@ -550,12 +549,21 @@ function runsOnThisLane(testPath: string, execPath: string) {
 }
 // Compiling is CPU-bound, and a serial test leaves most cores idle. Where this is set, the compiler's programs, its
 // long test files and its bucket run at the lowest priority in the background of the shard's serial tests, and their results
-// are printed afterwards. Windows alone: its idle priority class yields at once, and a round showed no more retries there.
-// On Linux the same made other tests flaky (they wait for the same disk, and some judge by the order of callbacks).
-const usesIdleCores = isWindows;
+// are printed afterwards. Windows on arm64 alone. Elsewhere it disturbs tests that judge by the order of callbacks or by a
+// clock, and on Windows x64, where two threads share a core, work at idle priority gets too little time.
+const usesIdleCores = isWindows && !isX64;
 // These use every core for a minute: a low-priority program would starve until its time limit.
 const saturatesCpu = (testPath: string) =>
   /^cli\/check\/(?:conformance\/|differential|check\.)/.test(testPath.replaceAll("\\", "/"));
+// A file system in memory that executables may be started from.
+const memoryFolder = (() => {
+  try {
+    const [, options] = /^\S+ \/dev\/shm tmpfs (\S+)/m.exec(readFileSync("/proc/mounts", "utf8")) ?? [];
+    return isCI && options && !options.split(",").includes("noexec") ? "/dev/shm" : undefined;
+  } catch {
+    return undefined;
+  }
+})();
 // A file says so where it judges by a clock, or by the memory that is held or left.
 const runsAlone = (testPath: string) => /^\/\/ Runs alone: /m.test(readFileSync(join(testsPath, testPath), "utf8"));
 const withSymbols = (execPath: string) =>
@@ -1032,7 +1040,9 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
     const verdicts = new Map<string, AotVerdict>();
     const started = new Set<string>();
     const byPath = new Map(files.map(testPath => [join(testsPath, testPath), testPath]));
-    const folder = mkdtempSync(join(tmpdir(), "aot-programs-"));
+    // The driver's executables live for seconds: half a gigabyte at a time, gigabytes in all. It starts while the unpacking and
+    // the installs keep the disk at its limit, where every write waits. So they stay in memory where programs may run from it.
+    const folder = mkdtempSync(join(hasSanitizer(bun) ? tmpdir() : (memoryFolder ?? tmpdir()), "aot-programs-"));
     const list = join(folder, "files.txt");
     writeFileSync(list, [...byPath.keys()].join("\n") + "\n");
     let unfinishedLine = "";
@@ -1044,6 +1054,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
     const { error, exitCode, crashes } = await spawnBun(bun, {
       args: [aotDriver, ...flagsOfAotDriver(bun), `--jobs=${jobs}`, `--files-from=${list}`],
       cwd,
+      env: { TMPDIR: folder, BUN_TMPDIR: folder },
       lowPriority: inBackground,
       timeout: Math.max(60_000, Math.min(60 * 60_000, jobBudgetMs() - 5 * 60_000)),
       idleTimeout: 4 * 60_000,
@@ -1393,7 +1404,10 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   // runAotPrograms() awaits it.
   earlyAotDriver?.catch(() => {});
 
-  beforeFirstTest.push(remapInstalled.then(installed => installed && startCiRemapServer(execPath)).catch(console.warn));
+  const { promise: installsEnded, resolve: endInstalls } = Promise.withResolvers<void>();
+  beforeFirstTest.push(
+    remapInstalled.then(installed => installed && startCiRemapServer(execPath, installsEnded)).catch(console.warn),
+  );
 
   await remapInstalled;
   const installed = (await early?.results) ?? [];
@@ -1408,6 +1422,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       return result;
     });
   }
+  endInstalls();
 
   const isNapiAddonTest = (t: string) => /napi[\\/]node-napi-tests[\\/].*[\\/]do\.test\.ts$/.test(t);
   const napiAddonDirs = [...new Set(tests.filter(isNapiAddonTest).map(t => dirname(join(testsPath, t))))];
@@ -3099,8 +3114,11 @@ async function installCiRemapServer(execPath: string): Promise<boolean> {
   return ok;
 }
 
-/** Sets `remapPort` once the server listens. Startup takes over five seconds; the installs that run meanwhile take longer. */
-async function startCiRemapServer(execPath: string): Promise<void> {
+/**
+ * Sets `remapPort` once the server listens. Startup takes three to six seconds, and far longer while an install keeps the disk
+ * busy (Alpine: over 20 s of an install of 45 s). Waiting beside the installs is free, so it has until five seconds after them.
+ */
+async function startCiRemapServer(execPath: string, installsEnded: Promise<void>): Promise<void> {
   const { promise: portPromise, resolve: portResolve } = Promise.withResolvers<{ port: number }>();
   const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers<Error | string>();
   let exiting = false;
@@ -3130,7 +3148,7 @@ async function startCiRemapServer(execPath: string): Promise<void> {
   const result: unknown = await Promise.race([
     portPromise,
     errorPromise.catch((e: unknown) => e),
-    setTimeoutPromise(20_000, "timeout", { ref: false }),
+    installsEnded.then(() => setTimeoutPromise(5000, "timeout", { ref: false })),
   ]);
   if (typeof result !== "object" || result === null || !("port" in result) || typeof result.port != "number") {
     process.off("beforeExit", onBeforeExit);

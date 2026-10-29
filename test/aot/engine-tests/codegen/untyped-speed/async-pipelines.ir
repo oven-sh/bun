@@ -792,5 +792,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f113 visibility=Private
 # CHECK-NEXT: end of function f124
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: role=CoroutineBody
-# CHECK-NEXT: instructions: 192, patchpoints: 34, rare instructions: 176, polls: 2
+# CHECK-NEXT: instructions: 193, patchpoints: 34, rare instructions: 179, polls: 2
 # CHECK-NEXT: end of function f118

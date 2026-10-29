@@ -2142,7 +2142,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.b
             .infer_positions
             .as_mut_slice()
-            .sort_unstable_by_key(|p| p.0);
+            .shared_sort_unstable_by_key(|p| p.0);
         self.bind_deferred_expando_assignments();
         // Flatten the tables.
         self.b.tables.reserve_exact(self.tables.len());

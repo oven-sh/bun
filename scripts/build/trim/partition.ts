@@ -139,7 +139,7 @@ function classifyEdges(
   return { edgeKind, entryFeatures, isGuardedEntry, isSoftEntry, foldedEntryPoints, failures };
 }
 
-function findRoots(graph: SectionGraph, exportFeatures: number[]): { isRoot: Uint8Array; unexplainedBytes: number } {
+function findRoots(graph: SectionGraph, exportFeatures: number[]): { isRoot: Uint8Array; unexplained: number[] } {
   const isRoot = graph.isRoot.slice();
   const explanations: number[] = [];
   for (let node = 0; node < graph.count; node++) {
@@ -148,13 +148,13 @@ function findRoots(graph: SectionGraph, exportFeatures: number[]): { isRoot: Uin
     if (isRoot[node] !== 0 || isExported || graph.isLiveWithoutReference[node] !== 0) explanations.push(node);
   }
   const isExplained = reach(graph, explanations);
-  let unexplainedBytes = 0;
+  const unexplained: number[] = [];
   for (let node = 0; node < graph.count; node++) {
     if (isExplained[node] !== 0) continue;
     isRoot[node] = 1;
-    unexplainedBytes += graph.size[node]!;
+    unexplained.push(node);
   }
-  return { isRoot, unexplainedBytes };
+  return { isRoot, unexplained };
 }
 
 function findViolations(
@@ -345,7 +345,7 @@ export function partition(input: PartitionInput): Partition {
     .sort(ascending);
   const classification = classifyEdges(graph, entryPoints, exportFeatures, isCode);
   const { edgeKind, entryFeatures, isSoftEntry, foldedEntryPoints } = classification;
-  const { isRoot, unexplainedBytes } = findRoots(graph, exportFeatures);
+  const { isRoot, unexplained } = findRoots(graph, exportFeatures);
   const isRetained = reach(graph, nodesWith(isRoot), edgeKind);
   const violations = findViolations(graph, isRoot, isRetained, classification);
   const seeds = createSeeds(graph, isRetained, entryFeatures, exportFeatures);
@@ -382,7 +382,8 @@ export function partition(input: PartitionInput): Partition {
     groupOfSet,
     removableBytes,
     featuresNearMinimum,
-    unexplainedBytes,
+    unexplained,
+    unexplainedBytes: unexplained.reduce((sum, node) => sum + graph.size[node]!, 0),
     failures: [...classification.failures, ...violations, ...minimumSizes.failures],
   };
 }

@@ -8,7 +8,10 @@ import type { Feature, FeatureModel } from "../../../scripts/build/trim/features
 import { EdgeKind, type PartitionFailure } from "../../../scripts/build/trim/partition.ts";
 import {
   describeFailures,
+  describeFiller,
+  describeSections,
   foldedEntryPointsHeading,
+  holeSizesWithoutFeatures,
   maxChainLength,
   maxPrintedFailures,
   writeReviewFiles,
@@ -222,6 +225,47 @@ describe("the partition", () => {
     expect(Array.from(result.isRoot)).toEqual([1, 1, 1]);
     expect(result.retained()).toEqual(["main", "orphan", "orphanTarget"]);
     expect(result.unexplainedBytes).toBe(0x4000);
+    expect(result.unexplained).toEqual([result.node("orphan"), result.node("orphanTarget")]);
+  });
+
+  test("sections are listed by where they lie and where they come from", () => {
+    const graph = {
+      size: Float64Array.of(0, 3_000_000, 1_000_000, 500_000),
+      output: [".text", ".rdata", ".rdata", ".text"],
+      object: ["main.obj", "C:\\build\\one.lib(a.obj)", "/build/two.a(b.o)", "C:\\build\\one.lib(a.obj)"],
+      section: [".text", ".rdata$r", ".rdata", ".text$x"],
+      names: [["main"], ["table", "alias"], [], ["handler"]],
+    };
+    expect(describeSections(graph, [1, 2, 3])).toEqual([
+      "by output section: .rdata 4.00 MB, .text 0.50 MB",
+      "by section: .rdata$r 3.00 MB, .rdata 1.00 MB, .text$x 0.50 MB",
+      "by input: one.lib(a.obj) 3.50 MB, two.a(b.o) 1.00 MB",
+      "3000000 bytes: one.lib(a.obj) .rdata$r table",
+      "1000000 bytes: two.a(b.o) .rdata",
+      "500000 bytes: one.lib(a.obj) .text$x handler",
+    ]);
+  });
+
+  test("ranges that can be cut and touch are one hole, and the smallest holes stay as filler", () => {
+    const range = (start: number, end: number, canBeCut = true) => ({
+      start,
+      end,
+      set: 1,
+      isCode: true,
+      canBeCut,
+      canBeFilled: true,
+    });
+    const sizes = holeSizesWithoutFeatures([
+      range(0x5000, 0x6000),
+      range(0x1000, 0x2000),
+      range(0x2000, 0x4000),
+      range(0x4000, 0x5000, false),
+    ]);
+    expect(sizes).toEqual([0x3000, 0x1000]);
+    const many = Array.from({ length: 80 }, (_, index) => (index + 1) * 10_000);
+    expect(describeFiller(many)).toBe(
+      "80 holes; left as filler by 39 cuts 8.61 MB, 60 cuts 2.10 MB, 78 cuts 0.03 MB, 156 cuts 0.00 MB",
+    );
   });
 
   test("a section that is live only by a flag is neither a root nor retained", () => {

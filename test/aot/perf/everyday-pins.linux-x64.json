@@ -464,8 +464,8 @@
     "untyped": 86.4
   },
   "everyday-benchmarks/reduce-with-a-spread-accumulator": {
-    "typed": 1732.9,
-    "untyped": 1272.7
+    "typed": 935.6,
+    "untyped": 933.3
   },
   "everyday-benchmarks/reverse-a-string": {
     "typed": 3308.1,
@@ -484,8 +484,8 @@
     "untyped": 60742.2
   },
   "everyday-benchmarks/spread-to-grow-an-object": {
-    "typed": 3566.6,
-    "untyped": 2913.3
+    "typed": 1525.9,
+    "untyped": 1525.7
   },
   "everyday-benchmarks/stack-machine-interpreter": {
     "typed": 1346.1,

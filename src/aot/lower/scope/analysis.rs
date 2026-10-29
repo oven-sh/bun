@@ -4,6 +4,7 @@ use bun_sema::bind::{CodeUnit, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{FnId, MemberId, StmtId};
 use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
 
 use super::ScopeSlot;
 use crate::ir::generated::FunctionFlags;
@@ -162,6 +163,12 @@ pub(super) fn find_by_key<K: Copy + Ord, V: Copy>(list: &[(K, V)], key: K) -> Op
 
 pub(super) fn sort_unique<T: Ord>(list: &mut Vec<T>) {
     list.sort_unstable();
+    list.dedup();
+}
+
+/// [`sort_unique`] off the hot path: see [`SharedSort`].
+pub(super) fn shared_sort_unique<T: Ord>(list: &mut Vec<T>) {
+    list.shared_sort_unstable();
     list.dedup();
 }
 

@@ -2,6 +2,7 @@ use bun_sema::bind::{CodeUnit, InitialState, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{ExprId, FnKind};
 use bun_sema::program::Sym;
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::loop_updates::is_stored_only_by_own_loop_update;
@@ -87,7 +88,7 @@ pub(super) fn compute_sharing(
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
     collect_fields_for_handlers(context, &mut sharing);
     sharing.captured_uses.sort_unstable();
-    sharing.variables.sort_unstable();
+    sharing.variables.shared_sort_unstable();
     sharing.shared.sort_unstable();
     sharing
 }

@@ -1291,7 +1291,7 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
         let module = module.map(|symbol| (symbol, index, Parameter::Module));
         parameters.extend(exports.into_iter().chain(module));
     }
-    parameters.sort_unstable_by_key(|entry| entry.0);
+    parameters.shared_sort_unstable_by_key(|entry| entry.0);
     if input.is_file_a_module {
         let exports = Binding::CommonJs(CommonJsVariable::Exports);
         let stores = text.bound.runtime.unbound_name_stores().iter();

@@ -1113,50 +1113,64 @@ runtimefunction id=GeneratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: undefined = Undefined
 # CHECK-NEXT: Jump -> next b1()
-# CHECK-NEXT: b1() handler=b9():
+# CHECK-NEXT: b1() handler=b14():
 # CHECK-NEXT: v4: undefined = StepGenerator v0, v3 check=None
 # CHECK-NEXT: v5: anything = ResultAt v4
 # CHECK-NEXT: v6: int[0, 2] = ResultAt v4 index=1
 # CHECK-NEXT: v7: 2 = Integer integer=2
 # CHECK-NEXT: v8: boolean = StrictEq v6, v7
 # CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3(| 0)
-# CHECK-NEXT: b2() handler=b9():
+# CHECK-NEXT: b2() handler=b14():
 # CHECK-NEXT: v9: anything = ResumeGenerator v0, v3
 # CHECK-NEXT: v10: object = AssumeType v9 provenType=object
 # CHECK-NEXT: v11: fact = Specified
 # CHECK-NEXT: Jump -> next b4(v10)
-# CHECK-NEXT: b3(v12: int[0, 1]) handler=b9():
+# CHECK-NEXT: b3(v12: int[0, 1]) handler=b14():
 # CHECK-NEXT: v13: 1 = Integer integer=1
 # CHECK-NEXT: v14: boolean = StrictEq v12, v13
 # CHECK-NEXT: v15: fact = Specified
 # CHECK-NEXT: v16: L(IteratorResult) = NewObject -, v5, v14 layout=L(IteratorResult) fields=[0, 1]
 # CHECK-NEXT: Jump -> next b4(v16)
-# CHECK-NEXT: b4(v17: object) handler=b9():
-# CHECK-NEXT: v18: object ~ L1 = Upcast v17 castType=anything
+# CHECK-NEXT: b4(v17: object):
+# CHECK-NEXT: v18: object ~ L(IteratorResult) = Upcast v17 castType=anything
 # CHECK-NEXT: v19: 31 = Integer integer=31
 # CHECK-NEXT: v20: i32 = CallBuiltin -, v2, v19 overload=MathImul/0 accessSite=44
-# CHECK-NEXT: v21: anything = PropGet v18 key="value" accessSite=45
-# CHECK-NEXT: v22: undefined|int = AssumeType v21 provenType=undefined|int
-# CHECK-NEXT: v23: boolean = ShouldFailPrediction
-# CHECK-NEXT: Branch v23 -> taken b7(), notTaken b5()
+# CHECK-NEXT: v21: boolean = ShouldFailPrediction
+# CHECK-NEXT: Branch v21 -> taken b8(), notTaken b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v24: boolean = TypeTest v22 testedType=number
-# CHECK-NEXT: Branch v24 -> taken b6(| 0), notTaken b7()
-# CHECK-NEXT: b6(v25: int):
-# CHECK-NEXT: v26: int|whole = Add v20, v25
-# CHECK-NEXT: Jump -> next b8(v26)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v27: number = Add v20, v22
-# CHECK-NEXT: Jump -> next b8(v27)
-# CHECK-NEXT: b8(v28: number ~ int|whole):
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: v30: i32 = BitOr v28, v29
-# CHECK-NEXT: Return v30
-# CHECK-NEXT: b9() role=CatchHandler:
-# CHECK-NEXT: v31: anything = CatchValue
-# CHECK-NEXT: v32: i32 = CallDirect v31 function=f1 accessSite=46
-# CHECK-NEXT: v33: i32 = BitXor v2, v32
-# CHECK-NEXT: v34: 0 = Integer
-# CHECK-NEXT: v35: i32 = BitOr v33, v34
-# CHECK-NEXT: Return v35
+# CHECK-NEXT: v22: boolean ~ true = TypeTest v18 testedType=L(IteratorResult)
+# CHECK-NEXT: Branch v22 -> taken b6(| 0), notTaken b8()
+# CHECK-NEXT: b6(v23: L(IteratorResult)):
+# CHECK-NEXT: v24: boolean = IsSlotFilled v23 key="value" receivers=[L(IteratorResult)] level=Expected
+# CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v25: guard):
+# CHECK-NEXT: v26: anything = GetSlot v23, v25 key="value" receivers=[L(IteratorResult)] level=Expected accessSite=45
+# CHECK-NEXT: Jump -> next b9(v26)
+# CHECK-NEXT: b8() frequency=Unlikely handler=b14():
+# CHECK-NEXT: v27: anything = PropGet v18 key="value" accessSite=45
+# CHECK-NEXT: Jump -> next b9(v27)
+# CHECK-NEXT: b9(v28: anything):
+# CHECK-NEXT: v29: undefined|int = AssumeType v28 provenType=undefined|int
+# CHECK-NEXT: v30: boolean = ShouldFailPrediction
+# CHECK-NEXT: Branch v30 -> taken b12(), notTaken b10()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v31: boolean = TypeTest v29 testedType=number
+# CHECK-NEXT: Branch v31 -> taken b11(| 0), notTaken b12()
+# CHECK-NEXT: b11(v32: int):
+# CHECK-NEXT: v33: int|whole = Add v20, v32
+# CHECK-NEXT: Jump -> next b13(v33)
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: v34: number = Add v20, v29
+# CHECK-NEXT: Jump -> next b13(v34)
+# CHECK-NEXT: b13(v35: number ~ int|whole):
+# CHECK-NEXT: v36: 0 = Integer
+# CHECK-NEXT: v37: i32 = BitOr v35, v36
+# CHECK-NEXT: Return v37
+# CHECK-NEXT: b14() role=CatchHandler:
+# CHECK-NEXT: v38: anything = CatchValue
+# CHECK-NEXT: v39: i32 = CallDirect v38 function=f1 accessSite=46
+# CHECK-NEXT: v40: i32 = BitXor v2, v39
+# CHECK-NEXT: v41: 0 = Integer
+# CHECK-NEXT: v42: i32 = BitOr v40, v41
+# CHECK-NEXT: Return v42
 # CHECK-NEXT: }

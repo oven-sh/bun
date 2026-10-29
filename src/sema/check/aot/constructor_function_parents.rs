@@ -15,7 +15,7 @@ use crate::node::NodeData;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::types::{TypeData, TypeId};
-use crate::util::{FxHashMap, FxHashSet};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
 use std::rc::Rc;
 
@@ -53,7 +53,7 @@ impl<'s> LinkedFunctions<'s> {
             let parent = link.parent.and_then(LinkEnd::as_parent);
             of_functions.push(FunctionLink { child, parent });
         }
-        of_functions.sort_by_key(|link| link.child);
+        of_functions.shared_sort_by_key(|link| link.child);
         ends.sort_unstable();
         ends.dedup();
         LinkedFunctions {
@@ -380,7 +380,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         for &(_, literal) in literals {
             self.add_copied_members(function.file, literal, &mut members);
         }
-        members.by_position.sort_by_key(|&(position, _)| position);
+        members
+            .by_position
+            .shared_sort_by_key(|&(position, _)| position);
         let names_stored_in_prototype = self.list(&members.names_stored_in_prototype);
         let members = Vec::from_iter(members.by_position.into_iter().map(|(_, member)| member));
         let shape: &'c ClassShape<'c> = self.arena.alloc(ClassShape {

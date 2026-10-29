@@ -177,7 +177,7 @@ fn collect_views_of_literals(
         return;
     }
     listed.retain(|(literals, _)| !literals.is_empty());
-    listed.sort_by(|left, right| left.0.cmp(&right.0));
+    listed.shared_sort_by(|left, right| left.0.cmp(&right.0));
     for definitions in listed.chunk_by(|left, right| left.0 == right.0) {
         let mut view = create_view(id, definitions[0].1);
         let mut uniting = Uniting::new(views.len() as u32 + 1, &view.fields, waiting);
@@ -216,7 +216,7 @@ impl UnitedLayout<'_> {
     // The types of a field are united in one step: thousands of definitions that each name another function would leave a type for each of them in the table.
     fn unite_waiting_positions(&mut self, unite: &mut impl FnMut(&[TypeId]) -> TypeId) {
         self.waiting
-            .sort_by_key(|position| (position.record, position.field));
+            .shared_sort_by_key(|position| (position.record, position.field));
         let is_same_field = |left: &WaitingPosition, right: &WaitingPosition| {
             (left.record, left.field) == (right.record, right.field)
         };

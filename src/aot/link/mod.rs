@@ -391,7 +391,7 @@ fn compiled_files(projects: &Projects<'_, '_>) -> Vec<ProgramFile> {
         let compiled = projects.get(project).loaded.files().compiled_files().iter();
         let first = files.len();
         files.extend(compiled.map(|&file| ProgramFile { project, file }));
-        files[first..].sort_unstable();
+        files[first..].shared_sort_unstable();
     }
     files
 }

@@ -9,7 +9,7 @@ use crate::hir::{
 };
 use crate::program::FileId;
 use crate::session::Arena;
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, SharedSort};
 use std::sync::OnceLock;
 
 pub(in crate::check) struct StoreIndex<'s> {
@@ -185,10 +185,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 });
             }
         }
-        this_stores
-            .sort_unstable_by_key(|store| (store.owner, hir[store.assign].pos, store.assign));
-        binding_stores
-            .sort_unstable_by_key(|store| (store.symbol, hir[store.source].pos, store.source));
+        this_stores.shared_sort_unstable_by_key(|store| {
+            (store.owner, hir[store.assign].pos, store.assign)
+        });
+        binding_stores.shared_sort_unstable_by_key(|store| {
+            (store.symbol, hir[store.source].pos, store.source)
+        });
         StoreIndex {
             this_stores: list_in(self.c.arena, &this_stores),
             binding_stores: list_in(self.c.arena, &binding_stores),

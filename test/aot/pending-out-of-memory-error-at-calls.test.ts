@@ -65,14 +65,17 @@ test.skipIf(!!unsupported)(
           bunEnv,
         ),
       );
-      const results: Record<string, unknown> = {};
-      for (const name of Object.keys(calls)) {
-        const ran = await spawned(withoutCoreDump([executable, name]), folder, {
-          ...bunEnv,
-          BUN_JSC_markedBlockCageSizeInMB: "64",
-        });
-        results[name] = { stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal };
-      }
+      const results = Object.fromEntries(
+        await Promise.all(
+          Object.keys(calls).map(async name => {
+            const ran = await spawned(withoutCoreDump([executable, name]), folder, {
+              ...bunEnv,
+              BUN_JSC_markedBlockCageSizeInMB: "64",
+            });
+            return [name, { stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }];
+          }),
+        ),
+      );
       expect(results).toEqual(
         Object.fromEntries(
           Object.keys(calls).map(name => [

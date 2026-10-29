@@ -15,7 +15,7 @@
 // The code behind a patchpoint is not counted, so a change that puts the fast path of a callee in line makes the program faster and a number here larger. A change
 // that moves a number on purpose restates it, for both architectures: AOT_PERF=update with AOT_PERF_ONLY. Any other rise is a loss to look into.
 //
-//   TEST_PART=aot/perf/generated-code-of-idioms bun test test/aot/parts.test.ts       fails if a patchpoint was added, or more than 10% AND more than 1 instruction;
+//   bun test ./test/aot/perf/generated-code-of-idioms-<1..26>.measure.ts              fails if a patchpoint was added, or more than 10% AND more than 1 instruction;
 //                                                                                     a patchpoint counts for 8 instructions, and a lower sum is never worse;
 //                                                                                     the poll of a loop counts for the instructions that it is, and as no patchpoint;
 //                                                                                     the function and its loop are each held against their own pin

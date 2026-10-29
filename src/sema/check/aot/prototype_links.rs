@@ -10,7 +10,7 @@ use crate::hir::{
 };
 use crate::program::FileId;
 use crate::session::Arena;
-use crate::util::{FxHashMap, FxHashSet};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::sync::OnceLock;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -611,10 +611,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             })
             .collect();
         functions_sharing_prototype_objects.sort_unstable();
-        links_of_parameters.sort_by_key(|entry| entry.0);
-        calls_passing_parameters.sort_by_key(|entry| entry.0);
-        calls_passing_this.sort_by_key(|&(caller, call)| (caller, hir[call.call].pos, call.call));
-        copied_literals.sort_by_key(|&(function, literal)| (function, hir[literal].pos, literal));
+        links_of_parameters.shared_sort_by_key(|entry| entry.0);
+        calls_passing_parameters.shared_sort_by_key(|entry| entry.0);
+        calls_passing_this
+            .shared_sort_by_key(|&(caller, call)| (caller, hir[call.call].pos, call.call));
+        copied_literals
+            .shared_sort_by_key(|&(function, literal)| (function, hir[literal].pos, literal));
         let arena = self.c.arena;
         PrototypeLinks {
             links_of_declarations: list_in(arena, &links_of_declarations),

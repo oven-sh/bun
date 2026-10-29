@@ -2025,20 +2025,28 @@ console.log("alive");
     inPart(test.skipIf(!isLinux || isASAN))(
       "the threads that a collection starts are up before the program goes on",
       async () => {
+        // A typed array takes its bytes alone, an ArrayBuffer a small block as well.
         using folder = tempDir("aot-heap-limit", {
-          "program.ts": `const hold: ArrayBuffer[] = [];
-for (const kib of [262144, 16384, 1024, 64, 40, 10]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
+          "program.ts": `const hold: unknown[] = [];
+for (const kib of [262144, 16384, 1024, 64]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
+for (const kib of [40, 10]) for (;;) { try { hold.push(new Uint8Array(kib * 1024)); } catch { break; } }
 console.log("alive");
 `,
         });
         await build(String(folder));
-        const runs = await Promise.all(
-          Array.from({ length: 100 }, () =>
-            run(["sh", "-c", "ulimit -c 0 && ulimit -v 4194304 && exec ./program"], String(folder), {
-              BUN_JSC_numberOfGCMarkers: "64",
-            }),
-          ),
-        );
+        // Each program starts 64 threads, so 20 run at once.
+        const runs: Awaited<ReturnType<typeof run>>[] = [];
+        for (let batch = 0; batch < 5; batch++) {
+          runs.push(
+            ...(await Promise.all(
+              Array.from({ length: 20 }, () =>
+                run(["sh", "-c", "ulimit -c 0 && ulimit -v 4194304 && exec ./program"], String(folder), {
+                  BUN_JSC_numberOfGCMarkers: "64",
+                }),
+              ),
+            )),
+          );
+        }
         expect(runs.filter(({ stdout, exitCode }) => stdout !== "alive\n" || exitCode !== 0)).toEqual([]);
       },
       240_000,

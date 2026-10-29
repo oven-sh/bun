@@ -15,6 +15,7 @@ use bun_sema::import_sites::{
 };
 use bun_sema::messages::Category;
 use bun_sema::program::{CodeAnswer, FileId, Files};
+use bun_sema::util::SharedSort;
 use bun_sema_driver::Locator;
 use bun_sema_driver::host::to_native;
 
@@ -363,9 +364,9 @@ pub(crate) fn find_code_that_starts_workers(
         })
         .collect();
     found.append(&mut walk.texts);
-    found.sort_unstable();
+    found.shared_sort_unstable();
     found.dedup();
-    walk.names.sort_unstable();
+    walk.names.shared_sort_unstable();
     walk.names.dedup();
     CodeThatStartsWorkers {
         files: found,
@@ -416,7 +417,7 @@ pub(crate) fn find_embedded_code_files(
         describe_embedded_file(files, loaders, file)
     });
     let mut copies: Vec<WorkerFile> = described.into_iter().flatten().collect();
-    copies.sort_unstable();
+    copies.shared_sort_unstable();
     copies.dedup();
     copies
 }

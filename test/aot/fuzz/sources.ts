@@ -746,6 +746,11 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "lists-from-builtins-taken-apart",
     "global-matches-only-counted",
     "joined-strings-compared-with-literals",
+    "private-stores-on-instances-of-builtin-subclasses",
+    "dictionaries-grown-by-spreads",
+    "instanceof-under-relinked-constructors",
+    "awaits-of-async-calls-that-answer-at-once",
+    "defaults-on-class-prototypes",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(
@@ -941,8 +946,8 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "spread-copies-read-in-hot-loops",
     "reflect-under-other-bindings",
     "library-instances-given-to-builtins",
-    "private-stores-on-instances-of-builtin-subclasses",
     "members-defined-on-instances-of-builtin-subclasses",
+    "fields-added-in-a-row-after-construction",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

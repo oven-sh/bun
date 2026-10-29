@@ -12,6 +12,7 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
+use bun_sema::util::SharedSort;
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
@@ -251,7 +252,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         .zip(options.loaders.values())
         .map(|(extension, &loader)| (extension.to_vec(), loader))
         .collect();
-    loaders.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    loaders.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
     LoadOptions {
         project_root: without_trailing_slash_windows_path(input.working_directory).to_vec(),
         loaders,
@@ -293,7 +294,7 @@ fn in_memory_file_keys(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8
     let mut keys: Vec<_> = (by_path.into_iter())
         .map(|(path, (key, _))| (key.to_vec(), path))
         .collect();
-    keys.sort_unstable();
+    keys.shared_sort_unstable();
     keys
 }
 
@@ -304,7 +305,7 @@ pub(crate) fn in_memory_files_by_path<'f>(
 ) -> BTreeMap<Vec<u8>, (&'f [u8], &'f [u8])> {
     let working_directory = from_native(working_directory);
     let mut files: Vec<_> = file_map.map.iter().collect();
-    files.sort_unstable_by(|a, b| a.0[..].cmp(&b.0[..]));
+    files.shared_sort_unstable_by(|a, b| a.0[..].cmp(&b.0[..]));
     (files.into_iter())
         .map(|(key, contents)| {
             (
@@ -340,7 +341,7 @@ fn externals(options: &BundleOptions<'_>) -> Externals {
 
 fn sorted_unique<T: Ord>(list: impl Iterator<Item = T>) -> Vec<T> {
     let mut sorted: Vec<T> = list.collect();
-    sorted.sort_unstable();
+    sorted.shared_sort_unstable();
     sorted.dedup();
     sorted
 }
@@ -555,7 +556,7 @@ pub(crate) fn embedded_entry_point_names(
 
 fn without_equal_names(names: Vec<Vec<u8>>, log: &mut Log) -> Option<Vec<Vec<u8>>> {
     let mut sorted: Vec<&Vec<u8>> = names.iter().collect();
-    sorted.sort_unstable();
+    sorted.shared_sort_unstable();
     let mut has_duplicate = false;
     for group in sorted
         .chunk_by(|a, b| a == b)
@@ -686,7 +687,7 @@ fn glob_matches(pattern: &[u8], working_directory: &[u8]) -> Option<Vec<Vec<u8>>
             Ok(Err(_)) | Err(_) => return None,
         }
     }
-    matches.sort_unstable();
+    matches.shared_sort_unstable();
     Some(matches)
 }
 

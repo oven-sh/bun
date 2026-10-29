@@ -100,6 +100,12 @@ impl FileLowering<'_, '_, '_, '_> {
         if names_of_source_are_unknown {
             return true;
         }
+        // `{ ...counts, [name]: n }`: the names of a dictionary are known only when it runs, and a copy takes them all at once.
+        if let Ok(source) = self.queries.expression_type(first.value)
+            && self.is_dictionary_type(source)
+        {
+            return true;
+        }
         // `{ ...defaults, ...options }`: an object of its own kind, which holds the names of every source.
         if properties.len() > 1
             && properties

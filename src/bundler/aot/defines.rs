@@ -5,6 +5,7 @@ use bun_js_parser::defines::{Define as DefineTable, DefineData};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::fold::{Constant, Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
 use bun_sema::hir_from_data::DataValue;
+use bun_sema::util::SharedSort;
 
 use super::data_values::{NotData, data_value_from_expr, report_not_data};
 use super::services::with_ast_scope;
@@ -48,7 +49,7 @@ fn collect_define_entries(table: &DefineTable) -> Vec<DefineEntry<'_>> {
         .chain(dots)
         .filter(|entry| !entry.data.valueless())
         .collect();
-    entries.sort_by(|a, b| a.parts.cmp(&b.parts));
+    entries.shared_sort_by(|a, b| a.parts.cmp(&b.parts));
     entries.dedup_by(|later, first| later.parts == first.parts);
     entries
 }
@@ -153,7 +154,7 @@ fn dropped_call_paths<'s>(
         .filter(|item| !item.is_empty())
         .map(|item| bun_core::strings::split(item, b".").collect())
         .collect();
-    paths.sort_unstable();
+    paths.shared_sort_unstable();
     paths.dedup();
     paths
         .iter()
@@ -168,7 +169,7 @@ fn feature_atoms(options: &BundleOptions<'_>, atoms: &Interner<'_>) -> Vec<Atom>
         .flat_map(|flags| flags.keys())
         .map(|name| &**name)
         .collect();
-    names.sort_unstable();
+    names.shared_sort_unstable();
     names.iter().map(|name| atoms.intern(name)).collect()
 }
 

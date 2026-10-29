@@ -7912,7 +7912,7 @@ impl<'s> Files<'s> {
         self.order_code_files(&mut seen, &mut libs, &mut others);
         if self.options.orders_files_as_listed {
             let path_of = |file: FileId| self.modules[file.idx()].file_name();
-            others.sort_by(|&left, &right| compare_as_listed(path_of(left), path_of(right)));
+            others.shared_sort_by(|&left, &right| compare_as_listed(path_of(left), path_of(right)));
         }
         libs.shared_sort_by_cached_key(|&file| self.default_lib_file_priority(file));
         libs.extend(others);

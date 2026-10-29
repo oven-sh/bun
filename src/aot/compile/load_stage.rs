@@ -548,9 +548,9 @@ impl<'a> Build<'a> {
         kept_runtime: &mut Option<(RuntimeRoots, LoadedProgram<'s>)>,
     ) -> Result<R, Stage> {
         let options = self.options;
-        let (host, request, positions) = (project.host, project.request, project.positions);
+        let (host, request) = (project.host, project.request);
         let session = shared.sessions.application;
-        let mut application = self.load_application(session, host, request, shared)?;
+        let application = self.load_application(session, host, request, shared)?;
         if project.asset_reads == AssetReads::FinishedLater {
             read_assets(project.scope, host);
         }
@@ -616,6 +616,20 @@ impl<'a> Build<'a> {
                 .map(|(path, size)| (path.to_vec(), size))
                 .collect();
         }
+        self.compile_loaded(shared, project, application, then, kept_runtime)
+    }
+
+    fn compile_loaded<'s, R>(
+        &mut self,
+        shared: &SharedLoadInputs<'_, 's>,
+        project: &ApplicationLoad<'_, '_, '_, '_, 's>,
+        mut application: LoadedProgram<'s>,
+        then: Then<'_, 'a, R>,
+        kept_runtime: &mut Option<(RuntimeRoots, LoadedProgram<'s>)>,
+    ) -> Result<R, Stage> {
+        let options = self.options;
+        let (host, request, positions) = (project.host, project.request, project.positions);
+        let files = application.files();
         let view = |first: Option<FileId>| {
             // SAFETY: the load has ended, and between two programs no thread works for the build.
             unsafe { files.view_program(first) };
@@ -699,36 +713,78 @@ impl<'a> Build<'a> {
                 None => groups.push(vec![index]),
             }
         }
+        let session_of = |group_index: usize| match group_index {
+            0 => shared.sessions.runtime,
+            _ => &shared.further_runtime_sessions[group_index - 1],
+        };
+        let asks: Vec<RuntimeUses> = (groups.iter())
+            .map(|group| join_asks(group.iter().map(|&index| &roots[index].asks)))
+            .collect();
+        let inputs: Vec<RuntimeLoadInputs<'_, 's>> = (groups.iter().zip(&asks).enumerate())
+            .map(|(group_index, (group, asks))| {
+                // What is loaded ahead of a program serves whatever that program asks for.
+                let asks = preload_of(options).is_none().then_some(asks);
+                let session = session_of(group_index);
+                self.create_runtime_load_inputs(shared, session, &roots[group[0]], asks)
+            })
+            .collect();
+        let root_paths: Vec<Vec<Vec<u8>>> = (groups.iter().zip(&inputs))
+            .map(|(group, inputs)| match inputs.host.reads_types {
+                true => {
+                    let of_group = group.iter().map(|&index| &roots[index]);
+                    join_root_paths(shared.runtime_modules, of_group)
+                }
+                false => Vec::new(),
+            })
+            .collect();
+        let requests: Vec<CompileRequest<'_, 's>> = (inputs.iter().zip(&root_paths))
+            .map(|(inputs, root_paths)| self.create_runtime_request(shared, inputs, root_paths))
+            .collect();
+        // Bun's own code is loaded for all programs ahead of the other stages of any, which are thrown away where the programs are one.
+        let mut loaded_ahead: Vec<Option<LoadedProgram<'s>>> = Vec::new();
+        if programs.len() > 1 && !options.aot.separates_programs && kept_runtime.is_none() {
+            let started = Instant::now();
+            for (group_index, (inputs, request)) in inputs.iter().zip(&requests).enumerate() {
+                let session = session_of(group_index);
+                let runtime = self.load_runtime(shared, session, &inputs.host, request)?;
+                loaded_ahead.push(Some(runtime));
+            }
+            self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
+            view(None);
+            let loaded = groups.iter().zip(loaded_ahead.iter().flatten());
+            if repeat_much_library_text(files, loaded, &self.limits, &mut self.statistics) {
+                let holds_all = self.programs.is_some_and(|of_one_load| {
+                    of_one_load.are_all_of_the_build && of_one_load.indexes.len() == programs.len()
+                });
+                if !holds_all {
+                    self.is_one_program = true;
+                    return Err(Stage::Load);
+                }
+                // What was loaded of the application is what a build of one program loads.
+                self.programs = None;
+                return self.compile_loaded(shared, project, application, then, kept_runtime);
+            }
+        }
         let mut result = None;
         let mut runtime_to_keep = None;
         for (group_index, group) in groups.iter().enumerate() {
             let started = Instant::now();
             self.lowered_runtimes.begin_load();
-            let asks = join_asks(group.iter().map(|&index| &roots[index].asks));
-            let of_group = group.iter().map(|&index| &roots[index]);
-            let mut root_paths = join_root_paths(shared.runtime_modules, of_group);
             let roots = &roots[group[0]];
-            let session = match group_index {
-                0 => shared.sessions.runtime,
-                _ => &shared.further_runtime_sessions[group_index - 1],
-            };
-            // What is loaded ahead of a program serves whatever that program asks for.
-            let asks = preload_of(options).is_none().then_some(&asks);
-            let inputs = self.create_runtime_load_inputs(shared, session, roots, asks);
-            if !inputs.host.reads_types {
-                root_paths.clear();
-            }
-            let runtime_request = self.create_runtime_request(shared, &inputs, &root_paths);
+            let session = session_of(group_index);
+            let runtime_request = &requests[group_index];
             let RuntimeLoadInputs {
                 host: ref runtime_host,
                 can_load_code_at_run_time,
                 loads_code_by_unknown_names_alone,
                 ..
-            } = inputs;
+            } = inputs[group_index];
+            let loaded_ahead = loaded_ahead.get_mut(group_index).and_then(Option::take);
             let kept = kept_runtime.take();
+            let kept = kept.filter(|(known, _)| asks_the_same(known, roots));
             let mut frozen_application = None;
-            let mut runtime = match kept.filter(|(known, _)| asks_the_same(known, roots)) {
-                Some((_, runtime)) => runtime,
+            let mut runtime = match loaded_ahead.or_else(|| kept.map(|(_, runtime)| runtime)) {
+                Some(runtime) => runtime,
                 // Each of several programs has options and a view of the files of its own.
                 None if self.programs.is_none() => {
                     let input = self.create_freeze_input(shared, &application, None);
@@ -738,13 +794,13 @@ impl<'a> Build<'a> {
                         || freeze_sources(&input, &in_parallel),
                         || {
                             let parsed_before = shared.parsed_before;
-                            parsed_before.load_program(session, runtime_host, &runtime_request)
+                            parsed_before.load_program(session, runtime_host, runtime_request)
                         },
                     );
                     frozen_application = Some(frozen);
-                    self.finish_load(runtime, &runtime_request, shared.messages)?
+                    self.finish_load(runtime, runtime_request, shared.messages)?
                 }
-                None => self.load_runtime(shared, session, runtime_host, &runtime_request)?,
+                None => self.load_runtime(shared, session, runtime_host, runtime_request)?,
             };
             self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
 
@@ -772,7 +828,7 @@ impl<'a> Build<'a> {
                     runtime: LoadedProject {
                         loaded: &runtime,
                         host: runtime_host,
-                        request: &runtime_request,
+                        request: runtime_request,
                         sources: sources.runtime,
                     },
                 };
@@ -1200,6 +1256,52 @@ fn looks_too_large_to_analyze(
     }
     let size: usize = texts_of_program_files(files).map(|(_, size)| size).sum();
     size as u64 > limits.get(LimitId::MaxSourceBytesExpectedToBeAnalyzed)
+}
+
+// The rule of `are_one_program` for Bun's own modules. Each of `loaded` is what the programs of one group hold of them.
+// Of a file of functions a program holds only those that it reaches, so those files do not count.
+fn repeat_much_library_text<'l, 's: 'l>(
+    application: &Files<'_>,
+    loaded: impl Iterator<Item = (&'l Vec<usize>, &'l LoadedProgram<'s>)>,
+    limits: &LimitValues,
+    statistics: &mut Statistics,
+) -> bool {
+    let limit = |limit: LimitId| usize::try_from(limits.get(limit)).unwrap_or(usize::MAX);
+    let text_of = |files: &Files<'_>, file: FileId| files.module(file).hir.text.len();
+    let compiled = application.compiled_files().iter();
+    let mut size_of_all: usize = compiled.map(|&file| text_of(application, file)).sum();
+    let mut repeated = 0;
+    let mut held: Vec<&[u8]> = Vec::new();
+    for (group, runtime) in loaded {
+        let files = runtime.files();
+        let is_module = |file: &&FileId| {
+            let source = parsed_source(files, **file);
+            source.is_some_and(|it| matches!(it.kind, SourceKind::RuntimeModule(_)))
+        };
+        for &file in files.compiled_files().iter().filter(is_module) {
+            let size = text_of(files, file);
+            let path = files.module(file).file_name();
+            let is_new = !held.contains(&path);
+            if is_new {
+                held.push(path);
+                size_of_all += size;
+            }
+            repeated += size * (group.len() - usize::from(is_new));
+        }
+    }
+    let share = size_of_all / 100 * limit(LimitId::MaxRepeatedSourcePercent);
+    let most = limit(LimitId::MaxRepeatedSourceBytes);
+    if repeated <= most.max(share) {
+        return false;
+    }
+    statistics.gave_up(
+        match share > most {
+            true => LimitId::MaxRepeatedSourcePercent,
+            false => LimitId::MaxRepeatedSourceBytes,
+        },
+        None,
+    );
+    true
 }
 
 // The rule of `are_one_program` for the files of a program that is loaded behind the others.

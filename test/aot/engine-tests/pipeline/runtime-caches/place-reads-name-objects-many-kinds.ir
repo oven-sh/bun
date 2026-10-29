@@ -2189,7 +2189,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f31 visibility=Private
 # CHECK: module=m0 position=695 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L5 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f11 = AssumeType v0 provenType=f11
-# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L5 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L5}, {kind=MemberPassedByStores layout=L5 key="nothing"}]
+# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L5 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L5}]
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v3: 0 = Integer
@@ -2250,7 +2250,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f31 visibility=Private
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v22: L5 = NewObject layout=L5 allocationClass=5
 # CHECK-NEXT: v23: 0 = Integer
-# CHECK-NEXT: v24: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L5}, {kind=MemberPassedByStores layout=L5 key="nothing"}]
+# CHECK-NEXT: v24: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L5}]
 # CHECK-NEXT: Branch v24 -> taken b21(| 0), notTaken b24()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v25: "{\"mark\":\"parsed " = String string="{\"mark\":\"parsed "

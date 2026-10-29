@@ -1,5 +1,6 @@
 use bun_sema::bind::{CodeUnit, CommonJsVariable, ScopeId};
 use bun_sema::hir::{FnBody, FnId};
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::variables::{BodyForm, WRAPPER_PARAMETERS, emit_entry_value};
@@ -104,7 +105,7 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             entry_values.push((BindingRef::Symbol(symbol), value));
         }
-        entry_values.sort_by_key(|entry| entry.0);
+        entry_values.shared_sort_by_key(|entry| entry.0);
         entry_values.dedup_by_key(|entry| entry.0);
         lowering.allocate_scope(scope, &entry_values);
         lowering.instantiate_functions(scope);

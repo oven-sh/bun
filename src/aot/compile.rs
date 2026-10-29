@@ -1116,7 +1116,7 @@ fn add_programs_of_worker_files(
 ) -> Result<Result<Compilation, Vec<WorkerFile>>, BuildFailed> {
     let mut files = core::mem::take(&mut first.started_workers.files);
     // A file that was followed to one Worker is not a guess, and it has options if any of its Workers has.
-    files.sort_by_key(|file| file.is_guess);
+    files.shared_sort_by_key(|file| file.is_guess);
     for index in 0..files.len() {
         let mut same = files
             .iter()
@@ -1227,7 +1227,7 @@ fn add_programs_of_worker_files(
         return Ok(Err(found));
     }
     warn_about_worker_files_left_out(&mut first, log);
-    texts_not_started.sort_unstable();
+    texts_not_started.shared_sort_unstable();
     texts_not_started.dedup();
     for text in &texts_not_started {
         first.started_workers.code = CodeOfWorkers::Unseen;
@@ -1246,7 +1246,7 @@ fn warn_about_worker_files_left_out(compiled: &mut Compilation, log: &mut Log) {
     // Without a place: only native code might start such a Worker, and there is nothing to change in the program.
     files.retain(|file| file.started_at.is_some());
     let key = |file: &WorkerFile| (file.started_at.clone(), file.source_path.clone());
-    files.sort_by_cached_key(key);
+    files.shared_sort_by_cached_key(key);
     files.dedup_by_key(|file| key(file));
     for files in files.chunk_by(|a, b| a.started_at == b.started_at) {
         let named = files.iter().take(MAX_FILES_NAMED);
@@ -1574,7 +1574,7 @@ fn compile_programs<'a>(
             return Err(failure);
         }
     };
-    outputs.sort_by_key(|(place, _)| match *place {
+    outputs.shared_sort_by_key(|(place, _)| match *place {
         ProgramPlace::Only => 0,
         ProgramPlace::OneOfSeveral(index) => index,
     });
@@ -1703,7 +1703,7 @@ fn compile_programs<'a>(
             }));
         }
     }
-    reported.sort_unstable();
+    reported.shared_sort_unstable();
     // A file that one program only starts Workers with is no guess.
     let mut certain: Vec<&[u8]> = (started_workers.files.iter())
         .chain(reported.iter().filter(|it| !it.is_guess))

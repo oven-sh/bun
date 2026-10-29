@@ -24,6 +24,7 @@ use bun_sema::hir::{
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -102,7 +103,7 @@ pub(crate) fn is_read_left_out_by_bun_run(member: BuiltinId) -> bool {
             .iter()
             .chain(GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING);
         let mut reads: Vec<BuiltinId> = paths.filter_map(|names| find_path(names)).collect();
-        reads.sort_unstable();
+        reads.shared_sort_unstable();
         reads
     });
     reads.binary_search(&member).is_ok()

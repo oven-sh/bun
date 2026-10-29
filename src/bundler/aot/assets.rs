@@ -4,6 +4,7 @@ use bun_aot::load::source_provider::{Failed, SourceFile};
 use bun_ast::{Loader, Log, Target};
 use bun_core::strings;
 use bun_paths::resolve_path;
+use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 
 use super::paths::{relative_path, report_long_path};
@@ -202,7 +203,7 @@ fn print_embedded_name(template: &PathTemplate) -> Vec<u8> {
 
 fn compute_name_order(files: &[OutputFile]) -> Vec<u32> {
     let mut order: Vec<u32> = (0..files.len() as u32).collect();
-    order.sort_by(|&left, &right| {
+    order.shared_sort_by(|&left, &right| {
         let (left, right) = (&files[left as usize], &files[right as usize]);
         left.dest_path
             .cmp(&right.dest_path)

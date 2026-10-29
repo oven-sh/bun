@@ -7,6 +7,7 @@ import { Realm } from "../differential/members";
 import { Table } from "../differential/table-description";
 import { checkTarget } from "./check-target";
 import { addHostInstances } from "./host-instances";
+import { setUpPrefix } from "./run-workers";
 import { collectTargets } from "./targets";
 
 export type WorkerRequest = { filter: string; index: number; count: number; finished: string[] };
@@ -25,9 +26,13 @@ function sayCurrent(name: string | null): void {
 process.on("unhandledRejection", () => {});
 process.on("uncaughtException", () => {});
 
+sayCurrent(`${setUpPrefix}table`);
 const realm = new Realm(new Table(aotBuiltinEntries()));
+sayCurrent(`${setUpPrefix}live candidates`);
 await addLiveCandidates(realm);
+sayCurrent(`${setUpPrefix}host instances`);
 await addHostInstances(realm);
+sayCurrent(`${setUpPrefix}targets`);
 
 const traceSet = process.env.AOT_NATIVE_CONTRACT_TRACE ? (set: string) => writeFileSync(`${reportsPath}.set`, set) : undefined;
 const isFinished = new Set(finished);

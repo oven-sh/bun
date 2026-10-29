@@ -6,6 +6,7 @@ use bun_core::{Global, Output};
 use bun_options_types::aot_options::AotOptions;
 use bun_options_types::context::ContextData;
 use bun_options_types::schema::api;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::format::{self, Layout};
 use bun_sema_driver::{CommandLine, CompilerOption};
 
@@ -205,7 +206,7 @@ fn errors_line(log: &bun_ast::Log, files_checked: u32) -> Vec<u8> {
         .filter_map(|message| message.data.location.as_ref())
         .map(|location| &location.file[..])
         .collect();
-    files.sort_unstable();
+    files.shared_sort_unstable();
     files.dedup();
 
     let mut line = b"Found ".to_vec();

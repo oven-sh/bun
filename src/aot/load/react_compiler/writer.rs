@@ -9,6 +9,7 @@ use bun_sema::hir::{
 };
 use bun_sema::resolve::JsxSettings;
 use bun_sema::session::Arena;
+use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Debug)]
@@ -74,7 +75,7 @@ impl SourceRanges {
                 (expression.pos, shape, expression.end)
             })
             .collect();
-        ranges.sort_unstable();
+        ranges.shared_sort_unstable();
         SourceRanges(ranges)
     }
 

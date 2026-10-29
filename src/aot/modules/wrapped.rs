@@ -656,7 +656,7 @@ impl Finder<'_, '_> {
             }
         }
         by_callback.sort_unstable_by_key(|entry: &(FnId, u32)| entry.0);
-        by_symbol.sort_unstable_by_key(|entry: &(SymbolId, Role, u32)| entry.0);
+        by_symbol.shared_sort_unstable_by_key(|entry: &(SymbolId, Role, u32)| entry.0);
         FileModules {
             modules,
             by_callback: by_callback.into_boxed_slice(),

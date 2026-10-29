@@ -27,6 +27,7 @@ use bun_sema::hir::DiagnosticKind;
 use bun_sema::program::{FileId, FileRole, Files, HostLoader, Run};
 use bun_sema::resolve::Options as CompilerOptions;
 use bun_sema::session::Session;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, EntryPoints,
     Incomplete, RoleDecision, decide_roles, keep_verified_roles, load_program_of_loaded_files,
@@ -414,7 +415,7 @@ impl Build<'_> {
                     roles.roles[demotion.file.idx()] = FileRole::Inferred;
                     roles.demoted.push(demotion);
                 }
-                roles.demoted.sort_by_key(|demotion| demotion.file);
+                roles.demoted.shared_sort_by_key(|demotion| demotion.file);
                 roles.checked.extend_from_slice(&worlds.lowered);
                 roles.checked.sort_unstable();
                 roles.checked.dedup();

@@ -86,13 +86,13 @@
     }
   },
   "class/default-on-the-prototype-read-in-function": {
-    "typed": 142.3,
-    "untyped": 142.2,
+    "typed": 25.6,
+    "untyped": 25.6,
     "jit": 28.2
   },
   "class/instanceof-a-function-that-stands-under-another": {
-    "typed": 280.1,
-    "untyped": 323.6,
+    "typed": 5,
+    "untyped": 5,
     "jit": 56.5
   },
   "class/instanceof-false-in-function": {
@@ -1432,8 +1432,8 @@
     "jit": 63.1
   },
   "closure/properties-defined-by-a-loop-over-written-names": {
-    "typed": 806.5,
-    "untyped": 785.4,
+    "typed": 17.3,
+    "untyped": 17.3,
     "jit": 12
   },
   "function/makers-made-by-one-function-each-with-its-own-prototype": {

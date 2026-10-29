@@ -41,6 +41,9 @@ import {
 import {
   Demangler,
   describeFailures,
+  describeFiller,
+  describeSections,
+  holeSizesWithoutFeatures,
   megabytes,
   writeRetainedFile,
   writeReviewFiles,
@@ -82,6 +85,7 @@ const responseFileArgument = /^((?:\/clang:)?-Wl,)?@(.*)$/;
 const rangeCountMargin = 1.25;
 const maxListedOutputs = 8;
 const maxListedRemarks = 20;
+const smallestListedBytes = 64 * 1024;
 const linkerFormats = { elf, macho: machO, coff } satisfies Record<ObjectFormat, (linker: Linker) => LinkerFormat>;
 
 export class Stopwatch {
@@ -541,6 +545,18 @@ function uncuttableGroupBytes({ analysis, ranges }: Layout, policy: OutputPolicy
   return bytes;
 }
 
+/** They stay where the linker puts them, among code that is kept. */
+function findUnplacedSections({ analysis }: Layout, format: LinkerFormat): number[] {
+  const { graph } = analysis.reading;
+  const placed = new Set(format.orderOf(graph, analysis.partition).nodes);
+  const isMovable = (output: string) => format.isMovable(output);
+  const unplaced: number[] = [];
+  for (let node = 0; node < graph.placedCount; node++) {
+    if (groupOfNode(graph, analysis.partition, isMovable, node) >= 0 && !placed.has(node)) unplaced.push(node);
+  }
+  return unplaced;
+}
+
 function unmovableOutputBytes({ analysis }: Layout, policy: OutputPolicy): [output: string, bytes: number][] {
   const { graph } = analysis.reading;
   const bytesOf = new Map<string, number>();
@@ -640,6 +656,16 @@ export function printSummary(layout: Layout, { model, uses, format, stopwatch }:
     );
   }
   console.log(`${megabytes(partition.unexplainedBytes)} are in the image without a known reference and are retained`);
+  if (partition.unexplainedBytes >= smallestListedBytes) {
+    for (const line of describeSections(reading.graph, partition.unexplained)) console.log(`  ${line}`);
+  }
+  const unplaced = findUnplacedSections(layout, format);
+  const unplacedBytes = unplaced.reduce((sum, node) => sum + reading.graph.size[node]!, 0);
+  console.log(`${megabytes(unplacedBytes)} of the groups have no name that the order of sections can list`);
+  if (unplacedBytes >= smallestListedBytes) {
+    for (const line of describeSections(reading.graph, unplaced)) console.log(`  ${line}`);
+  }
+  console.log(`without any feature: ${describeFiller(holeSizesWithoutFeatures(layout.ranges))}`);
   const statistics = Object.entries(reading.statistics).map(([name, count]) => `${name} ${count}`);
   if (statistics.length > 0) console.log(`graph: ${statistics.join(", ")}`);
   for (const remark of (reading.remarks ?? []).slice(0, maxListedRemarks)) console.log(`graph: ${remark}`);

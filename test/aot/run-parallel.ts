@@ -362,7 +362,7 @@ const isASAN = (() => {
     return basename(process.execPath).includes("asan");
   }
 })();
-// On Windows CI runs the driver at low priority in the background of other tests, which may take every core for a minute.
+// On Windows arm64 CI runs the driver at low priority in the background of other tests, which may take every core for a minute.
 const patience = getPriority() > 0 ? 3 : 1;
 /** In seconds, for a run or the build of one program, and for each further program of a build. A build that is ended for nothing is made twice, so the limit is several times what a busy machine takes. */
 const timeLimit = (cmd: string[], programs = 1) =>

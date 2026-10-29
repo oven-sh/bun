@@ -165,6 +165,8 @@ export interface Partition {
   groupOfSet: Map<number, number>;
   removableBytes: Map<number, number>;
   featuresNearMinimum: number[];
+  /** The sections that are in the image without a known reference. */
+  unexplained: number[];
   unexplainedBytes: number;
   failures: PartitionFailure[];
 }

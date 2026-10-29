@@ -536,6 +536,8 @@ describe("layOut", () => {
       "0.00 MB of the groups are outside every cuttable range",
       `the trim table takes ${layout.table.length} of 1024 bytes`,
       "0.00 MB are in the image without a known reference and are retained",
+      "0.01 MB of the groups have no name that the order of sections can list",
+      "without any feature: 1 holes; left as filler by 39 cuts 0.00 MB, 60 cuts 0.00 MB, 78 cuts 0.00 MB, 156 cuts 0.00 MB",
       "graph: objects 1",
       "needed only by features, in output sections that cannot be reordered: .data 0.00 MB",
     ]);

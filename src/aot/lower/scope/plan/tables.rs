@@ -32,7 +32,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
     let holders = parts.initialized_holders.iter();
     let holders = holders.map(|&(function, symbol)| (walk.functions[function.index()].key, symbol));
     let mut initialized_holders: Vec<(FunctionKey, SymbolId)> = holders.collect();
-    initialized_holders.sort_unstable();
+    initialized_holders.shared_sort_unstable();
     let named_in_unprinted_statements = walk.symbols_named_in_unprinted_statements.iter();
     let named_elsewhere_only_there = named_in_unprinted_statements.filter(|&&symbol| {
         let owner = context.owner_of(BindingRef::Symbol(symbol));

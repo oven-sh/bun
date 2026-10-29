@@ -18,6 +18,7 @@ use bun_js_parser::{Define, Parser, ParserOptions, Result as Parsed};
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
 use bun_sema::hir::{self, ExprId};
+use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 use smallvec::{SmallVec, smallvec};
 
@@ -363,7 +364,7 @@ impl<'a> Walker<'a> {
         self.accessed_constructions.sort_unstable();
         self.regexp_literals.sort_unstable();
         self.require_main_positions.sort_unstable();
-        self.joined_declarators.sort_unstable();
+        self.joined_declarators.shared_sort_unstable();
         self.classes_that_assign_fields.sort_unstable();
         self.statements.sort_unstable_by_key(|entry| entry.0);
         self.initializers.sort_unstable_by_key(|entry| entry.0);

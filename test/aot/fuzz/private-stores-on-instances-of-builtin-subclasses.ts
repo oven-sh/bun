@@ -3,6 +3,7 @@
 // scene picks the parent, who makes the object, the kind of store and of value, and what happens to the object between two
 // stores: properties come and go, it is frozen, it gets another prototype, a collection runs. Objects that lack the name also
 // come by: of another evaluation of the class, of the parent, a plain one. After every store the field is read back.
+// In half of the scenes the loops stand in the class's own methods.
 import type { Random } from "./random";
 
 /** Parents, with the arguments of their constructors. */
@@ -125,13 +126,63 @@ const members = [
   "static #p = 0;",
 ];
 
-export function generate(random: Random): string {
+/** What TypeScript wants behind the name of a generic parent. */
+const typeParameters: Record<string, string> = { Array: "<any>", Map: "<any, any>", Set: "<any>", WeakMap: "<object, any>", Promise: "<any>" }; // prettier-ignore
+
+export function generate(random: Random, typed: boolean): string {
+  const as = (type: string) => (typed ? `: ${type}` : "");
   const scenes: string[] = [];
   for (let scene = 0, total = random.between(2, 4); scene < total; scene++) {
-    const [parent, args] = random.pick(parents);
+    // TypeScript wants other arguments for a class below a view.
+    const [parent, args] = random.pick(
+      typed ? parents.filter(([name]) => !/8Array|64Array|DataView/.test(name)) : parents,
+    );
     const filled = (text: string) => text.replaceAll("ARGS", args);
     const value = random.pick(values);
     const turns = random.pick([3, 5, 300]);
+    // Half of the scenes are plain: the class stands at the top of the file, its methods hold the loops, and the objects reach
+    // them without a helper in between. There the compiler knows the receiver and takes the code for hot.
+    if (typed || random.chance(0.5)) {
+      // In TypeScript the object is changed through a variable without a type, and the parent's type parameters are written.
+      const change = random.pick(changes).replaceAll("\n      ", "\n    ").replace(/\bit\b/g, "raw").replaceAll("Other.prototype", "Object.prototype"); // prettier-ignore
+      const above = parent + (typed ? (typeParameters[parent] ?? "") : "");
+      const member = random.pick(members.slice(0, 5)).replaceAll("\n    ", "\n  ");
+      const name = `Plain${scene}`;
+      const stranger = filled(random.pick(["new Parent(ARGS)", "{}", "null", "Plain.prototype"])).replace("Parent", parent).replace("Plain", name); // prettier-ignore
+      scenes.push(`class ${name} extends ${above} {
+  ${typed ? member.replace("#p = 0;", "#p: any = 0;").replace("#p;", "#p: any;").replace("#held = 0;", "#held: any = 0;").replace("(value)", "(value: any)") : member}
+  #q${as("any")} = 0;
+  spin(turns${as("number")})${as("string")} {
+    const it = this;
+    for (let i = 0; i < turns; i++) {
+    ${random.pick(stores).replaceAll("VALUE", value)}
+    }
+    return shown(this.#p) + "," + shown(this.#q);
+  }
+  static each(list${as(`${name}[]`)})${as("string")} {
+    let seen = "";
+    for (const it of list) seen += shown(it.#p) + ";";
+    return seen;
+  }
+  static fill(list${as(`${name}[]`)})${as("number")} {
+    for (let i = 0; i < list.length; i++) list[i].#q = i;
+    return list.length;
+  }
+}
+function plain${scene}()${as("string")} {
+  const it = new ${name}(${args});
+  const raw${as("any")} = it;
+  const before = it.spin(${turns});
+  for (let i = 0; i < 4; i++) {
+    ${change}
+  }
+  const list = [it, new ${name}(${args}), new ${name}(${args})];
+  return [before, it.spin(${turns}), ${name}.fill(list), ${name}.each(list), list[2].spin(2)].join(" | ");
+}
+console.log("scene ${scene} plain", told(plain${scene}));
+console.log("scene ${scene} stranger", told(() => ${name}.each([${typed ? `(${stranger}) as any` : stranger}])));`);
+      continue;
+    }
     scenes.push(`{
   const Parent = ${parent};
   const make = () =>
@@ -177,29 +228,29 @@ export function generate(random: Random): string {
 }`);
   }
   return `// Every round should answer alike: how many different answers there were, and how long they are together.
-const rounds = new Set();
-function noted(answer) {
+const rounds = new Set${typed ? "<string>" : ""}();
+function noted(answer${as("string")})${as("string")} {
   rounds.add(answer);
   return answer;
 }
-function counted() {
+function counted()${as("string")} {
   const said = rounds.size + ":" + [...rounds].join("").length;
   rounds.clear();
   return said;
 }
-function shown(value) {
+function shown(value${as("any")})${as("string")} {
   if (typeof value === "function") return "function";
   if (typeof value === "bigint") return value + "n";
   if (value === null || typeof value !== "object") return typeof value + " " + String(value);
   return Array.isArray(value) ? "list " + value.length : "n" in value ? "object " + value.n : "object";
 }
-function told(ask) {
+function told(ask${as("() => unknown")})${as("unknown")} {
   try {
     return ask();
   } catch (error) {
-    return "threw " + error.name;
+    return "threw " + ${typed ? "(error as Error)" : "error"}.name;
   }
 }
 ${scenes.join("\n")}
-`;
+${typed ? "export {};\n" : ""}`;
 }

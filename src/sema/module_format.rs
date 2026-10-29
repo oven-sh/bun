@@ -43,7 +43,37 @@ pub(crate) enum EsmSyntax {
     ExportOrTopLevelAwait,
 }
 
+/// The format of a text for each type that may be declared for it.
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub struct FormatByDeclaredType {
+    unknown: ModuleFormat,
+    commonjs: ModuleFormat,
+    esm: ModuleFormat,
+}
+
+impl FormatByDeclaredType {
+    pub(crate) fn decided_by_text(format: ModuleFormat) -> FormatByDeclaredType {
+        FormatByDeclaredType {
+            unknown: format,
+            commonjs: format,
+            esm: format,
+        }
+    }
+
+    pub fn is_decided_by_text(self) -> bool {
+        self.unknown == self.commonjs && self.commonjs == self.esm
+    }
+
+    pub fn get(self, declared: DeclaredModuleType) -> ModuleFormat {
+        match declared {
+            DeclaredModuleType::Unknown => self.unknown,
+            DeclaredModuleType::CommonJs => self.commonjs,
+            DeclaredModuleType::Esm => self.esm,
+        }
+    }
+}
+
 pub(crate) struct FormatDecision {
-    pub format: ModuleFormat,
+    pub formats: FormatByDeclaredType,
     pub error: Option<FoldError>,
 }

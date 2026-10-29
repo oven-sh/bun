@@ -1,0 +1,867 @@
+# -- source: constructor-fn-called-without-new-catch.cjs
+# // Sloppy code: called without `new`, `this` is the global object. A variable takes it inside `try`, and the catch block uses the variable, all ahead of `this instanceof F`.
+# function fail() {
+#   throw new Error("thrown");
+# }
+#
+# function Stores(value) {
+#   var taken = null;
+#   try {
+#     taken = this;
+#     fail();
+#   } catch (error) {
+#     taken.storedByCatchBlock = value;
+#   }
+#   if (!(this instanceof Stores)) return new Stores(value);
+#   this.value = value;
+# }
+# var stored = Stores(5);
+# console.log(stored.value, typeof storedByCatchBlock, globalThis.storedByCatchBlock, "storedByCatchBlock" in globalThis);
+# console.log(stored.storedByCatchBlock, Object.keys(stored).join());
+#
+# var kept = [];
+# function Keeps(value) {
+#   var taken = null;
+#   try {
+#     taken = this;
+#     fail();
+#   } catch (error) {
+#     kept.push(taken);
+#   }
+#   if (!(this instanceof Keeps)) return new Keeps(value);
+#   this.value = value;
+# }
+# var made = Keeps(6);
+# console.log(made.value, kept.length, kept[0] === globalThis, kept[1] === made);
+# kept[0].storedLater = 1;
+# console.log(typeof storedLater, globalThis.storedLater);
+#
+# var finished = 0;
+# function Counts(value) {
+#   try {
+#     if (!(this instanceof Counts)) return new Counts(value);
+#   } finally {
+#     finished++;
+#   }
+#   this.value = value;
+# }
+# console.log(Counts(1).value, new Counts(2).value, finished, typeof value);
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="constructor-fn-called-without-new-catch.cjs" displayPath="constructor-fn-called-without-new-catch.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.3" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.4" declared={type=undefined|null|Array flags=[IsExpected]} flags=[IsRequired, IsImmutable]}, {key=@"binding.5" declared={type=undefined|number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=6
+layout L2 kind=Instance name="Stores" module=m0 position=224 constructor=f2 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L3 kind=Instance name="Keeps" module=m0 position=681 constructor=f3 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L4 kind=Instance name="Counts" module=m0 position=1092 constructor=f4 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    v4 = NewObject -, v3, v3 layout=L1 fields=[4, 5]
+    v5 = NewClosure function=f1
+    v6 = Convert v5 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v4, v6 layout=L1
+    v8 = NewClosure v4 function=f2
+    v9 = Convert v8 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v4, v9 layout=L1 field=1
+    v11 = NewClosure v4 function=f3
+    v12 = Convert v11 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v4, v12 layout=L1 field=2
+    v14 = NewClosure v4 function=f4
+    v15 = Convert v14 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v4, v15 layout=L1 field=3
+    v17 = Integer integer=5
+    v18 = Call v9, -, v17 calleeName="Stores"
+    v19 = Convert v18 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="console" [isFreeName]
+    v22 = Convert v21 declared={type=builtin(Console) flags=[IsExpected]}
+    v23 = PropGet v22 key="log"
+    v24 = Convert v23 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v25 = PropGet v19 key="value"
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="storedByCatchBlock" [isFreeName, isForTypeOf]
+    v28 = TypeOf v27
+    v29 = Builtin builtin=GlobalThis
+    v30 = PropGet v29 key="globalThis" [isFreeName]
+    v31 = Convert v30 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v32 = PropGet v31 key="storedByCatchBlock"
+    v33 = Builtin builtin=GlobalThis
+    v34 = PropGet v33 key="globalThis" [isFreeName]
+    v35 = Convert v34 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v36 = PropHas v35 key="storedByCatchBlock"
+    v37 = Call v24, v22, v25, v28, v32, v36 calleeKey="log" calleeName="console.log"
+    v38 = Builtin builtin=GlobalThis
+    v39 = PropGet v38 key="console" [isFreeName]
+    v40 = Convert v39 declared={type=builtin(Console) flags=[IsExpected]}
+    v41 = PropGet v40 key="log"
+    v42 = Convert v41 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v43 = PropGet v19 key="storedByCatchBlock"
+    v44 = Builtin builtin=Object
+    v45 = Builtin builtin=ObjectKeys
+    v46 = Call v45, v44, v19 calleeName="Object.keys"
+    v47 = Convert v46 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v48 = PropGet v47 key="join"
+    v49 = Convert v48 declared={type=undefined|null|function flags=[IsExpected]}
+    v50 = Call v49, v47 calleeKey="join" calleeName="join"
+    v51 = Convert v50 declared={type=undefined|null|string flags=[IsExpected]}
+    v52 = Call v42, v40, v43, v51 calleeKey="log" calleeName="console.log"
+    v53 = Data data=d0
+    v54 = Convert v53 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v55 = Convert v54 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutEnvironmentField v4, v55 layout=L1 field=4
+    v57 = Integer integer=6
+    v58 = Call v12, -, v57 calleeName="Keeps"
+    v59 = Convert v58 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v60 = Builtin builtin=GlobalThis
+    v61 = PropGet v60 key="console" [isFreeName]
+    v62 = Convert v61 declared={type=builtin(Console) flags=[IsExpected]}
+    v63 = PropGet v62 key="log"
+    v64 = Convert v63 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v65 = PropGet v59 key="value"
+    v66 = PropGet v55 key="length"
+    v67 = Convert v66 declared={type=number flags=[IsExpected]}
+    v68 = Integer
+    v69 = ElemGet v55, v68
+    v70 = Builtin builtin=GlobalThis
+    v71 = PropGet v70 key="globalThis" [isFreeName]
+    v72 = Convert v71 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v73 = StrictEq v69, v72
+    v74 = Integer integer=1
+    v75 = ElemGet v55, v74
+    v76 = StrictEq v75, v59
+    v77 = Call v64, v62, v65, v67, v73, v76 calleeKey="log" calleeName="console.log"
+    v78 = Integer
+    v79 = ElemGet v55, v78
+    v80 = Convert v79 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v81 = Integer integer=1
+    PropSet v80, v81 key="storedLater" mode=Sloppy
+    v83 = Builtin builtin=GlobalThis
+    v84 = PropGet v83 key="console" [isFreeName]
+    v85 = Convert v84 declared={type=builtin(Console) flags=[IsExpected]}
+    v86 = PropGet v85 key="log"
+    v87 = Convert v86 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v88 = Builtin builtin=GlobalThis
+    v89 = PropGet v88 key="storedLater" [isFreeName, isForTypeOf]
+    v90 = TypeOf v89
+    v91 = Builtin builtin=GlobalThis
+    v92 = PropGet v91 key="globalThis" [isFreeName]
+    v93 = Convert v92 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v94 = PropGet v93 key="storedLater"
+    v95 = Call v87, v85, v90, v94 calleeKey="log" calleeName="console.log"
+    v96 = Integer
+    v97 = Convert v96 declared={type=undefined|number flags=[IsExpected]}
+    PutEnvironmentField v4, v97 layout=L1 field=5
+    v99 = Builtin builtin=GlobalThis
+    v100 = PropGet v99 key="console" [isFreeName]
+    v101 = Convert v100 declared={type=builtin(Console) flags=[IsExpected]}
+    v102 = PropGet v101 key="log"
+    v103 = Convert v102 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v104 = Integer integer=1
+    v105 = Call v15, -, v104 calleeName="Counts"
+    v106 = Convert v105 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v107 = PropGet v106 key="value"
+    v108 = Integer integer=2
+    v109 = Construct v15, -, v108 calleeName="Counts"
+    v110 = Convert v109 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v111 = PropGet v110 key="value"
+    v112 = GetEnvironmentField v4 layout=L1 field=5
+    v113 = Convert v112 declared={type=number flags=[IsExpected]}
+    v114 = Builtin builtin=GlobalThis
+    v115 = PropGet v114 key="value" [isFreeName, isForTypeOf]
+    v116 = TypeOf v115
+    v117 = Call v103, v101, v107, v111, v113, v116 calleeKey="log" calleeName="console.log"
+    v118 = Undefined
+    Return v118
+}
+function f1 name="fail" module=m0 position=174 flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Error" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Error) flags=[IsExpected]}
+    v3 = String string="thrown"
+    v4 = Construct v2, -, v3 calleeName="Error"
+    v5 = Convert v4 declared={type=undefined|null|Error flags=[IsExpected]}
+    Throw v5
+}
+function f2 name="Stores" module=m0 position=224 flags=[IsSloppy, HasThis, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: env L1, v1: anything, v2: anything):
+    Jump -> next b1()
+  b1():
+    v3 = Undefined
+    v4 = ToThis v1
+    v5 = Convert v4 declared={type=L2 flags=[IsExpected]}
+    v6 = Null
+    v7 = Convert v6 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    Jump -> next b2()
+  b2() handler=b5(v7):
+    v8 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v9 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    Jump -> next b3()
+  b3() handler=b5(v9):
+    v10 = GetEnvironmentField v0 layout=L1
+    v11 = Call v10 calleeName="fail"
+    Jump -> next b4()
+  b4():
+    Jump -> next b6()
+  b5(v12) role=CatchHandler:
+    v13 = CatchValue
+    PropSet v12, v2 key="storedByCatchBlock" mode=Sloppy
+    Jump -> next b6()
+  b6():
+    v15 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v16 = GetEnvironmentField v0 layout=L1 field=1
+    v17 = InstanceOf v15, v16 writtenExpression="this instanceof Stores"
+    v18 = ToBoolean v17
+    Branch v18 -> taken b7(| 0), notTaken b9(| 0)
+  b7(v19):
+    Jump -> next b8()
+  b8():
+    v20 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v20, v2 key="value" mode=Sloppy
+    v22 = Undefined
+    Return v22
+  b9(v23):
+    Jump -> next b10()
+  b10():
+    v24 = GetEnvironmentField v0 layout=L1 field=1
+    v25 = Construct v24, -, v2 calleeName="Stores"
+    Return v25
+}
+function f3 name="Keeps" module=m0 position=681 flags=[IsSloppy, HasThis, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: env L1, v1: anything, v2: anything):
+    Jump -> next b1()
+  b1():
+    v3 = Undefined
+    v4 = ToThis v1
+    v5 = Convert v4 declared={type=L3 flags=[IsExpected]}
+    v6 = Null
+    Jump -> next b2()
+  b2() handler=b5(v6):
+    v7 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    Jump -> next b3()
+  b3() handler=b5(v7):
+    v8 = GetEnvironmentField v0 layout=L1
+    v9 = Call v8 calleeName="fail"
+    Jump -> next b4()
+  b4():
+    Jump -> next b6()
+  b5(v10) role=CatchHandler:
+    v11 = CatchValue
+    v12 = GetEnvironmentField v0 layout=L1 field=4
+    v13 = PropGet v12 key="push"
+    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]}
+    v15 = Call v14, v12, v10 calleeKey="push" calleeName="kept.push"
+    Jump -> next b6()
+  b6():
+    v16 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v17 = GetEnvironmentField v0 layout=L1 field=2
+    v18 = InstanceOf v16, v17 writtenExpression="this instanceof Keeps"
+    v19 = ToBoolean v18
+    Branch v19 -> taken b7(| 0), notTaken b9(| 0)
+  b7(v20):
+    Jump -> next b8()
+  b8():
+    v21 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v21, v2 key="value" mode=Sloppy
+    v23 = Undefined
+    Return v23
+  b9(v24):
+    Jump -> next b10()
+  b10():
+    v25 = GetEnvironmentField v0 layout=L1 field=2
+    v26 = Construct v25, -, v2 calleeName="Keeps"
+    Return v26
+}
+function f4 name="Counts" module=m0 position=1092 flags=[IsSloppy, HasThis, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: env L1, v1: anything, v2: anything):
+    Jump -> next b1()
+  b1():
+    v3 = ToThis v1
+    v4 = Convert v3 declared={type=L4 flags=[IsExpected]}
+    Jump -> next b2()
+  b2() handler=b9():
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = GetEnvironmentField v0 layout=L1 field=3
+    v7 = InstanceOf v5, v6 writtenExpression="this instanceof Counts"
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v9) handler=b9():
+    Jump -> next b4()
+  b4() handler=b9():
+    Jump -> next b5()
+  b5():
+    v10 = Integer
+    v11 = Undefined
+    v12 = Undefined
+    Jump -> next b10(v10, v11, v12)
+  b6(v13) handler=b9():
+    Jump -> next b7()
+  b7() handler=b9():
+    v14 = GetEnvironmentField v0 layout=L1 field=3
+    v15 = Construct v14, -, v2 calleeName="Counts"
+    Jump -> next b8(v15)
+  b8(v16):
+    v17 = Integer integer=1
+    v18 = Undefined
+    Jump -> next b10(v17, v16, v18)
+  b9() role=CleanupHandler:
+    v19 = CatchValue
+    v20 = Integer integer=2
+    v21 = Undefined
+    Jump -> next b10(v20, v21, v19)
+  b10(v22, v23, v24):
+    v25 = GetEnvironmentField v0 layout=L1 field=5
+    v26 = Increment v25
+    v27 = Convert v26 declared={type=undefined|number flags=[IsExpected]}
+    PutEnvironmentField v0, v27 layout=L1 field=5
+    Switch v22 cases=[0, 1] -> case b11(), case b13(), otherwise b14()
+  b11():
+    Jump -> next b12()
+  b12():
+    v29 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v29, v2 key="value" mode=Sloppy
+    v31 = Undefined
+    Return v31
+  b13():
+    Return v23
+  b14():
+    Throw v24
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 fail Stores Keeps Counts
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationSite=0 allocationClass=0
+# CHECK-NEXT: v1: L0 = FinishObject v0
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: v3: f2 = NewClosure function=f2 allocationSite=3
+# CHECK-NEXT: PutModuleVariable v3 variable=g2
+# CHECK-NEXT: v5: f3 = NewClosure function=f3 allocationSite=4
+# CHECK-NEXT: PutModuleVariable v5 variable=g3
+# CHECK-NEXT: v7: f4 = NewClosure function=f4 allocationSite=5
+# CHECK-NEXT: PutModuleVariable v7 variable=g4
+# CHECK-NEXT: v9: 5 = Integer integer=5
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: v11: undefined|L2 = CallDirect v10, v9 function=f2 accessSite=0
+# CHECK-NEXT: v12: L2 = RequireObjectCoercible v11 name="value"
+# CHECK-NEXT: v13: anything ~ int[-2147483643, 2147483647] = PropGet v12 key="value" accessSite=3 receivers=[L2]
+# CHECK-NEXT: v14: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v13 provenType=undefined|int
+# CHECK-NEXT: v15: anything = GetGlobalBinding key="storedByCatchBlock" level=Expected accessSite=4 [seesScriptBindings, isForTypeOf]
+# CHECK-NEXT: v16: string = TypeOf v15
+# CHECK-NEXT: v17: anything = GetGlobalBinding key="storedByCatchBlock" level=Expected accessSite=6
+# CHECK-NEXT: v18: undefined|int = AssumeType v17 provenType=undefined|int
+# CHECK-NEXT: v19: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v20: boolean = PropHas v19 key="storedByCatchBlock" accessSite=8
+# CHECK-NEXT: v21: undefined = CallBuiltin -, v14, v16, v18, v20 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v22: undefined|int = GetSlotOrUndefined v12 key="storedByCatchBlock" receivers=[L2] level=Proven accessSite=12
+# CHECK-NEXT: v23: Array<string> = CallBuiltin -, v12 overload=ObjectKeys/0 accessSite=13
+# CHECK-NEXT: v24: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v25: string = CallBuiltin v24 overload=ArrayPrototypeJoin/0 accessSite=15
+# CHECK-NEXT: v26: undefined = CallBuiltin -, v22, v25 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: v27: Array<null|L3|builtin(GlobalThis), Contiguous> = NewArray contents=null|L3|builtin(GlobalThis) allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v28: Array<null|L3|builtin(GlobalThis), proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<null|L3|builtin(GlobalThis), proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v28 variable=g5
+# CHECK-NEXT: v30: 6 = Integer integer=6
+# CHECK-NEXT: v31: undefined = Undefined
+# CHECK-NEXT: v32: undefined|L3 = CallDirect v31, v30 function=f3 accessSite=17
+# CHECK-NEXT: v33: L3 = RequireObjectCoercible v32 name="value"
+# CHECK-NEXT: v34: anything ~ int[-2147483643, 2147483647] = PropGet v33 key="value" accessSite=20 receivers=[L3]
+# CHECK-NEXT: v35: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v34 provenType=undefined|int
+# CHECK-NEXT: v36: int[0, 4294967295] = CallBuiltin v28 overload=ArrayPrototypeLength/0 accessSite=21
+# CHECK-NEXT: v37: 0 = Integer
+# CHECK-NEXT: v38: undefined|null|L3|builtin(GlobalThis) = GetArrayElement v28, v37 arrayStorage=Contiguous level=Proven accessSite=22 [keyIsIntegral]
+# CHECK-NEXT: v39: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v40: boolean ~ false = StrictEq v38, v39
+# CHECK-NEXT: v41: 1 = Integer integer=1
+# CHECK-NEXT: v42: undefined|null|L3|builtin(GlobalThis) = GetArrayElement v28, v41 arrayStorage=Contiguous level=Proven accessSite=24 [keyIsIntegral]
+# CHECK-NEXT: v43: boolean ~ false = StrictEq v42, v33
+# CHECK-NEXT: v44: undefined = CallBuiltin -, v35, v36, v40, v43 overload=ConsoleLog/0 accessSite=25
+# CHECK-NEXT: v45: 0 = Integer
+# CHECK-NEXT: v46: undefined|null|L3|builtin(GlobalThis) = GetArrayElement v28, v45 arrayStorage=Contiguous level=Proven accessSite=26 [keyIsIntegral]
+# CHECK-NEXT: v47: 1 = Integer integer=1
+# CHECK-NEXT: v48: L3|builtin(GlobalThis) = RequireObjectCoercible v46 nullishAccess=Write name="storedLater"
+# CHECK-NEXT: v49: boolean = TypeTest v48 testedType=L3
+# CHECK-NEXT: Branch v49 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v50: L3):
+# CHECK-NEXT: PutSlot v50, -, v47 key="storedLater" receivers=[L3] level=Proven accessSite=27
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: SetGlobalBinding v47 key="storedLater" mode=Sloppy level=Expected accessSite=27
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v53: anything = GetGlobalBinding key="storedLater" level=Expected accessSite=30 [seesScriptBindings, isForTypeOf]
+# CHECK-NEXT: v54: string = TypeOf v53
+# CHECK-NEXT: v55: anything = GetGlobalBinding key="storedLater" level=Expected accessSite=32
+# CHECK-NEXT: v56: undefined|int = AssumeType v55 provenType=undefined|int
+# CHECK-NEXT: v57: undefined = CallBuiltin -, v54, v56 overload=ConsoleLog/0 accessSite=33
+# CHECK-NEXT: v58: 0 = Integer
+# CHECK-NEXT: PutModuleVariable v58 variable=g6
+# CHECK-NEXT: v60: 1 = Integer integer=1
+# CHECK-NEXT: v61: undefined = Undefined
+# CHECK-NEXT: v62: undefined|L4 = CallDirect v61, v60 function=f4 accessSite=36
+# CHECK-NEXT: v63: L4 = RequireObjectCoercible v62 name="value"
+# CHECK-NEXT: v64: anything ~ int[-2147483643, 2147483647] = PropGet v63 key="value" accessSite=37 receivers=[L4]
+# CHECK-NEXT: v65: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v64 provenType=undefined|int
+# CHECK-NEXT: v66: 2 = Integer integer=2
+# CHECK-NEXT: v67: L4 = CallDirect v7, v66 function=f17 accessSite=38 [isConstruction]
+# CHECK-NEXT: v68: anything ~ int[-2147483643, 2147483647] = PropGet v67 key="value" accessSite=39 receivers=[L4]
+# CHECK-NEXT: v69: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v68 provenType=undefined|int
+# CHECK-NEXT: v70: int|whole = GetModuleVariable variable=g6
+# CHECK-NEXT: v71: anything = GetGlobalBinding key="value" level=Expected accessSite=40 [seesScriptBindings, isForTypeOf]
+# CHECK-NEXT: v72: string = TypeOf v71
+# CHECK-NEXT: v73: undefined = CallBuiltin -, v65, v69, v70, v72 overload=ConsoleLog/0 accessSite=41
+# CHECK-NEXT: v74: undefined = Undefined
+# CHECK-NEXT: Return v74
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="fail"
+# CHECK: module=m0 position=174 flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "thrown" = String string="thrown"
+# CHECK-NEXT: v1: Error = CallBuiltin -, v0 overload=Error/1 accessSite=43
+# CHECK-NEXT: Throw v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Stores"
+# CHECK: module=m0 position=224 flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=undefined|L2} parameters=[{type=int}] results=[{type=undefined|L2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L2 inlineFrames=[{}, {callee=f11 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0(v0: undefined|L2, v1: int):
+# CHECK-NEXT: v2: object = ToThis v0
+# CHECK-NEXT: v3: L2|builtin(GlobalThis) = AssumeType v2 provenType=L2|builtin(GlobalThis)
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() frequency=Rare handler=b2():
+# CHECK-NEXT: v4: anything = CallDirect function=f1 accessSite=44
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: PropSet v3, v1 key="storedByCatchBlock" mode=Sloppy accessSite=45 receivers=[L2, ..]
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v6: f2 = GetModuleVariable variable=g2
+# CHECK-NEXT: v7: boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v7 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v8: object = GetClassPrototype v6 layout=L2
+# CHECK-NEXT: v9: boolean = HasInPrototypeChain v3, v8
+# CHECK-NEXT: Branch v9 -> taken b6(), notTaken b13()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v10: boolean = InstanceOf v3, v6 writtenExpression="this instanceof Stores"
+# CHECK-NEXT: Branch v10 -> taken b6(), notTaken b13()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v11: boolean = TypeTest v3 testedType=L2
+# CHECK-NEXT: Branch v11 -> taken b7(| 0), notTaken b11()
+# CHECK-NEXT: b7(v12: L2):
+# CHECK-NEXT: v13: boolean = HasNoFieldOutsideSlot v12
+# CHECK-NEXT: Branch v13 -> taken b8(| 0), notTaken b10()
+# CHECK-NEXT: b8(v14: guard):
+# CHECK-NEXT: v15: boolean = TypeTest v1 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v15 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v16: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v12, v14, v16 key="value" receivers=[L2] level=Expected accessSite=46
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: PropSet v12, v1 key="value" mode=Sloppy accessSite=46 receivers=[L2]
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: SetGlobalBinding v1 key="value" mode=Sloppy level=Expected accessSite=46
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v20: undefined = Undefined
+# CHECK-NEXT: Return v20
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v21: object = GetConstructPrototype v6 layout=L2
+# CHECK-NEXT: v22: L2 = NewObject v21 layout=L2 allocationClass=1
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b14() frequency=Rare handler=b15():
+# CHECK-NEXT: v23: anything = CallDirect function=f1 accessSite=44
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b15() role=CatchHandler:
+# CHECK-NEXT: PutSlotOrAdd v22, -, v1 key="storedByCatchBlock" receivers=[L2] level=Proven accessSite=45
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v25: boolean = InstanceOf v22, v6 writtenExpression="this instanceof Stores"
+# CHECK-NEXT: Branch v25 -> taken b17(), notTaken b18()
+# CHECK-NEXT: b17():
+# CHECK-NEXT: PropSet v22, v1 key="value" mode=Sloppy accessSite=46 receivers=[L2, ..]
+# CHECK-NEXT: Jump -> next b19(v22)
+# CHECK-NEXT: b18():
+# CHECK-NEXT: v27: L2 = CallDirect v6, v1 function=f11 accessSite=47 [isConstruction]
+# CHECK-NEXT: Jump -> next b19(v27)
+# CHECK-NEXT: b19(v28: L2):
+# CHECK-NEXT: Return v28
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Keeps"
+# CHECK: module=m0 position=681 flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=undefined|L3} parameters=[{type=int}] results=[{type=undefined|L3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L3 {
+# CHECK-NEXT: b0(v0: undefined|L3, v1: int):
+# CHECK-NEXT: v2: object = ToThis v0
+# CHECK-NEXT: v3: L3|builtin(GlobalThis) = AssumeType v2 provenType=L3|builtin(GlobalThis)
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() frequency=Rare handler=b2():
+# CHECK-NEXT: v4: anything = CallDirect function=f1 accessSite=48
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v5: Array<null|L3|builtin(GlobalThis), proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g5
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v5, v3 overload=ArrayPrototypePush/0 accessSite=50
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v7: f3 = GetModuleVariable variable=g3
+# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{layout=L3 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v8 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v9: object = GetClassPrototype v7 layout=L3
+# CHECK-NEXT: v10: boolean = HasInPrototypeChain v3, v9
+# CHECK-NEXT: Branch v10 -> taken b6(), notTaken b13()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v11: boolean = InstanceOf v3, v7 writtenExpression="this instanceof Keeps"
+# CHECK-NEXT: Branch v11 -> taken b6(), notTaken b13()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v12: boolean = TypeTest v3 testedType=L3
+# CHECK-NEXT: Branch v12 -> taken b7(| 0), notTaken b11()
+# CHECK-NEXT: b7(v13: L3):
+# CHECK-NEXT: v14: boolean = HasNoFieldOutsideSlot v13
+# CHECK-NEXT: Branch v14 -> taken b8(| 0), notTaken b10()
+# CHECK-NEXT: b8(v15: guard):
+# CHECK-NEXT: v16: boolean = TypeTest v1 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v16 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v17: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlot v13, v15, v17 key="value" receivers=[L3] level=Expected accessSite=51
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: PropSet v13, v1 key="value" mode=Sloppy accessSite=51 receivers=[L3]
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: SetGlobalBinding v1 key="value" mode=Sloppy level=Expected accessSite=51
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v21: undefined = Undefined
+# CHECK-NEXT: Return v21
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v22: L3 = CallDirect v7, v1 function=f14 accessSite=52 [isConstruction]
+# CHECK-NEXT: Return v22
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Counts"
+# CHECK: module=m0 position=1092 flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=undefined|L4} parameters=[{type=int}] results=[{type=undefined|L4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L4 {
+# CHECK-NEXT: b0(v0: undefined|L4, v1: int):
+# CHECK-NEXT: v2: object = ToThis v0
+# CHECK-NEXT: v3: L4|builtin(GlobalThis) = AssumeType v2 provenType=L4|builtin(GlobalThis)
+# CHECK-NEXT: v4: f4 = GetModuleVariable variable=g4
+# CHECK-NEXT: v5: boolean = AreMembersUnchanged conditions=[{layout=L4 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() handler=b5():
+# CHECK-NEXT: v6: object = GetClassPrototype v4 layout=L4
+# CHECK-NEXT: v7: boolean = HasInPrototypeChain v3, v6
+# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b2() frequency=Unlikely handler=b5():
+# CHECK-NEXT: v8: boolean = InstanceOf v3, v4 writtenExpression="this instanceof Counts"
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Jump -> next b6(v9, v10, v11)
+# CHECK-NEXT: b4() handler=b5():
+# CHECK-NEXT: v12: L4 = CallDirect v4, v1 function=f17 accessSite=53 [isConstruction]
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Jump -> next b6(v13, v12, v14)
+# CHECK-NEXT: b5() role=CleanupHandler:
+# CHECK-NEXT: v15: anything = CatchValue
+# CHECK-NEXT: v16: 2 = Integer integer=2
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: Jump -> next b6(v16, v17, v15)
+# CHECK-NEXT: b6(v18: int[0, 2], v19: undefined|L4, v20: anything):
+# CHECK-NEXT: v21: int|whole = GetModuleVariable variable=g6
+# CHECK-NEXT: v22: int|whole = Increment v21
+# CHECK-NEXT: PutModuleVariable v22 variable=g6
+# CHECK-NEXT: Switch v18 cases=[0, 1] -> case b7(), case b14(), otherwise b15()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v24: boolean = TypeTest v3 testedType=L4
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b12()
+# CHECK-NEXT: b8(v25: L4):
+# CHECK-NEXT: v26: boolean = HasNoFieldOutsideSlot v25
+# CHECK-NEXT: Branch v26 -> taken b9(| 0), notTaken b11()
+# CHECK-NEXT: b9(v27: guard):
+# CHECK-NEXT: v28: boolean = TypeTest v1 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v28 -> taken b10(| 0), notTaken b11()
+# CHECK-NEXT: b10(v29: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlot v25, v27, v29 key="value" receivers=[L4] level=Expected accessSite=54
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: PropSet v25, v1 key="value" mode=Sloppy accessSite=54 receivers=[L4]
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: SetGlobalBinding v1 key="value" mode=Sloppy level=Expected accessSite=54
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v33: undefined = Undefined
+# CHECK-NEXT: Return v33
+# CHECK-NEXT: b14():
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: b15():
+# CHECK-NEXT: Throw v20
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Stores"
+# CHECK: module=m0 position=224 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers constructEntrypoint=f10} {
+# CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Stores"
+# CHECK: module=m0 position=224 role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2 parameter=2} creator=Entrypoint{target=f2 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything, v3: anything) frequency=Rare:
+# CHECK-NEXT: v4: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Stores"
+# CHECK: module=m0 position=224 role=ConstructBody flags=[IsSloppy, HasNewTarget, HasExplicitName, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type=int}] results=[{type=L2}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}, {original=1}]} creator=Version{provenVersion=f2} constructedClass=L2 {
+# CHECK-NEXT: b0(v0: anything, v1: int):
+# CHECK-NEXT: v2: f2 = AssumeType v0 provenType=f2
+# CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b10()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: L2 = NewObject layout=L2 allocationClass=1
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() frequency=Rare handler=b3():
+# CHECK-NEXT: v5: anything = CallDirect function=f1 accessSite=44
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: PutSlotOrAdd v4, -, v1 key="storedByCatchBlock" receivers=[L2] level=Proven accessSite=45
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v7: f2 = GetModuleVariable variable=g2
+# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v8 -> taken b6(), notTaken b5()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v9: boolean = InstanceOf v4, v7 writtenExpression="this instanceof Stores"
+# CHECK-NEXT: Branch v9 -> taken b6(), notTaken b9()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v10: boolean = HasNoFieldOutsideSlot v4
+# CHECK-NEXT: Branch v10 -> taken b7(| 0), notTaken b16(v4)
+# CHECK-NEXT: b7(v11: guard):
+# CHECK-NEXT: v12: boolean = TypeTest v1 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v12 -> taken b8(| 0), notTaken b16(v4)
+# CHECK-NEXT: b8(v13: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlotOrAdd v4, v11, v13 key="value" receivers=[L2] level=Expected accessSite=46
+# CHECK-NEXT: Jump -> next b17(v4)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v15: L2 = CallDirect v7, v1 function=f11 accessSite=47 [isNeverInlined, isConstruction]
+# CHECK-NEXT: Jump -> next b19(v15)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v16: object = GetConstructPrototype v2 layout=L2
+# CHECK-NEXT: v17: L2 = NewObject v16 layout=L2 allocationClass=1
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11() frequency=Rare handler=b12():
+# CHECK-NEXT: v18: anything = CallDirect function=f1 accessSite=44
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b12() role=CatchHandler frequency=Unlikely:
+# CHECK-NEXT: PutSlotOrAdd v17, -, v1 key="storedByCatchBlock" receivers=[L2] level=Proven accessSite=45
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: v20: f2 = GetModuleVariable variable=g2
+# CHECK-NEXT: v21: boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v21 -> taken b14(), notTaken b15()
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: v22: object = GetClassPrototype v20 layout=L2
+# CHECK-NEXT: v23: boolean = HasInPrototypeChain v17, v22
+# CHECK-NEXT: Branch v23 -> taken b16(v17), notTaken b18()
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v24: boolean = InstanceOf v17, v20 writtenExpression="this instanceof Stores"
+# CHECK-NEXT: Branch v24 -> taken b16(v17), notTaken b18()
+# CHECK-NEXT: b16(v25: L2) frequency=Unlikely:
+# CHECK-NEXT: PropSet v25, v1 key="value" mode=Sloppy accessSite=46 receivers=[L2]
+# CHECK-NEXT: Jump -> next b17(v25)
+# CHECK-NEXT: b17(v27: L2):
+# CHECK-NEXT: Return v27
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v28: L2 = CallDirect v20, v1 function=f11 accessSite=47 [isConstruction]
+# CHECK-NEXT: Jump -> next b19(v28)
+# CHECK-NEXT: b19(v29: L2):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Keeps"
+# CHECK: module=m0 position=681 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers constructEntrypoint=f13} {
+# CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Keeps"
+# CHECK: module=m0 position=681 role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameter=2} creator=Entrypoint{target=f3 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything, v3: anything) frequency=Rare:
+# CHECK-NEXT: v4: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Keeps"
+# CHECK: module=m0 position=681 role=ConstructBody flags=[IsSloppy, HasNewTarget, HasExplicitName, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type=int}] results=[{type=L3}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{}, {original=1}]} creator=Version{provenVersion=f3} constructedClass=L3 {
+# CHECK-NEXT: b0(v0: anything, v1: int):
+# CHECK-NEXT: v2: f3 = AssumeType v0 provenType=f3
+# CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{layout=L3 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b10()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: L3 = NewObject layout=L3 allocationClass=2
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() frequency=Rare handler=b3():
+# CHECK-NEXT: v5: anything = CallDirect function=f1 accessSite=48
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: v6: Array<null|L3|builtin(GlobalThis), proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g5
+# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v6, v4 overload=ArrayPrototypePush/0 accessSite=50
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v8: f3 = GetModuleVariable variable=g3
+# CHECK-NEXT: v9: boolean = AreMembersUnchanged conditions=[{layout=L3 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v9 -> taken b6(), notTaken b5()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v10: boolean = InstanceOf v4, v8 writtenExpression="this instanceof Keeps"
+# CHECK-NEXT: Branch v10 -> taken b6(), notTaken b9()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v11: boolean = HasNoFieldOutsideSlot v4
+# CHECK-NEXT: Branch v11 -> taken b7(| 0), notTaken b16(v4)
+# CHECK-NEXT: b7(v12: guard):
+# CHECK-NEXT: v13: boolean = TypeTest v1 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v13 -> taken b8(| 0), notTaken b16(v4)
+# CHECK-NEXT: b8(v14: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlot v4, v12, v14 key="value" receivers=[L3] level=Expected accessSite=51
+# CHECK-NEXT: Jump -> next b17(v4)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v16: L3 = CallDirect v8, v1 function=f14 accessSite=52 [isNeverInlined, isConstruction]
+# CHECK-NEXT: Jump -> next b19(v16)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v17: object = GetConstructPrototype v2 layout=L3
+# CHECK-NEXT: v18: L3 = NewObject v17 layout=L3 allocationClass=2
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11() frequency=Rare handler=b12():
+# CHECK-NEXT: v19: anything = CallDirect function=f1 accessSite=48
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b12() role=CatchHandler frequency=Unlikely:
+# CHECK-NEXT: v20: Array<null|L3|builtin(GlobalThis), proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g5
+# CHECK-NEXT: v21: int[0, 4294967295] = CallBuiltin v20, v18 overload=ArrayPrototypePush/0 accessSite=50
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: v22: f3 = GetModuleVariable variable=g3
+# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{layout=L3 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v23 -> taken b14(), notTaken b15()
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: v24: object = GetClassPrototype v22 layout=L3
+# CHECK-NEXT: v25: boolean = HasInPrototypeChain v18, v24
+# CHECK-NEXT: Branch v25 -> taken b16(v18), notTaken b18()
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v26: boolean = InstanceOf v18, v22 writtenExpression="this instanceof Keeps"
+# CHECK-NEXT: Branch v26 -> taken b16(v18), notTaken b18()
+# CHECK-NEXT: b16(v27: L3) frequency=Unlikely:
+# CHECK-NEXT: PropSet v27, v1 key="value" mode=Sloppy accessSite=51 receivers=[L3]
+# CHECK-NEXT: Jump -> next b17(v27)
+# CHECK-NEXT: b17(v29: L3):
+# CHECK-NEXT: Return v29
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v30: L3 = CallDirect v22, v1 function=f14 accessSite=52 [isConstruction]
+# CHECK-NEXT: Jump -> next b19(v30)
+# CHECK-NEXT: b19(v31: L3):
+# CHECK-NEXT: Return v31
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Counts"
+# CHECK: module=m0 position=1092 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers constructEntrypoint=f16} {
+# CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Counts"
+# CHECK: module=m0 position=1092 role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4 parameter=2} creator=Entrypoint{target=f4 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything, v3: anything) frequency=Rare:
+# CHECK-NEXT: v4: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Counts"
+# CHECK: module=m0 position=1092 role=ConstructBody flags=[IsSloppy, HasNewTarget, HasExplicitName, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type=int}] results=[{type=L4}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{}, {original=1}]} creator=Version{provenVersion=f4} constructedClass=L4 {
+# CHECK-NEXT: b0(v0: anything, v1: int):
+# CHECK-NEXT: v2: f4 = AssumeType v0 provenType=f4
+# CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{layout=L4 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b9()
+# CHECK-NEXT: b1(v4: guard):
+# CHECK-NEXT: v5: L4 = NewObject layout=L4 allocationClass=3
+# CHECK-NEXT: v6: guard = AllGuards v5
+# CHECK-NEXT: v7: f4 = GetModuleVariable variable=g4
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Jump -> next b3(v8, v9, v10)
+# CHECK-NEXT: b3(v11: 0, v12: undefined, v13: undefined):
+# CHECK-NEXT: v14: int|whole = GetModuleVariable variable=g6
+# CHECK-NEXT: v15: int|whole = Increment v14
+# CHECK-NEXT: PutModuleVariable v15 variable=g6
+# CHECK-NEXT: Switch v11 cases=[0, 1] -> case b4(), case b7(), otherwise b21(v13)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Jump -> next b5(v6)
+# CHECK-NEXT: b5(v17: guard):
+# CHECK-NEXT: v18: boolean = TypeTest v1 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b16(v5)
+# CHECK-NEXT: b6(v19: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PutSlot v5, v17, v19 key="value" receivers=[L4] level=Expected accessSite=54
+# CHECK-NEXT: Jump -> next b17(v5)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v21: false = TypeTest v12 testedType=object
+# CHECK-NEXT: Branch v21 -> taken b19(| 0), notTaken b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b9() frequency=Unlikely:
+# CHECK-NEXT: v22: object = GetConstructPrototype v2 layout=L4
+# CHECK-NEXT: v23: L4 = NewObject v22 layout=L4 allocationClass=3
+# CHECK-NEXT: v24: f4 = GetModuleVariable variable=g4
+# CHECK-NEXT: v25: boolean = AreMembersUnchanged conditions=[{layout=L4 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v25 -> taken b10(| 0), notTaken b11()
+# CHECK-NEXT: b10(v26: guard) frequency=Unlikely handler=b14():
+# CHECK-NEXT: v27: object = GetClassPrototype v24 layout=L4
+# CHECK-NEXT: v28: boolean = HasInPrototypeChain v23, v27
+# CHECK-NEXT: Branch v28 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b11() frequency=Rare handler=b14():
+# CHECK-NEXT: v29: boolean = InstanceOf v23, v24 writtenExpression="this instanceof Counts"
+# CHECK-NEXT: Branch v29 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: v30: 0 = Integer
+# CHECK-NEXT: v31: undefined = Undefined
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: Jump -> next b15(v30, v31, v32)
+# CHECK-NEXT: b13() frequency=Unlikely handler=b14():
+# CHECK-NEXT: v33: L4 = CallDirect v24, v1 function=f17 accessSite=53 [isConstruction]
+# CHECK-NEXT: v34: 1 = Integer integer=1
+# CHECK-NEXT: v35: undefined = Undefined
+# CHECK-NEXT: Jump -> next b15(v34, v33, v35)
+# CHECK-NEXT: b14() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: v36: anything = CatchValue
+# CHECK-NEXT: v37: 2 = Integer integer=2
+# CHECK-NEXT: v38: undefined = Undefined
+# CHECK-NEXT: Jump -> next b15(v37, v38, v36)
+# CHECK-NEXT: b15(v39: int[0, 2], v40: undefined|L4, v41: anything) frequency=Unlikely:
+# CHECK-NEXT: v42: int|whole = GetModuleVariable variable=g6
+# CHECK-NEXT: v43: int|whole = Increment v42
+# CHECK-NEXT: PutModuleVariable v43 variable=g6
+# CHECK-NEXT: Switch v39 cases=[0, 1] -> case b16(v23), case b18(), otherwise b21(v41)
+# CHECK-NEXT: b16(v45: L4) frequency=Unlikely:
+# CHECK-NEXT: PropSet v45, v1 key="value" mode=Sloppy accessSite=54 receivers=[L4]
+# CHECK-NEXT: Jump -> next b17(v45)
+# CHECK-NEXT: b17(v47: L4):
+# CHECK-NEXT: Return v47
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v48: boolean = TypeTest v40 testedType=object
+# CHECK-NEXT: Branch v48 -> taken b19(| 0), notTaken b20()
+# CHECK-NEXT: b19(v49: L4) frequency=Unlikely:
+# CHECK-NEXT: Return v49
+# CHECK-NEXT: b20() frequency=Unlikely:
+# CHECK-NEXT: Return v23
+# CHECK-NEXT: b21(v50: anything ~ undefined):
+# CHECK-NEXT: Throw v50
+# CHECK-NEXT: }

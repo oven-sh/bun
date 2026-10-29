@@ -140,6 +140,8 @@ pub enum MainEntryPoint {
     /// The user's file, through the `bun:main` wrapper.
     File,
     Compiled,
+    /// A file that is not compiled into an executable that runs only what is. The loader gets its path and answers for it.
+    OutsideExecutable,
     /// `bun ./index.html`: `src/js/internal/html.ts` serves the pages.
     Html,
     /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
@@ -3226,7 +3228,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
     ) -> *mut JSInternalPromise;
-    fn Bun__lookForServerAfterEvaluation(global: &JSGlobalObject, promise: *mut JSInternalPromise);
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3648,13 +3649,16 @@ impl VirtualMachine {
 
         if matches!(
             self.main_entry_point,
-            MainEntryPoint::File | MainEntryPoint::Compiled
+            MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable
         ) {
-            let is_compiled = entry_path.is_some_and(crate::compiled_program::is_compiled_module);
-            self.main_entry_point = if is_compiled {
-                MainEntryPoint::Compiled
-            } else {
-                MainEntryPoint::File
+            self.main_entry_point = match entry_path {
+                Some(path) if crate::compiled_program::is_compiled_module(path) => {
+                    MainEntryPoint::Compiled
+                }
+                Some(path) if crate::compiled_program::refuses_code_at(self.global(), path) => {
+                    MainEntryPoint::OutsideExecutable
+                }
+                _ => MainEntryPoint::File,
             };
         }
         self.has_loaded = self.main_entry_point == MainEntryPoint::Compiled
@@ -3685,15 +3689,17 @@ impl VirtualMachine {
                 if self.has_patched_run_main
                     && matches!(
                         self.main_entry_point,
-                        MainEntryPoint::File | MainEntryPoint::Compiled
+                        MainEntryPoint::File
+                            | MainEntryPoint::Compiled
+                            | MainEntryPoint::OutsideExecutable
                     )
                 {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
                     let run_main_path = match (self.main_entry_point, self.main()) {
-                        (MainEntryPoint::Compiled, Some(main)) => main,
-                        _ => MAIN_FILE_NAME,
+                        (MainEntryPoint::File, _) | (_, None) => MAIN_FILE_NAME,
+                        (_, Some(main)) => main,
                     };
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
                     let promise: *mut JSInternalPromise =
@@ -3738,7 +3744,9 @@ impl VirtualMachine {
         // module evaluations from here on mark the entry graph as executing.
         self.entry_evaluation_started = false;
         let builtin = match self.main_entry_point {
-            MainEntryPoint::File | MainEntryPoint::Compiled => None,
+            MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable => {
+                None
+            }
             MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
             MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
         };
@@ -3758,18 +3766,15 @@ impl VirtualMachine {
                 return Err(crate::CrateError::JSError);
             }
             p
-        } else if self.main_entry_point == MainEntryPoint::Compiled
+        } else if self.main_entry_point != MainEntryPoint::File
             && !self.transpiler.options.disable_transpilation
         {
-            // The path is the key of the module in the image: there is nothing to resolve.
-            let main = (self.main()).expect("a compiled entry point has a path");
+            // The path is the key of the module: there is nothing to resolve.
+            let main = (self.main()).expect("the entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
-            let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
                 .map(NonNull::as_ptr)
-                .ok_or(crate::CrateError::JSError)?;
-            // SAFETY: `promise` is a live JSC heap cell.
-            unsafe { Bun__lookForServerAfterEvaluation(self.global(), promise) };
-            promise
+                .ok_or(crate::CrateError::JSError)?
         } else if !self.transpiler.options.disable_transpilation {
             let name = bun_core::StringView::borrow_utf8(MAIN_FILE_NAME);
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
@@ -4359,6 +4364,13 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
     pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
         bun_core::code_generation_from_strings() as u8
+    }
+
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
+    #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByFlags")]
+    pub(crate) extern "C" fn is_code_generation_disallowed_by_flags_for_cpp() -> bool {
+        bun_core::code_generation_from_strings_by_flags()
+            != bun_core::CodeGenerationFromStrings::Allowed
     }
 
     #[cfg(not(bun_disallow_code_generation_from_strings))]
@@ -7786,7 +7798,7 @@ impl VirtualMachine {
         let frames = exception.stack.frames();
         let top_frame = frames.first();
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir());
+            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::get().top_level_dir());
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

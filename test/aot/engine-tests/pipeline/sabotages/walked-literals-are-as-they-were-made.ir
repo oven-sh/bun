@@ -1,0 +1,6 @@
+# sabotage=WalkedLiteralsAreAsTheyWereMade: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: sabotage=WalkedLiteralsAreAsTheyWereMade
+# CHECK-NOT: one a,1,b,two,c,3,|,a+b+c+z,a,2,b,two,c,3,|,a+b+c+z,a,3,b,two,c,3,|,a+b+c+z,end
+# PROGRAM-OF: walked-literals-are-as-they-were-made-left-alone.ir

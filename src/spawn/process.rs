@@ -1231,14 +1231,10 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub(crate) fn append(&self, process: *mut T) {
-            // freshly boxed `TaskQueueEntry`; `into_raw` yields a valid owned pointer.
-            let entry = bun_core::heap::into_raw(Box::new(TaskQueueEntry {
+            self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
                 process,
                 next: bun_threading::Link::new(),
             }));
-            // SAFETY: `entry` was just `into_raw`'d from a live Box (non-null).
-            self.queue
-                .push(unsafe { core::ptr::NonNull::new_unchecked(entry) });
         }
 
         pub(crate) fn loop_(&self) {
@@ -1337,7 +1333,7 @@ pub mod waiter_thread_posix {
                     }
                 }
             }
-            EventLoopHandle::Mini(mut mini) => {
+            EventLoopHandle::Mini(mini) => {
                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
                     result,
                     subprocess: process,
@@ -1349,10 +1345,9 @@ pub mod waiter_thread_posix {
                         out,
                         ResultTaskMini::<T>::run_from_main_thread_mini,
                     );
-                    mini.get_mut()
-                        .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                            core::ptr::addr_of_mut!((*out).task),
-                        ));
+                    mini.enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
+                        core::ptr::addr_of_mut!((*out).task),
+                    ));
                 }
                 // `out` is now owned by the mini queue; freed in `run_from_main_thread_mini`.
             }

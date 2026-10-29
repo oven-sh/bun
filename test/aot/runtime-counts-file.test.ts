@@ -2,10 +2,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { built, spawned } from "./harness/commands";
 import { runtimeEnvironment } from "./harness/flags";
 import { registry } from "./harness/registry";
-import { built, spawned } from "./run-programs";
-import { beforeAll, describe, test } from "./supported-with-counted-calls";
+import { beforeAll, describe, test } from "./supported";
 
 // `export {}` makes the module strict. In sloppy code eval's JSON shortcut answers "1" and nothing is interpreted.
 const files = {
@@ -72,7 +72,7 @@ describe("compile/aot/runtime-counts-file", () => {
 
     const lines = text.split("\n");
     expect(lines.pop()).toBe("");
-    const isCount = (line: string) => /^\d+\t(counter|exit|limit|operation|branch):\S+$/.test(line);
+    const isCount = (line: string) => /^\d+\t(counter|exit|limit|operation|refilled|branch):\S+$/.test(line);
     // Behind the counts: what was made and learned, by its description, and the places that allocate.
     const isDescribed = (line: string) =>
       /^\d+\t(structures|plans dropped by collections|keys of plans|pairs of layouts|named):\S.*$/.test(line);
@@ -98,6 +98,9 @@ describe("compile/aot/runtime-counts-file", () => {
     expect(entries.filter(entry => entry.name.startsWith("operation:operationAOT") && entry.count > 0)).not.toEqual([]);
 
     const counts = new Map(entries.map(entry => [entry.name, entry.count]));
+    const refilledMoreOftenThanCalled = (name: string) =>
+      !(counts.get("refilled:" + name)! <= counts.get("operation:" + name)!);
+    expect(namesOf("refilled").filter(refilledMoreOftenThanCalled)).toEqual([]);
     expect(counts.get("counter:FieldsLeftSlotByStoreOfOtherType")).toBe(1);
     expect(counts.get("counter:InterpretedEvalCode")).toBeGreaterThanOrEqual(1);
     expect(counts.get("limit:PromisesWalkedPerImport")).toBe(0);

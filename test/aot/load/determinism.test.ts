@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned } from "../run-programs";
+import { slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 type Files = Record<string, string>;

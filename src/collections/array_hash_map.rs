@@ -1196,15 +1196,9 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
         let gop = self.get_or_put(key)?;
         if !gop.found_existing {
-            // SAFETY: re-borrow at same index — `gop` borrows `self` so go
-            // through the slot it already points at.
             *gop.value_ptr = value;
         }
-        // Can't return `gop` while it borrows in the branch above without
-        // NLL gymnastics; recompute via index.
-        let i = gop.index;
-        let found = gop.found_existing;
-        Ok(self.gop_at(i, found))
+        Ok(gop)
     }
 }
 
@@ -1512,11 +1506,8 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// slice by reference; never freed on drop.
     #[inline]
     pub(crate) const fn borrowed(s: &'static [u8]) -> Self {
-        // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
-        // SAFETY: `as_ptr()` on a slice reference is never null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         Self {
-            ptr,
+            ptr: core::ptr::NonNull::from_ref(s).cast(),
             len_tag: s.len(),
             _alloc: PhantomData,
         }
@@ -1533,13 +1524,9 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
         );
         // Discard the stored `A` — for every `A` in use (`Global`,
         // `DefaultAlloc`, `AstAlloc`) it is a ZST, so `A::default()` in `Drop`
-        // is the same instance. `into_raw_with_allocator` because on current
-        // nightly `Box::into_raw` is restricted to `Box<T, Global>`.
-        let (raw, _alloc) = Box::into_raw_with_allocator(b);
-        // SAFETY: `Box::into_raw_with_allocator` never returns null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(raw.cast::<u8>()) };
+        // is the same instance.
         Self {
-            ptr,
+            ptr: Box::into_non_null_with_allocator(b).0.cast(),
             len_tag: len | SHMK_OWNED_BIT,
             _alloc: PhantomData,
         }

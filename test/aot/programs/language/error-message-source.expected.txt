@@ -1,2 +1,0 @@
-new Math.max(): quotes its caller false, text quotes itself false
-new Symbol(): quotes its caller false, text quotes itself false

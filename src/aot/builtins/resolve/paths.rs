@@ -20,8 +20,8 @@ fn member_holder(id: BuiltinId) -> BuiltinId {
     }
 }
 
-struct KeyName {
-    name: BuiltinName,
+pub(super) struct KeyName {
+    pub(super) name: BuiltinName,
     mutability: Mutability,
     has_side_effects: bool,
 }
@@ -124,7 +124,7 @@ impl Resolver<'_, '_> {
         ExprState::of_path(self.find_global(name))
     }
 
-    fn find_key_name(&self, key: MemberKey) -> Option<KeyName> {
+    pub(super) fn find_key_name(&self, key: MemberKey) -> Option<KeyName> {
         match key {
             MemberKey::Name(name) => Some(KeyName {
                 name: self.input.names.get(name)?,

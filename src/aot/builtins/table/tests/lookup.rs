@@ -233,6 +233,26 @@ fn every_well_known_symbol_has_name() {
 }
 
 #[test]
+fn functions_are_callable() {
+    for function in [
+        BuiltinId::MathAbs,
+        BuiltinId::Array,
+        BuiltinId::ArrayPrototypePush,
+        BuiltinId::FunctionPrototype,
+    ] {
+        assert!(is_callable(function), "{function:?}");
+    }
+    for other in [
+        BuiltinId::Math,
+        BuiltinId::ArrayPrototype,
+        BuiltinId::SymbolIterator,
+        BuiltinId::MathPI,
+    ] {
+        assert!(!is_callable(other), "{other:?}");
+    }
+}
+
+#[test]
 fn roots() {
     assert_eq!(root_of(BuiltinId::ArrayPrototypePush), BuiltinId::Array);
     assert_eq!(root_of(BuiltinId::Array), BuiltinId::Array);

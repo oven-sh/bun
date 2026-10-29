@@ -1,0 +1,6 @@
+# sabotage=CarriedVariablesAreWrittenByOthers: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: sabotage=CarriedVariablesAreWrittenByOthers
+# CHECK-NOT: one ,3,7,13,21,,23,27,33,41,finally,41,,43,47,53,61,caught,61,finally,61,,63,67,73,81,,83,87,93,101,finally,101,,103,107,113,121,,123,127,133,141,finally,141,141
+# PROGRAM-OF: carried-variables-are-written-by-others-left-alone.ir

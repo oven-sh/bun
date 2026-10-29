@@ -1,0 +1,193 @@
+# A large method with a rest parameter that only reads its rest arguments: no array is allocated for the call.
+# IR+ CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
+# FORM: AsRead
+# RUN: lower-to-air size f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="rest-callee-called-by-name.ts" displayPath="rest-callee-called-by-name.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Emitter" module=m0 position=579 constructor=f2 fields=[{key="count" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|string elements=[String{value="x"}, String{value="y"}]} module=m0
+variable g0 name="pad" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f3
+    DefineMethod v1, v2 layout=L0 key="emit"
+    v4 = FinishClass v1 layout=L0
+    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Construct v5 calleeName="Emitter"
+    v7 = Convert v6 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v8 = Data data=d0
+    v9 = Convert v8 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v10 = Integer
+    v11 = Convert v10 declared={type=number}
+    v12 = Integer
+    v13 = Convert v12 declared={type=number}
+    Jump -> next b1(v11, v13)
+  b1(v14: number, v15: number):
+    LoopHint
+    v17 = Convert v15 declared={type=i32 flags=[IsExpected]}
+    v18 = PropGet v7 key="emit"
+    v19 = Convert v17 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = BitAnd v19, v20
+    v22 = ElemGet v9, v21
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v24 = String string="s"
+    v25 = Call v18, v7, v23, v19, v24 calleeKey="emit" calleeName="e.emit"
+    v26 = Convert v25 declared={type=boolean}
+    v27 = Increment v14
+    v28 = Convert v27 declared={type=number}
+    v29 = Increment v19
+    v30 = Convert v29 declared={type=number}
+    Jump -> next b1(v28, v30)
+}
+function f1 name="pad" module=m0 position=205 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = Less v8, v0
+    Branch v9 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v10, v11):
+    v12 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v13 = Integer integer=3
+    v14 = Mul v12, v13
+    v15 = Add v5, v14
+    v16 = Convert v15 declared={type=number}
+    v17 = Integer integer=2
+    v18 = LShift v12, v17
+    v19 = BitXor v16, v18
+    v20 = Convert v19 declared={type=number}
+    v21 = Integer integer=7
+    v22 = Mod v20, v21
+    v23 = Add v20, v22
+    v24 = Convert v23 declared={type=number}
+    v25 = Integer integer=5
+    v26 = BitAnd v12, v25
+    v27 = Sub v24, v26
+    v28 = Convert v27 declared={type=number}
+    v29 = Integer integer=3
+    v30 = RShift v28, v29
+    v31 = Integer integer=9
+    v32 = BitOr v12, v31
+    v33 = Add v30, v32
+    v34 = Add v28, v33
+    v35 = Convert v34 declared={type=number}
+    v36 = Integer integer=31
+    v37 = Mul v35, v36
+    v38 = BitXor v35, v37
+    v39 = Convert v38 declared={type=number}
+    v40 = Integer integer=11
+    v41 = Mod v12, v40
+    v42 = Add v39, v41
+    v43 = Convert v42 declared={type=number}
+    v44 = Integer integer=255
+    v45 = BitAnd v43, v44
+    v46 = Sub v43, v45
+    v47 = Convert v46 declared={type=number}
+    v48 = Mul v12, v12
+    v49 = Add v47, v48
+    v50 = Convert v49 declared={type=number}
+    v51 = Integer integer=5
+    v52 = URShift v50, v51
+    v53 = BitXor v50, v52
+    v54 = Convert v53 declared={type=number}
+    v55 = Integer integer=1
+    v56 = Add v12, v55
+    v57 = Integer integer=13
+    v58 = Mul v56, v57
+    v59 = Add v54, v58
+    v60 = Convert v59 declared={type=number}
+    v61 = Integer integer=17
+    v62 = Mod v60, v61
+    v63 = Sub v60, v62
+    v64 = Convert v63 declared={type=number}
+    v65 = Integer integer=7
+    v66 = Mul v12, v65
+    v67 = BitXor v64, v66
+    v68 = Convert v67 declared={type=number}
+    v69 = Integer integer=63
+    v70 = BitAnd v68, v69
+    v71 = Add v68, v70
+    v72 = Convert v71 declared={type=number}
+    v73 = Integer integer=1
+    v74 = RShift v12, v73
+    v75 = Sub v72, v74
+    v76 = Convert v75 declared={type=number}
+    v77 = Integer integer=29
+    v78 = Mod v76, v77
+    v79 = Add v76, v78
+    v80 = Convert v79 declared={type=number}
+    v81 = Integer integer=19
+    v82 = Add v12, v81
+    v83 = BitXor v80, v82
+    v84 = Convert v83 declared={type=number}
+    v85 = Integer integer=3
+    v86 = BitOr v84, v85
+    v87 = Sub v86, v12
+    v88 = Add v84, v87
+    v89 = Convert v88 declared={type=number}
+    v90 = Integer integer=5
+    v91 = Mod v89, v90
+    v92 = Sub v89, v91
+    v93 = Convert v92 declared={type=number}
+    v94 = Integer integer=1
+    v95 = LShift v93, v94
+    v96 = BitXor v93, v95
+    v97 = Convert v96 declared={type=number}
+    v98 = Increment v12
+    v99 = Convert v98 declared={type=number}
+    Jump -> next b1(v97, v99)
+  b3(v100, v101):
+    v102 = Convert v5 declared={type=number}
+    Return v102
+}
+function f2 name="Emitter" module=m0 position=579 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v3
+}
+function f3 name="emit" module=m0 position=600 kind=Method flags=[HasRestParameter, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: undefined|null|string, v2: Array):
+    v3 = PropGet v2 key="length"
+    v4 = Convert v3 declared={type=number} illTypedCause=Assertion
+    Switch v4 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v5):
+    v6 = NarrowByField v2, v5 key="length"
+    Jump -> next b4(v6)
+  b2(v7):
+    v8 = NarrowByField v2, v7 key="length"
+    v9 = Integer
+    v10 = ElemGet v8, v9
+    Jump -> next b4(v8)
+  b3():
+    v11 = Integer integer=1
+    v12 = ElemGet v2, v11
+    Jump -> next b4(v2)
+  b4(v13: undefined|null|Array):
+    v14 = GetModuleVariable variable=g0
+    v15 = PropGet v13 key="length"
+    v16 = Convert v15 declared={type=number} illTypedCause=Assertion
+    v17 = Integer integer=2
+    v18 = Add v16, v17
+    v19 = Call v14, -, v18 calleeName="pad"
+    v20 = String string="x"
+    v21 = StrictEq v1, v20
+    v22 = Convert v21 declared={type=boolean}
+    Return v22
+}
+# -- generated: pad
+# CHECK-LABEL: function {{*}}name="pad"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 124, patchpoints: 2, rare instructions: 423, polls: 1
+# CHECK-NEXT: end of function f1

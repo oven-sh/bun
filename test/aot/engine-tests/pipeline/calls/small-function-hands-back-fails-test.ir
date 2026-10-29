@@ -1,0 +1,845 @@
+# -- source: small-function-hands-back-fails-test.ts
+# // A small function hands its argument back under a type parameter. Each caller says the result is a Holder and hands in a buffer.
+# // The result goes through a try block first and is asked what it is behind the block, in four ways.
+# // Flags: --aot-disable=InlineCalls --aot-heat=everything-is-hot
+# let notes = 0;
+# function note(value: unknown): void {
+#   if (notes++ < 4) console.log("noted", value);
+# }
+# function isText<T>(value: unknown): value is T {
+#   return false;
+# }
+# class Holder {
+#   held = 1;
+# }
+# function same<T>(value: T | string): T {
+#   if (isText<string>(value)) return (notes > 1 ? new Holder() : undefined) as T;
+#   return value as T;
+# }
+# function readsMember() {
+#   const holder: Holder = same<Holder>(new SharedArrayBuffer(8) as any);
+#   try {
+#     note(holder);
+#   } catch {}
+#   return holder?.held ?? 7;
+# }
+# function comparesWithUndefined() {
+#   const holder: Holder = same<Holder>(new SharedArrayBuffer(8) as any);
+#   try {
+#     note(holder);
+#   } catch {}
+#   return holder === undefined ? 3 : 7;
+# }
+# function asksForKind() {
+#   const holder: Holder = same<Holder>(new SharedArrayBuffer(8) as any);
+#   try {
+#     note(holder);
+#   } catch {}
+#   return typeof holder === "object" ? 3 : 7;
+# }
+# function asksForClass() {
+#   const holder: Holder = same<Holder>(new SharedArrayBuffer(8) as any);
+#   try {
+#     note(holder);
+#   } catch {}
+#   return holder instanceof Holder ? 3 : 7;
+# }
+# const sums = [0, 0, 0, 0];
+# for (let round = 0; round < 1000; round++) {
+#   sums[0] += readsMember();
+#   sums[1] += comparesWithUndefined();
+#   sums[2] += asksForKind();
+#   sums[3] += asksForClass();
+# }
+# console.log(sums.join(" "));
+# -- end of source
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls heat=EverythingIsHot
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="small-function-hands-back-fails-test.ts" displayPath="small-function-hands-back-fails-test.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=400 kind=Result
+typesite w1 module=m0 position=513 kind=Parameter
+typesite w2 module=m0 position=496 kind=Result
+typesite w3 module=m0 position=301 kind=Variable
+typesite w4 module=m0 position=1365 kind=Variable
+typesite w5 module=m0 position=641 kind=Result
+typesite w6 module=m0 position=807 kind=Result
+typesite w7 module=m0 position=994 kind=Result
+typesite w8 module=m0 position=1177 kind=Result
+typesite w9 module=m0 position=484 kind=Field
+typesite w10 module=m0 position=1395 kind=Variable
+typesite w11 module=m0 position=1433 kind=Element
+typesite w12 module=m0 position=1444 kind=CallResult
+typesite w13 module=m0 position=1461 kind=Element
+typesite w14 module=m0 position=1472 kind=CallResult
+typesite w15 module=m0 position=1499 kind=Element
+typesite w16 module=m0 position=1510 kind=CallResult
+typesite w17 module=m0 position=1527 kind=Element
+typesite w18 module=m0 position=1538 kind=CallResult
+typesite w19 module=m0 position=1568 kind=CallResult
+typesite w20 module=m0 position=543 kind=CallResult
+typesite w21 module=m0 position=615 kind=Assertion
+typesite w22 module=m0 position=586 kind=CallResult
+typesite w23 module=m0 position=704 kind=CallResult
+typesite w24 module=m0 position=691 kind=CallResult
+typesite w25 module=m0 position=880 kind=CallResult
+typesite w26 module=m0 position=867 kind=CallResult
+typesite w27 module=m0 position=1057 kind=CallResult
+typesite w28 module=m0 position=1044 kind=CallResult
+typesite w29 module=m0 position=1241 kind=CallResult
+typesite w30 module=m0 position=1228 kind=CallResult
+layout L0 kind=Instance name="Holder" module=m0 position=473 constructor=f8 fields=[{key="held" declared={type=number site=w9} flags=[IsRequired]}] supertypes=[L1] ownFieldCount=1
+layout L1 flags=[IsTypeParameter, IsNeverAllocated] flow={allocation=NeverAllocated}
+data d0 root=Array{contents=number elements=[Number{}, Number{}, Number{}, Number{}]} module=m0
+variable g0 name="note" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="isText" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="same" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="notes" module=m0 declared={type=number|absent site=w3}
+variable g4 name="Holder" module=m0 declared={type=absent|f8 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f5
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f6
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f7
+    v7 = Convert v6 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f8
+    v9 = NewClass v8 layout=L0
+    PutModuleVariable v9 variable=g5
+    v11 = FinishClass v9 layout=L0
+    v12 = Convert v11 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v13 = Convert v11 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v13 variable=g4
+    v15 = Integer
+    v16 = Convert v15 declared={type=number site=w3}
+    PutModuleVariable v16 variable=g3
+    v18 = Data data=d0
+    v19 = Convert v18 declared={type=undefined|null|Array<number> site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v20 = Integer
+    v21 = Convert v20 declared={type=number site=w10}
+    Jump -> next b2(v21)
+  b2(v22: number):
+    LoopHint
+    v24 = Integer integer=1000
+    v25 = Less v22, v24
+    Branch v25 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v26):
+    Jump -> next b4()
+  b4():
+    v27 = Integer
+    v28 = ElemGet v19, v27
+    v29 = Convert v28 declared={type=number site=w11} illTypedCause=ContainerWriterUnseen
+    v30 = Call v1 calleeName="readsMember"
+    v31 = Convert v30 declared={type=number site=w12}
+    v32 = Add v29, v31
+    v33 = Convert v32 declared={type=number site=w11}
+    ElemSet v19, v27, v33
+    v35 = Integer integer=1
+    v36 = ElemGet v19, v35
+    v37 = Convert v36 declared={type=number site=w13} illTypedCause=ContainerWriterUnseen
+    v38 = Call v3 calleeName="comparesWithUndefined"
+    v39 = Convert v38 declared={type=int[3, 7] site=w14}
+    v40 = Add v37, v39
+    v41 = Convert v40 declared={type=number site=w13}
+    ElemSet v19, v35, v41
+    v43 = Integer integer=2
+    v44 = ElemGet v19, v43
+    v45 = Convert v44 declared={type=number site=w15} illTypedCause=ContainerWriterUnseen
+    v46 = Call v5 calleeName="asksForKind"
+    v47 = Convert v46 declared={type=int[3, 7] site=w16}
+    v48 = Add v45, v47
+    v49 = Convert v48 declared={type=number site=w15}
+    ElemSet v19, v43, v49
+    v51 = Integer integer=3
+    v52 = ElemGet v19, v51
+    v53 = Convert v52 declared={type=number site=w17} illTypedCause=ContainerWriterUnseen
+    v54 = Call v7 calleeName="asksForClass"
+    v55 = Convert v54 declared={type=int[3, 7] site=w18}
+    v56 = Add v53, v55
+    v57 = Convert v56 declared={type=number site=w17}
+    ElemSet v19, v51, v57
+    Jump -> next b5()
+  b5():
+    v59 = Increment v26
+    v60 = Convert v59 declared={type=number site=w10}
+    Jump -> next b2(v60)
+  b6(v61):
+    Jump -> next b7()
+  b7():
+    v62 = Builtin builtin=GlobalThis
+    v63 = PropGet v62 key="console" [isFreeName]
+    v64 = Convert v63 declared={type=builtin(Console) flags=[IsExpected]}
+    v65 = PropGet v64 key="log"
+    v66 = Convert v65 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v67 = PropGet v19 key="join"
+    v68 = String string=" "
+    v69 = Call v67, v19, v68 calleeKey="join" calleeName="sums.join"
+    v70 = Convert v69 declared={type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v71 = Call v66, v64, v70 calleeKey="log" calleeName="console.log"
+    v72 = Undefined
+    Return v72
+}
+function f1 name="note" module=m0 position=312 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g3
+    v2 = CheckInitialized v1 name="notes"
+    v3 = ToNumeric v2
+    v4 = Increment v3
+    v5 = Convert v4 declared={type=number site=w3}
+    v6 = GetModuleVariable variable=g3
+    v7 = CheckInitialized v6 name="notes"
+    PutModuleVariable v5 variable=g3
+    v9 = Integer integer=4
+    v10 = Less v3, v9
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="console" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(Console) flags=[IsExpected]}
+    v14 = PropGet v13 key="log"
+    v15 = Convert v14 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v16 = String string="noted"
+    v17 = Call v15, v13, v16, v0 calleeKey="log" calleeName="console.log"
+    Jump -> next b3()
+  b3():
+    v18 = Undefined
+    Return v18
+}
+function f2 name="isText" module=m0 position=400 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Boolean
+    v2 = Convert v1 declared={type=boolean site=w0}
+    Return v2
+}
+function f3 name="same" module=m0 position=496 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|L0 site=w1}] results=[{type=undefined|null|L0 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|L0):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="isText"
+    v3 = Convert v2 declared={type=boolean site=w20}
+    v4 = ToBoolean v3
+    Branch v4 -> taken b2(| 0), notTaken b7(| 0)
+  b2(v5):
+    Jump -> next b3()
+  b3():
+    v6 = GetModuleVariable variable=g3
+    v7 = CheckInitialized v6 name="notes"
+    v8 = Integer integer=1
+    v9 = Greater v7, v8
+    Branch v9 -> taken b4(), notTaken b5()
+  b4():
+    v10 = GetModuleVariable variable=g4
+    v11 = CheckInitialized v10 name="Holder"
+    v12 = Construct v11 calleeName="Holder"
+    v13 = Convert v12 declared={type=undefined|null|L0 site=w22 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    Jump -> next b6(v13)
+  b5():
+    v14 = Undefined
+    Jump -> next b6(v14)
+  b6(v15):
+    v16 = Convert v15 declared={type=undefined|null|L0 site=w21} illTypedCause=Assertion
+    Return v16
+  b7(v17):
+    Jump -> next b8()
+  b8():
+    v18 = Convert v0 declared={type=undefined|null|L0} illTypedCause=Assertion
+    Return v18
+}
+function f4 name="readsMember" module=m0 position=641 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]}
+    v4 = Integer integer=8
+    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer"
+    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w23 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]}
+    v8 = Call v0, -, v7 calleeName="same"
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w24 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Jump -> next b2()
+  b2() handler=b4():
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v9 calleeName="note"
+    Jump -> next b3()
+  b3():
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v12 = CatchValue
+    Jump -> next b5()
+  b5():
+    v13 = TypeTest v9 testedType=undefined|null
+    Branch v13 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v14):
+    Jump -> next b7()
+  b7():
+    v15 = Undefined
+    Jump -> next b9(v15)
+  b8(v16):
+    v17 = PropGet v16 key="held"
+    Jump -> next b9(v17)
+  b9(v18):
+    v19 = TypeTest v18 testedType=undefined|null
+    Branch v19 -> taken b10(| 0), notTaken b12(| 0)
+  b10(v20):
+    Jump -> next b11()
+  b11():
+    v21 = Integer integer=7
+    Jump -> next b13(v21)
+  b12(v22):
+    Jump -> next b13(v22)
+  b13(v23):
+    v24 = Convert v23 declared={type=number site=w5}
+    Return v24
+}
+function f5 name="comparesWithUndefined" module=m0 position=807 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]}
+    v4 = Integer integer=8
+    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer"
+    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w25 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]}
+    v8 = Call v0, -, v7 calleeName="same"
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w26 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Jump -> next b2()
+  b2() handler=b4():
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v9 calleeName="note"
+    Jump -> next b3()
+  b3():
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v12 = CatchValue
+    Jump -> next b5()
+  b5():
+    v13 = TypeTest v9 testedType=undefined
+    Branch v13 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v14):
+    Jump -> next b7()
+  b7():
+    v15 = Integer integer=3
+    Jump -> next b10(v15)
+  b8(v16):
+    Jump -> next b9()
+  b9():
+    v17 = Integer integer=7
+    Jump -> next b10(v17)
+  b10(v18):
+    v19 = Convert v18 declared={type=int[3, 7] site=w6}
+    Return v19
+}
+function f6 name="asksForKind" module=m0 position=994 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]}
+    v4 = Integer integer=8
+    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer"
+    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w27 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]}
+    v8 = Call v0, -, v7 calleeName="same"
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w28 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Jump -> next b2()
+  b2() handler=b4():
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v9 calleeName="note"
+    Jump -> next b3()
+  b3():
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v12 = CatchValue
+    Jump -> next b5()
+  b5():
+    v13 = TypeTest v9 testedType=function
+    Branch v13 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v14):
+    Jump -> next b11()
+  b7(v15):
+    v16 = TypeTest v15 testedType=null|object
+    Branch v16 -> taken b8(| 0), notTaken b10(| 0)
+  b8(v17):
+    Jump -> next b9()
+  b9():
+    v18 = Integer integer=3
+    Jump -> next b12(v18)
+  b10(v19):
+    Jump -> next b11()
+  b11():
+    v20 = Integer integer=7
+    Jump -> next b12(v20)
+  b12(v21):
+    v22 = Convert v21 declared={type=int[3, 7] site=w7}
+    Return v22
+}
+function f7 name="asksForClass" module=m0 position=1177 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]}
+    v4 = Integer integer=8
+    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer"
+    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w29 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]}
+    v8 = Call v0, -, v7 calleeName="same"
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w30 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Jump -> next b2()
+  b2() handler=b4():
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v9 calleeName="note"
+    Jump -> next b3()
+  b3():
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v12 = CatchValue
+    Jump -> next b5()
+  b5():
+    v13 = GetModuleVariable variable=g4
+    v14 = CheckInitialized v13 name="Holder"
+    v15 = InstanceOf v9, v14 writtenExpression="holder instanceof Holder"
+    v16 = ToBoolean v15
+    Branch v16 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v17):
+    Jump -> next b7()
+  b7():
+    v18 = Integer integer=3
+    Jump -> next b10(v18)
+  b8(v19):
+    Jump -> next b9()
+  b9():
+    v20 = Integer integer=7
+    Jump -> next b10(v20)
+  b10(v21):
+    v22 = Convert v21 declared={type=int[3, 7] site=w8}
+    Return v22
+}
+function f8 name="Holder" module=m0 position=473 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f9
+    Return v3
+}
+function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number site=w9}
+    PropDefine v1, v3 key="held"
+    v5 = Undefined
+    Return v5
+}
+# -- generated: f0 note isText same readsMember comparesWithUndefined asksForKind asksForClass Holder f9
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: PutModuleVariable v0 variable=g3
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: Array<int|whole> = NewArray v2, v3, v4, v5 contents=int|whole allocationSite=5
+# CHECK-NEXT: v7: Array<int|whole, proven, pristine[Storage, Names]> = AssumeType v6 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v8)
+# CHECK-NEXT: b1(v9: int[0, 1000] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v9)
+# CHECK-NEXT: b2(v10: int[0, 1000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v12: 1000 = Integer integer=1000
+# CHECK-NEXT: v13: boolean = Less v10, v12
+# CHECK-NEXT: Branch v13 -> taken b3(| 0), notTaken b41()
+# CHECK-NEXT: b3(v14: int[0, 999]):
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: boolean = HasArrayStorage v7 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v17: guard):
+# CHECK-NEXT: v18: boolean = IsInBounds v7, v15
+# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v19: guard):
+# CHECK-NEXT: v20: guard = AllGuards v17, v19
+# CHECK-NEXT: v21: int|whole = GetArrayElement v7, v15, v20 arrayStorage=Double level=Expected accessSite=0 [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK-NEXT: v22: int = CallDirect function=f4 accessSite=1
+# CHECK-NEXT: Jump -> next b9(v21, v22)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v7
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v24: undefined|int|whole = ElemGet v7, v15 accessSite=0 [keyIsIntegral]
+# CHECK-NEXT: v25: undefined|int|whole ~ int|whole = Expect v24 expectedType=number
+# CHECK-NEXT: v26: int = CallDirect function=f4 accessSite=1
+# CHECK-NEXT: v27: boolean ~ true = TypeTest v25 testedType=int|whole
+# CHECK-NEXT: Branch v27 -> taken b8(| 0), notTaken b14()
+# CHECK-NEXT: b8(v28: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b9(v28, v26)
+# CHECK-NEXT: b9(v29: int|whole, v30: int):
+# CHECK-NEXT: v31: int|whole = Add v29, v30
+# CHECK-NEXT: v32: boolean = HasArrayStorage v7 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v32 -> taken b10(| 0), notTaken b13()
+# CHECK-NEXT: b10(v33: guard):
+# CHECK-NEXT: PutArrayElement v7, v15, v31, v33 arrayStorage=Double level=Expected accessSite=2 [keyIsIntegral]
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: boolean = HasArrayStorage v7 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v36 -> taken b11(| 0), notTaken b16()
+# CHECK-NEXT: b11(v37: guard):
+# CHECK-NEXT: v38: boolean = IsInBounds v7, v35
+# CHECK-NEXT: Branch v38 -> taken b12(| 0), notTaken b16()
+# CHECK-NEXT: b12(v39: guard):
+# CHECK-NEXT: v40: guard = AllGuards v37, v39
+# CHECK-NEXT: v41: int|whole = GetArrayElement v7, v35, v40 arrayStorage=Double level=Expected accessSite=3 [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK-NEXT: v42: int[3, 7] = CallDirect function=f5 accessSite=4
+# CHECK-NEXT: Jump -> next b18(v41, v42)
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v7
+# CHECK-NEXT: Jump -> next b15(v31)
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v44: number ~ int|whole = Add v25, v26
+# CHECK-NEXT: Jump -> next b15(v44)
+# CHECK-NEXT: b15(v45: number ~ int|whole) frequency=Rare:
+# CHECK-NEXT: ElemSet v7, v15, v45 accessSite=2 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b16() frequency=Rare:
+# CHECK-NEXT: v47: 1 = Integer integer=1
+# CHECK-NEXT: v48: undefined|int|whole = ElemGet v7, v47 accessSite=3 [keyIsIntegral]
+# CHECK-NEXT: v49: undefined|int|whole ~ int|whole = Expect v48 expectedType=number
+# CHECK-NEXT: v50: int[3, 7] = CallDirect function=f5 accessSite=4
+# CHECK-NEXT: v51: boolean ~ true = TypeTest v49 testedType=int|whole
+# CHECK-NEXT: Branch v51 -> taken b17(| 0), notTaken b23()
+# CHECK-NEXT: b17(v52: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b18(v52, v50)
+# CHECK-NEXT: b18(v53: int|whole, v54: int[3, 7]):
+# CHECK-NEXT: v55: int|whole = Add v53, v54
+# CHECK-NEXT: v56: boolean = HasArrayStorage v7 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v56 -> taken b19(| 0), notTaken b22()
+# CHECK-NEXT: b19(v57: guard):
+# CHECK-NEXT: v58: 1 = Integer integer=1
+# CHECK-NEXT: PutArrayElement v7, v58, v55, v57 arrayStorage=Double level=Expected accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: v60: 2 = Integer integer=2
+# CHECK-NEXT: v61: boolean = HasArrayStorage v7 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v61 -> taken b20(| 0), notTaken b25()
+# CHECK-NEXT: b20(v62: guard):
+# CHECK-NEXT: v63: boolean = IsInBounds v7, v60
+# CHECK-NEXT: Branch v63 -> taken b21(| 0), notTaken b25()
+# CHECK-NEXT: b21(v64: guard):
+# CHECK-NEXT: v65: guard = AllGuards v62, v64
+# CHECK-NEXT: v66: int|whole = GetArrayElement v7, v60, v65 arrayStorage=Double level=Expected accessSite=6 [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK-NEXT: v67: int[3, 7] = CallDirect function=f6 accessSite=7
+# CHECK-NEXT: Jump -> next b27(v66, v67)
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v7
+# CHECK-NEXT: Jump -> next b24(v55)
+# CHECK-NEXT: b23() frequency=Rare:
+# CHECK-NEXT: v69: number ~ int|whole = Add v49, v50
+# CHECK-NEXT: Jump -> next b24(v69)
+# CHECK-NEXT: b24(v70: number ~ int|whole) frequency=Rare:
+# CHECK-NEXT: v71: 1 = Integer integer=1
+# CHECK-NEXT: ElemSet v7, v71, v70 accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b25()
+# CHECK-NEXT: b25() frequency=Rare:
+# CHECK-NEXT: v73: 2 = Integer integer=2
+# CHECK-NEXT: v74: undefined|int|whole = ElemGet v7, v73 accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: v75: undefined|int|whole ~ int|whole = Expect v74 expectedType=number
+# CHECK-NEXT: v76: int[3, 7] = CallDirect function=f6 accessSite=7
+# CHECK-NEXT: v77: boolean ~ true = TypeTest v75 testedType=int|whole
+# CHECK-NEXT: Branch v77 -> taken b26(| 0), notTaken b32()
+# CHECK-NEXT: b26(v78: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b27(v78, v76)
+# CHECK-NEXT: b27(v79: int|whole, v80: int[3, 7]):
+# CHECK-NEXT: v81: int|whole = Add v79, v80
+# CHECK-NEXT: v82: boolean = HasArrayStorage v7 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v82 -> taken b28(| 0), notTaken b31()
+# CHECK-NEXT: b28(v83: guard):
+# CHECK-NEXT: v84: 2 = Integer integer=2
+# CHECK-NEXT: PutArrayElement v7, v84, v81, v83 arrayStorage=Double level=Expected accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v86: 3 = Integer integer=3
+# CHECK-NEXT: v87: boolean = HasArrayStorage v7 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v87 -> taken b29(| 0), notTaken b34()
+# CHECK-NEXT: b29(v88: guard):
+# CHECK-NEXT: v89: boolean = IsInBounds v7, v86
+# CHECK-NEXT: Branch v89 -> taken b30(| 0), notTaken b34()
+# CHECK-NEXT: b30(v90: guard):
+# CHECK-NEXT: v91: guard = AllGuards v88, v90
+# CHECK-NEXT: v92: int|whole = GetArrayElement v7, v86, v91 arrayStorage=Double level=Expected accessSite=9 [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK-NEXT: v93: int[3, 7] = CallDirect function=f7 accessSite=10
+# CHECK-NEXT: Jump -> next b36(v92, v93)
+# CHECK-NEXT: b31() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v7
+# CHECK-NEXT: Jump -> next b33(v81)
+# CHECK-NEXT: b32() frequency=Rare:
+# CHECK-NEXT: v95: number ~ int|whole = Add v75, v76
+# CHECK-NEXT: Jump -> next b33(v95)
+# CHECK-NEXT: b33(v96: number ~ int|whole) frequency=Rare:
+# CHECK-NEXT: v97: 2 = Integer integer=2
+# CHECK-NEXT: ElemSet v7, v97, v96 accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b34()
+# CHECK-NEXT: b34() frequency=Rare:
+# CHECK-NEXT: v99: 3 = Integer integer=3
+# CHECK-NEXT: v100: undefined|int|whole = ElemGet v7, v99 accessSite=9 [keyIsIntegral]
+# CHECK-NEXT: v101: undefined|int|whole ~ int|whole = Expect v100 expectedType=number
+# CHECK-NEXT: v102: int[3, 7] = CallDirect function=f7 accessSite=10
+# CHECK-NEXT: v103: boolean ~ true = TypeTest v101 testedType=int|whole
+# CHECK-NEXT: Branch v103 -> taken b35(| 0), notTaken b39()
+# CHECK-NEXT: b35(v104: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b36(v104, v102)
+# CHECK-NEXT: b36(v105: int|whole, v106: int[3, 7]):
+# CHECK-NEXT: v107: int|whole = Add v105, v106
+# CHECK-NEXT: v108: boolean = HasArrayStorage v7 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v108 -> taken b37(| 0), notTaken b38()
+# CHECK-NEXT: b37(v109: guard):
+# CHECK-NEXT: v110: 3 = Integer integer=3
+# CHECK-NEXT: PutArrayElement v7, v110, v107, v109 arrayStorage=Double level=Expected accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: v112: int[1, 1000] = Increment v14
+# CHECK-NEXT: Jump -> next b2(v112)
+# CHECK-NEXT: b38() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v7
+# CHECK-NEXT: Jump -> next b40(v107)
+# CHECK-NEXT: b39() frequency=Rare:
+# CHECK-NEXT: v114: number ~ int|whole = Add v101, v102
+# CHECK-NEXT: Jump -> next b40(v114)
+# CHECK-NEXT: b40(v115: number ~ int|whole) frequency=Rare:
+# CHECK-NEXT: v116: 3 = Integer integer=3
+# CHECK-NEXT: ElemSet v7, v116, v115 accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: v118: int[1, 1000] = Increment v14
+# CHECK-NEXT: Jump -> next b1(v118)
+# CHECK-NEXT: b41():
+# CHECK-NEXT: v119: " " = String string=" "
+# CHECK-NEXT: v120: string = CallBuiltin v7, v119 overload=ArrayPrototypeJoin/0 accessSite=15
+# CHECK-NEXT: v121: undefined = CallBuiltin -, v120 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: v122: undefined = Undefined
+# CHECK-NEXT: Return v122
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="note"
+# CHECK: module=m0 position=312 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|SharedArrayBuffer<pristine[Storage, Names]>}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK-NEXT: v1: int|whole = GetModuleVariable variable=g3
+# CHECK-NEXT: v2: int|whole = ToNumeric v1
+# CHECK-NEXT: v3: int|whole = Increment v2
+# CHECK-NEXT: PutModuleVariable v3 variable=g3
+# CHECK-NEXT: v5: 4 = Integer integer=4
+# CHECK-NEXT: v6: boolean = Less v2, v5
+# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v7: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v8: "noted" = String string="noted"
+# CHECK-NEXT: v9: undefined = CallBuiltin v7, v8, v0 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=19
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="isText"
+# CHECK: module=m0 position=400 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=SharedArrayBuffer<pristine[Storage, Names]>}] results=[{type=false site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK-NEXT: v1: false = Boolean
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="same"
+# CHECK: module=m0 position=496 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=SharedArrayBuffer<pristine[Storage, Names]> site=w1}] results=[{type=undefined|null|L0 site=w2 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="readsMember"
+# CHECK: module=m0 position=641 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = GetGlobalBinding key="SharedArrayBuffer" level=Expected accessSite=22 [seesScriptBindings]
+# CHECK-NEXT: v1: undefined|builtin(SharedArrayBuffer) = AssumeType v0 provenType=undefined|builtin(SharedArrayBuffer)
+# CHECK-NEXT: v2: undefined|builtin(SharedArrayBuffer) ~ builtin(SharedArrayBuffer) = Upcast v1 castType=anything
+# CHECK-NEXT: v3: 8 = Integer integer=8
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v2 testedType=builtin(SharedArrayBuffer)
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: SharedArrayBuffer = CallBuiltin -, v3 overload=SharedArrayBuffer/1 accessSite=23
+# CHECK-NEXT: v6: SharedArrayBuffer<pristine[Storage, Names]> = AssumeType v5 provenType=SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: anything ~ object = Construct v7, -, v3 calleeName="SharedArrayBuffer" accessSite=23 callees=[builtin(SharedArrayBuffer)]
+# CHECK-NEXT: v9: SharedArrayBuffer<pristine[Storage, Names]> = AssumeType v8 provenType=SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b3(v10: SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK-NEXT: v11: anything ~ undefined|null|L0 = CallDirect v10 function=f3 accessSite=24
+# CHECK-NEXT: v12: undefined|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined = AssumeType v11 provenType=undefined|SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() handler=b5():
+# CHECK-NEXT: v13: undefined = CallDirect v12 function=f1 accessSite=25
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v14: boolean ~ true = TypeTest v12 testedType=undefined|null
+# CHECK-NEXT: Branch v14 -> taken b8(), notTaken b7(| 0)
+# CHECK-NEXT: b7(v15: SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK-NEXT: v16: anything = PropGet v15 key="held" accessSite=26
+# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=undefined|null
+# CHECK-NEXT: Branch v17 -> taken b8(), notTaken b9(| 0)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v18: 7 = Integer integer=7
+# CHECK-NEXT: Jump -> next b10(v18)
+# CHECK-NEXT: b9(v19: boolean|number|string|symbol|bigint|object):
+# CHECK-NEXT: v20: int = AssumeType v19 provenType=int
+# CHECK-NEXT: Jump -> next b10(v20)
+# CHECK-NEXT: b10(v21: int ~ 7):
+# CHECK-NEXT: Return v21
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="comparesWithUndefined"
+# CHECK: module=m0 position=807 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = GetGlobalBinding key="SharedArrayBuffer" level=Expected accessSite=27 [seesScriptBindings]
+# CHECK-NEXT: v1: undefined|builtin(SharedArrayBuffer) = AssumeType v0 provenType=undefined|builtin(SharedArrayBuffer)
+# CHECK-NEXT: v2: undefined|builtin(SharedArrayBuffer) ~ builtin(SharedArrayBuffer) = Upcast v1 castType=anything
+# CHECK-NEXT: v3: 8 = Integer integer=8
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v2 testedType=builtin(SharedArrayBuffer)
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: SharedArrayBuffer = CallBuiltin -, v3 overload=SharedArrayBuffer/1 accessSite=28
+# CHECK-NEXT: v6: SharedArrayBuffer<pristine[Storage, Names]> = AssumeType v5 provenType=SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: anything ~ object = Construct v7, -, v3 calleeName="SharedArrayBuffer" accessSite=28 callees=[builtin(SharedArrayBuffer)]
+# CHECK-NEXT: v9: SharedArrayBuffer<pristine[Storage, Names]> = AssumeType v8 provenType=SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b3(v10: SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK-NEXT: v11: anything ~ undefined|null|L0 = CallDirect v10 function=f3 accessSite=29
+# CHECK-NEXT: v12: undefined|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined = AssumeType v11 provenType=undefined|SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() handler=b5():
+# CHECK-NEXT: v13: undefined = CallDirect v12 function=f1 accessSite=30
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v14: boolean ~ true = TypeTest v12 testedType=undefined
+# CHECK-NEXT: Branch v14 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v15: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b9(v15)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v16: 7 = Integer integer=7
+# CHECK-NEXT: Jump -> next b9(v16)
+# CHECK-NEXT: b9(v17: int[3, 7]):
+# CHECK-NEXT: Return v17
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="asksForKind"
+# CHECK: module=m0 position=994 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = GetGlobalBinding key="SharedArrayBuffer" level=Expected accessSite=31 [seesScriptBindings]
+# CHECK-NEXT: v1: undefined|builtin(SharedArrayBuffer) = AssumeType v0 provenType=undefined|builtin(SharedArrayBuffer)
+# CHECK-NEXT: v2: undefined|builtin(SharedArrayBuffer) ~ builtin(SharedArrayBuffer) = Upcast v1 castType=anything
+# CHECK-NEXT: v3: 8 = Integer integer=8
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v2 testedType=builtin(SharedArrayBuffer)
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: SharedArrayBuffer = CallBuiltin -, v3 overload=SharedArrayBuffer/1 accessSite=32
+# CHECK-NEXT: v6: SharedArrayBuffer<pristine[Storage, Names]> = AssumeType v5 provenType=SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: anything ~ object = Construct v7, -, v3 calleeName="SharedArrayBuffer" accessSite=32 callees=[builtin(SharedArrayBuffer)]
+# CHECK-NEXT: v9: SharedArrayBuffer<pristine[Storage, Names]> = AssumeType v8 provenType=SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b3(v10: SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK-NEXT: v11: anything ~ undefined|null|L0 = CallDirect v10 function=f3 accessSite=33
+# CHECK-NEXT: v12: undefined|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined = AssumeType v11 provenType=undefined|SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() handler=b5():
+# CHECK-NEXT: v13: undefined = CallDirect v12 function=f1 accessSite=34
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v14: boolean ~ false = TypeTest v12 testedType=null|object
+# CHECK-NEXT: Branch v14 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v15: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b9(v15)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v16: 7 = Integer integer=7
+# CHECK-NEXT: Jump -> next b9(v16)
+# CHECK-NEXT: b9(v17: int[3, 7]):
+# CHECK-NEXT: Return v17
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="asksForClass"
+# CHECK: module=m0 position=1177 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = GetGlobalBinding key="SharedArrayBuffer" level=Expected accessSite=35 [seesScriptBindings]
+# CHECK-NEXT: v1: undefined|builtin(SharedArrayBuffer) = AssumeType v0 provenType=undefined|builtin(SharedArrayBuffer)
+# CHECK-NEXT: v2: undefined|builtin(SharedArrayBuffer) ~ builtin(SharedArrayBuffer) = Upcast v1 castType=anything
+# CHECK-NEXT: v3: 8 = Integer integer=8
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v2 testedType=builtin(SharedArrayBuffer)
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: SharedArrayBuffer = CallBuiltin -, v3 overload=SharedArrayBuffer/1 accessSite=36
+# CHECK-NEXT: v6: SharedArrayBuffer<pristine[Storage, Names]> = AssumeType v5 provenType=SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: anything ~ object = Construct v7, -, v3 calleeName="SharedArrayBuffer" accessSite=36 callees=[builtin(SharedArrayBuffer)]
+# CHECK-NEXT: v9: SharedArrayBuffer<pristine[Storage, Names]> = AssumeType v8 provenType=SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b3(v10: SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK-NEXT: v11: anything ~ undefined|null|L0 = CallDirect v10 function=f3 accessSite=37
+# CHECK-NEXT: v12: undefined|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined = AssumeType v11 provenType=undefined|SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() handler=b5():
+# CHECK-NEXT: v13: undefined = CallDirect v12 function=f1 accessSite=38
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v14: f8 = GetModuleVariable variable=g4
+# CHECK-NEXT: v15: object = GetClassPrototype v14 layout=L0
+# CHECK-NEXT: v16: boolean = HasInPrototypeChain v12, v15
+# CHECK-NEXT: Branch v16 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v17: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b9(v17)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v18: 7 = Integer integer=7
+# CHECK-NEXT: Jump -> next b9(v18)
+# CHECK-NEXT: b9(v19: int[3, 7]):
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Holder"
+# CHECK: module=m0 position=473 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+# CHECK-LABEL: function f9 module=
+# CHECK: m0 position=473 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="Holder"
+# CHECK: module=m0 position=473 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f8, v1: anything, v2: anything):
+# CHECK-NEXT: v3: never = ThrowNewError message="'Holder' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }

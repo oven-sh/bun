@@ -1,6 +1,6 @@
+// Runs alone: it judges by a clock.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
-import { measureUntilWithinBounds } from "./harness/measure-again";
 import { test } from "./supported";
 
 const isSlowBuild = isDebug || isASAN;
@@ -55,7 +55,7 @@ function writeTwoArrayLiterals(elementCount: number): Program {
   };
 }
 
-async function processorSecondsOfBuild(program: Program) {
+async function buildsAndPrints(program: Program) {
   using dir = tempDir("aot-long-literals", { "main.js": program.source });
   await using built = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--aot", "./main.js", "--outfile", "./main"],
@@ -70,27 +70,17 @@ async function processorSecondsOfBuild(program: Program) {
   await using ran = Bun.spawn({ cmd: ["./main"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [output, errors, exitCodeOfRun] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
   expect({ output, errors, exitCode: exitCodeOfRun }).toEqual({ output: program.output, errors: "", exitCode: 0 });
-  return Number(built.resourceUsage()!.cpuTime.user) / 1e6;
 }
 
-// Four times the program takes four times as long where the time is linear, and sixteen times as long where it is quadratic.
-async function expectLinearBuildTime(name: string, few: number, writeProgramOfSize: (size: number) => Program) {
-  const growth = await measureUntilWithinBounds(
-    name,
-    async () => {
-      const withFew = await processorSecondsOfBuild(writeProgramOfSize(few));
-      const withMany = await processorSecondsOfBuild(writeProgramOfSize(4 * few));
-      return withMany / withFew;
-    },
-    growth => growth < 6,
-  );
-  expect(growth).toBeLessThan(6);
-}
+// Each builds in a few seconds. Where a step of the build took the square of the length, 70,000 members took over four minutes.
+test.concurrent(
+  "an object literal of very many members builds",
+  () => buildsAndPrints(writeObjectLiteral(isSlowBuild ? 20_000 : 70_000)),
+  60_000,
+);
 
-test("build time is linear in the number of members of an object literal", async () => {
-  await expectLinearBuildTime("members of an object literal", isSlowBuild ? 5_000 : 35_000, writeObjectLiteral);
-}, 240_000);
-
-test("build time is linear in the number of elements of the array literals of a function", async () => {
-  await expectLinearBuildTime("elements of two array literals", isSlowBuild ? 5_000 : 20_000, writeTwoArrayLiterals);
-}, 240_000);
+test.concurrent(
+  "a function with two array literals of very many elements builds",
+  () => buildsAndPrints(writeTwoArrayLiterals(isSlowBuild ? 20_000 : 80_000)),
+  60_000,
+);

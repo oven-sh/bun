@@ -112,7 +112,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn WebPDemuxReleaseChunkIterator(iter: *mut WebPChunkIterator);
 
-    fn WebPNewInternal(version: c_int) -> *mut WebPMux;
+    safe fn WebPNewInternal(version: c_int) -> *mut WebPMux;
     fn WebPMuxDelete(mux: *mut WebPMux);
     fn WebPMuxSetImage(mux: *mut WebPMux, bitstream: *const WebPData, copy_data: c_int) -> c_int;
     fn WebPMuxSetChunk(
@@ -300,8 +300,7 @@ pub(crate) fn encode(
         // SAFETY: p is the buffer returned by WebPEncode*RGBA above; WebPFree is the matching deallocator.
         unsafe { WebPFree(p.cast::<c_void>()) }
     });
-    // SAFETY: WebPNewInternal has no preconditions.
-    let mux = unsafe { WebPNewInternal(WEBP_MUX_ABI_VERSION) };
+    let mux = WebPNewInternal(WEBP_MUX_ABI_VERSION);
     if mux.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }

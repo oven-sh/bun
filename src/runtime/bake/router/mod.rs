@@ -566,11 +566,7 @@ impl FrameworkRouter {
         arena_state: &mut Arena,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
-        let fs = r.fs();
-        // SAFETY: BACKREF — `r.fs()` is the process-global FileSystem singleton; valid for the
-        // program lifetime. Resolver mutex serializes mutation. We hold a raw pointer (no borrow)
-        // so `r.read_dir_info_ignore_error(&mut self)` below does not conflict.
-        let fs_ref = unsafe { &*fs };
+        let fs_ref = bun_resolver::fs::FileSystem::get();
 
         {
             // Note: `entries.data` is backed by `std::collections::HashMap`,

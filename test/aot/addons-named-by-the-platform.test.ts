@@ -16,7 +16,7 @@ import {
   targetOfRuntime,
   targets,
 } from "./addons-named-by-the-platform/loaders";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const here = join(import.meta.dir, "addons-named-by-the-platform");
@@ -321,6 +321,12 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     });
   });
 
+  // The name of the file is what the build has to find. A program that imports no built-in module is built without them, which takes a fifth of the time. On Windows a function of the library makes process.env.
+  const usesABuiltInModule = ({ files }: Program) =>
+    Object.values(files).some(text =>
+      /(\brequire\(|\bfrom |\bimport\()["'](node:|path|os|fs|module|url)\b|\bprocess\.env\b/.test(text),
+    );
+
   async function run(title: string, program: Program, { passesAddons = false } = {}) {
     const file = title.replaceAll(/[^a-z]+/gi, "-") + (passesAddons ? "-passed" : "");
     const sources = join(folder, file);
@@ -347,6 +353,7 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
         "build",
         "--compile",
         "--aot",
+        ...(usesABuiltInModule(program) ? [] : ["--no-builtin-modules"]),
         join(sources, program.entry),
         ...(passesAddons ? program.addons.map(path => join(sources, path)) : []),
         "--outfile",
@@ -357,7 +364,9 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     );
     built(build);
     rmSync(sources, { recursive: true, force: true });
-    return { plain, build, compiled: said(await spawned([executable], away, bunEnv)) };
+    const compiled = said(await spawned([executable], away, bunEnv));
+    if (!isWindows) rmSync(executable, { force: true });
+    return { plain, build, compiled };
   }
 
   test.concurrent.each(Object.keys(programs))(

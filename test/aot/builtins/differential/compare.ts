@@ -4,8 +4,8 @@ import type { LogEvent, Origin } from "./log";
 import type { Realm } from "./members";
 import { selectOverload, type Call } from "./operands";
 import { hasIndexedElements, internalsOf } from "./references";
-import { candidateOf, isReentrant, valueOf, type Run } from "./runs";
-import { compareSnapshots, type Change } from "./snapshots";
+import { candidateOf, changesIn, isReentrant, valueOf, type Run } from "./runs";
+import type { Change } from "./snapshots";
 import {
   claimsEveryUse,
   columnOf,
@@ -1111,7 +1111,7 @@ class Comparison {
       this.checkResult(run.completion.value);
       for (const value of run.yielded) this.checkYielded(value);
     }
-    if (!isReentrant(run.set)) for (const change of compareSnapshots(run.before, run.after)) this.checkChange(change);
+    if (!isReentrant(run.set)) for (const change of changesIn(run)) this.checkChange(change);
     this.checkRegExpState();
     return [...this.differences.values()];
   }

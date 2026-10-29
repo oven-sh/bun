@@ -121,3 +121,15 @@ const got = await new Promise(async resolve => {
 });
 console.log(got);
 receiver.close();
+//// spawn-sync-by-a-name-beside-a-writer
+//@ trimmed-says ERR_FEATURE_REMOVED
+const name = ["s", "pawnSync"].join(process.argv.length > 99 ? "x" : "");
+const writer = Bun.stdout.writer();
+writer.write("written\n");
+await writer.flush();
+try {
+  console.log(String(Bun[name](["echo", "hi"]).stdout).trim());
+} catch (error) {
+  console.log(error.code);
+}
+console.log("still here");

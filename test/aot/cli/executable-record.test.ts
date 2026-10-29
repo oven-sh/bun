@@ -2,8 +2,8 @@ import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, spawned, withoutDebugInformation } from "../run-programs";
-import { beforeAll, test } from "../supported";
+import { built, spawned, withoutDebugInformation } from "../harness/commands";
+import { beforeAll, describe, test } from "../supported";
 import { findImages, imageHeader } from "./compiled-image";
 import { runCopy, type SpawnResult } from "./edited-executable";
 
@@ -139,76 +139,78 @@ beforeAll(async () => {
   bundled = readFileSync(executablePath(folder, "bundled"));
 }, timeout);
 
-test(
-  "several entry points and workers run as under bun run",
-  async () => {
-    for (const cwd of [folder, "/"]) {
-      const ran = await spawned([executablePath(folder, "program")], cwd, interpreterForbidden);
+describe.concurrent("the record of an executable", () => {
+  test(
+    "several entry points and workers run as under bun run",
+    async () => {
+      for (const cwd of [folder, "/"]) {
+        const ran = await spawned([executablePath(folder, "program")], cwd, interpreterForbidden);
+        expect(outcome(ran)).toEqual(outcome(expected));
+      }
+    },
+    timeout,
+  );
+
+  test(
+    "the record names the image and each entry point",
+    async () => {
+      const { base, byteCount, fileCount, flags, image, count, entries, orderAt } = readRecord(original);
+      expect(flags & hasCompiledProgram).not.toBe(0);
+      expect(count).toBe(3);
+
+      const fileIndexes = entries.map(entry => entry.fileIndex);
+      expect(fileIndexes[0]!).toBeLessThan(fileIndexes[1]!);
+      expect(fileIndexes[1]!).toBeLessThan(fileIndexes[2]!);
+      expect(fileIndexes[2]!).toBeLessThan(fileCount);
+
+      const sourcePaths = entries.map(({ sourcePath: { offset, length } }) =>
+        original.latin1Slice(base + offset, base + offset + length).replaceAll("\\", "/"),
+      );
+      expect(sourcePaths.sort()).toEqual([
+        expect.stringMatching(/\/main\.ts$/),
+        expect.stringMatching(/\/nested\/other\.ts$/),
+        expect.stringMatching(/\/worker\.ts$/),
+      ]);
+
+      const order = [0, 1, 2].map(i => original.readUInt32LE(orderAt + 4 * i));
+      expect(order.sort()).toEqual([0, 1, 2]);
+      expect(orderAt + 12).toBeLessThanOrEqual(base + byteCount);
+
+      const imageAt = base + image.offset;
+      expect((8 + image.offset) % 4096).toBe(0);
+      // The main program starts Workers, so each entry point begins a program of its own. Their images lie one behind the other.
+      const starts: number[] = [];
+      let end = imageAt;
+      for (const _ of entries) {
+        starts.push(end);
+        end += Number(original.readBigUInt64LE(end + imageHeader.size));
+      }
+      expect(findImages(original)).toEqual(starts);
+      expect(image.length).toBe(end - imageAt);
+
+      expect(readRecord(bundled).flags & hasCompiledProgram).toBe(0);
+      const ran = await spawned([executablePath(folder, "bundled")], folder, bunEnv);
       expect(outcome(ran)).toEqual(outcome(expected));
-    }
-  },
-  timeout,
-);
+    },
+    timeout,
+  );
 
-test(
-  "the record names the image and each entry point",
-  async () => {
-    const { base, byteCount, fileCount, flags, image, count, entries, orderAt } = readRecord(original);
-    expect(flags & hasCompiledProgram).not.toBe(0);
-    expect(count).toBe(3);
+  test.each(Object.keys(edits))(
+    "a record with bad bytes is an error at start: %s",
+    async name => {
+      const copy = Buffer.from(name === flagWithoutRecord ? bundled : original);
+      edits[name]!(copy, readRecord(copy));
+      expectRejected(await runCopy(folder, copy, bunEnv));
+    },
+    timeout,
+  );
 
-    const fileIndexes = entries.map(entry => entry.fileIndex);
-    expect(fileIndexes[0]!).toBeLessThan(fileIndexes[1]!);
-    expect(fileIndexes[1]!).toBeLessThan(fileIndexes[2]!);
-    expect(fileIndexes[2]!).toBeLessThan(fileCount);
-
-    const sourcePaths = entries.map(({ sourcePath: { offset, length } }) =>
-      original.latin1Slice(base + offset, base + offset + length).replaceAll("\\", "/"),
-    );
-    expect(sourcePaths.sort()).toEqual([
-      expect.stringMatching(/\/main\.ts$/),
-      expect.stringMatching(/\/nested\/other\.ts$/),
-      expect.stringMatching(/\/worker\.ts$/),
-    ]);
-
-    const order = [0, 1, 2].map(i => original.readUInt32LE(orderAt + 4 * i));
-    expect(order.sort()).toEqual([0, 1, 2]);
-    expect(orderAt + 12).toBeLessThanOrEqual(base + byteCount);
-
-    const imageAt = base + image.offset;
-    expect((8 + image.offset) % 4096).toBe(0);
-    // The main program starts Workers, so each entry point begins a program of its own. Their images lie one behind the other.
-    const starts: number[] = [];
-    let end = imageAt;
-    for (const _ of entries) {
-      starts.push(end);
-      end += Number(original.readBigUInt64LE(end + imageHeader.size));
-    }
-    expect(findImages(original)).toEqual(starts);
-    expect(image.length).toBe(end - imageAt);
-
-    expect(readRecord(bundled).flags & hasCompiledProgram).toBe(0);
-    const ran = await spawned([executablePath(folder, "bundled")], folder, bunEnv);
-    expect(outcome(ran)).toEqual(outcome(expected));
-  },
-  timeout,
-);
-
-test.each(Object.keys(edits))(
-  "a record with bad bytes is an error at start: %s",
-  async name => {
-    const copy = Buffer.from(name === flagWithoutRecord ? bundled : original);
-    edits[name]!(copy, readRecord(copy));
-    expectRejected(await runCopy(folder, copy, bunEnv));
-  },
-  timeout,
-);
-
-test(
-  "an unedited copy of the executable runs",
-  async () => {
-    const ran = await runCopy(folder, original, interpreterForbidden);
-    expect(outcome(ran)).toEqual(outcome(expected));
-  },
-  timeout,
-);
+  test(
+    "an unedited copy of the executable runs",
+    async () => {
+      const ran = await runCopy(folder, original, interpreterForbidden);
+      expect(outcome(ran)).toEqual(outcome(expected));
+    },
+    timeout,
+  );
+});

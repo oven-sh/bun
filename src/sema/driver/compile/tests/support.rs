@@ -578,6 +578,24 @@ impl CodeHost for ClaimsNodeFs<'_> {
     }
 }
 
+pub(super) struct LacksBunTypes<'a>(pub &'a host::Disk);
+
+impl LacksBunTypes<'_> {
+    pub(super) const DECLARATIONS: &'static str = "in-place-of-bun-types.d.ts";
+}
+
+impl Host for LacksBunTypes<'_> {
+    delegate_host_to_disk!();
+}
+
+impl CodeHost for LacksBunTypes<'_> {
+    delegate_parsers_to_disk!();
+
+    fn declarations_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
+        Some(inside(PROJECT, Self::DECLARATIONS.as_bytes()))
+    }
+}
+
 pub(super) struct SlowToQueueAgain<'a>(pub &'a host::Disk, pub Guarded<Vec<Vec<u8>>>);
 
 impl SlowToQueueAgain<'_> {

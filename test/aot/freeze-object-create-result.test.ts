@@ -72,7 +72,7 @@ function expectNoMutation(bodies: Record<string, string>) {
   }
 }
 
-describe("Object.create, Object.assign and Object.freeze on an ordinary object mutate no layout", () => {
+describe.concurrent("Object.create, Object.assign and Object.freeze on an ordinary object mutate no layout", () => {
   expectNoMutation({
     "stores that match a record type": `function make(x: number, y: number): Point {
   const self = Object.create(Proto);
@@ -97,7 +97,7 @@ make();`,
   });
 });
 
-describe("Object.freeze of a parsed value mutates no layout", () => {
+describe.concurrent("Object.freeze of a parsed value mutates no layout", () => {
   expectNoMutation({
     "a parameter of type any": `function close(value: any) {
   return Object.freeze(value);
@@ -110,7 +110,7 @@ make(JSON.parse("{}"));`,
   });
 });
 
-describe("control", () => {
+describe.concurrent("control", () => {
   test("a deleted field lists its class", async () => {
     expect(
       await check(

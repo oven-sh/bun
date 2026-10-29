@@ -1,6 +1,0 @@
-plain call TypeError RegExp.prototype.test requires that |this| be an Object
-call TypeError RegExp.prototype.test requires that |this| be an Object
-comma TypeError RegExp.prototype.test requires that |this| be an Object
-async TypeError RegExp.prototype.test requires that |this| be an Object
-fromAsync TypeError RegExp.prototype.test requires that |this| be an Object
-fromAsync array-like TypeError RegExp.prototype.test requires that |this| be an Object

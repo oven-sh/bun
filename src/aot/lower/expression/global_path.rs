@@ -6,6 +6,7 @@ use bun_sema::hir::ExprId;
 
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Resolved, SourceDialect};
+use crate::diagnostic_codes::Code;
 use crate::ir::ValueId;
 use crate::lower::FunctionLowering;
 use crate::lower::member::PropertyName;
@@ -53,11 +54,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         name: Atom,
         is_for_type_of: bool,
     ) -> ValueId {
+        if !is_for_type_of {
+            self.report_global_without_support(name);
+        }
         let key = self.file.atom_key(name);
         let is_free_name = self.sees_script_bindings();
         let global = self.builder.builtin(BuiltinId::GlobalThis, false);
         self.builder
             .prop_get(global, key, is_free_name, is_for_type_of)
+    }
+
+    fn report_global_without_support(&mut self, name: Atom) {
+        let text = self.file.queries.atom_bytes(name);
+        if text == b"ShadowRealm" && self.sees_script_bindings() {
+            let span = self.file.span_at(self.position());
+            self.file
+                .diagnostics
+                .report(Code::UnsupportedOption, span, &[text]);
+        }
     }
 
     pub(in crate::lower) fn emit_free_name_set(&mut self, name: Atom, value: ValueId) {

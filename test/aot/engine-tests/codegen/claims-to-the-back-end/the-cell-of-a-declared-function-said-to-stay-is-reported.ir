@@ -1,0 +1,6 @@
+# sabotage=SlotsOfSitesStayAsTheyAre: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=MovedLoads limit=MaxWarmCodeValues:1 sabotage=SlotsOfSitesStayAsTheyAre
+# CHECK: AOT claim check: LoadMayMove
+# PROGRAM-OF: a-loop-asks-for-a-declared-function-that-nobody-has-asked-for-passes.ir

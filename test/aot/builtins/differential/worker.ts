@@ -35,7 +35,11 @@ try {
   process.exit(1);
 }
 
-for (const [token, mode] of calls) {
+// What native code holds for an object that is no longer used is let go by a collection, and the engine does not know how much that is.
+const callsPerCollection = 100;
+
+for (const [index, [token, mode]] of calls.entries()) {
+  if (index % callsPerCollection === callsPerCollection - 1) Bun.gc(true);
   const entry = table.entries.get(token);
   const call = entry && callsOf(realm, entry).find(other => other.mode === mode);
   if (!call) continue;

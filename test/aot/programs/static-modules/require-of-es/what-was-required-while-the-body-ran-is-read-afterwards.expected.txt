@@ -1,4 +1,0 @@
-while it runs: threw ReferenceError
-first: object bump,one,zero number number function
-kept, afterwards: bump,one,zero number number function true
-false false false Module

@@ -1980,7 +1980,8 @@ for (let i = 0; i < 200; i++) {
   const name = "./gen" + i + ".js";
   write(name);
   try {
-    require.resolve(name, { paths });
+    // A lookup that finds another file is a miss too.
+    if (fs.realpathSync(require.resolve(name, { paths })) !== fs.realpathSync(path.join(here, name))) missed.push(name);
   } catch {
     missed.push(name);
   }
@@ -2002,5 +2003,5 @@ process.exit(0);
     // the program starts again. Each run that comes to its end prints what it missed.
     expect([...new Set(stdout.trim().split("\n"))]).toEqual(["[]"]);
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 }

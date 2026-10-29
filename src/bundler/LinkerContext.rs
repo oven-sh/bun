@@ -5194,8 +5194,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    /// The next statement is for an async dependency: an `import` of an async module, or an `export *` of one.
-    /// From here on each sync dependency runs first, then the `await`, then the other statements.
+    /// From the first async dependency on: each sync dependency, the `await`, then the other statements.
     pub(crate) fn leave_source_order(&mut self) {
         if !self.in_source_order {
             return;

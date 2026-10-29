@@ -192,7 +192,7 @@ mod sql_hooks {
         // an embedded field with stable address for the VM lifetime.
         unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
     }
-    unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
+    fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
         crate::jsc_hooks::timer_all().cast()
     }
     unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
@@ -224,7 +224,7 @@ mod sql_hooks {
         let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
         cache.get_or_create_opts(opts, err)
     }
-    unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
+    fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;
         match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
             Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),

@@ -6,6 +6,10 @@ const fail = message => () => {
   throw new Error(message);
 };
 const neverSettles = () => new Promise(() => {});
+const skipsAndNeverSettles = t => {
+  t.skip();
+  return neverSettles();
+};
 
 test("a subtest calls t.todo() and then throws", async t => {
   await t.test("todo then throws", t2 => {
@@ -194,6 +198,34 @@ test("a test calls t.skip() and throws while a test of its inline todo suite nev
     it("inherits todo", neverSettles);
   });
   t.skip();
+  throw new Error("own");
+});
+
+// A test with a timeout waits for a subtest only until that timeout ends. Node
+// cancels the subtest at once, and a subtest that called t.skip() stays skipped.
+test("a test with a timeout calls t.skip() and throws while its subtest never settles", { timeout: 20 }, t => {
+  t.test("skips and never settles", skipsAndNeverSettles);
+  t.skip();
+  throw new Error("own");
+});
+
+test("a test that called t.skip() times out while its subtest never settles", { timeout: 20 }, async t => {
+  t.skip();
+  t.test("skips and never settles", skipsAndNeverSettles);
+  await neverSettles();
+});
+
+test("a test with a timeout throws, and its after hook calls t.skip(), while its subtest never settles", { timeout: 20 }, t => {
+  t.after(() => t.skip());
+  t.test("skips and never settles", skipsAndNeverSettles);
+  throw new Error("own");
+});
+
+test("a test with a timeout throws, and its subtest calls the t.skip() of the test and never settles", { timeout: 20 }, t => {
+  t.test("skips and never settles", t2 => {
+    t.skip();
+    return skipsAndNeverSettles(t2);
+  });
   throw new Error("own");
 });
 

@@ -430,6 +430,8 @@ describe("node:test", () => {
     async (_, args) => {
       // `node --test` (v26.3.0) exits 0 for the fixture. No error is printed.
       const { exitCode, stderr } = await runTests(["45-runtime-directive-suppressed-failures.js"], {}, args);
+      // A wait that starts after the timeout of a test is over arms no timer with a negative delay.
+      expect(stderr.split("\n").filter(line => line.includes("TimeoutNegativeWarning"))).toEqual([]);
       expect(errorsAndVerdicts(stderr).sort()).toEqual(
         [
           "(pass) a subtest calls t.todo() and then throws",
@@ -457,6 +459,10 @@ describe("node:test", () => {
           "(todo) a test calls t.todo() and throws while its subtest never settles",
           "(skip) a test calls t.skip() and throws while its todo subtest never settles",
           "(skip) a test calls t.skip() and throws while a test of its inline todo suite never settles",
+          "(skip) a test with a timeout calls t.skip() and throws while its subtest never settles",
+          "(skip) a test that called t.skip() times out while its subtest never settles",
+          "(skip) a test with a timeout throws, and its after hook calls t.skip(), while its subtest never settles",
+          "(skip) a test with a timeout throws, and its subtest calls the t.skip() of the test and never settles",
           "(todo) a test calls t.todo() and throws, and its after hook closes what its subtest reads",
           "(skip) a suite > whose test calls t.todo() and t.skip() and then throws",
           "(todo) a suite > whose test calls t.todo() and then throws",
@@ -629,15 +635,38 @@ describe("node:test", () => {
     30_000,
   );
 
-  test.concurrent(
-    "should report a passing run() for todo tests whose subtests fail",
-    async () => {
-      // A run() child has no bun:test todo scope, so a failure that Node does not count must not fail the file.
-      const { counts, success } = await runEvents("46-todo-scope-failures.js");
-      expect({ failed: counts.failed, cancelled: counts.cancelled, success }).toEqual({
+  test.concurrent.each(["46-todo-scope-failures.js", "45-runtime-directive-suppressed-failures.js"])(
+    "should report a passing run() for failures that Node does not count, %s",
+    async fixture => {
+      // A run() child has no bun:test todo scope, and a todo suite or a suite that expects its failure fails no run.
+      const { counts, success } = await runEvents(fixture);
+      expect({ reported: counts.tests > 0, failed: counts.failed, cancelled: counts.cancelled, success }).toEqual({
+        reported: true,
         failed: 0,
         cancelled: 0,
         success: true,
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should not report a failed file through run() when a failed inline suite explains the exit code",
+    async () => {
+      const { events, counts, success } = await runEvents("50-run-suite-failure.js");
+      // The events and the verdict of node v26.3.0: no event for the file, no failed test, and no success.
+      expect(events.map(({ type, name, kind, skip }) => ({ type, name, kind, skip }))).toEqual([
+        { type: "test:fail", name: "skips then throws", kind: "test", skip: true },
+        { type: "test:fail", name: "inline", kind: "suite" },
+        { type: "test:fail", name: "an inline suite fails below a test that calls t.skip()", kind: "test", skip: true },
+      ]);
+      const { tests, failed, skipped, suites } = counts;
+      expect({ tests, failed, skipped, suites, success }).toEqual({
+        tests: 2,
+        failed: 0,
+        skipped: 2,
+        suites: 1,
+        success: false,
       });
     },
     30_000,

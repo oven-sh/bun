@@ -7333,8 +7333,10 @@ describe("an operation that reads a resizable ArrayBuffer leaves it free to be t
           received.fill(0xee);
 
           let foreignChunks = 0;
+          // A write that fails or stops short leaves the fifo empty for good, so it ends the loop.
+          const stopped = written.promise.then(n => (n === TOTAL ? new Promise(() => {}) : 0));
           while (drained < TOTAL) {
-            const n = await read();
+            const n = await Promise.race([read(), stopped]);
             if (!n) break;
             if (Buffer.compare(chunk.subarray(0, n), expected.subarray(0, n)) !== 0) foreignChunks++;
             drained += n;

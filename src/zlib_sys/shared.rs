@@ -132,8 +132,3 @@ pub struct zStream_struct {
 
 pub type z_stream = zStream_struct;
 pub type z_streamp = *mut z_stream;
-
-// SAFETY: `#[repr(C)]` POD — raw pointers, integers, and `Option<extern fn>`
-// allocators. All-zero
-// is the documented pre-`inflateInit`/`deflateInit` state (S021).
-unsafe impl bun_core::ffi::Zeroable for zStream_struct {}

@@ -1,6 +1,6 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
 
@@ -2008,5 +2008,541 @@ it.concurrent("the path passed to onLoad is still valid after the module is free
     stdout: "failed: 50 kept, 0 changed\nfailed in a namespace: 50 kept, 0 changed\ndeleted: 50 kept, 0 changed\n",
     stderr: "",
     exitCode: 0,
+  });
+});
+
+// An import() is loaded in jobs of the module loader. They continue the import(): the hooks they call and the
+// module bodies they run see the AsyncLocalStorage store of the import(), whichever module of the graph they are for.
+describe.concurrent("AsyncLocalStorage in what an import() loads", () => {
+  const files = {
+    "storage.mjs": `
+      import { AsyncLocalStorage } from "node:async_hooks";
+      export const storage = new AsyncLocalStorage();
+      const seen = [];
+      export const note = what => void seen.push(what + ": " + storage.getStore());
+      export const report = () => console.log(seen.sort().join("\\n"));
+      Object.assign(globalThis, { note, report, storage });
+    `,
+    // The namespace "virt". "c" and "y" are loaded asynchronously, "main" and "enters-main" report, the hook for
+    // "throws" throws, the hook for "enters-middle" enters a store, "slow" waits for the promise "gate" and says
+    // when it began, "first" says when it ran.
+    "virt.mjs": `
+      import { note, storage } from "./storage.mjs";
+      const imports = {
+        a: ["b", "c"],
+        b: ["d"],
+        x: ["y"],
+        n: ["m"],
+        main: ["a"],
+        fails: ["throws"],
+        deferred: ["below-deferred"],
+        thenable: ["below-thenable"],
+        parent: ["first", "slow"],
+        "enters-root": ["enters-middle"],
+        "enters-main": ["enters-middle"],
+        "enters-middle": ["enters-leaf"],
+      };
+      const bodies = {
+        main: "report();",
+        "enters-main": "report();",
+        deferred: "export const value = 1;",
+        thenable: 'export function then(resolve) { note("then of thenable"); resolve("what then() hands on"); }',
+        slow: 'began(); await gate; note("body slow behind its await");',
+        first: "firstRan();",
+      };
+      const body = name =>
+        (imports[name] ?? []).map(dependency => 'import "virt:' + dependency + '";').join("") +
+        'note("body ' + name + '");' +
+        (bodies[name] ?? "");
+      // Where a hook is registered does not decide what it sees.
+      storage.run("registration", () =>
+        Bun.plugin({
+          name: "virt",
+          setup(build) {
+            build.onResolve({ filter: /.*/, namespace: "virt" }, ({ path }) => {
+              note("onResolve " + path);
+              return { path, namespace: "virt" };
+            });
+            build.onLoad({ filter: /.*/, namespace: "virt" }, async ({ path }) => {
+              if (path === "enters-middle") storage.enterWith("entered by a hook");
+              note("onLoad " + path);
+              if (path === "throws") throw new Error("thrown by onLoad");
+              if (path === "c" || path === "y") {
+                await new Promise(resolve => setImmediate(resolve));
+                note("onLoad " + path + " after await");
+              }
+              return { contents: body(path), loader: "js" };
+            });
+          },
+        }),
+      );
+    `,
+    // Other ways into user code from a load: a CommonJS body, what it requires, an object's getter, build.module().
+    "kinds.mjs": `
+      import { note } from "./storage.mjs";
+      Bun.plugin({
+        name: "kinds",
+        setup(build) {
+          build.onLoad({ filter: /\\.custom$/ }, () => {
+            note("onLoad required.custom");
+            return { contents: "module.exports = 1;", loader: "js" };
+          });
+          build.onLoad({ filter: /\\.getter$/ }, () => {
+            note("onLoad object.getter");
+            return {
+              loader: "object",
+              exports: {
+                get default() {
+                  note("getter of object.getter");
+                  return 1;
+                },
+              },
+            };
+          });
+          build.module("module-of-plugin", () => {
+            note("factory of build.module()");
+            return { exports: { default: 1 }, loader: "object" };
+          });
+        },
+      });
+    `,
+    "esm.mjs": `
+      import "./dependency.cjs";
+      import "./object.getter";
+      import "module-of-plugin";
+      note("body esm.mjs");
+    `,
+    "dependency.cjs": `
+      note("body dependency.cjs");
+      require("./required.custom");
+    `,
+    "required.custom": "",
+    "object.getter": "",
+    "imports-enters.mjs": `
+      import "./enters.cjs";
+      import "./beside-enters.mjs";
+      note("body imports-enters.mjs");
+    `,
+    "enters.cjs": `
+      storage.enterWith("entered by enters.cjs");
+      note("body enters.cjs");
+      module.exports = {};
+    `,
+    "beside-enters.mjs": `note("body beside-enters.mjs");`,
+    "of-the-host.mjs": `note("body of-the-host.mjs in " + (Bun.ModuleGraph.current ? "a graph's context" : "the host's context"));`,
+    "required.mjs": `
+      import "./required-dependency.mjs";
+      note("body required.mjs");
+      storage.enterWith("entered by required.mjs");
+      globalThis.importedInside = storage.run("inside", () => import("./imported-inside.mjs"));
+    `,
+    "required-dependency.mjs": `note("body required-dependency.mjs");`,
+    "imported-inside.mjs": `
+      import "./below-imported-inside.mjs";
+      note("body imported-inside.mjs");
+    `,
+    "below-imported-inside.mjs": `note("body below-imported-inside.mjs");`,
+  };
+  async function run(entry: string, source: string, env: Record<string, string> = {}) {
+    using dir = tempDir("plugin-async-local-storage", { ...files, [entry]: source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      cwd: String(dir),
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+  // What report() prints for modules of "virt" that all saw one store.
+  const graph = (store: string | undefined, modules: string[], asynchronous: string[] = []) =>
+    modules.flatMap(name => [
+      `body ${name}: ${store}`,
+      `onLoad ${name}: ${store}`,
+      ...(asynchronous.includes(name) ? [`onLoad ${name} after await: ${store}`] : []),
+      `onResolve ${name}: ${store}`,
+    ]);
+  const hooks = (store: string | undefined, modules: string[]) =>
+    modules.flatMap(name => [`onLoad ${name}: ${store}`, `onResolve ${name}: ${store}`]);
+
+  it("onResolve, onLoad and the module bodies of static imports see the store of their import()", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { report, storage } from "./storage.mjs";
+          import "./virt.mjs";
+          const load = name => import("virt:" + name);
+          await Promise.all([storage.run("A", () => load("a")), storage.run("B", () => load("x")), load("n")]);
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        ...graph("A", ["a", "b", "c", "d"], ["c"]),
+        ...graph("B", ["x", "y"], ["y"]),
+        ...graph(undefined, ["n", "m"]),
+      ].sort(),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("as do an import() from a timer, one from a promise reaction and one after exit()", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { report, storage } from "./storage.mjs";
+          import "./virt.mjs";
+          const load = name => import("virt:" + name);
+          await storage.run("timer", () => new Promise(resolve => setImmediate(() => resolve(load("a")))));
+          await storage.run("reaction", () => Promise.resolve().then(() => load("x")));
+          await storage.run("exited", () => storage.exit(() => load("n")));
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        ...graph("timer", ["a", "b", "c", "d"], ["c"]),
+        ...graph("reaction", ["x", "y"], ["y"]),
+        ...graph(undefined, ["n", "m"]),
+      ].sort(),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("as does what Module.runMain() loads", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { runMain } from "node:module";
+          import { storage } from "./storage.mjs";
+          import "./virt.mjs";
+          storage.run("runMain", () => runMain("virt:main"));
+        `,
+      ),
+    ).toEqual({ stdout: graph("runMain", ["main", "a", "b", "c", "d"], ["c"]).sort(), stderr: "", exitCode: 0 });
+  });
+
+  it("a CommonJS body, what it requires, an object's getter and a build.module() factory see it too", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { report, storage } from "./storage.mjs";
+          import "./kinds.mjs";
+          await storage.run("A", () => import("./esm.mjs"));
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "body dependency.cjs: A",
+        "body esm.mjs: A",
+        "factory of build.module(): A",
+        "getter of object.getter: A",
+        "onLoad object.getter: A",
+        "onLoad required.custom: A",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("the then() of a namespace runs in the store of the import() too", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { note, report, storage } from "./storage.mjs";
+          import "./virt.mjs";
+          note("resolved with " + (await storage.run("T", () => import("virt:thenable"))));
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        ...graph("T", ["thenable", "below-thenable"]),
+        "resolved with what then() hands on: undefined",
+        "then of thenable: T",
+      ].sort(),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("as does what import.defer() loads", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { report, storage } from "./storage.mjs";
+          import "./virt.mjs";
+          // The transpiler does not take import.defer(). The engine does.
+          const importDefer = new Function("specifier", "return import.defer(specifier)");
+          // The promise is resolved with the namespace, which is asked for then(): that runs the modules.
+          await storage.run("call", () => importDefer("virt:deferred"));
+          report();
+        `,
+      ),
+    ).toEqual({ stdout: graph("call", ["deferred", "below-deferred"]).sort(), stderr: "", exitCode: 0 });
+  });
+
+  it("a load that fails keeps the store up to the hook that fails it", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { note, report, storage } from "./storage.mjs";
+          import "./virt.mjs";
+          const load = name => import("virt:" + name);
+          const failed = storage.run("F", () => load("fails").then(() => "loaded", error => error.message));
+          await Promise.all([failed, storage.run("G", () => load("x"))]);
+          note("import() of fails: " + (await failed));
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        ...hooks("F", ["fails", "throws"]),
+        ...graph("G", ["x", "y"], ["y"]),
+        "import() of fails: thrown by onLoad: undefined",
+      ].sort(),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The modules that wait for a module with a top-level await run when its body ends, in the job of whoever
+  // began to evaluate it.
+  it("a module that waits for a dependency of another import() runs in the store of that import()", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { report, storage } from "./storage.mjs";
+          import "./virt.mjs";
+          const load = name => import("virt:" + name);
+          const { promise: gate, resolve: open } = Promise.withResolvers();
+          const { promise: slowBegan, resolve: began } = Promise.withResolvers();
+          const { promise: parentWaits, resolve: firstRan } = Promise.withResolvers();
+          Object.assign(globalThis, { gate, began, firstRan });
+          const one = storage.run("one", () => load("slow"));
+          await slowBegan;
+          const two = storage.run("two", () => load("parent"));
+          await parentWaits;
+          open();
+          await Promise.all([one, two]);
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "body first: two",
+        "body parent: one",
+        "body slow behind its await: one",
+        "body slow: one",
+        ...hooks("one", ["slow"]),
+        ...hooks("two", ["parent", "first"]),
+        // "parent" asks for "slow" too.
+        "onResolve slow: two",
+      ].sort(),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // What a hook enters with enterWith() ends with the hook: the rest of the load goes on in the store of the import().
+  it.each([
+    ["import()", `await storage.run("A", () => import("virt:enters-root")); report();`, "enters-root"],
+    ["Module.runMain()", `storage.run("A", () => runMain("virt:enters-main"));`, "enters-main"],
+  ])("a store that a hook enters under %s ends with the hook", async (_, load, root) => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { runMain } from "node:module";
+          import { report, storage } from "./storage.mjs";
+          import "./virt.mjs";
+          ${load}
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        ...graph("A", [root, "enters-leaf"]),
+        "body enters-middle: A",
+        "onLoad enters-middle: entered by a hook",
+        "onResolve enters-middle: A",
+      ].sort(),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Bun runs a CommonJS file that an ES module imports where the loader fetches it, in a job of its own. Node runs
+  // it with the modules that import it, which then see the store that it entered.
+  it("a store that a CommonJS file enters under an import() ends with the file", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { note, report, storage } from "./storage.mjs";
+          await storage.run("A", () => import("./imports-enters.mjs"));
+          note("after the import()");
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "after the import(): undefined",
+        "body beside-enters.mjs: A",
+        "body enters.cjs: entered by enters.cjs",
+        "body imports-enters.mjs: A",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The modules of a Bun.ModuleGraph run in the graph's context. The host's hooks that load them are the host's.
+  it("the host's hooks see the host's store for what a Bun.ModuleGraph imports, and the graph's modules do not", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { note, report, storage } from "./storage.mjs";
+          import "./kinds.mjs";
+          const graph = new Bun.ModuleGraph({ globals: { note } });
+          await storage.run("host", () => graph.import(import.meta.dir + "/esm.mjs"));
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "body dependency.cjs: undefined",
+        "body esm.mjs: undefined",
+        "factory of build.module(): host",
+        "getter of object.getter: undefined",
+        "onLoad object.getter: host",
+        "onLoad required.custom: undefined",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // What the host calls through run() runs in the graph's context, and so does a module that it imports there.
+  it("a module of the host that is imported inside graph.run() runs in the graph's context", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { note, report } from "./storage.mjs";
+          const graph = new Bun.ModuleGraph({ globals: { note } });
+          await graph.run(() => import("./of-the-host.mjs"));
+          report();
+        `,
+      ),
+    ).toEqual({ stdout: ["body of-the-host.mjs in a graph's context: undefined"], stderr: "", exitCode: 0 });
+  });
+
+  it("require() of an ES module stays in the context of its caller, and an import() inside it has its own", async () => {
+    expect(
+      await run(
+        "entry.cjs",
+        `
+          const { note, report, storage } = require("./storage.mjs");
+          storage.run("A", () => {
+            require("./required.mjs");
+            // What a required module enters is still entered where require() returns.
+            note("after require()");
+          });
+          note("after run()");
+          importedInside.then(report);
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "after require(): entered by required.mjs",
+        "after run(): undefined",
+        "body below-imported-inside.mjs: inside",
+        "body imported-inside.mjs: inside",
+        "body required-dependency.mjs: A",
+        "body required.mjs: A",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("the factory of mock.module() for a static dependency runs in the store of the import()", async () => {
+    using dir = tempDir("plugin-async-local-storage-mock", {
+      "imports-mocked.mjs": `import value from "module-mocked-for-async-local-storage"; export default value;`,
+    });
+    const { AsyncLocalStorage } = await import("node:async_hooks");
+    const storage = new AsyncLocalStorage();
+    let seen: unknown = "not called";
+    mock.module("module-mocked-for-async-local-storage", () => {
+      seen = storage.getStore();
+      return { default: 1 };
+    });
+    const imported = await storage.run("A", () => import(resolve(String(dir), "imports-mocked.mjs")));
+    expect({ seen, value: imported.default }).toEqual({ seen: "A", value: 1 });
+  });
+
+  // The store rides in cells that a load has anyway. A load under a store makes the cells that it makes without one.
+  it("a store adds no cell to a load", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      "entry.mjs",
+      `
+        import { heapStats } from "bun:jsc";
+        import { storage } from "./storage.mjs";
+        Bun.plugin({
+          name: "counted",
+          setup(build) {
+            build.onResolve({ filter: /.*/, namespace: "counted" }, ({ path }) => ({ path, namespace: "counted" }));
+            // "<graph>-root" imports 12 modules, and each of them imports "<graph>-leaf".
+            build.onLoad({ filter: /.*/, namespace: "counted" }, ({ path }) => {
+              const [graph, name] = path.split("-");
+              const imports =
+                name === "root"
+                  ? Array.from({ length: 12 }, (_, i) => 'import "counted:' + graph + "-" + i + '";').join("")
+                  : name === "leaf"
+                    ? ""
+                    : 'import "counted:' + graph + '-leaf";';
+              return { contents: imports + "export default 0;", loader: "js" };
+            });
+          },
+        });
+        const counted = /Promise|Module|Reaction|Tuple/;
+        const counts = () => Object.entries(heapStats().objectTypeCounts).filter(([name]) => counted.test(name));
+        const cellsOf = async load => {
+          const before = new Map(counts());
+          await load();
+          return Object.fromEntries(
+            counts()
+              .map(([name, count]) => [name, count - (before.get(name) ?? 0)])
+              .filter(([, added]) => added),
+          );
+        };
+        const load = name => () => import("counted:" + name + "-root");
+        await load("warm")();
+        const withoutStore = await cellsOf(load("plain"));
+        const withStore = await storage.run({ store: 1 }, () => cellsOf(load("stored")));
+        console.log(JSON.stringify({ same: Bun.deepEquals(withStore, withoutStore), records: withStore.ModuleRecord, withStore, withoutStore }));
+      `,
+      { BUN_JSC_useGC: "0" },
+    );
+    const result = JSON.parse(stdout.join("\n"));
+    expect({ same: result.same || result, records: result.records, stderr, exitCode }).toEqual({
+      same: true,
+      records: 14,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

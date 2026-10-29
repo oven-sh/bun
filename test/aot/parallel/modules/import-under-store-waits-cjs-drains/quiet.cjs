@@ -1,0 +1,2 @@
+see("quiet");
+module.exports = {};

@@ -216,7 +216,7 @@ pub(crate) fn run_task(
     macro_rules! compression_arm {
         ($feature:ident, $T:ty) => {
             feature_arm!([$feature], |stream: $T| {
-                // SAFETY: §Dispatch — tag identifies pointee; the task holds the ref `write()` took.
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns the ref `write()` took.
                 let stream = unsafe { bun_ptr::RefPtr::from_raw(stream) };
                 node_zlib_binding::run_from_js_thread(stream);
             })

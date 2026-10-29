@@ -233,9 +233,9 @@ unsafe extern "C" {
     safe fn WebWorker__postOutOfMemoryError(proxy: *mut c_void);
     safe fn WebWorker__postFailedToStartError(proxy: *mut c_void);
     /// The address space a compiled program's thread needs for its tables, taken
-    /// by the thread that starts it. False: there is none. `pages` may be null.
-    fn Bun__AOT__tryReservePagesForNewThread(
-        pages: *mut *mut c_void,
+    /// by the thread that starts it. False: there is none. `*pages` may be null.
+    safe fn Bun__AOT__tryReservePagesForNewThread(
+        pages: &mut *mut c_void,
         threads_are_ending: bool,
     ) -> bool;
     safe fn Bun__AOT__releasePagesForNewThread(pages: *mut c_void);
@@ -628,8 +628,7 @@ impl WebWorker {
     fn try_start(&self, can_wait: bool) -> StartOutcome {
         let start = self.thread_start.get();
         let mut table_pages: *mut c_void = core::ptr::null_mut();
-        // SAFETY: `table_pages` is a live local the callee writes once.
-        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages, can_wait) } {
+        if !Bun__AOT__tryReservePagesForNewThread(&mut table_pages, can_wait) {
             return StartOutcome::NoRoom;
         }
         // SAFETY: `heap::alloc`'d in `create()`; no thread has it yet.

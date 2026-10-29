@@ -2,24 +2,10 @@
 // With the leading `*` of the next comment line that expression runs into the next tag: `token * @returns`. The `@returns` is a
 // decorator of nothing. It belongs to the comment, as every node of a tag does, and no statement of the file comes from it.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "./harness/commands";
-
-async function run(cmd: string[], cwd: string) {
-  await using child = Bun.spawn({
-    cmd,
-    cwd,
-    env: bunEnv,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 60_000,
-    killSignal: "SIGKILL",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
-}
+import { run } from "./harness/run";
 
 const files = {
   "lib.js": `/**

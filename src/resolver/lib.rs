@@ -229,8 +229,7 @@ pub mod fs {
             Ok(ZStr::from_buf_mut(buf, written))
         }
 
-        /// Only for `RealFS::entries`, whose methods take `&mut self`.
-        /// Everything else uses [`get`](Self::get).
+        /// Only for `RealFS::entries`, whose methods take `&mut self`; otherwise use [`get`](Self::get).
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
             // SAFETY: caller guarantees init() was called, so INSTANCE is initialized.

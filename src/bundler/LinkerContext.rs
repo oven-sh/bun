@@ -148,7 +148,8 @@ pub struct LinkerContext<'a> {
 // `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
 // `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
 // lifetimes strictly outlive every parallel section, and per-thread writes go
-// to disjoint SoA slots (see `compute_line_offsets`). For `graph`, see `LinkerGraph`.
+// to disjoint SoA slots (see `compute_line_offsets`). Only the bundle thread
+// allocates from `graph`'s arena; workers use `worker.arena()`.
 unsafe impl<'a> Send for LinkerContext<'a> {}
 // SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
@@ -1875,8 +1876,6 @@ impl<'a> GenerateChunkCtx<'a> {
     pub(crate) fn c(&self) -> &mut LinkerContext<'a> {
         // SAFETY: ParentRef into `BundleV2.linker`, valid for the
         // chunk-generation pass; this task's chunk row is disjoint from peers'.
-        // Constructed via `from_raw_mut` (write provenance) in
-        // `generate_chunks_in_parallel`.
         unsafe { self.c.assume_mut() }
     }
 }

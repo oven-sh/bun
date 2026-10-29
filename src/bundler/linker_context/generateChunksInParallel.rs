@@ -69,8 +69,6 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             c: bun_ptr::ParentRef::from_ref_mut(c),
             chunks: bun_ptr::BackRef::new(&*chunks),
         };
-        // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
-        // link step); `pool` is the arena-allocated bundler ThreadPool.
         c.worker_pool()
             .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
         if !c.options.minify_identifiers {
@@ -335,8 +333,6 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             debug_assert!(chunks_to_do.len() > 0);
             debug!(" START {} postprocess chunks", chunks_to_do.len());
 
-            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
-            // the link step); `pool` is the arena-allocated bundler ThreadPool.
             c.worker_pool().each_ptr(
                 chunk_contexts[0],
                 LinkerContext::generate_chunk,

@@ -153,7 +153,8 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
 ) {
     // SAFETY: `ud` is the `DevServer` that `set_routes` registered; the server clears
     // the routes before it drops it. uWS passes a non-null `Request*` that is valid
-    // for the callback.
+    // for the callback and that nothing else uses meanwhile. Every handler below takes
+    // `&mut DevServer`, so this asks for no more exclusivity than they do.
     let (dev, req) = unsafe { (&mut *ud.cast::<DevServer>(), &mut *req) };
     let resp = if SSL {
         AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())

@@ -210,22 +210,6 @@ pub use js_meta::{
     ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
 };
 
-/// Shared read-mostly across worker threads during linking, as a field of
-/// `LinkerContext` (whose `unsafe impl Sync` rests on this):
-///
-/// - `bump`: only the bundle thread allocates from it. Workers use `worker.arena()`.
-/// - `files_live` / `parts_live` / `is_scb_bitset` / `reachable_files` /
-///   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
-///   before fan-out and only read by workers.
-/// - `ast` / `meta` / `files` columns that workers mutate are split out via
-///   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
-///   `compute_cross_chunk_dependencies`); workers never reach those columns
-///   through `&LinkerGraph`.
-/// - `symbols: symbol::Map` IS written by workers
-///   (`Map::assign_chunk_index`), but the written field is
-///   `Symbol.chunk_index: AtomicU32` — interior-mutable, Relaxed store — so
-///   the write is sound through `&Map`. All other `Symbol` fields are
-///   read-only during worker fan-out.
 pub struct LinkerGraph<'a> {
     pub files: FileList,
     pub(crate) files_live: BitSet,

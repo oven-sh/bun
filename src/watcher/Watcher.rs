@@ -1139,7 +1139,7 @@ fn files_by_name_key(folder: platform::EventListIndex, name: &[u8]) -> u64 {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
 fn last_path_component(path: &[u8]) -> &[u8] {
-    match path.iter().rposition(|&byte| byte == bun_paths::SEP) {
+    match strings::last_index_of_char(path, bun_paths::SEP) {
         Some(separator) => &path[separator + 1..],
         None => path,
     }

@@ -325,10 +325,7 @@ impl<'a> fmt::Display for GroupFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let this = self.group;
 
-        if this.head.next.is_none()
-            && this.head.head.next.is_none()
-            && !this.head.head.range.has_left()
-        {
+        if this.is_empty() {
             return Ok(());
         }
 

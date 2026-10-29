@@ -295,11 +295,21 @@ JSC_DEFINE_CUSTOM_GETTER(jsEvent_type, (JSGlobalObject * lexicalGlobalObject, JS
     return IDLAttribute<JSEvent>::get<jsEvent_typeGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
+// The event of events.addAbortListener() has no native target: its signal need not be an EventTarget, so the wrapper names it (JSEventTargetNode.cpp).
+static NEVER_INLINE JSValue targetNamedOnWrapper(JSGlobalObject& lexicalGlobalObject, JSEvent& thisObject)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    JSValue target = thisObject.getDirect(vm, WebCore::builtinNames(vm).signalPrivateName());
+    return target ? target : jsNull();
+}
+
 static inline JSValue jsEvent_targetGetter(JSGlobalObject& lexicalGlobalObject, JSEvent& thisObject)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
+    if (!impl.target()) [[unlikely]]
+        return targetNamedOnWrapper(lexicalGlobalObject, thisObject);
     RELEASE_AND_RETURN(throwScope, (toJS<IDLNullable<IDLInterface<EventTarget>>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.target())));
 }
 
@@ -313,6 +323,8 @@ static inline JSValue jsEvent_currentTargetGetter(JSGlobalObject& lexicalGlobalO
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
+    if (!impl.currentTarget()) [[unlikely]]
+        return impl.isBeingDispatched() ? targetNamedOnWrapper(lexicalGlobalObject, thisObject) : jsNull();
     RELEASE_AND_RETURN(throwScope, (toJS<IDLNullable<IDLInterface<EventTarget>>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.currentTarget())));
 }
 
@@ -451,6 +463,8 @@ static inline JSValue jsEvent_srcElementGetter(JSGlobalObject& lexicalGlobalObje
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
+    if (!impl.target()) [[unlikely]]
+        return targetNamedOnWrapper(lexicalGlobalObject, thisObject);
     RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<EventTarget>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.target())));
 }
 

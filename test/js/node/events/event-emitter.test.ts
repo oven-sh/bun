@@ -1084,6 +1084,7 @@ describe("addAbortListener on a signal that is aborted already", () => {
       currentTarget: false,
       eventPhase: Event.NONE,
     });
+    expect([event.bubbles, event.cancelable]).toEqual([false, false]);
     expect(Object.getPrototypeOf(event)).toBe(Event.prototype);
     // Nothing is dispatched, so the listeners that are on the signal do not run.
     expect(otherListener).not.toHaveBeenCalled();
@@ -1098,7 +1099,7 @@ describe("addAbortListener on a signal that is aborted already", () => {
       srcElement: event.srcElement === signal,
       keys: Object.keys(event),
       json: JSON.stringify(event),
-      targetIsWritable: Object.getOwnPropertyDescriptor(event, "target")?.writable,
+      ownNames: Object.getOwnPropertyNames(event),
     });
     let event!: Event;
     let during: object | undefined;
@@ -1108,7 +1109,7 @@ describe("addAbortListener on a signal that is aborted already", () => {
     });
     await nextTurn();
 
-    const own = { srcElement: true, keys: ["isTrusted"], json: '{"isTrusted":true}', targetIsWritable: false };
+    const own = { srcElement: true, keys: ["isTrusted"], json: '{"isTrusted":true}', ownNames: ["isTrusted"] };
     expect({ during, after: describeOwn(event) }).toEqual({
       during: {
         type: "abort",
@@ -1120,6 +1121,11 @@ describe("addAbortListener on a signal that is aborted already", () => {
       },
       after: { type: "abort", isTrusted: true, target: true, currentTarget: false, eventPhase: Event.NONE, ...own },
     });
+  });
+
+  test("an event that no signal has does not name a target before a dispatch", () => {
+    const event = new Event("abort");
+    expect([event.target, event.currentTarget, event.srcElement]).toEqual([null, null, null]);
   });
 
   test("a later dispatch of the event of such a signal names its own target", async () => {

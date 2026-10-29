@@ -221,10 +221,15 @@ thread_local! {
     static SOURCE_SET: Cell<bool> = const { Cell::new(false) };
 }
 
+#[cfg(not(windows))]
+type AtomicFd = AtomicI32;
+#[cfg(windows)]
+type AtomicFd = core::sync::atomic::AtomicU64;
+
 // These are not threadlocal so we avoid opening stdout/stderr for every thread
 // Guarded by STDOUT_STREAM_SET (write-once at startup before threads).
-static STDERR_STREAM: crate::RacyCell<StreamType> = crate::RacyCell::new(StreamType::ZEROED);
-static STDOUT_STREAM: crate::RacyCell<StreamType> = crate::RacyCell::new(StreamType::ZEROED);
+static STDERR_STREAM: AtomicFd = AtomicFd::new(Fd::INVALID.0);
+static STDOUT_STREAM: AtomicFd = AtomicFd::new(Fd::INVALID.0);
 static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 
 // Track which stdio descriptors are TTYs (0=stdin, 1=stdout, 2=stderr).
@@ -349,9 +354,12 @@ impl Source {
             return;
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
-        // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
-        SOURCE.with_borrow_mut(|s| unsafe {
-            Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
+        SOURCE.with_borrow_mut(|s| {
+            Source::init(
+                s,
+                File(Fd(STDOUT_STREAM.load(Ordering::Relaxed))),
+                File(Fd(STDERR_STREAM.load(Ordering::Relaxed))),
+            )
         });
         crate::StackCheck::configure_thread();
     }
@@ -377,9 +385,12 @@ impl Source {
             return;
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
-        // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
-        SOURCE.with_borrow_mut(|s| unsafe {
-            Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
+        SOURCE.with_borrow_mut(|s| {
+            Source::init(
+                s,
+                File(Fd(STDOUT_STREAM.load(Ordering::Relaxed))),
+                File(Fd(STDERR_STREAM.load(Ordering::Relaxed))),
+            )
         });
         // Intentionally NOT calling `crate::StackCheck::configure_thread()`.
     }
@@ -450,11 +461,8 @@ impl Source {
                     .store(enable_color.unwrap_or(is_stderr_tty), Ordering::Relaxed);
             }
 
-            // SAFETY: write-once init guarded by STDOUT_STREAM_SET above.
-            unsafe {
-                STDOUT_STREAM.write(stdout);
-                STDERR_STREAM.write(stderr);
-            }
+            STDOUT_STREAM.store(stdout.0.0, Ordering::Relaxed);
+            STDERR_STREAM.store(stderr.0.0, Ordering::Relaxed);
         }
     }
 }

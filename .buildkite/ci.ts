@@ -20,6 +20,7 @@ import {
   getAotSample,
   getAotShare,
   getAotStepArguments,
+  getAotTakesOfLane,
   getAotTestsOfLane,
   getHardenedStepArguments,
   isFileDrawn,
@@ -535,6 +536,12 @@ function getTestAgent(platform: Platform): Agent {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
+    // The only test machines that are a fixed number: 16 arm64 and 9 x64
+    // agents on 2026-10-28. Their queue gives a free one to the oldest build,
+    // whatever the step, and a job that waits 60 minutes expires: the fourth
+    // expiry fails its build. So every job a build puts here delays the jobs
+    // of every later build.
+    //
     // `release-tier` is emitted by scripts/agent.ts based on the box's macOS
     // major version. arm64 splits into `latest` (current macOS) + `previous`
     // (anything older). x64 is NOT tier-targeted — single entry, any Intel
@@ -2032,8 +2039,11 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           const aot = getAotTests(target, options);
           const aotStep = aot && getTestBunStep(target, options, { buildId, aot });
           if (aotStep) testStepKeys.push(aotStep.key);
-          // Nothing waits for it.
-          const drawnAotStep = aot && getTestBunStep(target, options, { buildId, aot, aotTakes: "drawn" });
+          // Nothing waits for it, so it is not on macOS, where later builds would (see getTestAgent).
+          const drawnAotStep =
+            aot &&
+            getAotTakesOfLane(target).includes("drawn") &&
+            getTestBunStep(target, options, { buildId, aot, aotTakes: "drawn" });
           // Its build is made in this run alone, and no release waits for it.
           const runsHardened =
             !buildId &&

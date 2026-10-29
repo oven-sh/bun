@@ -21,7 +21,11 @@ export type AotTests = "all" | "a tenth";
 // nothing.
 export type AotTakes = "fixed" | "drawn";
 
-// What the sample goes by: the commit under test. Each commit takes other files and programs, so in time every lane has run all of them. A step is written with its sample, so a retry
+// The steps of a lane. Every lane but macOS starts a machine for each job. macOS has a fixed number, and their queue gives a free one to the oldest build: a drawn step there runs before
+// the test-bun jobs of every later build, which expire while they wait. So macOS has no drawn step, and runs nothing of what it is dealt.
+export const getAotTakesOfLane = ({ os }: AotLane): AotTakes[] => (os === "darwin" ? ["fixed"] : ["fixed", "drawn"]);
+
+// What the sample goes by: the commit under test. Each commit takes other files and programs, so in time every lane that has a drawn step has run all of them. A step is written with its sample, so a retry
 // of a job makes the same draw. AOT_SAMPLE is a sample by hand: with the one that a step printed, the steps are those of that commit.
 const sampleWithoutCommit = "58b3677a4d38b2500927f51f945beb4c1a01886a";
 const isRevision = (text: string | undefined): text is string => /^[0-9a-f]{7,40}$/.test(text ?? "");
@@ -30,8 +34,8 @@ export const getAotSample = (): string =>
   (aotSample ??= [process.env.AOT_SAMPLE, getCommit()].find(isRevision) ?? sampleWithoutCommit);
 
 // Each lane takes another share of the sample: of what is dealt out one in n, the lane with the number k takes the share k % n.
-// macOS on ARM64 runs the even half of the files. The four lanes that run one file in eight run the odd eighths, so every file runs on one of the five. macOS on x64 runs an odd tenth and
-// Windows on ARM64 an even one: what the other lane of that system does not run. No two lanes take the same tenth of a folder of programs.
+// macOS on ARM64 is dealt the even half of the files. The four lanes that run one file in eight run the odd eighths, so every file is dealt to one of the five. macOS on x64 is dealt an odd
+// tenth and Windows on ARM64 an even one: what the other lane of that system is not dealt. No two lanes take the same tenth of a folder of programs.
 export const aotLanes: (AotLane & { share: number })[] = [
   { os: "linux", arch: "x64", distro: "debian", share: 0 },
   { os: "windows", arch: "x64", share: 1 },
@@ -152,7 +156,7 @@ export function getAotExcludes({ arch, distro, profile }: AotLane, aot: AotTests
   return aot === "all" && arch === "x64" && distro === "debian" ? runNothing : [...groups, ...runNothing];
 }
 
-// Debian runs every file. Any other lane runs one file in this many.
+// Debian runs every file. Any other lane is dealt one file in this many.
 export function getAotFileDraw({ os, distro, profile }: AotLane, aot: AotTests): number {
   if (aot === "a tenth") return 10;
   if (distro === "debian" && !profile) return 1;
@@ -185,6 +189,8 @@ export function getAotAlwaysDrawn(
     ...(arch === "aarch64" ? ["aot/calls-beyond-their-reach"] : []),
     // Only a file system that ignores the case of letters can tell it from any other resolution.
     ...(os === "darwin" ? ["aot/resolver/file-name-case"] : []),
+    // One of its tests is for macOS alone, and macOS has no drawn step that would draw the file. It was green there on ARM64.
+    ...(isMacOnArm ? ["bundler/compile-trim-runtime.test"] : []),
     // It lists what once went wrong on one platform alone, so that no draw passes it over there.
     "aot/programs-that-differed-on-one-platform",
     // What every run takes of the programs, whatever its share. Debian runs every file.
@@ -199,7 +205,8 @@ export function getAotAlwaysDrawn(
   ];
 }
 
-// The tests whose next result on a system is waited for. The lanes of that system run them on every commit, whatever they draw. An entry is taken out when the result is in.
+// The tests whose next result on a system is waited for. The drawn steps of that system run them on every commit, whatever they draw, so macOS can have no entry. An entry is taken out
+// when the result is in.
 export const testsAwaitedOn: Record<string, string[]> = {
   windows: [
     "aot/a-descriptor-that-is-written-out-is-no-object-whatever-it-describes-a-property-of",

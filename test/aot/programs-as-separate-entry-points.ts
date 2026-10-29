@@ -16,7 +16,7 @@
 // Left out: a program that is built with flags, entry points or an environment of its own, one that is not compared with plain Bun, and one whose build is meant to fail.
 //
 // A program by itself costs thirteen times the processor time of a program among hundreds, so a run takes a quarter. Which one goes by the day and by the lane of CI: in four days a lane has
-// taken every program, and the two lanes that run every file have in two. macOS, which has the fewest machines, takes a tenth. AOT_SHARE=all takes all.
+// taken every program, and the two lanes that run every file have in two. macOS, which has the fewest machines, takes a tenth, and no step of CI runs this there (getAotTakesOfLane()). AOT_SHARE=all takes all.
 //
 //   TEST_PART=aot/every-program-alone-3 bun test test/aot/parts.test.ts   one part
 //   AOT_SHARE=all TEST_PART=aot/every-program-alone bun test ..        every program

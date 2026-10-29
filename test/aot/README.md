@@ -65,7 +65,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   without those two groups, `heat`, `startup-scaling` and `variant-*`. A pull request that touches none of those paths but `src/js`,
   `src/codegen` or a `*.bind.ts` changes what an executable compiles or what the table of built-ins is written from: on the two Debian
   lanes its first step also has `builtins/`, `servers/` and `programs-in-every-run-*` (`libraryAotGroups`), and holds up the merge.
-  macOS x64 and Windows arm64 only ever run that tenth. A failing
+  Windows arm64 only ever runs that tenth, and macOS x64 is only ever dealt it. A failing
   file is run once more, not three times.
 - **Two steps a platform.** `<platform>-test-aot` may hold up a merge, so it is the same on every commit: the tests with a body of their own, `programs-in-every-run-*`, what once went
   wrong, the servers, the frameworks, the engine's tests. `<platform>-test-aot-drawn` is whatever goes by the commit, and a red there is seen and holds up nothing (`soft_fail`): the
@@ -73,15 +73,17 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   that draw their files the draw. On Debian the runner gets `--aot-takes=fixed` or `--aot-takes=drawn`:
   it sets `AOT_TAKES`, which `inShare()` and `takesWhatIsFixed` of `run-programs.ts` read, and leaves out what has nothing for that step (`unitsThatDraw`, `unitsThatOnlyDraw` in
   `parts.mts`; a test file draws if it calls a helper that does). On the other lanes the first step is what `getAotAlwaysDrawn()` lists. A program that the drawn step found red gets a
-  line in `programs-in-every-run.txt` with its cure.
-- **Every lane but Debian's two draws its files**: `getAotFileDraw()` in `scripts/aot-tests.ts` gives the runner `--one-in=<n>`: one file in
+  line in `programs-in-every-run.txt` with its cure. macOS has the first step alone (`getAotTakesOfLane()`): its machines are a fixed number, and their queue gives a free one to the
+  oldest build, so a drawn step there runs before the `test-bun` jobs of every later build, which expire while they wait.
+- **Every lane but Debian's two is dealt its files**: `getAotFileDraw()` in `scripts/aot-tests.ts` gives the runner of a drawn step `--one-in=<n>`: one file in
   two on macOS, one in eight on Alpine, Windows and the ASAN build. The draw follows from the sample (`getAotSample()`: the commit under test), the path and the number of the lane
-  (`aotLanes`): of what is dealt out one in n, the lane with the number k takes the share k % n. The lanes' numbers are chosen so that every file runs on a lane besides Debian's.
+  (`aotLanes`): of what is dealt out one in n, the lane with the number k takes the share k % n. The lanes' numbers are chosen so that every file is dealt to a lane besides Debian's.
+  macOS has no drawn step, and runs nothing of what it is dealt.
   The runner gets both as `--aot-sample=<sample>+<k>` and hands them on as `AOT_SHARE`, so the lanes also take different shares of the programs. A share that comes out empty takes one.
-  Each commit draws other files and programs, so in time every lane has run all of them. A step is written with its sample, so a retry of a job makes the same draw, and the runner
+  Each commit draws other files and programs, so in time every lane that has a drawn step has run all of them. A step is written with its sample, so a retry of a job makes the same draw, and the runner
   prints it first (`Sample: ..`). `scripts/runner.node.ts --include=aot/ --one-in=<n> --aot-sample=<sample>+<k>` makes the draw again, and with `AOT_SAMPLE=<sample>` in the environment
   `getAotStepArguments()` gives the steps of that commit.
-  A test whose next result on one system is waited for stands in `testsAwaitedOn`: the lanes of that system run it on every commit until the entry is taken out.
+  A test whose next result on one system is waited for stands in `testsAwaitedOn`: the drawn steps of that system run it on every commit until the entry is taken out, so macOS can have no entry.
 - **A test file that runs no test is red on Debian x64** (`--must-run`), which is told to run every file. A file whose tests all skip themselves there goes into one of the lists of
   `scripts/aot-tests.ts`: what needs a sanitizer or a hardened Bun is always run by the step that has one and left out by the others, what comes as units of `parts.mts` or reads the
   engine's sources is run elsewhere, and `testsOutsideCi` has what no step can run, each with the reason. `every-test-runs-in-ci.test.ts` checks the lists against the steps.
@@ -177,7 +179,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **A mark that outlives its cure hides the next fault.** `programs-marked-as-failing` runs the programs that are left out because they fail (`<name>.todo.txt`, `"todoOn"` for the
   platform or the platform and architecture, and with AddressSanitizer a `"skipWithASAN"` that begins with `TODO`), and one that does what is expected is red: its mark goes out. A `.todo.txt` or a `"todoOn"` that begins with
   `Not every time:` is not asked, nor is a program that compares two times. It is in the step that holds up nothing,
-  on every lane whatever the lane draws (`getAotAlwaysInDrawnStep()` in `.buildkite/ci.ts`). A `test.todo` with a body is asked the same by `bun test --todo <file>`.
+  on every lane that has one, whatever the lane draws (`getAotAlwaysInDrawnStep()` in `scripts/aot-tests.ts`). A `test.todo` with a body is asked the same by `bun test --todo <file>`.
 - **The engine's tests with a sanitizer and assertions.** `engine-tests-in-parts-<part>` on the ASAN lane, where `engine-tests-ir`, `engine-tests-ir-of-bun` and `engine-tests-native-<part>` skip themselves: every twelfth IR text
   test and every twelfth native test. In the step that holds up nothing until CI has shown them green.
 - **Speed is pinned in instructions**, which are the same at any load: `perf/pins.<os>-<arch>.json` (`perf/idioms.test.ts`), `perf/everyday-pins.<os>-<arch>.json`

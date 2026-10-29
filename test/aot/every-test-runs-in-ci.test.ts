@@ -11,6 +11,7 @@ import {
   aotLanes,
   getAotSample,
   getAotStepArguments,
+  getAotTakesOfLane,
   getAotTestsOfLane,
   getHardenedStepArguments,
   mustRunSomething,
@@ -49,11 +50,15 @@ const kind = {
 
 const steps = [
   ...aotLanes.flatMap(lane =>
-    (["fixed", "drawn"] as const).map(takes => getAotStepArguments(lane, getAotTestsOfLane(lane, true)!, takes, false)),
+    getAotTakesOfLane(lane).map(takes => getAotStepArguments(lane, getAotTestsOfLane(lane, true)!, takes, false)),
   ),
   getHardenedStepArguments("fixed"),
   getHardenedStepArguments("drawn"),
 ].map(parseStepArguments);
+// What each lane is dealt of the files. macOS has no step that runs its deal: getAotTakesOfLane().
+const deals = aotLanes
+  .map(lane => getAotStepArguments(lane, getAotTestsOfLane(lane, true)!, "drawn", false))
+  .map(parseStepArguments);
 const isListed = (list: string[], path: string) => list.some(group => path.includes(group));
 const listedElsewhere = [...testsThatComeInParts, ...testsOfEngineSources, ...Object.keys(testsOutsideCi)];
 
@@ -70,10 +75,10 @@ test("every test runs in a step that fails if the test runs nothing", () => {
 });
 
 test.each(["", "0123456789abcdef0123456789abcdef01234567", "fedcba9876543210fedcba9876543210fedcba98"])(
-  "every file runs on a lane besides the two that run every file, whatever the commit %s",
+  "every file is dealt to a lane besides the two that run every file, whatever the commit %s",
   commit => {
     const drawn = new Set(
-      steps
+      deals
         .filter(step => step.oneIn > 1 && step.oneIn <= 8)
         .map(step => (commit ? { ...step, sample: spellSample(commit, parseSample(step.sample).share) } : step))
         .flatMap(step => pickTestsOfStep({ ...step, exclude: [] }, tests, kind)),
@@ -112,6 +117,12 @@ test("each entry of the lists names a test", () => {
       .flat()
       .filter(group => !tests.some(path => path.includes(group))),
   ).toEqual([]);
+});
+
+test("what is awaited on a system runs there", () => {
+  // An entry runs in the drawn steps of its system.
+  const systems = aotLanes.filter(lane => getAotTakesOfLane(lane).includes("drawn")).map(lane => lane.os);
+  expect(Object.keys(testsAwaitedOn).filter(os => !systems.includes(os))).toEqual([]);
 });
 
 test("what comes in parts has a unit", () => {

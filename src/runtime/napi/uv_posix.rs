@@ -23,7 +23,7 @@
 //! - A handle keeps the process alive while it is started and ref'd ([`RefState`]).
 
 use core::cell::Cell;
-use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 
@@ -43,18 +43,14 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 bun_output::declare_scope!(uv, hidden);
 
 unsafe extern "C" {
-    /// Crashes the same way the stubs do. `name` must be static. Never returns.
-    fn CrashHandler__unsupportedUVFunction(name: *const c_char);
     /// Returns null while the GC is sweeping. `HandleScopeImpl__close` accepts null.
     safe fn HandleScopeImpl__open(global: &JSGlobalObject) -> *mut c_void;
     fn HandleScopeImpl__close(global: &JSGlobalObject, scope: *mut c_void);
 }
 
 #[cold]
-fn unsupported(function: &'static CStr) -> ! {
-    // SAFETY: `function` is a static NUL-terminated string.
-    unsafe { CrashHandler__unsupportedUVFunction(function.as_ptr()) };
-    unreachable!("CrashHandler__unsupportedUVFunction returned");
+fn unsupported(function: &'static [u8]) -> ! {
+    bun_crash_handler::unsupported_uv_function(function)
 }
 
 /// Holds a handle scope open while an addon's callback runs on the JS thread. Node's
@@ -1080,7 +1076,7 @@ pub(crate) extern "C" fn uv_update_time(_loop: *mut UvLoop) {}
 ///
 /// # Safety
 /// `handle` points to an initialized handle.
-unsafe fn handle_type(handle: *mut UvHandle, function: &'static CStr) -> c_uint {
+unsafe fn handle_type(handle: *mut UvHandle, function: &'static [u8]) -> c_uint {
     // SAFETY: fn contract.
     match unsafe { (*handle).type_ } {
         type_ @ (UV_ASYNC | UV_IDLE | UV_PREPARE | UV_CHECK | UV_TIMER) => type_,
@@ -1093,7 +1089,7 @@ unsafe fn handle_type(handle: *mut UvHandle, function: &'static CStr) -> c_uint 
 /// # Safety
 /// Same as [`handle_type`]. This is the loop thread, and the caller doesn't use the
 /// returned pointer after it calls back into the addon.
-unsafe fn ref_state(handle: *mut UvHandle, function: &'static CStr) -> *mut RefState {
+unsafe fn ref_state(handle: *mut UvHandle, function: &'static [u8]) -> *mut RefState {
     // SAFETY: fn contract. `type` says which struct `handle` is the start of.
     unsafe {
         match handle_type(handle, function) {
@@ -1156,7 +1152,7 @@ impl UvHandle {
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option<UvCloseCb>) {
     // SAFETY: fn contract.
-    let type_ = unsafe { handle_type(handle, c"uv_close") };
+    let type_ = unsafe { handle_type(handle, b"uv_close") };
     // SAFETY: `handle` is initialized, and only the loop thread uses the plain fields.
     let loop_ = unsafe {
         if (*handle).flags & UV_HANDLE_CLOSING != 0 {
@@ -1198,7 +1194,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_ref(handle: *mut UvHandle) {
     // SAFETY: fn contract.
-    unsafe { (*ref_state(handle, c"uv_ref")).set_referenced(true) };
+    unsafe { (*ref_state(handle, b"uv_ref")).set_referenced(true) };
 }
 
 /// Implements `void uv_unref(uv_handle_t*)`. Idempotent.
@@ -1208,7 +1204,7 @@ pub(crate) unsafe extern "C" fn uv_ref(handle: *mut UvHandle) {
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_unref(handle: *mut UvHandle) {
     // SAFETY: fn contract.
-    unsafe { (*ref_state(handle, c"uv_unref")).set_referenced(false) };
+    unsafe { (*ref_state(handle, b"uv_unref")).set_referenced(false) };
 }
 
 /// Implements `int uv_has_ref(const uv_handle_t*)`.
@@ -1218,7 +1214,7 @@ pub(crate) unsafe extern "C" fn uv_unref(handle: *mut UvHandle) {
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_has_ref(handle: *mut UvHandle) -> c_int {
     // SAFETY: fn contract.
-    c_int::from(unsafe { (*ref_state(handle, c"uv_has_ref")).referenced })
+    c_int::from(unsafe { (*ref_state(handle, b"uv_has_ref")).referenced })
 }
 
 /// Implements `int uv_is_active(const uv_handle_t*)`. A watcher or timer is active
@@ -1230,7 +1226,7 @@ pub(crate) unsafe extern "C" fn uv_has_ref(handle: *mut UvHandle) -> c_int {
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_is_active(handle: *mut UvHandle) -> c_int {
     // SAFETY: fn contract.
-    c_int::from(unsafe { (*ref_state(handle, c"uv_is_active")).active })
+    c_int::from(unsafe { (*ref_state(handle, b"uv_is_active")).active })
 }
 
 /// Implements `int uv_is_closing(const uv_handle_t*)`. Returns true once `uv_close`
@@ -1241,7 +1237,7 @@ pub(crate) unsafe extern "C" fn uv_is_active(handle: *mut UvHandle) -> c_int {
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_is_closing(handle: *mut UvHandle) -> c_int {
     // SAFETY: fn contract.
-    unsafe { handle_type(handle, c"uv_is_closing") };
+    unsafe { handle_type(handle, b"uv_is_closing") };
     // SAFETY: `handle` is initialized, and this is the loop thread.
     let flags = unsafe { (*handle).flags };
     c_int::from(flags & (UV_HANDLE_CLOSING | UV_HANDLE_CLOSED) != 0)

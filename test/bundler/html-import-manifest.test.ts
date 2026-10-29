@@ -19,9 +19,10 @@ interface Manifest {
   files: ManifestFile[];
 }
 
-/** The manifests that a chunk prints, in print order. */
+/** The manifests that a chunk prints, in print order. Minified, the `__jsonParse` that takes each one has another name. */
 function parseManifests(code: string): Manifest[] {
-  return [...code.matchAll(/__jsonParse\("(.+?)"\)/gs)].map(match => JSON.parse(JSON.parse('"' + match[1] + '"')));
+  const manifest = /\("(\{\\"(?:index|files)\\":(?:[^"\\]|\\.)*)"\)/g;
+  return [...code.matchAll(manifest)].map(match => JSON.parse(JSON.parse('"' + match[1] + '"')));
 }
 
 /** The manifests embedded in a bundled server entry point, in import order. */
@@ -678,8 +679,7 @@ console.log("About manifest:", aboutHtml);
 
     /** The outputs that print a manifest, then the outputs that import one of those by name. */
     function printers(outputs: Output[]) {
-      // The manifest's JSON in a string literal. Minified, `__jsonParse` has another name.
-      const printing = outputs.filter(output => output.text.includes(String.raw`\"files\":[`));
+      const printing = outputs.filter(output => parseManifests(output.text).length > 0);
       return [...printing, ...outputs.filter(output => printing.some(printer => output.text.includes(printer.path)))];
     }
 
@@ -810,12 +810,12 @@ console.log("About manifest:", aboutHtml);
       write(String(dir), { "client.js": `import("./lazy.js"); console.log("changed");` });
       const after = await build(String(dir), options);
 
-      const kept = new Set(after.map(output => output.path));
+      const remaining = new Set(after.map(output => output.path));
       const serverSide = before.filter(
         output => /^(server|other|third)-/.test(output.path) || printers(before).includes(output),
       );
       expect(serverSide.map(label).sort()).toEqual(["chunk.js", "chunk.js", "other.js", "server.js", "third.js"]);
-      expect(serverSide.filter(output => kept.has(output.path)).map(label)).toEqual([]);
+      expect(serverSide.filter(output => remaining.has(output.path)).map(label)).toEqual([]);
       expect(mismatches(before, after)).toEqual(none);
     });
 
@@ -1007,6 +1007,7 @@ console.log("About manifest:", aboutHtml);
         const index = (name: string) => outputs.findIndex(output => output.text.includes(`var ${name} = "${name}"`));
         const listed = (name: string) =>
           manifest.files.findIndex(file => file.path === "./" + outputs[index(name)].path);
+        expect([listed("x"), listed("y")]).not.toContain(-1);
         return { byIndex: index("x") < index("y"), listed: listed("x") < listed("y") };
       }
       const [first, second] = [await xBeforeY("a.js"), await xBeforeY("b.js")];
@@ -1035,9 +1036,10 @@ console.log("About manifest:", aboutHtml);
       write(String(dir), logs(others, "after"));
       const after = await build(String(dir), options);
 
+      // The widths follow the hashes of each run, so no single listed path is sure to change.
       const listed = (outputs: Output[]) => parseManifests(printers(outputs)[0].text).map(listedPaths);
-      expect(listed(after)).not.toEqual(listed(before));
-      expect(changes(before, after)).toEqual({ "server.js": renamed });
+      const listedChanged = !Bun.deepEquals(listed(after), listed(before));
+      expect(changes(before, after)).toEqual({ "server.js": listedChanged ? renamed : kept });
     });
 
     // Not by chunk index, which follows the scan order. Not by a native path

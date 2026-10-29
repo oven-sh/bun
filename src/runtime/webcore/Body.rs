@@ -891,8 +891,7 @@ impl Value {
             return ReadableStream::empty(cx.global());
         }
 
-        // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper in
+        // Ownership of the heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
@@ -1489,8 +1488,7 @@ impl Value {
             return Ok(Value::Null);
         }
 
-        // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper in
+        // Ownership of the heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {

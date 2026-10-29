@@ -1470,8 +1470,7 @@ impl crate::webcore::sink::ControlledSink for FileSink {
         sys::Result::Ok(())
     }
     fn source(&mut self) -> &mut streams::SourceHandle {
-        // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
-        unsafe { self.source.get_mut() }
+        self.source.as_mut()
     }
 }
 

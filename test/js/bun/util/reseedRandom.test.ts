@@ -56,6 +56,7 @@ describe.concurrent("Bun.reseedRandom", () => {
         postMessage(getRandomSeed());
       \`;
       const worker = new Worker("data:text/javascript," + encodeURIComponent(source));
+      worker.onerror = event => { console.error(event.message); process.exit(1); };
       const next = () => new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
       const before = await next();
       Bun.reseedRandom();
@@ -101,6 +102,7 @@ describe.concurrent("Bun.reseedRandom", () => {
         self.onmessage = () => { Bun.reseedRandom(); postMessage(getRandomSeed()); };
       \`;
       const worker = new Worker("data:text/javascript," + encodeURIComponent(source));
+      worker.onerror = event => { console.error(event.message); process.exit(1); };
       const next = () => new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
       const token = Bun.CSRF.generate();
       const before = getRandomSeed();

@@ -6182,7 +6182,7 @@ declare module "bun" {
    *   `crypto.subtle` key generation and TLS, on every thread (the main
    *   thread, Workers and the network thread), before its next output
    * - the buffered random bytes behind `crypto.randomUUID()`, `Bun.randomUUIDv7()`,
-   *   `crypto.randomInt()`, small `crypto.randomBytes()` calls, blob URLs,
+   *   `crypto.randomInt()`, blob URLs,
    *   WebSocket keys and the default `Bun.CSRF` secret, in every Worker
    * - the seed of `Math.random()` in every global object, including `node:vm`
    *   contexts, and of every global created afterwards

@@ -170,7 +170,7 @@ Bun.reseedRandom();
 The call refreshes:
 
 - The CSPRNG behind `crypto.getRandomValues()`, `crypto.randomBytes()`, `crypto.subtle` key generation and TLS, on every thread (the main thread, Workers and the network thread), before its next output.
-- The buffered random bytes behind `crypto.randomUUID()`, `Bun.randomUUIDv7()`, `crypto.randomInt()`, small `crypto.randomBytes()` calls, blob URLs, WebSocket keys and the default `Bun.CSRF` secret, in every Worker.
+- The buffered random bytes behind `crypto.randomUUID()`, `Bun.randomUUIDv7()`, `crypto.randomInt()`, blob URLs, WebSocket keys and the default `Bun.CSRF` secret, in every Worker.
 - The seed of `Math.random()` in every global object, including `node:vm` contexts, and of every global created afterwards.
 
 Bun reseeds from the operating system (`getrandom` on Linux). The kernel's own generator is part of the snapshot too. The platform must re-key it before this call, or Bun reseeds from cloned bytes. On Linux 5.18 and later with a VM generation ID device the kernel does this when it handles the restore notification, which can happen after your hook starts. On older kernels, or to close that window, issue `RNDADDENTROPY` followed by `RNDRESEEDCRNG` first, as Firecracker's guide on randomness for clones recommends.

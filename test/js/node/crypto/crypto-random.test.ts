@@ -508,6 +508,7 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
           postMessage(0);
         \`;
         const worker = new Worker("data:text/javascript," + encodeURIComponent(source));
+        worker.onerror = event => { console.error(event.message); process.exit(1); };
         const next = () => new Promise(resolve => (worker.onmessage = () => resolve()));
         // Seed both DRBGs before measuring.
         draw();

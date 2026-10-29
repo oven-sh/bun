@@ -177,26 +177,19 @@ impl WorkPool {
             function: fn(C),
         }
 
-        unsafe fn callback<C>(task: *mut Task) {
-            // SAFETY: `task` points to the `task` field of a `TaskType<C>` allocated below
-            // via Box::into_raw; recover the parent pointer, run the user fn, then free.
-            unsafe {
-                let this_task = bun_core::from_field_ptr!(TaskType<C>, task, task);
-                let this_task = Box::from_raw(this_task);
-                (this_task.function)(this_task.context);
+        intrusive_work_task!([C] TaskType<C>, task);
+
+        impl<C: Send + 'static> OwnedTask for TaskType<C> {
+            fn run(self: Box<Self>) {
+                (self.function)(self.context);
             }
         }
 
-        let task_ = Box::into_raw(Box::new(TaskType::<C> {
-            task: Task {
-                node: crate::thread_pool::Node::default(),
-                callback: callback::<C>,
-            },
+        Self::schedule_new(TaskType {
+            task: Task::default(),
             context,
             function,
-        }));
-        // SAFETY: task_ is a valid Box-allocated TaskType<C>; .task is its first field.
-        Self::schedule(unsafe { &raw mut (*task_).task });
+        });
         Ok(())
     }
 }

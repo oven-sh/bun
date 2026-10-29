@@ -115,8 +115,7 @@ impl CopyStream {
         matches!(self, Self::WritableOpen | Self::BothOpen)
     }
 
-    /// The readable applies backpressure. Not in `BothClosing`: the client has ended its side, so
-    /// the server's remaining reply is read to the end, and `close()` settles without a reader.
+    /// The readable applies backpressure. `BothClosing` does not: the reply is read to the end.
     pub(crate) fn pauses(self) -> bool {
         matches!(self, Self::ReadableOpen | Self::BothOpen)
     }

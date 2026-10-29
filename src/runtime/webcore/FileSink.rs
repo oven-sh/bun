@@ -631,15 +631,14 @@ impl FileSink {
     #[cfg(windows)]
     pub(crate) fn create_with_pipe(
         event_loop_: impl Into<EventLoopHandle>,
-        pipe: *mut uv::Pipe,
+        pipe: Box<uv::Pipe>,
     ) -> RefPtr<FileSink> {
         let evtloop: EventLoopHandle = event_loop_.into();
 
-        // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
         // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
         // INVALID_HANDLE_VALUE maps to `Fd::INVALID`, anything else is
         // tagged as a system handle.
-        let fd = match unsafe { (*pipe).fd() } {
+        let fd = match pipe.fd() {
             h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
             h => Fd::from_system(h),
         };

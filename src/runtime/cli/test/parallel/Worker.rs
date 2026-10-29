@@ -252,23 +252,16 @@ impl Worker {
             this.process = Some(spawned.to_process_handle(coord.vm.event_loop()));
 
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
-                // ownership transfers into the reader's `Source` (heap::take inside).
-                unsafe {
-                    this.out
-                        .reader
-                        .start_with_pipe(bun_core::heap::into_raw(pipe))
-                }
-                .map_err(|_| crate::Error::PipeStartFailed)?;
+                this.out
+                    .reader
+                    .start_with_pipe(pipe)
+                    .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-                // SAFETY: see stdout above.
-                unsafe {
-                    this.err
-                        .reader
-                        .start_with_pipe(bun_core::heap::into_raw(pipe))
-                }
-                .map_err(|_| crate::Error::PipeStartFailed)?;
+                this.err
+                    .reader
+                    .start_with_pipe(pipe)
+                    .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             // `ipc_pipe` was Box-allocated via heap::into_raw above and
             // initialised by spawn_process; ownership of the *mut Pipe transfers

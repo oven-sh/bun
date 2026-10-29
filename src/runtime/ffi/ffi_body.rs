@@ -2027,7 +2027,7 @@ impl Function {
         }
     }
 
-    pub(crate) fn compile(&mut self, napi_env: Option<&napi::NapiEnv>) -> crate::Result<()> {
+    pub(crate) fn compile(&mut self, napi_env: Option<NonNull<c_void>>) -> crate::Result<()> {
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
 
@@ -2066,10 +2066,7 @@ impl Function {
         if let Some(env) = napi_env {
             // `env` is the live VM-owned napi env; process-lifetime.
             if state
-                .add_symbol(
-                    zstr!("Bun__thisFFIModuleNapiEnv"),
-                    std::ptr::from_ref(env).cast::<c_void>(),
-                )
+                .add_symbol(zstr!("Bun__thisFFIModuleNapiEnv"), env.as_ptr())
                 .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");
@@ -2682,17 +2679,10 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 fn make_napi_env_if_needed<'a>(
     functions: impl IntoIterator<Item = &'a Function>,
     global_this: &JSGlobalObject,
-) -> Option<&'static napi::NapiEnv> {
-    // Return is `'static`, not `'a` — the env is heap-allocated by C++
-    // (`makeNapiEnvForFFI`) and owned by the VM for process lifetime; tying it
-    // to `'a` (the iterator borrow) is over-restrictive and blocks the
-    // immediate-after `values_mut()` loop at every call site.
+) -> Option<NonNull<c_void>> {
     for function in functions {
         if function.needs_napi_env() {
-            // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
-            // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
-            // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
-            return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
+            return NonNull::new(global_this.make_napi_env_for_ffi());
         }
     }
     None

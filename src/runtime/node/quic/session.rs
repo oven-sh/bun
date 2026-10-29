@@ -2370,11 +2370,9 @@ impl QuicSession {
     }
 
     /// Replaces `on_conn_closed` after `QuicEndpoint::detach_for_finalize`.
-    pub(super) extern "C" fn on_closed_detached(session: Option<&QuicSession>) {
+    pub(super) extern "C" fn on_closed_detached(session: &QuicSession) {
         // `endpoint` and `streams` may be freed, so only touch `conn`.
-        if let Some(session) = session {
-            session.conn.set(None);
-        }
+        session.conn.set(None);
     }
 }
 
@@ -2525,7 +2523,7 @@ lsquic_callback! {
 }
 
 lsquic_callback! {
-    pub(super) fn on_dg_write(session: &QuicSession, buf: *mut c_void, sz: usize) -> isize = -1; {
+    pub(super) fn on_dg_write(session: &QuicSession, buf: *mut c_void, sz: usize) -> isize {
         // -1 means "nothing written"; lsquic treats any value >= 0 as a
         // datagram it should frame, so 0 emits an empty DATAGRAM frame.
         if buf.is_null() {

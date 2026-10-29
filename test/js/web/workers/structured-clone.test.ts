@@ -581,8 +581,8 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             stderr: "pipe",
           });
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stderr).toBe("");
-          expect(JSON.parse(stdout)).toEqual({
+          // stderr isn't checked: a debug build has mimalloc report every allocation that fails.
+          expect(stdout ? JSON.parse(stdout) : { stderr, exitCode }).toEqual({
             full: true,
             errors: ["RangeError: Out of memory", "RangeError: Out of memory"],
             otherDetached: false,

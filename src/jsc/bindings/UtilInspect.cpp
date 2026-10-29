@@ -226,4 +226,35 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPreviewEntries, (JSGlobalObject * globalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), result)));
 }
 
+// JSC__JSValue__forEach for a printer that was given a Map or Set iterator: `callback` gets what the iterator has left, and the iterator is not run.
+// Every entry is read before the first call, because the callback can run user code that changes the collection.
+extern "C" void Bun__inspect__forEachRemainingEntry(JSC::EncodedJSValue encodedIterator, JSC::JSGlobalObject* globalObject, void* ctx, void (*callback)(JSC::VM*, JSC::JSGlobalObject*, void*, JSC::EncodedJSValue))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue iterator = JSValue::decode(encodedIterator);
+    MarkedArgumentBuffer entries;
+    uint32_t length = 0;
+    bool isKeyValue = false;
+    if (!remainingEntriesOf(globalObject, iterator, std::numeric_limits<uint32_t>::max(), entries, isKeyValue, length))
+        return;
+    if (entries.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+
+    // next() makes the pair of an entries() iterator in the realm of the iterator.
+    JSGlobalObject* realm = asObject(iterator)->globalObject();
+    for (size_t i = 0; i < entries.size(); i += isKeyValue ? 2 : 1) {
+        JSValue entry = entries.at(i);
+        if (isKeyValue) {
+            entry = constructArrayPair(realm, entry, entries.at(i + 1));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        callback(&vm, globalObject, ctx, JSValue::encode(entry));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
 }

@@ -1890,6 +1890,8 @@ pub mod formatter {
                     | Tag::Object
                     | Tag::Map
                     | Tag::Set
+                    | Tag::MapIterator
+                    | Tag::SetIterator
                     | Tag::Error
                     | Tag::Class
                     | Tag::Event
@@ -3194,6 +3196,27 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+
+        /// C++ helper (`UtilInspect.cpp`): `callback` gets what a Map or Set
+        /// iterator has left, as `next()` would yield it. The iterator is not
+        /// run and does not move.
+        safe fn Bun__inspect__forEachRemainingEntry(
+            iterator: JSValue,
+            global: &JSGlobalObject,
+            ctx: *mut c_void,
+            callback: jsc::ForEachCallback,
+        );
+    }
+
+    pub(crate) fn for_each_remaining_entry(
+        iterator: JSValue,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: jsc::ForEachCallback,
+    ) -> JsResult<()> {
+        jsc::host_fn::from_js_host_call_generic(global, || {
+            Bun__inspect__forEachRemainingEntry(iterator, global, ctx, callback)
+        })
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -4673,7 +4696,8 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
+                    for_each_remaining_entry(
+                        value,
                         global_this,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, true>::for_each,
@@ -4692,7 +4716,8 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
+                    for_each_remaining_entry(
+                        value,
                         global_this,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, false>::for_each,

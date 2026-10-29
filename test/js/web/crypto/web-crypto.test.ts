@@ -133,9 +133,9 @@ describe("Web Crypto", () => {
       return { key, iv, wrapped };
     }
 
-    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk runs the bytes through UTF-8
-    // decode, which drops a leading byte order mark; the bytes used to be read as Latin-1.
-    // Invalid UTF-8 is a DataError, as in Node.js.
+    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk reads the bytes as UTF-8; they used
+    // to be read as Latin-1. As in Node.js, one leading byte order mark is skipped and
+    // malformed UTF-8 is a DataError, not U+FFFD.
     it("decodes the wrapped bytes as UTF-8 and skips a byte order mark", async () => {
       const jwk = (kid: string) => `{"kty":"oct","k":"AAECAwQFBgcICQoLDA0ODw","alg":"A128GCM","kid":"${kid}"}`;
       const encode = (s: string) => new TextEncoder().encode(s);

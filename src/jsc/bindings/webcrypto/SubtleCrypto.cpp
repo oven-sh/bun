@@ -1564,7 +1564,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     keyData = bytes;
                     break;
                 case SubtleCrypto::KeyFormat::Jwk: {
-                    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk: UTF-8 decode, which skips a byte order mark.
+                    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk reads the bytes as UTF-8. Like Node, skip one byte order mark and reject malformed bytes.
                     static constexpr std::array<uint8_t, 3> utf8ByteOrderMark { 0xEF, 0xBB, 0xBF };
                     auto jwkBytes = bytes.span();
                     if (spanHasPrefix(jwkBytes, std::span { utf8ByteOrderMark }))

@@ -1,0 +1,243 @@
+# A position computed as y * w + x is a double once the product may pass 2^53. Below that it names an element, beyond it it names a property, rounded as JavaScript rounds it.
+# FORM: AsRead
+# RUN: lower-to-air size f0 f4
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="index-computed-by-a-product.ts" displayPath="index-computed-by-a-product.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number} module=m0
+data d1 root=Array{contents=number elements=[Number{value=-1}, Number{value=1}, Number{}]} module=m0
+data d2 root=Array{contents=number elements=[Number{value=94906267}, Number{value=94906267}, Number{}]} module=m0
+data d3 root=Array{contents=number elements=[Number{value=94906266}, Number{value=94906266}, Number{value=1}]} module=m0
+data d4 root=Array{contents=number elements=[Number{value=65536}, Number{value=65536}, Number{}]} module=m0
+data d5 root=Array{contents=number elements=[Number{value=65536}, Number{value=65535}, Number{value=65535}]} module=m0
+variable g0 name="cells" module=m0 declared={type=undefined|null|absent|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="parseInt" [isFreeName]
+    v14 = Convert v13 declared={type=builtin(ParseInt) flags=[IsExpected]}
+    v15 = Builtin builtin=Process
+    v16 = PropGet v15 key="argv"
+    v17 = Convert v16 declared={type=builtin(ProcessArgv) flags=[IsExpected]}
+    v18 = Integer integer=2
+    v19 = ElemGet v17, v18
+    v20 = Convert v19 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v21 = String string="7"
+    v22 = Integer integer=10
+    v23 = Call v14, -, v21, v22 calleeName="parseInt"
+    v24 = Convert v23 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v25 = Integer
+    v26 = BitOr v24, v25
+    v27 = Convert v26 declared={type=number}
+    v28 = Data data=d0
+    v29 = Convert v28 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v29 variable=g0
+    v31 = Integer
+    v32 = Convert v31 declared={type=number}
+    v33 = Integer
+    v34 = Convert v33 declared={type=number}
+    v35 = Convert v34 declared={type=i32 flags=[IsExpected]}
+    v36 = Integer integer=2147483647
+    v37 = Convert v36 declared={type=2147483647}
+    v38 = Integer integer=-2147483648
+    v39 = Convert v38 declared={type=-2147483648}
+    v40 = Integer integer=2
+    v41 = Integer integer=3
+    v42 = NewArray v40, v27, v41 contents=number
+    v43 = Integer
+    v44 = Integer
+    v45 = NewArray v43, v27, v44 contents=number
+    v46 = Integer
+    v47 = Negate v27
+    v48 = Integer
+    v49 = NewArray v46, v47, v48 contents=number
+    v50 = Integer integer=-1
+    v51 = Integer integer=10
+    v52 = NewArray v50, v27, v51 contents=number
+    v53 = Integer integer=9
+    v54 = Integer
+    v55 = NewArray v53, v27, v54 contents=number
+    v56 = Integer integer=9
+    v57 = Integer integer=1
+    v58 = NewArray v56, v27, v57 contents=number
+    v59 = Data data=d1
+    v60 = Integer
+    v61 = NewArray v37, v37, v60 contents=number
+    v62 = Integer
+    v63 = NewArray v39, v39, v62 contents=number
+    v64 = Integer integer=5
+    v65 = NewArray v39, v37, v64 contents=number
+    v66 = NewArray v37, v37, v39 contents=number
+    v67 = Data data=d2
+    v68 = Data data=d3
+    v69 = Data data=d4
+    v70 = Data data=d5
+    v71 = NewArray v42, v45, v49, v52, v55, v58, v59, v61, v63, v65, v66, v67, v68, v69, v70 contents=undefined|null|Array<number>
+    v72 = IteratorOpen v71
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v74 = IteratorResume v72
+    v75 = ResultAt v74
+    v76 = ResultAt v74 index=1
+    Branch v75 -> taken b2(), notTaken b7()
+  b2():
+    v77 = Integer integer=1001
+    v78 = Convert v77 declared={type=1001}
+    v79 = Integer integer=1002
+    v80 = Convert v79 declared={type=1002}
+    v81 = Convert v29 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v82 = Convert v78 declared={type=number}
+    PropSet v81, v82 key="9007199515875288"
+    v84 = Convert v80 declared={type=number}
+    PropSet v81, v84 key="4611686014132420609"
+    v86 = Integer integer=2147483646
+    v87 = Call v9, -, v37, v37, v37, v86 calleeName="atTwoProducts"
+    v88 = Integer integer=3
+    v89 = Integer integer=2
+    v90 = Call v9, -, v88, v27, v89, v27 calleeName="atTwoProducts"
+    v91 = Integer integer=2
+    v92 = Integer integer=3
+    v93 = Integer integer=-5
+    v94 = Call v11, -, v91, v27, v92, v93 calleeName="put"
+    v95 = Integer integer=2
+    v96 = Mul v95, v27
+    v97 = Integer integer=3
+    v98 = Add v96, v97
+    v99 = ElemGet v29, v98
+    v100 = Integer integer=9
+    v101 = Integer integer=2
+    v102 = Integer integer=77
+    v103 = Call v11, -, v100, v27, v101, v102 calleeName="put"
+    v104 = PropGet v29 key="length"
+    v105 = Convert v104 declared={type=number} illTypedCause=Assertion
+    v106 = Call v1, -, v105 calleeName="note"
+    v107 = Integer
+    v108 = Convert v107 declared={type=number}
+    v109 = Integer integer=1
+    v110 = Add v27, v109
+    v111 = Convert v110 declared={type=number}
+    v112 = Integer integer=8
+    v113 = Convert v112 declared={type=8}
+    v114 = Integer
+    v115 = Convert v114 declared={type=number}
+    Jump -> next b3(v108, v115)
+  b3(v116: number, v117: number):
+    v118 = Integer
+    v119 = Convert v118 declared={type=number}
+    Jump -> next b4(v116, v119)
+  b4(v120: number, v121: number):
+    LoopHint
+    v123 = Convert v121 declared={type=i32 flags=[IsExpected]}
+    v124 = Less v123, v111
+    Branch v124 -> taken b5(| 0, 1), notTaken b6(| 0, 1)
+  b5(v125, v126):
+    v127 = Convert v120 declared={type=i32 flags=[IsExpected]}
+    v128 = Mul v117, v126
+    v129 = Convert v125 declared={type=i32 flags=[IsExpected]}
+    v130 = Add v128, v129
+    v131 = ElemGet v29, v130
+    v132 = Convert v131 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v133 = Add v127, v132
+    v134 = Integer
+    v135 = BitOr v133, v134
+    v136 = Convert v135 declared={type=number}
+    v137 = Increment v129
+    v138 = Convert v137 declared={type=number}
+    Jump -> next b4(v136, v138)
+  b6(v139, v140):
+    v141 = Increment v117
+    v142 = Convert v141 declared={type=number}
+    Jump -> next b3(v120, v142)
+  b7():
+    Jump -> next b8()
+  b8() handler=b12():
+    v143 = Convert v76 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v144 = IteratorOpen v143 elementCount=3 [isDestructuring]
+    Jump -> next b9()
+  b9() handler=b11():
+    v145 = IteratorResume v144 stepIndex=0
+    v146 = ResultAt v145 index=1
+    v147 = Convert v146 declared={type=number} illTypedCause=Assertion
+    v148 = IteratorResume v144 stepIndex=1
+    v149 = ResultAt v148 index=1
+    v150 = Convert v149 declared={type=number} illTypedCause=Assertion
+    v151 = IteratorResume v144 stepIndex=2
+    v152 = ResultAt v151 index=1
+    v153 = Convert v152 declared={type=number} illTypedCause=Assertion
+    Jump -> next b10()
+  b10() handler=b12():
+    v154 = Call v3, -, v147, v150, v153 calleeName="at"
+    v155 = Call v5, -, v147, v150, v153 calleeName="atDifference"
+    v156 = Call v7, -, v147, v150, v153 calleeName="atReversed"
+    Jump -> next b1()
+  b11() role=IterationCleanup subject=v144 handler=b12():
+    v157 = CatchException
+    Rethrow v157
+  b12() role=IterationCleanup subject=v72:
+    v158 = CatchException
+    Rethrow v158
+}
+function f1 name="note" module=m0 position=271 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="undefined"
+    v2 = Undefined
+    Return v2
+}
+function f2 name="at" module=m0 position=600 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="atDifference" module=m0 position=701 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number, v2: number):
+    v3 = GetModuleVariable variable=g0
+    v4 = CheckInitialized v3 name="cells"
+    v5 = Integer
+    v6 = BitOr v0, v5
+    v7 = Integer
+    v8 = BitOr v1, v7
+    v9 = Mul v6, v8
+    v10 = Integer
+    v11 = BitOr v2, v10
+    v12 = Sub v9, v11
+    v13 = ElemGet v4, v12
+    v14 = Convert v13 declared={type=number} illTypedCause=ContainerWriterUnseen
+    Return v14
+}
+function f4 name="atReversed" module=m0 position=812 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number, v2: number):
+    v3 = GetModuleVariable variable=g0
+    v4 = CheckInitialized v3 name="cells"
+    v5 = Integer
+    v6 = BitOr v2, v5
+    v7 = Integer
+    v8 = BitOr v0, v7
+    v9 = Integer
+    v10 = BitOr v1, v9
+    v11 = Mul v8, v10
+    v12 = Sub v6, v11
+    v13 = ElemGet v4, v12
+    v14 = Convert v13 declared={type=number} illTypedCause=ContainerWriterUnseen
+    Return v14
+}
+function f5 name="atTwoProducts" module=m0 position=1142 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="put" module=m0 position=1487 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0 atReversed
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 405, patchpoints: 47, rare instructions: 384, polls: 1
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="atReversed"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 20, patchpoints: 4, rare instructions: 67
+# CHECK-NEXT: end of function f4

@@ -1827,6 +1827,7 @@ mod spelling_tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "no unsafe code, 76,000 pairs of names five times")]
     fn characters_refuse_only_names_that_are_too_far_apart() {
         let names = names();
         let mut accepted = 0;

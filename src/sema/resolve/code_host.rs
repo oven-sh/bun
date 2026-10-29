@@ -129,6 +129,11 @@ pub trait CodeHost: Host {
         false
     }
 
+    /// True for a file of the project whose declarations only the files that name it can see. It is read once a file that is read names it.
+    fn is_seen_only_by_name(&self, _path: &[u8]) -> bool {
+        false
+    }
+
     fn hoists_top_level_variables(&self, _path: &[u8]) -> bool {
         false
     }
@@ -176,6 +181,16 @@ pub trait CodeHost: Host {
         _request: &FinishedFile<'_, '_>,
         _payload: &mut Option<HostPayload>,
     ) -> Vec<HostResolution> {
+        Vec::new()
+    }
+
+    /// True: an import of a file is followed once `choose_imports_to_follow` names it. What no code asks for is not read.
+    fn follows_imports_on_request(&self) -> bool {
+        false
+    }
+
+    /// Called each time every file that was found is parsed, until it names nothing new. Each answer is the position of a file in `files` and the path of a file that it imports.
+    fn choose_imports_to_follow(&self, _files: &[ParsedFile<'_, '_>]) -> Vec<(u32, Vec<u8>)> {
         Vec::new()
     }
 }
@@ -313,6 +328,14 @@ pub struct FinishedFile<'a, 's> {
     pub analysis: &'a FileAnalysis<'s>,
     pub atoms: &'a Interner<'s>,
     pub resolutions: &'a [SiteResolution<'a>],
+}
+
+/// A file that `CodeHost::finish_file` has seen.
+pub struct ParsedFile<'a, 's> {
+    pub file: FinishedFile<'a, 's>,
+    pub payload: Option<&'a HostPayload>,
+    /// It rises when the file is parsed or folded again.
+    pub version: u32,
 }
 
 #[cfg(test)]

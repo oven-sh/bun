@@ -1,0 +1,290 @@
+# -- source: main.mjs
+# // A literal takes a variable of a file that is still running when a function of a third file starts the file of the literal.
+# import "./hooks.mjs";
+# import "./first.mjs";
+# -- source: first.mjs
+# globalThis.hook();
+# export var count = 1;
+# -- source: late.mjs
+# import { count } from "./first.mjs";
+# const seen = typeof count;
+# const kept = { first: count, list: [count, 2, 3], inner: { deep: count, more: [4, 5] }, last: { z: 1 } };
+# setTimeout(() => console.log(seen, String(kept.first), String(kept.list[0]), String(kept.inner.deep)));
+# -- source: hooks.mjs
+# globalThis.hook = () => require("./late.mjs");
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="first.mjs" displayPath="first.mjs" body=f0 namespaceLayout=L(m0)
+module m1 path="late.mjs" displayPath="late.mjs" body=f1 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+module m2 path="hooks.mjs" displayPath="hooks.mjs" body=f5 requests=[{target=m1 kind=Require completes=true}] namespaceLayout=L(m2)
+module m3 path="main.mjs" displayPath="main.mjs" body=f7 requests=[{target=m2 completes=true}, {target=m0 completes=true}] namespaceLayout=L(m3)
+entry module=m3
+layout L0 module=m1 position=77 fields=[{key="first" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="inner" declared={type=undefined|null|L1 flags=[IsExpected]} flags=[IsRequired]}, {key="last" declared={type=undefined|null|L2 flags=[IsExpected]} flags=[IsRequired]}, {key="list" declared={type=undefined|null|Array<number> flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[0, 3, 1, 2] ownFieldCount=4
+layout L1 module=m1 position=121 fields=[{key="deep" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="more" declared={type=undefined|null|Array<number> flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L2 module=m1 position=158 fields=[{key="z" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=number elements=[Number{value=4}, Number{value=5}]} module=m1
+data d1 root=Object{layout=L2 members=[{key="z" value=Number{value=1}}]} module=m1
+variable g0 name="count" module=m0 declared={type=undefined|number flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+variable g1 name="seen" module=m1 declared={type=undefined|null|absent|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]} flags=[IsImmutable]
+variable g2 name="kept" module=m1 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="globalThis" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v4 = PropGet v3 key="hook"
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
+    v6 = Call v5, v3 calleeKey="hook" calleeName="globalThis.hook"
+    v7 = Integer integer=1
+    v8 = Convert v7 declared={type=undefined|number flags=[IsExpected]}
+    PutModuleVariable v8 variable=g0
+    v10 = Undefined
+    Return v10
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="count"
+    v2 = TypeOf v1
+    v3 = Convert v2 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
+    PutModuleVariable v3 variable=g1
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="count"
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = NewObject layout=L0
+    PropDefine v8, v7 key="first"
+    v10 = GetModuleVariable variable=g0
+    v11 = CheckInitialized v10 name="count"
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = Integer integer=2
+    v14 = Integer integer=3
+    v15 = NewArray v12, v13, v14 contents=number
+    v16 = Convert v15 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    PropDefine v8, v16 key="list"
+    v18 = GetModuleVariable variable=g0
+    v19 = CheckInitialized v18 name="count"
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = NewObject layout=L1
+    PropDefine v21, v20 key="deep"
+    v23 = Data data=d0
+    v24 = Convert v23 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    PropDefine v21, v24 key="more"
+    v26 = FinishObject v21
+    v27 = Convert v26 declared={type=undefined|null|L1 flags=[IsExpected]}
+    PropDefine v8, v27 key="inner"
+    v29 = Data data=d1
+    v30 = Convert v29 declared={type=undefined|null|L2 flags=[IsExpected]}
+    PropDefine v8, v30 key="last"
+    v32 = FinishObject v8
+    v33 = Convert v32 declared={type=undefined|null|L0 flags=[IsExpected]}
+    PutModuleVariable v33 variable=g2
+    v35 = Builtin builtin=GlobalThis
+    v36 = PropGet v35 key="setTimeout" [isFreeName]
+    v37 = Convert v36 declared={type=builtin(SetTimeout) flags=[IsExpected]}
+    v38 = NewClosure function=f2
+    v39 = Call v37, -, v38 calleeName="setTimeout"
+    v40 = Undefined
+    Return v40
+}
+function f2 module=m1 position=181 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
+    v3 = PropGet v2 key="log"
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g1
+    v6 = CheckInitialized v5 name="seen"
+    v7 = Builtin builtin=String
+    v8 = GetModuleVariable variable=g2
+    v9 = CheckInitialized v8 name="kept"
+    v10 = PropGet v9 key="first"
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    v12 = Call v7, -, v11 calleeName="String"
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+    v14 = Builtin builtin=String
+    v15 = GetModuleVariable variable=g2
+    v16 = CheckInitialized v15 name="kept"
+    v17 = PropGet v16 key="list"
+    v18 = Convert v17 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v19 = Integer
+    v20 = ElemGet v18, v19
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = Call v14, -, v21 calleeName="String"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
+    v24 = Builtin builtin=String
+    v25 = GetModuleVariable variable=g2
+    v26 = CheckInitialized v25 name="kept"
+    v27 = PropGet v26 key="inner"
+    v28 = Convert v27 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v29 = PropGet v28 key="deep"
+    v30 = Convert v29 declared={type=number flags=[IsExpected]}
+    v31 = Call v24, -, v30 calleeName="String"
+    v32 = Convert v31 declared={type=undefined|null|string flags=[IsExpected]}
+    v33 = Call v4, v2, v6, v13, v23, v32 calleeKey="log" calleeName="console.log"
+    ReturnCall v33
+}
+function f3 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f4]
+function f4 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="globalThis" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v3 = NewClosure function=f6
+    PropSet v2, v3 key="hook"
+    v5 = Undefined
+    Return v5
+}
+function f6 module=m2 position=18 kind=Arrow thisType={type=anything} results=[{type=undefined|null|object flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    RecordRequire module=m1 referrer=m2 @24 tail
+    EvaluateModule module=m1 referrer=m2 [isCallOfRequire] @24 tail
+    RecordRequire module=m1 referrer=m2 @24 tail
+    v3 = ModuleNamespace module=m1 @24 tail
+    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
+    Return v4
+}
+function f7 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Undefined
+    Return v0
+}
+# -- generated: f0 f1 f2 f5 f6 f7
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: boolean = BeginModuleEvaluation module=m0
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v1: undefined = CallDirect function=f9
+# CHECK-NEXT: FinishModuleEvaluation module=m0
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: v4: exception = CatchException
+# CHECK-NEXT: AbandonModuleEvaluation v4 module=m0
+# CHECK-NEXT: Rethrow v4
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }
+# CHECK-LABEL: function f1 module=
+# CHECK: m1 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: boolean = BeginModuleEvaluation module=m1
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v1: undefined = CallDirect function=f0
+# CHECK-NEXT: v2: undefined = CallDirect function=f10
+# CHECK-NEXT: FinishModuleEvaluation module=m1
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b2() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: v5: exception = CatchException
+# CHECK-NEXT: AbandonModuleEvaluation v5 module=m1
+# CHECK-NEXT: Rethrow v5
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function f2 module=
+# CHECK: m1 position=181 kind=Arrow thisType={type=anything} results=[{type=undefined}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything ~ undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = GetModuleVariable variable=g1
+# CHECK-NEXT: v1: string ~ "bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = AssumeType v0 provenType=string
+# CHECK-NEXT: v2: L0 = GetModuleVariable variable=g2
+# CHECK-NEXT: v3: boolean = IsSlotFilled v2 key="first" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v4: guard):
+# CHECK-NEXT: v5: int[-2147483643, 2147483647] = GetSlot v2, v4 key="first" receivers=[L0] level=Expected accessSite=13 [holdsDeclaredType]
+# CHECK-NEXT: v6: string = CallBuiltin -, v5 overload=String/0 accessSite=14
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: v7: anything ~ int[-2147483643, 2147483647] = PropGet v2 key="first" accessSite=13 receivers=[L0]
+# CHECK-NEXT: v8: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v7 provenType=undefined|int
+# CHECK-NEXT: v9: string = CallBuiltin -, v8 overload=String/0 accessSite=14
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b3(v10: string):
+# CHECK-NEXT: v11: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = GetSlot v2 key="list" receivers=[L0] level=Proven accessSite=15
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: boolean = HasArrayStorage v11 arrayStorage=Double
+# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v14: guard):
+# CHECK-NEXT: v15: boolean = IsInBounds v11, v12
+# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v16: guard):
+# CHECK-NEXT: v17: guard = AllGuards v14, v16
+# CHECK-NEXT: v18: int = GetArrayElement v11, v12, v17 arrayStorage=Double level=Expected accessSite=16 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b8(v18)
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: ConvertToDoubleStorage v11
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v20: undefined|int = ElemGet v11, v12 accessSite=16 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b8(v20)
+# CHECK-NEXT: b8(v21: undefined|int ~ int):
+# CHECK-NEXT: v22: string = CallBuiltin -, v21 overload=String/0 accessSite=17
+# CHECK-NEXT: v23: L1 = GetSlot v2 key="inner" receivers=[L0] level=Proven accessSite=18
+# CHECK-NEXT: v24: boolean = IsSlotFilled v23 key="deep" receivers=[L1] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v24 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v25: guard):
+# CHECK-NEXT: v26: int[-2147483643, 2147483647] = GetSlot v23, v25 key="deep" receivers=[L1] level=Expected accessSite=19 [holdsDeclaredType]
+# CHECK-NEXT: v27: string = CallBuiltin -, v26 overload=String/0 accessSite=20
+# CHECK-NEXT: Jump -> next b11(v27)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v28: anything ~ int[-2147483643, 2147483647] = PropGet v23 key="deep" accessSite=19 receivers=[L1]
+# CHECK-NEXT: v29: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v28 provenType=undefined|int
+# CHECK-NEXT: v30: string = CallBuiltin -, v29 overload=String/0 accessSite=20
+# CHECK-NEXT: Jump -> next b11(v30)
+# CHECK-NEXT: b11(v31: string):
+# CHECK-NEXT: v32: undefined = CallBuiltin -, v1, v10, v22, v31 overload=ConsoleLog/0 accessSite=21 @0 tail
+# CHECK-NEXT: Return v32
+# CHECK-NEXT: }
+# CHECK-LABEL: function f5 module=
+# CHECK: m2 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f6 = NewClosure function=f6 allocationSite=6
+# CHECK-NEXT: SetGlobalBinding v0 key="hook" level=Expected accessSite=23
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f6 module=
+# CHECK: m2 position=18 kind=Arrow thisType={type=anything} results=[{type=L(m1)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = CallDirect function=f1 calledBuiltin=PrivateGlobalsEsmLoadSync @24 tail
+# CHECK-NEXT: v1: L(m1) = ModuleNamespace module=m1 @24 tail
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f7 module=
+# CHECK: m3 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: boolean = BeginModuleEvaluation module=m3
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: undefined = CallDirect function=f5
+# CHECK-NEXT: v2: undefined = CallDirect function=f0
+# CHECK-NEXT: FinishModuleEvaluation module=m3
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }

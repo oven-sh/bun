@@ -1773,62 +1773,53 @@ impl<'a> HTTPClient<'a> {
     ) -> bool {
         if self.wants_server_identity_check() {
             let enforce = self.flags.reject_unauthorized;
-            // SAFETY: `ssl` is a live `&mut SSL` for the open TLS socket whose
-            // peer certificate is being verified.
-            let cert_chain = unsafe { boringssl::c::SSL_get_peer_cert_chain(ssl) };
-            if !cert_chain.is_null() {
-                // SAFETY: cert_chain is a live STACK_OF(X509) owned by the SSL session; index 0 is in bounds when non-null is returned
-                let x509 = unsafe { boringssl::c::sk_X509_value(cert_chain, 0) };
-                if !x509.is_null() {
-                    let hostname = get_tls_hostname(self, allow_proxy_url);
+            if let Some(x509) = ssl.peer_leaf_certificate() {
+                let hostname = get_tls_hostname(self, allow_proxy_url);
 
-                    // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
-                    // this is the slow path
-                    //
-                    // The JS callback only applies to the *target's* certificate
-                    // (Node semantics). For the HTTPS proxy's own handshake, use
-                    // the native SAN check — a pinning callback written for the
-                    // target would reject the proxy's certificate.
-                    let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
-                    if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
-                        // clone the relevant data
-                        // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
-                        let cert_size =
-                            unsafe { boringssl::c::i2d_X509(x509, core::ptr::null_mut()) };
-                        let mut cert = vec![0u8; usize::try_from(cert_size).expect("int cast")]
-                            .into_boxed_slice();
-                        let mut cert_ptr = cert.as_mut_ptr();
-                        // SAFETY: x509 is live; cert_ptr points at a writable buffer of cert_size bytes
-                        let result_size =
-                            unsafe { boringssl::c::i2d_X509(x509, &raw mut cert_ptr) };
-                        debug_assert!(result_size == cert_size);
+                // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
+                // this is the slow path
+                //
+                // The JS callback only applies to the *target's* certificate
+                // (Node semantics). For the HTTPS proxy's own handshake, use
+                // the native SAN check — a pinning callback written for the
+                // target would reject the proxy's certificate.
+                let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
+                if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
+                    // clone the relevant data
+                    // SAFETY: x509 is a live `&mut X509`; null out-ptr requests size-only
+                    let cert_size = unsafe { boringssl::c::i2d_X509(x509, core::ptr::null_mut()) };
+                    let mut cert =
+                        vec![0u8; usize::try_from(cert_size).expect("int cast")].into_boxed_slice();
+                    let mut cert_ptr = cert.as_mut_ptr();
+                    // SAFETY: x509 is live; cert_ptr points at a writable buffer of cert_size bytes
+                    let result_size = unsafe { boringssl::c::i2d_X509(x509, &raw mut cert_ptr) };
+                    debug_assert!(result_size == cert_size);
 
-                        self.state.certificate_info = Some(CertificateInfo {
-                            cert,
-                            hostname: Box::<[u8]>::from(hostname),
-                        });
+                    self.state.certificate_info = Some(CertificateInfo {
+                        cert,
+                        hostname: Box::<[u8]>::from(hostname),
+                    });
 
-                        // Park the connection until the JS-side
-                        // `checkServerIdentity` callback approves this
-                        // certificate (gates `on_writable`/`on_data`; see the
-                        // flag's doc comment). The JS thread resumes via
-                        // `HTTPThread::schedule_cert_check_resume` on success,
-                        // or schedules a shutdown on failure.
-                        self.state.flags.is_waiting_for_cert_check = true;
+                    // Park the connection until the JS-side
+                    // `checkServerIdentity` callback approves this
+                    // certificate (gates `on_writable`/`on_data`; see the
+                    // flag's doc comment). The JS thread resumes via
+                    // `HTTPThread::schedule_cert_check_resume` on success,
+                    // or schedules a shutdown on failure.
+                    self.state.flags.is_waiting_for_cert_check = true;
 
-                        // we inform the user that the cert is invalid
-                        let ctx = self.get_ssl_ctx::<IS_SSL>();
-                        self.progress_update::<IS_SSL>(ctx, socket);
-                        // continue until we are aborted or not
+                    // we inform the user that the cert is invalid
+                    let ctx = self.get_ssl_ctx::<IS_SSL>();
+                    self.progress_update::<IS_SSL>(ctx, socket);
+                    // continue until we are aborted or not
+                    return true;
+                } else if !enforce {
+                    return true;
+                } else {
+                    // we check with native code if the cert is valid
+                    // fast path
+                    if uws::check_server_identity(ssl, hostname) {
                         return true;
-                    } else if !enforce {
-                        return true;
-                    } else {
-                        // we check with native code if the cert is valid
-                        // fast path
-                        if uws::check_server_identity(ssl, hostname) {
-                            return true;
-                        }
                     }
                 }
             }

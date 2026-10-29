@@ -210,7 +210,6 @@ static void encodeParamValue(const StringView& value, StringBuilder& builder)
     builder.append('"');
 }
 
-// get(), has(), set() and delete() take toASCIILower(`${name}`), as in Node.js:
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/mime.js#L338-L353
 static String toMIMEParamName(JSGlobalObject* globalObject, JSValue value)
 {

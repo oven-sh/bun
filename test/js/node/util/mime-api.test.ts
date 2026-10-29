@@ -270,7 +270,7 @@ test("Exact match with node", () => {
 
     === PARAMETER CASE SENSITIVITY ===
     mime5: text/javascript;charset=UTF-8
-    mime5.params.get("CHARSET"): false
+    mime5.params.get("CHARSET"): UTF-8
     mime5.params.get("charset"): UTF-8
     mime5.params.has("CHARSET"): true
     mime5.params.has("charset"): true
@@ -323,7 +323,7 @@ test("Exact match with node", () => {
 
     === CASE SENSITIVITY ===
     params.has("CHARSET"): true
-    params.get("CHARSET"): false
+    params.get("CHARSET"): utf-8
     After setting CHARSET, params.has("CHARSET"): true
     After setting CHARSET, params.get("CHARSET"): iso-8859-1
     params.has("charset"): true

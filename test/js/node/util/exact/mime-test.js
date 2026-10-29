@@ -98,7 +98,7 @@ console.log(`mime with empty param: ${mime4}`); // text/javascript;goal=module;x
 console.log("\n=== PARAMETER CASE SENSITIVITY ===");
 const mime5 = new MIMEType("text/javascript;CHARSET=UTF-8;abc=;def;ghi");
 console.log(`mime5: ${mime5}`); // text/javascript;charset=UTF-8
-console.log(`mime5.params.get("CHARSET"): ${mime5.params.get("CHARSET") === null}`); // false (UTF-8)
+console.log(`mime5.params.get("CHARSET"): ${mime5.params.get("CHARSET")}`); // UTF-8
 console.log(`mime5.params.get("charset"): ${mime5.params.get("charset")}`); // UTF-8
 console.log(`mime5.params.has("CHARSET"): ${mime5.params.has("CHARSET")}`); // true
 console.log(`mime5.params.has("charset"): ${mime5.params.has("charset")}`); // true
@@ -199,7 +199,7 @@ console.log(`params toString(): ${params2.toString()}`); // charset=utf-8
 // Case sensitivity
 console.log(`\n=== CASE SENSITIVITY ===`);
 console.log(`params.has("CHARSET"): ${params2.has("CHARSET")}`); // true
-console.log(`params.get("CHARSET"): ${params2.get("CHARSET") === null}`); // false
+console.log(`params.get("CHARSET"): ${params2.get("CHARSET")}`); // utf-8
 params2.set("CHARSET", "iso-8859-1");
 console.log(`After setting CHARSET, params.has("CHARSET"): ${params2.has("CHARSET")}`); // true
 console.log(`After setting CHARSET, params.get("CHARSET"): ${params2.get("CHARSET")}`); // iso-8859-1

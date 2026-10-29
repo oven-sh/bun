@@ -743,21 +743,18 @@ impl Scrypt {
         let r = self.r;
         let p = self.p;
         let maxmem = self.maxmem;
-        // SAFETY: all pointer args are null with len 0; numeric args are plain values.
-        if unsafe {
-            boringssl::c::EVP_PBE_validate_scrypt_params(
-                core::ptr::null(),
-                0,
-                core::ptr::null(),
-                0,
-                u64::from(n),
-                u64::from(r),
-                u64::from(p),
-                maxmem as usize,
-                core::ptr::null_mut(),
-                0,
-            )
-        } == 0
+        if boringssl::c::EVP_PBE_validate_scrypt_params(
+            core::ptr::null(),
+            0,
+            core::ptr::null(),
+            0,
+            u64::from(n),
+            u64::from(r),
+            u64::from(p),
+            maxmem as usize,
+            core::ptr::null_mut(),
+            0,
+        ) == 0
         {
             return Err(global.throw_invalid_scrypt_params());
         }

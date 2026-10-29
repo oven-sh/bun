@@ -84,22 +84,6 @@ const fn noop_callback() -> HTTPClientResultCallback {
     }
 }
 
-/// Free a `URL.href` slice that the caller marked as owned.
-///
-/// # Safety
-/// `href` must have been allocated via the global allocator as a `Box<[u8]>`
-/// and ownership ceded to this module via `is_url_owned = true`.
-#[inline]
-unsafe fn free_owned_href(href: &'static [u8]) {
-    if !href.is_empty() {
-        // SAFETY: caller guarantees `href` is the sole reference to a
-        // global-allocator `Box<[u8]>` allocation. The fat `*mut [u8]` is
-        // obtained directly from the borrowed slice — no need to round-trip
-        // through `(ptr, len)` + `from_raw_parts`.
-        unsafe { bun_core::heap::destroy(core::ptr::from_ref(href).cast_mut()) };
-    }
-}
-
 /// Read the HTTP-thread monotonic timer in nanoseconds.
 #[inline]
 fn http_thread_timer_read() -> u64 {
@@ -334,7 +318,8 @@ struct Preconnect {
     // (late-init); `None` is never observed after `preconnect()` populates it.
     async_http: Option<AsyncHTTP<'static>>,
     url: URL<'static>,
-    is_url_owned: bool,
+    // Last, so that it outlives the two fields that may point into it.
+    _owned_href: Vec<u8>,
 }
 
 impl Preconnect {
@@ -347,11 +332,6 @@ impl Preconnect {
                 .as_mut()
                 .expect("Preconnect.async_http set in preconnect()")
                 .clear_data();
-            if (*this).is_url_owned {
-                // SAFETY: `is_url_owned` is the caller's promise that `url.href`
-                // is a global-allocator `Box<[u8]>` we now own.
-                free_owned_href((*this).url.href);
-            }
             // Reclaim and drop the heap allocation (runs Drop on `async_http`
             // — which in turn drops `HTTPClient`).
             drop(bun_core::heap::take(this));
@@ -359,13 +339,9 @@ impl Preconnect {
     }
 }
 
-pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
+/// `owned_href` is the buffer that `url` points into, or empty when that buffer is `'static`.
+pub fn preconnect(url: URL<'static>, owned_href: Vec<u8>) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
-        if is_url_owned {
-            // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
-            // global-allocator `Box<[u8]>` we now own.
-            unsafe { free_owned_href(url.href) };
-        }
         return;
     }
 
@@ -380,7 +356,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
         async_http: None,
         url,
-        is_url_owned,
+        _owned_href: owned_href,
     }));
 
     // SAFETY: `this` is a freshly Box-allocated, uniquely-owned pointer; we

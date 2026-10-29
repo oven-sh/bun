@@ -39,11 +39,7 @@ unsafe extern "C" {
 
 impl Stream {
     pub fn socket(&mut self) -> Option<NonNull<Socket>> {
-        // Returned as a raw pointer (not &mut) because the Socket is the *parent
-        // connection shared by every stream on it* — two live &mut Stream on the
-        // same conn calling .socket() (or a conn-level callback already holding
-        // &mut Socket) would otherwise yield aliasing &mut Socket, which is UB.
-        // Callers reborrow locally under their own SAFETY proof.
+        // The parent connection, which every stream on it shares.
         NonNull::new(us_quic_stream_socket(self))
     }
 

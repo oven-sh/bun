@@ -346,8 +346,8 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if p.is_null() {
             None
         } else {
-            // SAFETY: highway_memmem returns a pointer within `haystack` on success.
-            Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+            // highway_memmem returns a pointer within `haystack` on success.
+            Some(p.addr() - haystack.as_ptr().addr())
         }
     }
 }

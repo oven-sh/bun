@@ -92,7 +92,6 @@ pub trait Host {
             .is_some_and(|member| member.ref_ == ref_)
     }
     fn source(&self) -> &[u8];
-    fn arena(&self) -> &bun_alloc::Arena;
 
     /// Name bytes for any `Ref`, regardless of tag (`Symbol`,
     /// `SourceContentsSlice`, `AllocatedName`). Post-visit, identifier
@@ -1312,6 +1311,7 @@ pub struct CompileResult {
 pub fn maybe_compile_pending(
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
+    arena: &bun_alloc::Arena,
     pending: &PendingCompile,
     body: &mut [Stmt],
     name: Option<&[u8]>,
@@ -1331,6 +1331,7 @@ pub fn maybe_compile_pending(
     let cf = maybe_compile_node(
         state,
         host,
+        arena,
         FunctionNode::Function(&tmp),
         name,
         pending.in_react_hoc,
@@ -1351,6 +1352,7 @@ pub fn maybe_compile_pending(
 fn maybe_compile_node(
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
+    arena: &bun_alloc::Arena,
     node: FunctionNode<'_>,
     name: Option<&[u8]>,
     in_react_hoc: bool,
@@ -1418,11 +1420,6 @@ fn maybe_compile_node(
     // TODO(port): emit the `gate() ? compiled : original` wrapper. The
     // function-declaration path needs statement-level access; for now a valid
     // directive only opts the function in and registers no extra import.
-
-    // SAFETY: the arena is owned by the `Host` implementor (the parser's `P`)
-    // and outlives the `&mut dyn Host` borrow for the duration of this call.
-    let arena: &bun_alloc::Arena =
-        unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(host.arena()) };
 
     match pipeline::compile_fn(
         &node,

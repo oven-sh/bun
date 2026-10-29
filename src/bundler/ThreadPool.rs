@@ -67,7 +67,7 @@ pub struct ThreadPool {
     /// freed slot), so each pool draws a fresh `u64` from [`POOL_GENERATION`].
     pub(crate) generation: u64,
     // BACKREF (LIFETIMES.tsv row 170: ThreadPool.v2). `BundleV2` is generic
-    // over `'a`; erase to `'static` behind the raw pointer like ParseTask.ctx.
+    // over `'a`; erase to `'static` behind the raw pointer.
     pub(crate) v2: *const BundleV2<'static>,
 }
 

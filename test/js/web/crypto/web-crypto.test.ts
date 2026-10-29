@@ -1,7 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { createSecretKey, type webcrypto } from "node:crypto";
+import { totalmem } from "node:os";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -133,9 +134,8 @@ describe("Web Crypto", () => {
       return { key, iv, wrapped };
     }
 
-    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk reads the bytes as UTF-8; they used
-    // to be read as Latin-1. As in Node.js, one leading byte order mark is skipped and
-    // malformed UTF-8 is a DataError, not U+FFFD.
+    // https://w3c.github.io/webcrypto/#concept-parse-a-jwk reads the bytes as UTF-8. As in Node.js,
+    // one leading byte order mark is skipped and malformed UTF-8 is a DataError, not U+FFFD.
     it("decodes the wrapped bytes as UTF-8 and skips a byte order mark", async () => {
       const jwk = (kid: string) => `{"kty":"oct","k":"AAECAwQFBgcICQoLDA0ODw","alg":"A128GCM","kid":"${kid}"}`;
       const encode = (s: string) => new TextEncoder().encode(s);
@@ -378,6 +378,34 @@ describe("oversized inputs", () => {
     }
     expect(exitCode).toBe(0);
   });
+
+  // WTF::String::fromUTF8 aborts on 2^30 bytes or more that are not ASCII. An AES-CTR ciphertext of
+  // zeros decrypts to the key stream, so the input is never written. unwrapKey writes two copies of
+  // it, so small machines skip. A debug build needs 65 seconds to decrypt 1 GiB.
+  it.skipIf(isDebug || totalmem() < 10 * 1024 ** 3)(
+    'unwrapKey("jwk") rejects 1 GiB that is not ASCII instead of aborting',
+    async () => {
+      const script = `
+        const key = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(1), "AES-CTR", false, ["unwrapKey"]);
+        const ctr = { name: "AES-CTR", counter: new Uint8Array(16), length: 64 };
+        const result = await crypto.subtle
+          .unwrapKey("jwk", new Uint8Array(2 ** 30), key, ctr, "AES-GCM", true, ["encrypt"])
+          .then(() => "resolved", e => e.name);
+        console.log(result);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("DataError");
+      expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+    },
+    30_000,
+  );
 });
 
 describe("oversized outputs", () => {

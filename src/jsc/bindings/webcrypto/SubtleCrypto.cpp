@@ -58,6 +58,7 @@
 #include "CryptoKeyRSA.h"
 #include "BunString.h"
 #include "ErrorCode.h"
+#include "helpers.h"
 #include "JSDOMExceptionHandling.h"
 #include "VectorSizeLimit.h"
 #include "node/crypto/CryptoUtil.h"
@@ -1569,7 +1570,9 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     auto jwkBytes = bytes.span();
                     if (spanHasPrefix(jwkBytes, std::span { utf8ByteOrderMark }))
                         jwkBytes = jwkBytes.subspan(utf8ByteOrderMark.size());
-                    String jwkString = String::fromUTF8(jwkBytes);
+                    // String::fromUTF8 aborts on 2^30 bytes or more that are not ASCII, and the caller controls the size.
+                    bool isUTF8 = !jwkBytes.empty() && simdutf::validate_utf8(reinterpret_cast<const char*>(jwkBytes.data()), jwkBytes.size());
+                    String jwkString = isUTF8 ? Zig::tryConvertValidUTF8ToString(jwkBytes) : String();
                     auto jwkObject = jwkString.isNull() ? JSValue() : JSONParse(&state, jwkString);
                     if (scope.exception()) [[unlikely]] {
                         weakThis->m_pendingPromises.remove(index);

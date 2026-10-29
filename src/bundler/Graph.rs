@@ -8,7 +8,7 @@ use enum_map::EnumMap;
 use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::options;
-use crate::{AdditionalFile, BundleV2, ThreadPool};
+use crate::{BundleV2, ThreadPool, output_file};
 
 use bun_ast::Index;
 
@@ -106,9 +106,10 @@ pub struct InputFile<'a> {
     pub(crate) secondary_path: AstVec<u8>,
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
+    /// The asset's entry in `Graph::additional_output_files`, set by `process_files_to_copy`.
+    pub(crate) asset_output_file: output_file::IndexOptional,
     // No `arena` field — the owned fields
     // (Box/Vec) carry their allocator.
-    pub additional_files: AstVec<AdditionalFile>,
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
@@ -121,7 +122,7 @@ impl Default for InputFile<'_> {
             secondary_path: AstAlloc::vec(),
             loader: options::Loader::default(),
             side_effects: SideEffects::default(),
-            additional_files: AstAlloc::vec(),
+            asset_output_file: output_file::IndexOptional::NONE,
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
@@ -138,7 +139,7 @@ bun_collections::multi_array_columns! {
         secondary_path: AstVec<u8>,
         loader: options::Loader,
         side_effects: SideEffects,
-        additional_files: AstVec<AdditionalFile>,
+        asset_output_file: output_file::IndexOptional,
         unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
@@ -219,6 +220,14 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+
+    /// The output file that `process_files_to_copy` made for an asset.
+    pub(crate) fn asset_output_file(&self, source_index: usize) -> &options::OutputFile {
+        match self.input_files.items_asset_output_file()[source_index].unwrap() {
+            Some(index) => &self.additional_output_files[index.get_usize()],
+            None => bun_core::Output::panic(format_args!("Internal error: missing asset file")),
+        }
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

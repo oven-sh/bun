@@ -35,47 +35,11 @@ impl Default for PathPair<'_> {
     }
 }
 
-pub(crate) struct PathPairIter<'a, 'r> {
-    index: u8,
-    ctx: &'a mut PathPair<'r>,
-}
-
-impl<'a, 'r> PathPairIter<'a, 'r> {
-    pub(crate) fn next(&mut self) -> Option<&mut crate::fs::Path<'r>> {
-        if let Some(path_) = self.next_() {
-            let p: *mut crate::fs::Path<'r> = path_;
-            // SAFETY: `p` is the exclusive `&mut Path` just returned by `next_()`,
-            // coerced to a raw pointer so `self` can be re-borrowed for the
-            // recursive call; `p` is not dereferenced after that call, so no two
-            // live `&mut` into `self.ctx` overlap.
-            unsafe {
-                if (*p).is_disabled {
-                    return self.next();
-                }
-                return Some(&mut *p);
-            }
-        }
-        None
-    }
-
-    fn next_(&mut self) -> Option<&mut crate::fs::Path<'r>> {
-        let ind = self.index;
-        self.index = self.index.saturating_add(1);
-
-        match ind {
-            0 => Some(&mut self.ctx.primary),
-            1 => self.ctx.secondary.as_mut(),
-            _ => None,
-        }
-    }
-}
-
 impl<'r> PathPair<'r> {
-    pub(crate) fn iter(&mut self) -> PathPairIter<'_, 'r> {
-        PathPairIter {
-            ctx: self,
-            index: 0,
-        }
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut crate::fs::Path<'r>> {
+        core::iter::once(&mut self.primary)
+            .chain(&mut self.secondary)
+            .filter(|path| !path.is_disabled)
     }
 }
 
@@ -274,14 +238,10 @@ impl<'r> Result<'r> {
 
 pub struct DirEntryResolveQueueItem {
     pub(crate) result: allocators::Result,
-    // NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
-    // threadlocal `dir_info_uncached_path` buffer and are consumed before
-    // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
-    // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
-    // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
-    // safe `.slice()` instead of an open-coded raw-ptr deref.
+    /// A slice of the threadlocal `dir_info_uncached_path` buffer, so not `'static`.
     pub(crate) unsafe_path: bun_ptr::RawSlice<u8>,
-    pub(crate) safe_path: bun_ptr::RawSlice<u8>,
+    /// Empty, or a `DirEntry::dir` from the dirname store.
+    pub(crate) safe_path: &'static [u8],
     pub(crate) fd: FD,
 }
 

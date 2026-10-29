@@ -37,12 +37,7 @@ struct RouterResolver<'a, 'r>(&'r mut Resolver<'a>);
 impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     #[inline]
     fn fs(&self) -> &'static Fs::FileSystem {
-        Fs::FileSystem::instance()
-    }
-    #[inline]
-    fn fs_impl(&self) -> *mut Fs::Implementation {
-        // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-        unsafe { &raw mut (*self.0.fs()).fs }
+        Fs::FileSystem::get()
     }
     #[inline]
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
@@ -169,7 +164,7 @@ impl FileSystemRouter {
             // (other threads rewrite the map in place under that lock), then drop
             // the guard: `bust_dir_cache` / the recursion below re-acquire it.
             let entry_ptrs: Vec<*mut Fs::Entry> = {
-                let _entries_lock = Fs::FileSystem::instance().fs.entries_mutex.lock_guard();
+                let _entries_lock = Fs::FileSystem::get().fs.entries_mutex.lock_guard();
                 match dir_ref.get_entries_const() {
                     Some(entries) => entries.data.values().copied().collect(),
                     None => Vec::new(),
@@ -186,19 +181,7 @@ impl FileSystemRouter {
                     if entry.base().first() == Some(&b'.') {
                         continue 'outer;
                     }
-                    // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem`
-                    // accessor for the process-lifetime singleton; `&mut .fs` (the
-                    // `Implementation` field) is the lazy-stat receiver. `kind`
-                    // needs `&mut Entry` to update the cached stat; no shared
-                    // borrow of `*entry_ptr` is live across this block.
-                    let kind = {
-                        let fs_impl = &mut vm.transpiler.fs_mut().fs;
-                        // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
-                        // EntryStore (checked non-null above); the lazy-stat rewrite is
-                        // serialized on `Entry.mutex`; fs_impl is the process-global RealFS.
-                        unsafe { (&*entry_ptr).kind(fs_impl, false) }
-                    };
-                    if kind == Fs::EntryKind::Dir {
+                    if entry.kind(&vm.fs().fs, false) == Fs::EntryKind::Dir {
                         for banned_dir in Router::BANNED_DIRS.iter() {
                             if entry.base() == *banned_dir {
                                 continue 'outer;
@@ -248,7 +231,7 @@ impl FileSystemRouter {
             // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
             let Some(joined) =
                 path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    Fs::FileSystem::instance().top_level_dir(),
+                    Fs::FileSystem::get().top_level_dir(),
                     &mut out_buf,
                     &[options.dir],
                 )

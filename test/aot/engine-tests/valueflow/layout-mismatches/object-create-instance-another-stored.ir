@@ -1,0 +1,360 @@
+# -- source: object-create-instance-another-stored.ts
+# // One arm of a conditional gives what Object.create(A.prototype) made, out of a variable of type `A | null`, the other an instance of B. Two fields that B declares as numbers are stored on whichever it is.
+# class A {}
+# class B {
+#   x: number;
+#   y: number;
+#   constructor(x: number, y: number) {
+#     this.x = x;
+#     this.y = y;
+#   }
+# }
+# let held: A | null = null;
+# const made: B[] = [new B(1.5, 2.5)];
+# function put(first: boolean, value: number) {
+#   const it = held;
+#   if (it === null) return 0;
+#   const either: A | B = first ? it : made[0];
+#   (either as any).x = value;
+#   (either as any).y = value + 1;
+#   return 1;
+# }
+# held = Object.create(A.prototype);
+# (held as any).first = "first";
+# (held as any).second = "second";
+# console.log(put(true, 1.5), put(false, 3.5));
+# console.log(JSON.stringify(held), Object.keys(held as object).join(), made[0].x, made[0].y);
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="object-create-instance-another-stored.ts" displayPath="object-create-instance-another-stored.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=334 kind=Variable
+typesite w1 module=m0 position=363 kind=Variable
+typesite w2 module=m0 position=407 kind=Parameter
+typesite w3 module=m0 position=423 kind=Parameter
+typesite w4 module=m0 position=394 kind=Result
+typesite w5 module=m0 position=268 kind=Parameter
+typesite w6 module=m0 position=279 kind=Parameter
+typesite w7 module=m0 position=230 kind=Field
+typesite w8 module=m0 position=243 kind=Field
+typesite w9 module=m0 position=376 kind=CallResult
+typesite w10 module=m0 position=721 kind=CallResult
+typesite w11 module=m0 position=737 kind=CallResult
+typesite w12 module=m0 position=767 kind=CallResult
+typesite w13 module=m0 position=809 kind=Assertion
+typesite w14 module=m0 position=789 kind=CallResult
+typesite w15 module=m0 position=825 kind=Element
+typesite w16 module=m0 position=836 kind=Element
+typesite w17 module=m0 position=448 kind=Variable
+typesite w18 module=m0 position=496 kind=Variable
+typesite w19 module=m0 position=525 kind=Element
+typesite w20 module=m0 position=296 kind=Field
+typesite w21 module=m0 position=312 kind=Field
+layout L0 kind=Instance name="A" module=m0 position=213 constructor=f2
+layout L1 kind=Instance name="B" module=m0 position=224 constructor=f3 fields=[{key="x" declared={type=number site=w7} flags=[IsRequired]}, {key="y" declared={type=number site=w8} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="held" module=m0 declared={type=undefined|null|boolean|number|string|symbol|bigint|absent|L0 site=w0 flags=[OmitsUndefined]}
+variable g1 name="made" module=m0 declared={type=undefined|null|absent|Array<undefined|null|L1> site=w1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    PutModuleVariable v3 variable=g2
+    v5 = FinishClass v3 layout=L0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L1
+    PutModuleVariable v9 variable=g3
+    v11 = FinishClass v9 layout=L1
+    v12 = Convert v11 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v13 = Convert v11 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = Null
+    v15 = Convert v14 declared={type=undefined|null|boolean|number|string|symbol|bigint|L0 site=w0 flags=[OmitsUndefined]}
+    PutModuleVariable v15 variable=g0
+    v17 = Double number=1.5
+    v18 = Double number=2.5
+    v19 = Construct v13, -, v17, v18 calleeName="B"
+    v20 = Convert v19 declared={type=undefined|null|L1 site=w9 flags=[OmitsNull, OmitsUndefined]}
+    v21 = NewArray v20 contents=undefined|null|L1
+    v22 = Convert v21 declared={type=undefined|null|Array<undefined|null|L1> site=w1 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v22 variable=g1
+    v24 = GetModuleVariable variable=g0
+    v25 = CheckInitialized v24 name="held"
+    v26 = Builtin builtin=Object
+    v27 = Builtin builtin=ObjectCreate
+    v28 = PropGet v7 key="prototype"
+    v29 = Call v27, v26, v28 calleeName="Object.create"
+    v30 = Convert v29 declared={type=undefined|null|boolean|number|string|symbol|bigint|L0 site=w0 flags=[OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v30 variable=g0
+    v32 = GetModuleVariable variable=g0
+    v33 = CheckInitialized v32 name="held"
+    v34 = Convert v33 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v35 = String string="first"
+    PropSet v34, v35 key="first"
+    v37 = GetModuleVariable variable=g0
+    v38 = CheckInitialized v37 name="held"
+    v39 = Convert v38 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v40 = String string="second"
+    PropSet v39, v40 key="second"
+    v42 = Builtin builtin=GlobalThis
+    v43 = PropGet v42 key="console" [isFreeName]
+    v44 = Convert v43 declared={type=builtin(Console) flags=[IsExpected]}
+    v45 = PropGet v44 key="log"
+    v46 = Convert v45 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v47 = Boolean boolean=true
+    v48 = Double number=1.5
+    v49 = Call v1, -, v47, v48 calleeName="put"
+    v50 = Convert v49 declared={type=int[0, 1] site=w10}
+    v51 = Boolean
+    v52 = Double number=3.5
+    v53 = Call v1, -, v51, v52 calleeName="put"
+    v54 = Convert v53 declared={type=int[0, 1] site=w11}
+    v55 = Call v46, v44, v50, v54 calleeKey="log" calleeName="console.log"
+    v56 = Builtin builtin=GlobalThis
+    v57 = PropGet v56 key="console" [isFreeName]
+    v58 = Convert v57 declared={type=builtin(Console) flags=[IsExpected]}
+    v59 = PropGet v58 key="log"
+    v60 = Convert v59 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v61 = Builtin builtin=JSON
+    v62 = PropGet v61 key="stringify"
+    v63 = Convert v62 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v64 = GetModuleVariable variable=g0
+    v65 = CheckInitialized v64 name="held"
+    v66 = Call v63, v61, v65 calleeKey="stringify" calleeName="JSON.stringify"
+    v67 = Convert v66 declared={type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v68 = Builtin builtin=Object
+    v69 = Builtin builtin=ObjectKeys
+    v70 = GetModuleVariable variable=g0
+    v71 = CheckInitialized v70 name="held"
+    v72 = Convert v71 declared={type=undefined|null|object site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v73 = Call v69, v68, v72 calleeName="Object.keys"
+    v74 = Convert v73 declared={type=undefined|null|Array<undefined|null|string> site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v75 = PropGet v74 key="join"
+    v76 = Call v75, v74 calleeKey="join" calleeName="join"
+    v77 = Convert v76 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v78 = Integer
+    v79 = ElemGet v22, v78
+    v80 = Convert v79 declared={type=undefined|null|L1 site=w15 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v81 = PropGet v80 key="x"
+    v82 = Integer
+    v83 = ElemGet v22, v82
+    v84 = Convert v83 declared={type=undefined|null|L1 site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v85 = PropGet v84 key="y"
+    v86 = Call v60, v58, v67, v77, v81, v85 calleeKey="log" calleeName="console.log"
+    v87 = Undefined
+    Return v87
+}
+function f1 name="put" module=m0 position=394 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w2}, {type=number site=w3}] results=[{type=int[0, 1] site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: boolean, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="held"
+    v4 = Convert v3 declared={type=undefined|null|boolean|number|string|symbol|bigint|L0 site=w17 flags=[OmitsUndefined]}
+    v5 = TypeTest v4 testedType=null
+    Branch v5 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v6):
+    Jump -> next b3()
+  b3():
+    v7 = Integer
+    v8 = Convert v7 declared={type=int[0, 1] site=w4}
+    Return v8
+  b4(v9):
+    Jump -> next b5()
+  b5():
+    v10 = ToBoolean v0
+    Branch v10 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v11):
+    Jump -> next b7()
+  b7():
+    Jump -> next b10(v9)
+  b8(v12):
+    Jump -> next b9()
+  b9():
+    v13 = GetModuleVariable variable=g1
+    v14 = CheckInitialized v13 name="made"
+    v15 = Integer
+    v16 = ElemGet v14, v15
+    v17 = Convert v16 declared={type=undefined|null|L1 site=w19 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    Jump -> next b10(v17)
+  b10(v18):
+    v19 = Convert v18 declared={type=undefined|null|boolean|number|string|symbol|bigint|L0|L1 site=w18 flags=[OmitsNull, OmitsUndefined]}
+    v20 = Convert v19 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v20, v1 key="x"
+    v22 = Convert v19 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v23 = Integer integer=1
+    v24 = Add v1, v23
+    PropSet v22, v24 key="y"
+    v26 = Integer integer=1
+    v27 = Convert v26 declared={type=int[0, 1] site=w4}
+    Return v27
+}
+function f2 name="A" module=m0 position=213 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v3
+}
+function f3 name="B" module=m0 position=267 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w5}, {type=number site=w6}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: number, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = GetConstructPrototype v0 layout=L1
+    v4 = NewObject v3 layout=L1
+    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f4
+    v7 = Convert v1 declared={type=number site=w20}
+    PropSet v5, v7 key="x"
+    v9 = Convert v2 declared={type=number site=w21}
+    PropSet v5, v9 key="y"
+    v11 = Undefined
+    v12 = TypeTest v11 testedType=object
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v13):
+    Jump -> next b4(v13)
+  b3(v14):
+    Jump -> next b4(v5)
+  b4(v15):
+    Return v15
+}
+function f4 module=m0 position=224 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Undefined
+    PropDefine v1, v2 key="x"
+    v4 = Undefined
+    PropDefine v1, v4 key="y"
+    v6 = Undefined
+    Return v6
+}
+# -- generated: f0 put B
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f9 callPosition=4294967295 isConstruction=true module=m0}, {callee=f4 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f2 = GetModuleVariable variable=g2
+# CHECK-NEXT: v1: f2 = FinishClass v0 layout=L0
+# CHECK-NEXT: v2: null = Null
+# CHECK-NEXT: PutModuleVariable v2 variable=g0
+# CHECK-NEXT: v4: fractional = Double number=1.5
+# CHECK-NEXT: v5: fractional = Double number=2.5
+# CHECK-NEXT: v6: L1 = NewObject -, v4, v5 layout=L1 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v7: Array<L1, Contiguous> = NewArray v6 contents=L1 allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v8: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v8 variable=g1
+# CHECK-NEXT: v10: anything = PropGet v1 key="prototype" accessSite=1
+# CHECK-NEXT: v11: object = AssumeType v10 provenType=object
+# CHECK-NEXT: v12: Object = CallBuiltin -, v11 overload=ObjectCreate/0
+# CHECK-NEXT: PutModuleVariable v12 variable=g0
+# CHECK-NEXT: v14: "first" = String string="first"
+# CHECK-NEXT: PropSet v12, v14 key="first" accessSite=2
+# CHECK-NEXT: v16: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0 = GetModuleVariable variable=g0
+# CHECK-NEXT: v17: null|Object ~ null = AssumeType v16 provenType=null|absent|Object
+# CHECK-NEXT: v18: "second" = String string="second"
+# CHECK-NEXT: v19: Object = RequireObjectCoercible v17 nullishAccess=Write name="second"
+# CHECK-NEXT: PropSet v19, v18 key="second" accessSite=3
+# CHECK-NEXT: v21: true = Boolean boolean=true
+# CHECK-NEXT: v22: fractional = Double number=1.5
+# CHECK-NEXT: v23: int[0, 1] = CallDirect v21, v22 function=f1 accessSite=6
+# CHECK-NEXT: v24: false = Boolean
+# CHECK-NEXT: v25: fractional = Double number=3.5
+# CHECK-NEXT: v26: int[0, 1] = CallDirect v24, v25 function=f1 accessSite=7
+# CHECK-NEXT: v27: undefined = CallBuiltin -, v23, v26 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v28: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0 = GetModuleVariable variable=g0
+# CHECK-NEXT: v29: null|Object ~ null = AssumeType v28 provenType=null|absent|Object
+# CHECK-NEXT: v30: undefined = Undefined
+# CHECK-NEXT: v31: undefined|string = CallBuiltin -, v29, v30 overload=JSONStringify/0 accessSite=12
+# CHECK-NEXT: v32: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0 = GetModuleVariable variable=g0
+# CHECK-NEXT: v33: null|Object ~ null = AssumeType v32 provenType=null|absent|Object
+# CHECK-NEXT: v34: Object = ToObject v33 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v35: Array<string> = CallBuiltin -, v34 overload=ObjectKeys/0 accessSite=13
+# CHECK-NEXT: v36: Array<"first"|"second"|"x"|"y", proven, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<"first"|"second"|"x"|"y", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v37: string = CallBuiltin v36 overload=ArrayPrototypeJoin/0 accessSite=15
+# CHECK-NEXT: v38: 0 = Integer
+# CHECK-NEXT: v39: undefined|L1 = GetArrayElement v8, v38 arrayStorage=Contiguous level=Proven accessSite=16 [keyIsIntegral]
+# CHECK-NEXT: v40: L1 = RequireObjectCoercible v39 name="x"
+# CHECK-NEXT: v41: fractional = GetSlot v40 key="x" receivers=[L1] level=Proven accessSite=17
+# CHECK-NEXT: v42: 0 = Integer
+# CHECK-NEXT: v43: undefined|L1 = GetArrayElement v8, v42 arrayStorage=Contiguous level=Proven accessSite=18 [keyIsIntegral]
+# CHECK-NEXT: v44: L1 = RequireObjectCoercible v43 name="y"
+# CHECK-NEXT: v45: number = GetSlot v44 key="y" receivers=[L1] level=Proven accessSite=19
+# CHECK-NEXT: v46: undefined = CallBuiltin -, v31, v37, v41, v45 overload=ConsoleLog/0 accessSite=20
+# CHECK-NEXT: v47: undefined = Undefined
+# CHECK-NEXT: Return v47
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="put"
+# CHECK: module=m0 position=394 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w2}, {type=fractional site=w3}] results=[{type=int[0, 1] site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: boolean, v1: fractional):
+# CHECK-NEXT: v2: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0 = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: null|Object ~ null = AssumeType v2 provenType=null|absent|Object
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=null
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b2(v6: Object):
+# CHECK-NEXT: Branch v0 -> taken b4(v6), notTaken b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v7: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g1
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: undefined|L1 = GetArrayElement v7, v8 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b4(v9)
+# CHECK-NEXT: b4(v10: undefined|L1|Object ~ undefined|L1):
+# CHECK-NEXT: v11: L1|Object ~ L1 = RequireObjectCoercible v10 nullishAccess=Write name="x"
+# CHECK-NEXT: v12: boolean ~ true = TypeTest v11 testedType=L1
+# CHECK-NEXT: Branch v12 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b5(v13: L1):
+# CHECK-NEXT: PutSlot v13, -, v1 key="x" receivers=[L1] level=Proven accessSite=22
+# CHECK-NEXT: v15: 1 = Integer integer=1
+# CHECK-NEXT: v16: number = Add v1, v15
+# CHECK-NEXT: PutSlot v13, -, v16 key="y" receivers=[L1] level=Proven accessSite=23
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b6(v18: Object) frequency=Rare:
+# CHECK-NEXT: PropSet v18, v1 key="x" accessSite=22 receivers=[L1, ..]
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: number = Add v1, v20
+# CHECK-NEXT: PropSet v18, v21 key="y" accessSite=23 receivers=[L1, ..]
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v23: 1 = Integer integer=1
+# CHECK-NEXT: Return v23
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="B"
+# CHECK: module=m0 position=267 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=fractional site=w5}, {type=fractional site=w6}] results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: anything, v1: fractional, v2: fractional):
+# CHECK-NEXT: v3: f3 = AssumeType v0 provenType=f3
+# CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L1
+# CHECK-NEXT: v5: object ~ L1 = NewObject v4 layout=L1 allocationSite=5 allocationClass=0
+# CHECK-NEXT: v6: L1 = AssumeType v5 provenType=L1
+# CHECK-NEXT: v7: fractional = Double number=0.5
+# CHECK-NEXT: PutSlot v6, -, v7 key="x" receivers=[L1] level=Proven accessSite=27
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: PutSlot v6, -, v9 key="y" receivers=[L1] level=Proven accessSite=28
+# CHECK-NEXT: PutSlot v6, -, v1 key="x" receivers=[L1] level=Proven accessSite=25
+# CHECK-NEXT: PutSlot v6, -, v2 key="y" receivers=[L1] level=Proven accessSite=26
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="B"
+# CHECK: module=m0 position=267 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=2 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything, v3: anything, v4: anything):
+# CHECK-NEXT: v5: fractional = AssumeType v3 provenType=fractional
+# CHECK-NEXT: v6: fractional = AssumeType v4 provenType=fractional
+# CHECK-NEXT: v7: L1 = CallDirect v2, v5, v6 function=f3
+# CHECK-NEXT: ReturnCall v7 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="B"
+# CHECK: module=m0 position=267 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=L1} parameters=[{type=fractional site=w5}, {type=fractional site=w6}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f3} constructedClass=L1

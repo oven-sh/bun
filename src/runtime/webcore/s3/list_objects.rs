@@ -166,7 +166,9 @@ impl S3ListObjectsV2Result {
 
 /// Reads a `ListObjectsV2` response body; `None` unless it is a well-formed
 /// `<ListBucketResult>` document.
+#[inline(never)]
 pub(crate) fn parse_s3_list_objects_result(body: &[u8]) -> Option<S3ListObjectsV2Result> {
+    bun_removable_features::removable_definition!(S3Responses, parse_s3_list_objects_result);
     xml_response::parse(body, |root| {
         if root.name != b"ListBucketResult" {
             return None;

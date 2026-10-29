@@ -1,0 +1,128 @@
+# Counted loops with a second exit: a return, a break, a throw, a missing element. They run past 65,536 and 131,072 iterations, and the second exit is taken just before, at and just after
+# each of those counts, on the first iteration, on the last one and never. The bound is a parameter, a constant length, a growing length, a shrinking length, and the largest 32-bit integer.
+# FORM: AsRead
+# RUN: lower-to-air size f1 f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="counted-loops-with-early-exits.js" displayPath="counted-loops-with-early-exits.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=2}, Number{value=65535}, Number{value=65536}, Number{value=65537}, Number{value=131071}, Number{value=131072}, Number{value=131073}, Number{value=200000}]} module=m0
+data d1 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=65536}, Number{value=65537}, Number{value=131073}, Number{value=200000}]} module=m0
+data d2 root=Array{contents=anything} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Data data=d0
+    v7 = Convert v6 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v8 = Data data=d1
+    v9 = Convert v8 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v10 = IteratorOpen v9
+    v11 = IteratorResume v10
+    v12 = ResultAt v11 index=1
+    Jump -> next b1()
+  b1() handler=b8():
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = IteratorOpen v7
+    Jump -> next b2()
+  b2() handler=b8():
+    LoopHint
+    v16 = IteratorResume v14
+    v17 = ResultAt v16 index=1
+    Jump -> next b3()
+  b3() handler=b7():
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Call v5, -, v13 calleeName="make"
+    v20 = Convert v19 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v21 = Integer integer=-5
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    ElemSet v20, v18, v22
+    v24 = Integer integer=-5
+    v25 = Call v1, -, v20, v24 calleeName="indexOf"
+    v26 = Call v3, -, v20 calleeName="sumUntilNegative"
+    v27 = Less v18, v13
+    Branch v27 -> taken b4(| 0, 1), notTaken b5(| 0, 1)
+  b4(v28, v29) handler=b7():
+    v30 = ElemDelete v20, v28
+    Jump -> next b6(v29, v28)
+  b5(v31, v32) handler=b7():
+    Jump -> next b6(v32, v31)
+  b6(v33, v34) handler=b7():
+    Jump -> next b2()
+  b7() role=IterationCleanup subject=v14 handler=b8():
+    v35 = CatchException
+    Rethrow v35
+  b8() role=IterationCleanup subject=v10:
+    v36 = CatchException
+    Rethrow v36
+}
+function f1 name="indexOf" module=m0 position=398 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = ElemGet v0, v4
+    v7 = Convert v1 declared={type=number flags=[IsExpected]}
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b2(| 1), notTaken b3(| 1)
+  b2(v9):
+    v10 = Convert v4 declared={type=number flags=[IsExpected]}
+    Return v10
+  b3(v11):
+    v12 = Increment v4
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v13)
+}
+function f2 name="sumUntilNegative" module=m0 position=520 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = ElemGet v0, v6
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Integer
+    v11 = Less v9, v10
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v12):
+    v13 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v13
+  b3(v14):
+    v15 = Add v5, v14
+    v16 = Integer
+    v17 = BitOr v15, v16
+    v18 = Convert v17 declared={type=i32 flags=[IsExpected]}
+    v19 = Increment v6
+    v20 = Convert v19 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v18, v20)
+}
+function f3 name="make" module=m0 position=2165 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Array<number> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Data data=d2
+    v2 = Convert v1 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v3 = Convert v2 declared={type=undefined|null|Array flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    LoopHint
+    v7 = Convert v0 declared={type=number flags=[IsExpected]}
+    v8 = Convert v3 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    Return v8
+}
+# -- generated: indexOf sumUntilNegative
+# CHECK-LABEL: function {{*}}name="indexOf"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 68, patchpoints: 8, rare instructions: 53, polls: 3
+# CHECK-NEXT: end of function f1
+# CHECK-LABEL: function {{*}}name="sumUntilNegative"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 56, patchpoints: 7, rare instructions: 101, polls: 3
+# CHECK-NEXT: end of function f2

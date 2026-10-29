@@ -42,7 +42,7 @@ Options:
   --watch              Poll and redraw --status every 10s until the build finishes
   --errors             Print rendered test-failure annotations for the build (the first 200)
   --logs               Save full logs for each failed job to ./tmp/ci-<build>/
-  --all                With --errors, include warning/info annotations too (flaky is always shown)
+  --all                With --errors, include warning/info annotations too (flaky is shown without it)
   --no-compare         With --errors, skip the "[pre-existing]" check against recently merged PRs
   --no-dedup           With --errors, print every platform's output in full
   -h, --help           Show this help
@@ -141,7 +141,7 @@ try {
 
 type AnnotationSummary = { style: string; context: string };
 type Annotation = AnnotationSummary & { body_html: string };
-/** `more`: the build has annotations after the last one in `list`. */
+/** `more`: `list` ends at the limit of the read, and the build is not known to end there. */
 type Annotations<T> = { list: T[]; more: boolean };
 type Job = { id: string; type: string; name: string; state: string; soft_failed?: boolean; web_url: string };
 
@@ -168,8 +168,12 @@ async function annotations(build: number, { bodies, maxPages = 2 }: { bodies: bo
     list.push(...batch);
     if (batch.length < perPage) return { list, more: false };
   }
-  const next = await bk<AnnotationSummary[]>("api", `${endpoint}?per_page=1&page=${list.length + 1}&omit_body=true`);
-  return { list, more: next.length > 0 };
+  // Only the note that the list is cut depends on this request. If it fails, the note is printed.
+  const next = await bk<AnnotationSummary[]>(
+    "api",
+    `${endpoint}?per_page=1&page=${list.length + 1}&omit_body=true`,
+  ).catch(() => null);
+  return { list, more: next == null || next.length > 0 };
 }
 
 function renderTermHTML(html: string): string {
@@ -247,8 +251,7 @@ async function printErrors(
     compare ? mergedPRFailingContexts(excludeBranch) : Promise.resolve(null),
   ]);
   // Printed above the annotations and below them: megabytes of output can lie between.
-  const cut =
-    more && `${c.yellow}(only the first ${anns.length} annotations of this build are read, it has more)${c.reset}`;
+  const cut = more && `${c.yellow}(only the first ${anns.length} annotations of this build are read)${c.reset}`;
   if (cut) console.log(cut);
 
   // "flaky-new": the same, of a file that test/flaky-tests.txt does not list.
@@ -293,9 +296,13 @@ function ago(iso: string | null | undefined): string {
 
 async function fetchStatus(build: number) {
   type Full = { state: string; started_at: string | null; finished_at: string | null; web_url: string; jobs: Job[] };
+  let unread: string | undefined;
   const [b, anns] = await Promise.all([
     bk<Full>("build", "view", String(build), "--json"),
-    annotations(build, { bodies: false }).catch(() => ({ list: [], more: false })),
+    annotations(build, { bodies: false }).catch((e: Error) => {
+      unread = e.message;
+      return { list: [], more: false };
+    }),
   ]);
 
   const out: string[] = [];
@@ -332,11 +339,10 @@ async function fetchStatus(build: number) {
     out.push(`${c.dim}  (+${err.length - maxNames} more: bun run ci:errors ${build})${c.reset}`);
   }
   if (other) out.push(`${c.dim}  (+${other} warning/flaky)${c.reset}`);
-  if (anns.more) {
-    out.push(`${c.dim}  (only the first ${anns.list.length} annotations are counted, the build has more)${c.reset}`);
-  }
+  if (anns.more) out.push(`${c.dim}  (only the first ${anns.list.length} annotations are counted)${c.reset}`);
+  if (unread) out.push("", `${c.dim}(could not read the annotations: ${unread})${c.reset}`);
 
-  if (!failed.length && !err.length && b.finished_at) {
+  if (!failed.length && !err.length && !anns.more && !unread && b.finished_at) {
     out.push("", `${c.dim}no failures${c.reset}`);
   }
   return { state: b.state, lines: out };
@@ -411,31 +417,29 @@ async function saveLogs(build: number) {
 async function mergedPRFailingContexts(excludeBranch: string | null | undefined): Promise<Set<string> | null> {
   // main builds don't run tests (build-only), so compare against the last few
   // merged PRs' final builds — anything still failing there is pre-existing.
-  let merged: Array<{ headRefName: string }>;
+  // A request that fails ends the comparison: a build left out would turn its failures into `[new]`.
   try {
-    merged = await $`gh pr list --repo oven-sh/bun --state merged --limit 5 --json headRefName`.json();
+    const merged: Array<{ headRefName: string }> =
+      await $`gh pr list --repo oven-sh/bun --state merged --limit 5 --json headRefName`.json();
+    const branches = merged.map(p => p.headRefName).filter(b => b && b !== excludeBranch);
+    if (branches.length === 0) return null;
+    const builds = await Promise.all(
+      branches.map(b =>
+        bk("build", "list", "--branch", b, "--state", "finished", "--limit", "1", "--json").then(
+          (r: Build[]) => r[0]?.number,
+        ),
+      ),
+    );
+    const results = await Promise.all(
+      builds.filter((n): n is number => n != null).map(n => annotations(n, { bodies: false, maxPages: Infinity })),
+    );
+    return new Set(
+      results
+        .flatMap(r => r.list)
+        .filter(a => a.style === "error")
+        .map(a => a.context),
+    );
   } catch {
     return null;
   }
-  const branches = merged.map(p => p.headRefName).filter(b => b && b !== excludeBranch);
-  if (branches.length === 0) return null;
-  const builds = await Promise.all(
-    branches.map(b =>
-      bk("build", "list", "--branch", b, "--state", "finished", "--limit", "1", "--json").then(
-        (r: Build[]) => r[0]?.number,
-        () => undefined,
-      ),
-    ),
-  );
-  const results = await Promise.all(
-    builds
-      .filter((n): n is number => n != null)
-      .map(n => annotations(n, { bodies: false, maxPages: Infinity }).catch(() => ({ list: [] }))),
-  );
-  return new Set(
-    results
-      .flatMap(r => r.list)
-      .filter(a => a.style === "error")
-      .map(a => a.context),
-  );
 }

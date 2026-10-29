@@ -87,11 +87,11 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
 
   interface Canned {
     /** `bk api /pipelines/bun/builds/<key>/annotations`, in the order the API lists them. */
-    annotations: Record<number, Annotation[]>;
+    annotations: Record<number, readonly Annotation[]>;
     /** `bk build view <key> --json` */
     views?: Record<number, object>;
     /** `bk build list --branch <key>` */
-    lists?: Record<string, { number: number }[]>;
+    lists?: Record<string, readonly { number: number }[]>;
     /** `gh pr list --state merged` */
     merged?: { headRefName: string }[];
     /** The annotations page on which `bk api` fails. */
@@ -139,10 +139,10 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const lines = stdout.split("\n");
     // The script reads several builds at the same time, and the pages of one build one after the other.
-    const requests: Record<string, string[]> = {};
+    const requests: Record<string, readonly string[]> = {};
     for (const call of readFileSync(join(String(dir), "calls"), "utf8").split("\n")) {
       const build = call.match(/^bk api \/pipelines\/bun\/builds\/(\d+)\//)?.[1];
-      if (build) (requests[build] ??= []).push(call);
+      if (build) requests[build] = [...(requests[build] ?? []), call];
     }
     return {
       stdout: lines,
@@ -159,6 +159,10 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
 
   // An ASAN build starts too slowly to run all of these at the same time within the default timeout.
   const scenario = test.concurrentIf(!isASAN);
+
+  const cutNote = "(only the first 200 annotations of this build are read)";
+  const failedRequest = (request: string) =>
+    `${request}: Error: error making request: HTTP request failed: 500 Internal Server Error`;
 
   scenario.each([
     { count: 31, requests: { 7: [request(7, 1)] } },
@@ -178,11 +182,10 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
 
   scenario("--errors prints the first 200 of 230 failing test files and says so above and below them", async () => {
     const result = await runFindBuild(["--errors", "7", "--no-compare"], { annotations: { 7: failingFiles(230) } });
-    const note = "(only the first 200 annotations of this build are read, it has more)";
     expect(result).toEqual({
       stdout: expect.any(Array),
       headings: failingHeadings(200),
-      notes: [note, note],
+      notes: [cutNote, cutNote],
       stderr: "",
       exitCode: 0,
       requests: { 7: [request(7, 1), request(7, 2), after200(7)] },
@@ -190,11 +193,26 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     expect(result.stdout.slice(0, 5)).toEqual([
       "build #7  https://buildkite.com/bun/bun/builds/7",
       "",
-      note,
+      cutNote,
       "",
       heading(failingFile(1)),
     ]);
-    expect(result.stdout.slice(-3)).toEqual(["", note, ""]);
+    expect(result.stdout.slice(-3)).toEqual(["", cutNote, ""]);
+  });
+
+  scenario("--errors prints the first 200 with the note when the request that looks for a 201st fails", async () => {
+    const result = await runFindBuild(["--errors", "7", "--no-compare"], {
+      annotations: { 7: failingFiles(200) },
+      failingPage: 201,
+    });
+    expect(result).toEqual({
+      stdout: expect.any(Array),
+      headings: failingHeadings(200),
+      notes: [cutNote, cutNote],
+      stderr: "",
+      exitCode: 0,
+      requests: { 7: [request(7, 1), request(7, 2), after200(7)] },
+    });
   });
 
   scenario("--errors makes one request for a build with no annotations", async () => {
@@ -223,78 +241,6 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     });
   });
 
-  scenario("--errors compares with every annotation of a merged PR's build, read without the bodies", async () => {
-    const onThisBranch = "test/js/only-on-this-branch.test.ts";
-    const result = await runFindBuild(["--errors", "7"], {
-      merged: [{ headRefName: "merged-pr" }],
-      lists: { "merged-pr": [{ number: 8 }] },
-      annotations: {
-        7: [failing(failingFile(5)), failing(failingFile(120)), failing(failingFile(220)), failing(onThisBranch)],
-        8: failingFiles(230),
-      },
-    });
-    expect(result).toEqual({
-      stdout: expect.any(Array),
-      headings: [
-        heading(onThisBranch, " [new]"),
-        heading(failingFile(5), " [pre-existing]"),
-        heading(failingFile(120), " [pre-existing]"),
-        heading(failingFile(220), " [pre-existing]"),
-      ],
-      notes: [],
-      stderr: "",
-      exitCode: 0,
-      requests: { 7: [request(7, 1)], 8: [names(8, 1), names(8, 2), names(8, 3)] },
-    });
-  });
-
-  scenario.each([
-    {
-      count: 130,
-      rest: ["  (+100 more: bun run ci:errors 7)", "  (+2 warning/flaky)"],
-      requests: { 7: [names(7, 1), names(7, 2)] },
-    },
-    {
-      count: 230,
-      rest: [
-        "  (+170 more: bun run ci:errors 7)",
-        "  (only the first 200 annotations are counted, the build has more)",
-      ],
-      requests: { 7: [names(7, 1), names(7, 2), after200(7)] },
-    },
-  ])("--status names 30 of $count failing test files and counts the others", async ({ count, rest, requests }) => {
-    const result = await runFindBuild(["--status", "7"], {
-      views: {
-        7: {
-          state: "failed",
-          started_at: null,
-          finished_at: null,
-          web_url: "https://buildkite.com/bun/bun/builds/7",
-          jobs: [{ id: "job", type: "script", name: "test-bun", state: "passed", web_url: "" }],
-        },
-      },
-      annotations: { 7: [...failingFiles(count), flaky("test/js/retried.test.ts"), binarySize] },
-    });
-    expect(result).toEqual({
-      stdout: [
-        "#7 failed  https://buildkite.com/bun/bun/builds/7",
-        "started - ago",
-        "",
-        "jobs: 1 passed  (1 total)",
-        "",
-        "failing tests so far:",
-        ...Array.from({ length: 30 }, (_, i) => `  ${failingFile(i + 1)}`),
-        ...rest,
-        "",
-      ],
-      headings: [],
-      notes: [],
-      stderr: "",
-      exitCode: 0,
-      requests,
-    });
-  });
-
   scenario("--errors fails when a later page fails, and prints no part of the list", async () => {
     const result = await runFindBuild(["--errors", "7", "--no-compare"], {
       annotations: { 7: failingFiles(230) },
@@ -304,9 +250,159 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
       stdout: ["build #7  https://buildkite.com/bun/bun/builds/7", "", ""],
       headings: [],
       notes: [],
-      stderr: `${request(7, 2)}: Error: error making request: HTTP request failed: 500 Internal Server Error\n`,
+      stderr: failedRequest(request(7, 2)) + "\n",
       exitCode: 1,
       requests: { 7: [request(7, 1), request(7, 2)] },
+    });
+  });
+
+  describe("--errors with the comparison", () => {
+    const onThisBranch = "test/js/only-on-this-branch.test.ts";
+    const build7 = [
+      failing(failingFile(5)),
+      failing(failingFile(120)),
+      failing(failingFile(220)),
+      failing(onThisBranch),
+    ];
+
+    scenario("tags with every annotation of a merged PR's build, read without the bodies", async () => {
+      const result = await runFindBuild(["--errors", "7"], {
+        merged: [{ headRefName: "merged-pr" }],
+        lists: { "merged-pr": [{ number: 8 }] },
+        annotations: { 7: build7, 8: failingFiles(230) },
+      });
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: [
+          heading(onThisBranch, " [new]"),
+          heading(failingFile(5), " [pre-existing]"),
+          heading(failingFile(120), " [pre-existing]"),
+          heading(failingFile(220), " [pre-existing]"),
+        ],
+        notes: [],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], 8: [names(8, 1), names(8, 2), names(8, 3)] },
+      });
+    });
+
+    // With a part of the merged PRs' failures, the others would get the tag `[new]`.
+    const failures: { failure: string; canned: Partial<Canned>; requests: Record<string, string[]> }[] = [
+      {
+        failure: "a page of a merged PR's build",
+        canned: { lists: { "merged-pr": [{ number: 8 }] }, failingPage: 2 },
+        requests: { 7: [request(7, 1)], 8: [names(8, 1), names(8, 2)] },
+      },
+      {
+        failure: "the list of a merged PR's builds",
+        canned: { lists: {} },
+        requests: { 7: [request(7, 1)] },
+      },
+    ];
+    scenario.each(failures)("prints no tag when the request for $failure fails", async ({ canned, requests }) => {
+      const result = await runFindBuild(["--errors", "7"], {
+        merged: [{ headRefName: "merged-pr" }],
+        annotations: { 7: build7, 8: failingFiles(230) },
+        ...canned,
+      });
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: build7.map(annotation => heading(annotation.context)),
+        notes: [],
+        stderr: "",
+        exitCode: 0,
+        requests,
+      });
+      expect(result.stdout.slice(-3)).toEqual(["", "(could not fetch recently merged PRs for comparison)", ""]);
+    });
+  });
+
+  describe("--status", () => {
+    const view = (state: string, finished_at: string | null) => ({
+      state,
+      started_at: null,
+      finished_at,
+      web_url: "https://buildkite.com/bun/bun/builds/7",
+      jobs: [{ id: "job", type: "script", name: "test-bun", state: "passed", web_url: "" }],
+    });
+
+    scenario.each([
+      { count: 30, rest: ["  (+2 warning/flaky)"], requests: { 7: [names(7, 1)] } },
+      {
+        count: 31,
+        rest: ["  (+1 more: bun run ci:errors 7)", "  (+2 warning/flaky)"],
+        requests: { 7: [names(7, 1)] },
+      },
+      {
+        count: 230,
+        rest: ["  (+170 more: bun run ci:errors 7)", "  (only the first 200 annotations are counted)"],
+        requests: { 7: [names(7, 1), names(7, 2), after200(7)] },
+      },
+    ])("names 30 of $count failing test files and counts the others", async ({ count, rest, requests }) => {
+      const result = await runFindBuild(["--status", "7"], {
+        views: { 7: view("failed", null) },
+        annotations: { 7: [...failingFiles(count), flaky("test/js/retried.test.ts"), binarySize] },
+      });
+      expect(result).toEqual({
+        stdout: [
+          "#7 failed  https://buildkite.com/bun/bun/builds/7",
+          "started - ago",
+          "",
+          "jobs: 1 passed  (1 total)",
+          "",
+          "failing tests so far:",
+          ...Array.from({ length: 30 }, (_, i) => `  ${failingFile(i + 1)}`),
+          ...rest,
+          "",
+        ],
+        headings: [],
+        notes: [],
+        stderr: "",
+        exitCode: 0,
+        requests,
+      });
+    });
+
+    // The build ends in the future, which prints as `0s ago` whenever the test runs.
+    const finished = view("passed", "2999-01-01T00:00:00Z");
+    const notRead = `(could not read the annotations: ${failedRequest(names(7, 2))})`;
+    const summaries: { summary: string; of: string; canned: Canned; rest: string[] }[] = [
+      {
+        summary: "no failures",
+        of: "a build with no annotations",
+        canned: { annotations: { 7: [] } },
+        rest: ["", "no failures"],
+      },
+      {
+        summary: "that the count is cut",
+        of: "a build with no failing test file in its first 200 annotations",
+        canned: { annotations: { 7: Array.from({ length: 230 }, () => binarySize) } },
+        rest: ["  (+200 warning/flaky)", "  (only the first 200 annotations are counted)"],
+      },
+      {
+        summary: "that the annotations are not read",
+        of: "a build with a page that fails",
+        canned: { annotations: { 7: failingFiles(130) }, failingPage: 2 },
+        rest: ["", notRead],
+      },
+    ];
+    scenario.each(summaries)("says $summary for $of", async ({ canned, rest }) => {
+      const result = await runFindBuild(["--status", "7"], { views: { 7: finished }, ...canned });
+      expect(result).toEqual({
+        stdout: [
+          "#7 passed  https://buildkite.com/bun/bun/builds/7",
+          "started - ago, finished 0s ago",
+          "",
+          "jobs: 1 passed  (1 total)",
+          ...rest,
+          "",
+        ],
+        headings: [],
+        notes: [],
+        stderr: "",
+        exitCode: 0,
+        requests: expect.any(Object),
+      });
     });
   });
 });

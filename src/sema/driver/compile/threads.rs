@@ -349,6 +349,158 @@ mod tests {
         );
     }
 
+    /// The kind of pool that `WorkPool` is: a thread that is out of tasks waits briefly for the next one.
+    fn lingering_pool(max_threads: u32) -> bun_threading::ThreadPool {
+        let config = bun_threading::thread_pool::Config {
+            max_threads,
+            ..Default::default()
+        };
+        bun_threading::ThreadPool::init(config)
+            .named("Test")
+            .lingering()
+    }
+
+    #[test]
+    fn lingering_pool_runs_tasks_that_come_one_after_the_other() {
+        set_up_output();
+        static DONE: AtomicUsize = AtomicUsize::new(0);
+        let mut scheduled = 0;
+        // With one thread, the thread that takes a task has no other thread to wake for the next one.
+        for threads in [8, 1] {
+            let pool: &'static _ = Box::leak(Box::new(lingering_pool(threads)));
+            for round in 1..=5000 {
+                // A thread takes most of the tasks while it waits briefly. It sleeps before the others.
+                if round % 50 == 0 {
+                    wait_until(
+                        || pool.available_threads() == threads as usize,
+                        "the threads never came to rest",
+                    );
+                }
+                schedule_on(pool, || {
+                    DONE.fetch_add(1, Ordering::SeqCst);
+                });
+                scheduled += 1;
+                wait_until(
+                    || DONE.load(Ordering::SeqCst) == scheduled,
+                    "the task never ran",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lingering_pool_starts_a_thread_for_each_waiting_task() {
+        set_up_output();
+        let pool: &'static _ = Box::leak(Box::new(lingering_pool(8)));
+        pool.limit_threads(2);
+        static ARRIVED: AtomicUsize = AtomicUsize::new(0);
+        for _ in 0..4 {
+            schedule_on(pool, || {
+                ARRIVED.fetch_add(1, Ordering::SeqCst);
+                wait_until(
+                    || ARRIVED.load(Ordering::SeqCst) >= 4,
+                    "a task has no thread",
+                );
+            });
+        }
+        wait_until(
+            || ARRIVED.load(Ordering::SeqCst) == 2,
+            "too few threads at first",
+        );
+        assert_eq!(pool.started_threads(), 2);
+        pool.allow_threads(8);
+        wait_until(
+            || ARRIVED.load(Ordering::SeqCst) == 4,
+            "a task has no thread",
+        );
+    }
+
+    #[test]
+    fn lingering_pool_runs_every_task() {
+        set_up_output();
+        let pool: &'static _ = Box::leak(Box::new(lingering_pool(8)));
+        static DONE: AtomicUsize = AtomicUsize::new(0);
+        const SCHEDULERS: usize = 4;
+        const TASKS: usize = 20_000;
+        std::thread::scope(|scope| {
+            for _ in 0..SCHEDULERS {
+                scope.spawn(|| {
+                    for _ in 0..TASKS {
+                        schedule_on(pool, || {
+                            DONE.fetch_add(1, Ordering::SeqCst);
+                        });
+                    }
+                });
+            }
+        });
+        wait_until(
+            || DONE.load(Ordering::SeqCst) == SCHEDULERS * TASKS,
+            "a task never ran",
+        );
+    }
+
+    #[test]
+    fn lingering_pool_runs_the_idle_task_of_a_thread_that_waits_briefly() {
+        set_up_output();
+        let pool: &'static _ = Box::leak(Box::new(lingering_pool(8)));
+        static DONE: AtomicUsize = AtomicUsize::new(0);
+        static IDLE: AtomicUsize = AtomicUsize::new(0);
+        let mut idle_tasks = 0;
+        for round in 1..=200 {
+            schedule_on(pool, || {
+                DONE.fetch_add(1, Ordering::SeqCst);
+            });
+            wait_until(
+                || DONE.load(Ordering::SeqCst) == round,
+                "the task never ran",
+            );
+            pool.push_idle_task_to_each_thread(|| {
+                idle_tasks += 1;
+                let mut task = task_that_calls(|| {
+                    IDLE.fetch_add(1, Ordering::SeqCst);
+                });
+                task.pop().expect("one task").as_ptr()
+            });
+            wait_until(
+                || IDLE.load(Ordering::SeqCst) == idle_tasks,
+                "an idle task never ran",
+            );
+        }
+    }
+
+    #[test]
+    fn lingering_pool_shuts_down_beside_a_thread_that_waits_briefly() {
+        set_up_output();
+        static DONE: AtomicUsize = AtomicUsize::new(0);
+        for round in 1..=200 {
+            let pool = bun_core::heap::into_raw(Box::new(lingering_pool(2)));
+            // SAFETY: the pool lives until `destroy` below.
+            schedule_on(unsafe { &*pool }, || {
+                DONE.fetch_add(1, Ordering::SeqCst);
+            });
+            wait_until(
+                || DONE.load(Ordering::SeqCst) == round,
+                "the task never ran",
+            );
+            // SAFETY: allocated above, and its one task has run.
+            unsafe { bun_core::heap::destroy(pool) };
+        }
+    }
+
+    #[test]
+    fn work_pool_tells_a_thread_once_that_it_gave_the_pool_a_task() {
+        set_up_output();
+        // On a thread of its own: the other tests give the pool tasks from theirs.
+        let told = std::thread::spawn(|| {
+            let before = bun_threading::WorkPool::take_scheduled_by_this_thread();
+            bun_threading::WorkPool::go((), |()| {}).expect("a task");
+            let after = bun_threading::WorkPool::take_scheduled_by_this_thread();
+            let again = bun_threading::WorkPool::take_scheduled_by_this_thread();
+            (before, after, again)
+        });
+        assert_eq!(told.join().expect("no panic"), (false, true, false));
+    }
+
     #[test]
     fn tasks_that_wait_get_the_threads_that_a_pool_is_allowed_later() {
         set_up_output();

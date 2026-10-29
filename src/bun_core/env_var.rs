@@ -254,6 +254,8 @@ pub mod feature_flag {
     // cross-thread completion until its teardown is waiting, so the "arrived
     // during teardown" paths run deterministically (bun_jsc::vm_handle::test_gate).
     new_feature_flag!(pub BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE, "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE", {});
+    // Test suite only, builds with debug assertions: `bun_threading::brief_wait` waits ten seconds, not microseconds.
+    new_feature_flag!(pub BUN_DEBUG_TEST_LONG_BRIEF_WAIT, "BUN_DEBUG_TEST_LONG_BRIEF_WAIT", {});
 
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});

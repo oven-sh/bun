@@ -13,6 +13,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
 use bun_io::{self as Async, Waker};
+use bun_threading::brief_wait::{self, Patience};
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -106,6 +107,8 @@ pub struct EventLoop {
     /// `fetch` can start and finish within one iteration. Atomic because a Worker may read it.
     task_drains: AtomicU64,
     pub concurrent_ref: AtomicI32,
+    /// Whether the last waits of `await_pool_job` ended with a task.
+    pool_job_patience: Patience,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
     /// Note (§Dispatch): payload is `*mut ()` — the real
@@ -149,6 +152,7 @@ impl Default for EventLoop {
             entered_event_loop_count: 0,
             task_drains: AtomicU64::new(0),
             concurrent_ref: AtomicI32::new(0),
+            pool_job_patience: Patience::new(),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
@@ -791,6 +795,18 @@ impl EventLoop {
         self.tasks.readable_length() > 0
             || self.plugin_requests.readable_length() > 0
             || self.has_concurrent_tasks()
+    }
+
+    /// Before a poll that would sleep for `timeout`: waits briefly for the result of a task that this thread gave the work pool and that is still out.
+    pub fn await_pool_job(&self, timeout: Option<&bun_core::Timespec>) -> bool {
+        // A timer that is due sooner than the wait ends is not held.
+        timeout.is_none_or(|timeout| u128::from(timeout.ns()) >= brief_wait::LENGTH.as_nanos())
+            && WorkPool::take_scheduled_by_this_thread()
+            && self.vm_ref().handle_ref().tickets_outstanding() > 0
+            && self.pool_job_patience.allows_wait()
+            && self
+                .pool_job_patience
+                .wait_briefly(|| self.has_concurrent_tasks())
     }
 
     /// Any thread.

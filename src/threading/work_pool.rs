@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use std::sync::OnceLock;
 
 use crate::ThreadPool;
@@ -132,12 +133,17 @@ macro_rules! owned_task {
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
+thread_local! {
+    static SCHEDULED_BY_THIS_THREAD: Cell<bool> = const { Cell::new(false) };
+}
+
 #[cold]
 fn create() -> ThreadPool {
     ThreadPool::init(crate::thread_pool::Config {
         max_threads: u32::from(bun_core::get_thread_count()),
         stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
     })
+    .lingering()
 }
 
 impl WorkPool {
@@ -147,7 +153,13 @@ impl WorkPool {
     }
 
     pub fn schedule(task: *mut Task) {
+        SCHEDULED_BY_THIS_THREAD.set(true);
         Self::get().schedule(Batch::from(task));
+    }
+
+    /// Whether this thread gave the pool a task since the last call, for a thread about to sleep until a task's result comes.
+    pub fn take_scheduled_by_this_thread() -> bool {
+        SCHEDULED_BY_THIS_THREAD.replace(false)
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of

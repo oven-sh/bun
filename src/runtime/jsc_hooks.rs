@@ -1075,7 +1075,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; the
             // `timer` field address is stable for the VM lifetime.
-            let have_timeout = unsafe {
+            let mut have_timeout = unsafe {
                 timer::All::get_timeout(
                     &mut (*state).timer,
                     &mut timespec,
@@ -1085,6 +1085,13 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     &mut now,
                 )
             };
+            // SAFETY: `el` is the live per-thread event loop.
+            let awaited = !has_pending_immediate
+                && unsafe { &*el }.await_pool_job(have_timeout.then_some(&timespec));
+            if awaited {
+                timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+                have_timeout = true;
+            }
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
         } else {
@@ -1194,7 +1201,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; see
             // Note on `auto_tick` re: aliased-&mut across `fire()`.
-            let have_timeout = unsafe {
+            let mut have_timeout = unsafe {
                 timer::All::get_timeout(
                     &mut (*state).timer,
                     &mut timespec,
@@ -1204,6 +1211,13 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     &mut now,
                 )
             };
+            // SAFETY: `el` is the live per-thread event loop.
+            let awaited = !has_pending_immediate
+                && unsafe { &*el }.await_pool_job(have_timeout.then_some(&timespec));
+            if awaited {
+                timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+                have_timeout = true;
+            }
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
         } else {

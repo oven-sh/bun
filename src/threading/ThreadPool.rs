@@ -30,6 +30,7 @@ use core::cell::Cell;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
 
+use crate::brief_wait::Patience;
 use crate::{Futex, WaitGroup};
 use bun_core::Output;
 
@@ -196,6 +197,10 @@ pub struct ThreadPool {
     name: &'static str,
     /// See `without_spare_threads`.
     keeps_spare_thread_awake: bool,
+    /// See `lingering`.
+    lingers: bool,
+    /// Whether the last lingers ended with a task.
+    linger_patience: Patience,
     /// See `limit_threads`. At most `max_threads`.
     allowed_threads: AtomicU32,
     pub(crate) stack_size: u32,
@@ -232,6 +237,8 @@ impl ThreadPool {
             needs_stack_bounds: true,
             name: "Bun Pool",
             keeps_spare_thread_awake: true,
+            lingers: false,
+            linger_patience: Patience::new(),
             allowed_threads: AtomicU32::new(1.max(config.max_threads)),
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
@@ -262,6 +269,12 @@ impl ThreadPool {
         self
     }
 
+    /// The same pool, whose waking thread waits briefly for a task before it sleeps (`linger`).
+    pub fn lingering(mut self) -> ThreadPool {
+        self.lingers = true;
+        self
+    }
+
     /// From now on the pool starts no thread while it has `count` or more. Tasks wait for the threads there are.
     pub fn limit_threads(&self, count: usize) {
         let count = u32::try_from(count)
@@ -278,7 +291,7 @@ impl ThreadPool {
         if self.allowed_threads.fetch_max(count, Ordering::Relaxed) < count
             && self.has_waiting_task()
         {
-            self.notify_slow(false);
+            self.notify_slow(false, self.keeps_spare_thread_awake);
         }
     }
 
@@ -778,11 +791,12 @@ impl ThreadPool {
     fn force_spawn(&self) {
         // Try to notify a thread
         let is_waking = false;
-        self.notify(is_waking);
+        self.notify(is_waking, self.keeps_spare_thread_awake);
     }
 
+    /// `keeps_spare`: whether a waking thread passes its role on when no task waits (`without_spare_threads`).
     #[inline(always)]
-    fn notify(&self, is_waking: bool) {
+    fn notify(&self, is_waking: bool, keeps_spare: bool) {
         // Fast path to check the Sync state to avoid calling into notify_slow().
         // If we're waking, then we need to update the state regardless
         if !is_waking {
@@ -797,7 +811,7 @@ impl ThreadPool {
             }
         }
 
-        self.notify_slow(is_waking);
+        self.notify_slow(is_waking, keeps_spare);
     }
 }
 
@@ -918,7 +932,7 @@ impl ThreadPool {
     }
 
     #[inline(never)]
-    fn notify_slow(&self, is_waking: bool) {
+    fn notify_slow(&self, is_waking: bool, keeps_spare: bool) {
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.state() != SyncState::Shutdown {
             let can_wake = is_waking || (sync.state() == SyncState::Pending);
@@ -928,10 +942,7 @@ impl ThreadPool {
 
             // A scheduler that finds the pool "waking" only sets `notified`, and leaves the rest to the waking thread.
             let can_wake = can_wake
-                && (!is_waking
-                    || self.keeps_spare_thread_awake
-                    || sync.notified()
-                    || self.has_waiting_task());
+                && (!is_waking || keeps_spare || sync.notified() || self.has_waiting_task());
 
             let can_spawn = (sync.spawned() as u32) < self.allowed_threads.load(Ordering::Relaxed);
 
@@ -1002,6 +1013,65 @@ impl ThreadPool {
                     }
                 };
         }
+    }
+
+    /// Takes a notification that comes within a brief wait, as the waking thread: whoever schedules a task meanwhile only sets `notified`.
+    #[inline(never)]
+    fn linger(&self, is_waking: &mut bool) -> bool {
+        if !self.linger_patience.allows_wait() {
+            return false;
+        }
+        let mut sync = self.sync.load(Ordering::Relaxed);
+        while !*is_waking {
+            // Another thread has the role or was woken for it.
+            if sync.state() != SyncState::Pending {
+                return false;
+            }
+            let mut new_sync = sync;
+            new_sync.set_state(SyncState::Waking);
+            new_sync.set_notified(false);
+            // Acquire barrier, here and below, as in `wait`: what was pushed before the notification is seen after it.
+            match self
+                .sync
+                .cmpxchg_weak(sync, new_sync, Ordering::Acquire, Ordering::Relaxed)
+            {
+                // A notification was there already: a task may wait, or a waking thread with nobody to wake left it.
+                None if sync.notified() => {
+                    *is_waking = true;
+                    return true;
+                }
+                None => *is_waking = true,
+                Some(current) => sync = current,
+            }
+        }
+
+        let mut took_notification = false;
+        self.linger_patience.wait_briefly(|| {
+            let mut sync = self.sync.load(Ordering::Relaxed);
+            loop {
+                // `wait` reports a shutdown.
+                if sync.state() == SyncState::Shutdown {
+                    return true;
+                }
+                debug_assert!(sync.state() == SyncState::Waking);
+                if !sync.notified() {
+                    return false;
+                }
+                let mut new_sync = sync;
+                new_sync.set_notified(false);
+                match self
+                    .sync
+                    .cmpxchg_weak(sync, new_sync, Ordering::Acquire, Ordering::Relaxed)
+                {
+                    None => {
+                        took_notification = true;
+                        return true;
+                    }
+                    Some(current) => sync = current,
+                }
+            }
+        });
+        took_notification
     }
 
     #[inline(never)]
@@ -1373,9 +1443,18 @@ impl Thread {
 
         let stats = stats_enabled();
         let mut is_waking = false;
+        let mut ran_task = false;
         loop {
             let wait_start = if stats { now_ns() } else { 0 };
-            is_waking = match pool.wait(is_waking) {
+            // Whether this thread has its notification without a sleep.
+            let lingered = pool.lingers && (ran_task || is_waking) && pool.linger(&mut is_waking);
+            ran_task = false;
+            let woken = if lingered {
+                Ok(is_waking)
+            } else {
+                pool.wait(is_waking)
+            };
+            is_waking = match woken {
                 Ok(w) => w,
                 Err(_) => {
                     // `shutdown()` raced `wake_for_idle_events()`: the bundler
@@ -1400,7 +1479,8 @@ impl Thread {
             // SAFETY: self_ptr is our own stack-local Thread.
             while let Some(result) = unsafe { (*self_ptr).pop(pool) } {
                 if result.pushed || is_waking {
-                    pool.notify(is_waking);
+                    // A thread that lingered for its task did not sleep: it is the spare thread.
+                    pool.notify(is_waking, pool.keeps_spare_thread_awake && !lingered);
                 }
                 is_waking = false;
 
@@ -1409,6 +1489,7 @@ impl Thread {
                 let task_start = if stats { now_ns() } else { 0 };
                 // SAFETY: task is a live scheduled Task; callback contract is `unsafe fn(*mut Task)`.
                 unsafe { ((*task).callback)(task) };
+                ran_task = true;
                 if stats {
                     pool.stats
                         .busy_ns

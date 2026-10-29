@@ -257,7 +257,8 @@ impl Walker<'_, '_> {
             let ScopeKind::Class(class) = bound.scopes[scope.idx()].kind else {
                 continue;
             };
-            for slot in class::class_slots(hir, bound, self.input.compiled.settings, class) {
+            let (settings, transpiled) = (self.input.compiled.settings, self.input.transpiled);
+            for slot in class::class_slots(hir, bound, settings, transpiled, class) {
                 match slot {
                     ClassSlot::ComputedKey(_) | ClassSlot::DecoratorState => {}
                     _ => {

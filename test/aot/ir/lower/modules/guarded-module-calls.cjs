@@ -13,6 +13,18 @@
 // LOADCALL: [[other]]([[callee]]):
 // LOADCALL-NEXT: = Call [[callee]], -, [[specifier]] calleeName="require"
 
+// RUN(MODULE): lower
+// MODULE-LABEL: function {{*}}name="loadThroughModule"
+// MODULE-NOT: ModuleObject
+// MODULE: [[specifier]] = String string="./imports/common.cjs"
+// MODULE: [[expected]] = ModuleBuiltin builtin=ModuleRequire module=m
+// MODULE-NEXT: [[same]] = StrictEq [[callee]], [[expected]]
+// MODULE-NEXT: Branch [[same]] -> taken [[matched]](), notTaken [[other]](| 0)
+// MODULE: [[matched]]():
+// MODULE: EvaluateModule module=m
+// MODULE: [[other]]([[replaced]]):
+// MODULE-NEXT: = Call [[replaced]], -, [[specifier]] calleeName="require"
+
 // RUN(NATIVE): lower
 // NATIVE-LABEL: function {{*}}name="native"
 // NATIVE: = PropGet {{*}}key="getBuiltinModule"
@@ -40,8 +52,12 @@ function load() {
   return require("./imports/common.cjs");
 }
 
+function loadThroughModule() {
+  return module.require("./imports/common.cjs");
+}
+
 function native() {
   return process.getBuiltinModule("node:buffer");
 }
 
-module.exports = { load, native };
+module.exports = { load, loadThroughModule, native };

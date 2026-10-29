@@ -1,3 +1,0 @@
-an instance, read: 358000011 358000011 358000011
-an instance, not read: no error no error no error
-beside a date: 358000045 358000045 358000045

@@ -76,7 +76,9 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     let names_require_or_own_path = |&(_, binding): &(ExprId, Binding)| {
         matches!(
             binding,
-            Binding::CommonJs(CommonJsVariable::Require | CommonJsVariable::Filename)
+            Binding::CommonJs(
+                CommonJsVariable::Require | CommonJsVariable::Module | CommonJsVariable::Filename
+            )
         )
     };
     let mut named = references.ident_bindings.iter();

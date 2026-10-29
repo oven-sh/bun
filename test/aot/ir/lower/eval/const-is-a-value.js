@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: module [[entry]] path="{{*}}const-is-a-value"
+// CHECK: module [[entry]] path="{{*}}const-is-a-value.js"
 // CHECK: evalscope [[scope]] {{*}}bindings=[{name="c" kind=Constant operand=0}
 // CHECK: function [[f]] name="f" module=[[entry]]
 // CHECK: [[c]] = Call

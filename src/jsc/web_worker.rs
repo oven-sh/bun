@@ -1533,14 +1533,16 @@ fn on_unhandled_rejection(
         .to_error()
         .unwrap_or(error_instance_or_exception);
 
-    // A parse failure rejects with a BuildMessage, which doesn't survive structured
-    // clone. Node reports a SyntaxError; build a real one from the formatted parse
-    // error so the subtype reaches the parent intact.
-    if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
-        // SAFETY: as_ returned a live BuildMessage cell, read-only on the
-        // worker (JS) thread that owns it.
-        let text: &[u8] = unsafe { &(*bm).msg.data.text };
-        error_instance = EncodedSlice::utf8(text).to_syntax_error_instance(global_object);
+    // A BuildMessage doesn't survive structured clone, so an error built from its text is
+    // reported in its place: a SyntaxError for a diagnostic of the parser (it has a position),
+    // as in Node, and a plain Error for any other (a module that could not be read).
+    if let Some(build_message) = error_instance.as_class_ref::<crate::BuildMessage>() {
+        let text = EncodedSlice::utf8(build_message.get_message());
+        error_instance = if build_message.has_position() {
+            text.to_syntax_error_instance(global_object)
+        } else {
+            text.to_error_instance(global_object)
+        };
     }
 
     let mut array: Vec<u8> = Vec::new();

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { once } from "node:events";
 
 test("Worker from a Blob", async () => {
   const worker = new Worker(
@@ -62,6 +63,33 @@ test("Worker from a blob errors on invalid blob", async () => {
   const worker = new Worker("blob:i dont exist!");
   worker.addEventListener("error", e => reject(e.message));
   expect(promise).rejects.toBe('BuildMessage: ModuleNotFound resolving "blob:i dont exist!" (entry point)');
+});
+
+// The message starts with the class of the error. A module that resolves and then fails to load is a
+// SyntaxError only for a diagnostic of the parser: those have a position. Any other is an Error
+// (Node gives TypeError for this data: URL).
+test.each([
+  [
+    "a data: URL that cannot be decoded",
+    `await import("data:text/javascript;base64,!!!");`,
+    "Error",
+    `error: Base64DecodeError decoding data "data:text/javascript;base64,!!!"\n`,
+  ],
+  [
+    "a module with one parse error",
+    `await import("data:text/javascript,var foo bar;");`,
+    "SyntaxError",
+    `SyntaxError: Expected ";" but found "bar"\n`,
+  ],
+])("Worker from a Blob reports the class of the error for %s", async (_, source, name, message) => {
+  const handler = `self.addEventListener("error", event => postMessage(event.error.name));`;
+  const worker = new Worker(URL.createObjectURL(new Blob([`${handler}\n${source}`])));
+  const [[inWorker], [event]] = await Promise.all([once(worker, "message"), once(worker, "error")]);
+  expect({ inWorker: inWorker.data, message: event.message, error: event.error }).toEqual({
+    inWorker: name,
+    message,
+    error: null,
+  });
 });
 
 test("Revoking an object URL after a Worker is created before it loads should throw an error", async () => {

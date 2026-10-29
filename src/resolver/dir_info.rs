@@ -258,7 +258,7 @@ impl DirInfo {
         &self,
         generation: Generation,
         query: &[u8],
-    ) -> Option<fs::EntryLookup<'static>> {
+    ) -> Option<fs::EntryLookup> {
         let rfs = &mut fs::FileSystem::instance().fs;
         // `MutexGuard` stores the mutex by raw pointer, so holding it does not
         // keep `rfs` borrowed.

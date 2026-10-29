@@ -617,7 +617,7 @@ bun_core::comptime_string_map! {
 }
 
 unsafe extern "C" {
-    fn bun_image_resize_scratch_size(
+    safe fn bun_image_resize_scratch_size(
         src_w: i32,
         src_h: i32,
         dst_w: i32,
@@ -677,16 +677,13 @@ pub(crate) fn resize(
     // C++; mimalloc here is faster than libc, and the over-allocation rounds
     // into the same size class as the row buffer alone.
     let out_sz: usize = (dw as usize) * (dh as usize) * 4;
-    // SAFETY: pure FFI query; all args are by-value ints, no pointers.
-    let scratch_sz = unsafe {
-        bun_image_resize_scratch_size(
-            i32::try_from(sw).expect("int cast"),
-            i32::try_from(sh).expect("int cast"),
-            i32::try_from(dw).expect("int cast"),
-            i32::try_from(dh).expect("int cast"),
-            f as i32,
-        )
-    };
+    let scratch_sz = bun_image_resize_scratch_size(
+        i32::try_from(sw).expect("int cast"),
+        i32::try_from(sh).expect("int cast"),
+        i32::try_from(dw).expect("int cast"),
+        i32::try_from(dh).expect("int cast"),
+        f as i32,
+    );
     let mut block: Vec<u8> = Vec::with_capacity(out_sz + scratch_sz);
     // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
     let rc = unsafe {

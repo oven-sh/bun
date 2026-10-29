@@ -1471,7 +1471,6 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 
             int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_PATH | O_DIRECTORY, 0700);
             if (socket_dir_fd == -1) {
-                errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
@@ -1524,7 +1523,6 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 
             int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_RDONLY | O_DIRECTORY);
             if (socket_dir_fd == -1) {
-                errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 

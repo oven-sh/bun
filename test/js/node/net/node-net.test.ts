@@ -10,6 +10,8 @@ import {
   gc,
   isASAN,
   isDebug,
+  isLinux,
+  isMacOS,
   isMusl,
   isWindows,
   tempDir,
@@ -707,6 +709,19 @@ it("should handle connection error", done => {
     expect(errored).toBe(true);
     done();
   });
+});
+
+it.skipIf(!isLinux && !isMacOS)("preserves ENOENT for a missing directory in a long Unix socket path", async () => {
+  using dir = tempDir("net-enoent", {});
+  const path = join(String(dir), Buffer.alloc(120, "x").toString(), "s.sock");
+  const socket = connect(path);
+  try {
+    const [error] = await once(socket, "error");
+    expect(error.code).toBe("ENOENT");
+    expect(error.syscall).toBe("connect");
+  } finally {
+    socket.destroy();
+  }
 });
 
 it("should handle connection error (unix)", done => {

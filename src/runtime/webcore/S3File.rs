@@ -389,15 +389,13 @@ impl S3BlobStatTask {
                 .to_js());
             }
         };
+        let strong = bun_jsc::JSPromiseStrong::init(cx.global());
+        let (promise, s3_store) = (strong.value(), store.data.as_s3());
         let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
-            store,
+            promise: strong,
+            store: store.clone(),
             global: bun_ptr::BackRef::new(cx.global()),
         });
-        // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
-        // callback below. Scoped shared access.
-        let task = unsafe { &*this };
-        let (promise, s3_store) = (task.promise.value(), task.store.data.as_s3());
         s3::stat(
             s3_store.get_credentials(),
             cx.context(),
@@ -424,9 +422,12 @@ impl S3BlobStatTask {
     // Teardown (store deref, promise deinit, freeing the box) is handled by Box<Self> Drop.
 }
 
-/// Returns an owned ref to `blob`'s S3 store, because the option getters that run next can detach it from `blob`.
-fn s3_store(blob: &Blob, global: &JSGlobalObject, verb: &str) -> JsResult<RefPtr<Store>> {
-    match blob.store().cloned() {
+fn s3_store<'a>(
+    blob: &'a Blob,
+    global: &JSGlobalObject,
+    verb: &str,
+) -> JsResult<&'a RefPtr<Store>> {
+    match blob.store() {
         Some(store) if matches!(store.data, blob::store::Data::S3(_)) => Ok(store),
         _ => Err(global
             .err(
@@ -452,7 +453,8 @@ pub(crate) fn get_presign_url_from(
     let mut method: Method = Method::GET;
     let mut expires: usize = 86400; // 1 day default
 
-    let store = s3_store(this, global, "presign")?;
+    // An owned ref, because the option getters that run next can detach the store from `this`.
+    let store = s3_store(this, global, "presign")?.clone();
     let s3 = store.data.as_s3();
     // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
     // defaults here — they are only seeded from the store when extra_options

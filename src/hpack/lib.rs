@@ -707,11 +707,13 @@ mod tests {
             "3f",                // the same in a size update
             "7fffffffff10",      // integer over 32 bits
             "ffffffffff10",      // the same in an indexed field
+            "7fffffffff10 0161", // the same, and a value after it
             "007f",              // the length of a name cut off
             "00ff",              // the same for a Huffman coded one
             "007fffffffff7f",    // the length of a name over 32 bits
             "01 7f",             // the length of a value cut off
             "01 7fffffffff7f",   // the length of a value over 32 bits
+            "01 7fffffffff7f61", // the same, and a byte after it
             "000161 0261",       // string cut off
             "000161 81ff",       // 8 bits of padding
             "000161 8100",       // padding that is not ones: "0" and 000

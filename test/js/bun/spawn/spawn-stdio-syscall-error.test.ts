@@ -6,7 +6,9 @@
 //
 // An LD_PRELOAD shim fails the Nth recv()/send() on each AF_UNIX socket (the
 // parent's end of a stdio socketpair) with EIO/ENOBUFS. The children write
-// with write(2), so only bun's side of the pair is affected.
+// with write(2), so only bun's side of the pair is affected. The shim can also
+// refuse the epoll registration of such a socket with ENOMEM, which the reader
+// reports as a read error.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
@@ -22,6 +24,8 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 // With SPAWN_FAULT_RECV_AT, two more settings shape the reads before the failing one:
 // SPAWN_FAULT_RECV_EAGAIN_AT=N  the Nth recv() reads nothing and fails with EAGAIN.
 // SPAWN_FAULT_RECV_CAP=N  every recv() returns at most N bytes, as when the reader outpaces the writer.
+// SPAWN_FAULT_EPOLL_ADD_AT=N  the Nth EPOLL_CTL_ADD that waits for input on an AF_UNIX socket fails with ENOMEM, as
+//   when the kernel cannot watch one more fd. The count is over all sockets.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -29,6 +33,7 @@ const SHIM_C = /* c */ `
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -46,6 +51,8 @@ static int fail_recv_mid_fill = -1;
 static int fail_send_at = -1;
 static int eagain_recv_at = -1;
 static long recv_cap = -1;
+static int fail_epoll_add_at = -1;
+static unsigned int epoll_add_count;
 static unsigned int recv_count[MAX_FD];
 static unsigned int send_count[MAX_FD];
 static unsigned long recv_bytes[MAX_FD];
@@ -74,6 +81,10 @@ static void init_modes(void) {
   if (recv_cap < 0) {
     s = getenv("SPAWN_FAULT_RECV_CAP");
     recv_cap = s ? atol(s) : 0;
+  }
+  if (fail_epoll_add_at < 0) {
+    s = getenv("SPAWN_FAULT_EPOLL_ADD_AT");
+    fail_epoll_add_at = s ? atoi(s) : 0;
   }
 }
 
@@ -154,6 +165,11 @@ int close(int fd) {
   return real_close(fd);
 }
 
+static int refuses_epoll_add(long op, int fd, const struct epoll_event *event) {
+  if (fail_epoll_add_at <= 0 || op != EPOLL_CTL_ADD || !(event->events & EPOLLIN) || !is_unix_sock(fd)) return 0;
+  return __atomic_add_fetch(&epoll_add_count, 1, __ATOMIC_RELAXED) == (unsigned)fail_epoll_add_at;
+}
+
 long syscall(long number, ...) {
   va_list ap;
   long a, b, c, d, e, f;
@@ -167,8 +183,14 @@ long syscall(long number, ...) {
   va_end(ap);
   if (!real_syscall) {
     real_syscall = (long (*)(long, long, long, long, long, long, long))dlsym(RTLD_NEXT, "syscall");
+    init_modes();
   }
   if (number == SYS_close) reset_fd((int)a);
+  // Bun registers an fd through syscall(SYS_epoll_ctl, epfd, op, fd, event).
+  if (number == SYS_epoll_ctl && refuses_epoll_add(b, (int)c, (const struct epoll_event *)d)) {
+    errno = ENOMEM;
+    return -1;
+  }
   return real_syscall(number, a, b, c, d, e, f);
 }
 `;
@@ -276,18 +298,24 @@ child.on("close", () => {
 });
 `;
 
-// node:child_process with no 'error' listener on stdout: the error is an uncaughtException. stdout and the
-// ChildProcess still emit 'close'.
-const CHILD_PROCESS_UNHANDLED_FIXTURE = /* js */ `
+// node:child_process with no 'error' listener on the pipe: the error is an uncaughtException. The pipe and the
+// ChildProcess still emit 'close'. The child writes to that pipe only, and it is the only AF_UNIX socket.
+const childProcessUnhandledFixture = (pipe: "stdout" | "stderr") => {
+  const [command, stdio] =
+    pipe === "stdout"
+      ? [WRITER_CMD[2], ["ignore", "pipe", "ignore"]]
+      : [WRITER_CMD[2] + " >&2", ["ignore", "ignore", "pipe"]];
+  return /* js */ `
 import { spawn } from "node:child_process";
-const out = { uncaught: [], stdout: [], child: [] };
+const out = { uncaught: [], ${pipe}: [], child: [] };
 process.on("uncaughtException", e => out.uncaught.push(e.code));
 process.on("exit", () => console.log(JSON.stringify(out)));
-const child = spawn(${JSON.stringify(WRITER_CMD[0])}, ${JSON.stringify(WRITER_CMD.slice(1))}, { stdio: ["ignore", "pipe", "ignore"] });
-child.stdout.on("data", () => {});
-child.stdout.on("close", () => out.stdout.push("close"));
+const child = spawn("sh", ["-c", ${JSON.stringify(command)}], { stdio: ${JSON.stringify(stdio)} });
+child.${pipe}.on("data", () => {});
+child.${pipe}.on("close", () => out.${pipe}.push("close"));
 child.on("close", () => out.child.push("close"));
 `;
+};
 
 // The same with no 'uncaughtException' listener: the error is fatal. Nothing reads stdout here, so its first recv()
 // comes when the ChildProcess resumes it, after 'exit'.
@@ -410,7 +438,8 @@ beforeAll(async () => {
     "stdout-text.mjs": STDOUT_TEXT_FIXTURE,
     "stdout-write.mjs": STDOUT_WRITE_FIXTURE,
     "child-process.mjs": CHILD_PROCESS_FIXTURE,
-    "child-process-unhandled.mjs": CHILD_PROCESS_UNHANDLED_FIXTURE,
+    "child-process-unhandled-stdout.mjs": childProcessUnhandledFixture("stdout"),
+    "child-process-unhandled-stderr.mjs": childProcessUnhandledFixture("stderr"),
     "child-process-fatal.mjs": CHILD_PROCESS_FATAL_FIXTURE,
     "child-process-bytes.mjs": CHILD_PROCESS_BYTES_FIXTURE,
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
@@ -445,6 +474,7 @@ async function runWithFault(fixture: string, fault: Record<string, string>) {
     SPAWN_FAULT_READS_AFTER: undefined,
     SPAWN_FAULT_RECV_EAGAIN_AT: undefined,
     SPAWN_FAULT_RECV_CAP: undefined,
+    SPAWN_FAULT_EPOLL_ADD_AT: undefined,
     ...fault,
   };
   await using proc = Bun.spawn({
@@ -528,7 +558,7 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
   });
 
   test.concurrent("node:child_process: an unhandled read error still ends in 'close'", async () => {
-    expect(await runWithFault("child-process-unhandled.mjs", { SPAWN_FAULT_RECV_AT: "3" })).toEqual({
+    expect(await runWithFault("child-process-unhandled-stdout.mjs", { SPAWN_FAULT_RECV_AT: "3" })).toEqual({
       parsed: { uncaught: ["EIO"], stdout: ["close"], child: ["close"] },
       stderr: "",
       exitCode: 0,
@@ -539,6 +569,19 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
     const { parsed, stderr, exitCode } = await runWithFault("child-process-fatal.mjs", { SPAWN_FAULT_RECV_AT: "1" });
     expect({ parsed, error: stderr.includes("EIO"), exitCode }).toEqual({ parsed: "", error: true, exitCode: 1 });
   });
+
+  // The kernel can refuse to watch one more fd: epoll_ctl fails with ENOMEM or ENOSPC. The reader reports that the
+  // way it reports a failed read.
+  test.concurrent.each(["stdout", "stderr"] as const)(
+    "node:child_process: an unhandled refusal by epoll to watch %s still ends in 'close'",
+    async pipe => {
+      expect(await runWithFault(`child-process-unhandled-${pipe}.mjs`, { SPAWN_FAULT_EPOLL_ADD_AT: "1" })).toEqual({
+        parsed: { uncaught: ["ENOMEM"], [pipe]: ["close"], child: ["close"] },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   // child.stdout reads one chunk ahead of its 'data' listener, so once the stream flows a chunk is still buffered
   // when a later read fails. The stream is destroyed with the error, and that chunk has to reach 'data' first.

@@ -251,7 +251,7 @@ export default b.declarations(
     [...handedOver, b.definesName(["stack", "originalLine", "originalColumn"], b.any)],
     b.undefined,
   ),
-  // The Event that events.addAbortListener() makes for a signal that is no EventTarget names the signal in own properties. `currentTarget` becomes null when the listener has returned.
+  // The Event of a signal that is no EventTarget has an own `currentTarget`, which becomes null.
   binding(
     "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsFinishAbortEvent",
     [...handedOver, b.definesName(["currentTarget"], b.null)],

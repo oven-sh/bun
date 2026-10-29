@@ -1035,7 +1035,6 @@ describe("addAbortListener resists stopImmediatePropagation", () => {
 });
 
 describe("addAbortListener on a signal that is aborted already", () => {
-  // After one turn of the event loop every microtask that was queued before has run.
   const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
 
   const describeEvent = (event: Event, signal: object) => ({
@@ -1090,10 +1089,7 @@ describe("addAbortListener on a signal that is aborted already", () => {
     expect(otherListener).not.toHaveBeenCalled();
   });
 
-  // Any object that has `aborted` is taken for a signal: the AbortSignal of happy-dom, jsdom or abort-controller is
-  // no EventTarget of Bun's. A native Event can name only such a target, so own properties name this signal. They
-  // are not enumerable: the event lists and serializes as any other event does, whatever the signal holds.
-  // Node.js v26.12.1 answers the signal for `srcElement` too.
+  // The AbortSignal of happy-dom or jsdom is such an object. Node.js v26.12.1 answers the signal for `srcElement` too.
   test("the event names a signal that is no EventTarget", async () => {
     const signal: { aborted: boolean; self?: object } = { aborted: true };
     signal.self = signal;
@@ -1236,9 +1232,7 @@ describe("addAbortListener on a signal that is aborted already", () => {
     });
   });
 
-  // The reason of a signal lives on its wrapper. Only the event names this signal, and the listener waits for a turn
-  // of the event loop and a collection. The event must keep the signal as it was. The listener is a function and
-  // no arrow: without the event's hold on the signal, a release build loses the reason only for that form.
+  // A function and no arrow: without the event's hold on the signal, a release build loses the reason only for that form.
   test("the event keeps a signal that nothing else names, with its reason", async () => {
     const script = `
       const { addAbortListener } = require("node:events");

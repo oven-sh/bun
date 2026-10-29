@@ -166,9 +166,6 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
-  // For a signal that is aborted already the polyfill follows node:events: the listener gets an
-  // `abort` event that names the signal, and dispose() before the microtask stops the call. The host
-  // of a bundle may have no `Event`: the listener is then called with no argument, as it was before.
   itBundled("browser/NodeEventsAddAbortListenerAborted", {
     files: {
       "/entry.js": /* js */ `

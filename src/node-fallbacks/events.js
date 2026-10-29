@@ -473,8 +473,7 @@ function addAbortListener(signal, listener) {
         listener();
         return;
       }
-      // A page cannot make a trusted event, and only a dispatch sets the target of one. Own
-      // properties name the signal: `target` for good, `currentTarget` for the time of the call.
+      // Only a dispatch sets the target of an event, so own properties name the signal.
       const event = new Event("abort");
       Object.defineProperty(event, "target", { value: signal });
       Object.defineProperty(event, "currentTarget", { value: signal, configurable: true });

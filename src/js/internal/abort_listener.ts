@@ -4,7 +4,6 @@ const { resistStopPropagation } = require("internal/shared");
 type ArmAbortEvent = (signal: AbortSignal) => Event;
 type FinishAbortEvent = (event: Event) => void;
 
-// Bound at the first call that needs them: a signal is rarely aborted before it is listened to.
 let armAbortEvent: ArmAbortEvent | undefined;
 let finishAbortEvent: FinishAbortEvent | undefined;
 
@@ -30,9 +29,7 @@ function addAbortListener(signal: AbortSignal, listener: (event: Event) => void)
         "jsFunctionNodeEventsFinishAbortEvent",
         1,
       ) as FinishAbortEvent);
-      // Nothing is dispatched, so no other listener of the signal runs. The listener gets the event
-      // that a dispatch would have handed it: trusted, with the signal as its target. As in node,
-      // the event of a listener that throws stays in its dispatching state.
+      // No dispatch: it would call the signal's other listeners again. As in node, a listener that throws leaves the event armed.
       const event = arm(signal);
       listener(event);
       finish(event);

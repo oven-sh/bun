@@ -49,11 +49,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values)));
 }
 
-// events.addAbortListener() on a signal that is aborted already calls its listener with an `abort`
-// event that no dispatch made. Node builds it in JavaScript: `event[kTarget] = signal` and
-// `event[kIsBeingDispatched] = true` before the call, `event[kIsBeingDispatched] = false` after it.
-// These two functions are those two steps for the native Event. internal/abort_listener calls the
-// listener between them.
+// events.addAbortListener() on an aborted signal: node's `kTarget` and `kIsBeingDispatched` steps, before and after the listener.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsArmAbortEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -74,15 +70,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsArmAbortEvent, (JSGlobalObject * le
 
     JSObject* object = asObject(wrapper);
     if (target) {
-        // An Event keeps its native target alive and not the wrapper of it, and the reason of a
-        // signal lives on the wrapper. A listener may hold nothing but the event, so the event
-        // holds the signal. This slot can go when JSEvent marks the wrapper of its target.
+        // JSEvent does not mark the wrapper of its target, and the reason of a signal lives on that wrapper.
         object->putDirect(vm, WebCore::builtinNames(vm).signalPrivateName(), signal, PropertyAttribute::DontEnum | 0);
     } else {
-        // validateAbortSignal() takes any object that has `aborted`: the AbortSignal of happy-dom,
-        // jsdom or abort-controller is no EventTarget of ours. A native Event can name only an
-        // EventTarget, so own properties name any other signal. They are not enumerable: `target`
-        // is no own key of any other event, and JSON.stringify(event) must not walk the signal.
+        // validateAbortSignal() takes any object that has `aborted`, such as the AbortSignal of happy-dom or jsdom.
         unsigned attributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum;
         object->putDirect(vm, vm.propertyNames->target, signal, attributes);
         object->putDirect(vm, Identifier::fromString(vm, "currentTarget"_s), signal, attributes);
@@ -103,8 +94,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsFinishAbortEvent, (JSGlobalObject *
     event.setCurrentTarget(nullptr);
     event.setEventPhase(Event::NONE);
     if (!event.target()) {
-        // The own `currentTarget` of a signal that is no EventTarget is stored over, not deleted:
-        // a delete would give every such event a Structure of its own.
+        // Stored over, not deleted: a delete would give every such event a Structure of its own.
         auto currentTarget = Identifier::fromString(vm, "currentTarget"_s);
         if (wrapper->getDirect(vm, currentTarget))
             wrapper->putDirect(vm, currentTarget, jsNull(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);

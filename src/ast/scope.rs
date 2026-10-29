@@ -419,20 +419,6 @@ impl Scope {
         self.members.get_hashed(hash_value, name).copied()
     }
 
-    /// # Safety
-    /// `name` must outlive the scope: see `Members::get_or_put_hashed`. The
-    /// parser's names are slices of the source or of the lexer's string
-    /// table, which outlive the AST arena.
-    #[inline]
-    pub unsafe fn get_or_put_member_with_hash(
-        &mut self,
-        name: &[u8],
-        hash_value: u32,
-    ) -> MembersGetOrPut<'_> {
-        // SAFETY: forwarded contract.
-        unsafe { self.members.get_or_put_hashed(hash_value, name) }
-    }
-
     /// Associated-fn form of [`can_merge_symbols`] taking the scope's [`Kind`]
     /// by value instead of `&self`. Lets the parser hold a single-probe
     /// `members.entry()` borrow across the merge decision without re-borrowing

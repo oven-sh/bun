@@ -585,7 +585,6 @@ impl Watcher {
             file_path: file_path_,
             fd,
             hash,
-            count: 0,
             parent_hash,
             package_json,
             kind: WatchItemKind::File,
@@ -672,7 +671,6 @@ impl Watcher {
             file_path: file_path_,
             fd,
             hash,
-            count: 0,
             parent_hash,
             kind: WatchItemKind::Directory,
             package_json: None,
@@ -1062,7 +1060,6 @@ pub struct WatchItem {
     // filepath hash for quick comparison
     pub hash: u32,
     pub fd: Fd,
-    pub count: u32,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
     pub package_json: Option<&'static PackageJSON>,

@@ -6,9 +6,11 @@ import {
   getMaxFD,
   isBroken,
   isDebug,
+  isFreeBSD,
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -3257,6 +3259,158 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   unlinkSync(path);
 });
 
+const realpathVariants = {
+  "realpathSync": fs.realpathSync,
+  "realpath": promisify(fs.realpath),
+  "realpathSync.native": fs.realpathSync.native,
+  "realpath.native": promisify(fs.realpath.native),
+  "promises.realpath": fs.promises.realpath,
+};
+/** What each variant answers for each path: a path relative to `root`, or an error code. */
+async function resolveWithEveryVariant(root: string, paths: string[]) {
+  const results: Record<string, string[]> = {};
+  for (const [variant, realpath] of Object.entries(realpathVariants)) {
+    results[variant] = [];
+    for (const path of paths) {
+      try {
+        results[variant].push(relative(root, await realpath(path)));
+      } catch (e: any) {
+        results[variant].push(e.code);
+      }
+    }
+  }
+  return results;
+}
+const forEveryVariant = (expected: string[]) =>
+  Object.fromEntries(Object.keys(realpathVariants).map(variant => [variant, expected]));
+
+// FreeBSD's realpath still opens the path.
+it.if(isPosix && !isFreeBSD)("realpath does not open what its path leads to", async () => {
+  using dir = tempDir("realpath", { "file": "", "dir/inside": "" });
+  const root = String(dir);
+  using server = Bun.listen({ unix: join(root, "socket"), socket: { data() {} } });
+  const names = ["file", "dir", "socket"];
+  for (const name of names) symlinkSync(name, join(root, "to-" + name));
+  fs.chmodSync(join(root, "file"), 0);
+  fs.chmodSync(join(root, "dir"), 0o100);
+  try {
+    const refusals: Record<string, string> = {
+      "file": "EACCES",
+      "dir": "EACCES",
+      "socket": isMacOS ? "EOPNOTSUPP" : "ENXIO",
+    };
+    // Root can open the file and the directory.
+    for (const name of process.getuid!() === 0 ? ["socket"] : names) {
+      expect(() => closeSync(openSync(join(root, name), "r"))).toThrow(
+        expect.objectContaining({ code: refusals[name] }),
+      );
+    }
+    const paths = [...names.flatMap(name => [name, "to-" + name]), "dir/inside", "to-dir/inside"];
+    expect(
+      await resolveWithEveryVariant(
+        root,
+        paths.map(path => join(root, path)),
+      ),
+    ).toEqual(forEveryVariant(["file", "file", "dir", "dir", "socket", "socket", "dir/inside", "dir/inside"]));
+  } finally {
+    fs.chmodSync(join(root, "dir"), 0o755);
+  }
+});
+
+// Linux needs one for `O_PATH`.
+it.if(isMacOS)("realpath needs no file descriptor", async () => {
+  using dir = tempDir("realpath", { "file": "" });
+  symlinkSync("loop", join(String(dir), "loop"));
+  const script = `
+    const fs = require("node:fs");
+    const { relative } = require("node:path");
+    // getcwd() needs a descriptor on macOS.
+    const cwd = process.cwd();
+    try {
+      for (;;) fs.openSync("/dev/null", "r");
+    } catch (e) {
+      console.log(e.code);
+    }
+    for (const path of ["file", "missing", "file/below", "loop"]) {
+      for (const realpath of [fs.realpathSync, fs.realpathSync.native]) {
+        try {
+          console.log(path, relative(cwd, realpath(path)));
+        } catch (e) {
+          console.log(path, e.code);
+        }
+      }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 128 && exec "$@"', "sh", bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([
+    "EMFILE",
+    "file file",
+    "file file",
+    "missing ENOENT",
+    "missing ENOENT",
+    "file/below ENOTDIR",
+    "file/below ENOTDIR",
+    "loop ELOOP",
+    "loop ELOOP",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+// FreeBSD only has /dev/fd/0 to 2 unless fdescfs is mounted.
+it.if(isPosix && !isFreeBSD)("realpath leads from /dev/fd to the open file", async () => {
+  using dir = tempDir("realpath", { "file": "" });
+  const fd = openSync(join(String(dir), "file"), "r");
+  try {
+    expect(await resolveWithEveryVariant(String(dir), ["/dev/fd/" + fd])).toEqual(forEveryVariant(["file"]));
+  } finally {
+    closeSync(fd);
+  }
+});
+
+it.if(isMacOS)("realpath resolves what macOS only resolves for open()", async () => {
+  using dir = tempDir("realpath", { "file": "", "forked": "", "denied": "" });
+  const root = String(dir);
+  writeFileSync(join(root, "forked/..namedfork/rsrc"), "fork");
+  const deny = Bun.spawnSync(["/bin/chmod", "+a", "everyone deny readattr", join(root, "denied")]);
+  expect(deny.stderr.toString()).toBe("");
+  expect(deny.exitCode).toBe(0);
+  try {
+    const cases = [
+      [join(root, "forked/..namedfork/rsrc"), "forked/..namedfork/rsrc"],
+      [join(root, "denied"), "denied"],
+    ];
+    // macOS 15.4 is the first with these prefixes.
+    if (existsSync("/.nofollow" + root)) {
+      // 1,020 bytes fit in PATH_MAX, and no longer do after a prefix.
+      let deep = root;
+      while (deep.length < 1020) deep += "/" + Buffer.alloc(Math.min(200, 1019 - deep.length), "d").toString();
+      mkdirSync(deep, { recursive: true });
+      symlinkSync(deep, join(root, "to-deep"));
+      cases.push(
+        ["/.nofollow" + join(root, "file"), "file"],
+        ["/.resolve/1" + join(root, "file"), "file"],
+        ["/.resolve/0" + join(root, "to-deep"), relative(root, deep)],
+      );
+    }
+    expect(
+      await resolveWithEveryVariant(
+        root,
+        cases.map(([path]) => path),
+      ),
+    ).toEqual(forEveryVariant(cases.map(([, expected]) => expected)));
+  } finally {
+    Bun.spawnSync(["/bin/chmod", "-N", join(root, "denied")]);
+  }
+});
+
 // Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
 // a /dev/fd fallback for environments where /proc is broken (FreeBSD
 // Linuxulator) or absent (minimal containers).
@@ -3357,6 +3511,61 @@ it.if(isPosix)("realpath reads its path the way Node does", async () => {
     row("/e\\", "/e\\"),
     row("/e\\/z", "/e\\/z"),
   ]);
+  expect(exitCode).toBe(0);
+});
+
+it.if(isLinux)("realpath.native throws ENOENT for a working directory that was removed", async () => {
+  using dir = tempDir("fs-realpath-removed-cwd", {});
+
+  const script = `
+    import fs from "node:fs";
+    import { promisify } from "node:util";
+    const root = process.cwd();
+    const impls = [fs.realpathSync.native, promisify(fs.realpath.native), fs.promises.realpath];
+    async function run(path) {
+      const results = [];
+      for (const impl of impls) {
+        try {
+          results.push((await impl(path)).slice(root.length));
+        } catch (err) {
+          results.push(err.code + " " + err.path);
+        }
+      }
+      return results;
+    }
+    const out = [];
+    fs.mkdirSync("gone/sub", { recursive: true });
+    process.chdir("gone/sub");
+    fs.rmSync(root + "/gone", { recursive: true });
+    out.push(await run("."), await run("./"), await run(".."), await run("../.."));
+    fs.mkdirSync(root + "/gone/sub (deleted)", { recursive: true });
+    out.push(await run("."));
+    process.chdir(root + "/gone/sub (deleted)");
+    out.push(await run("."));
+    // With the suffix, this name is longer than a name can be.
+    const long = root + "/" + Buffer.alloc(250, "x").toString();
+    fs.mkdirSync(long);
+    process.chdir(long);
+    fs.rmdirSync(long);
+    out.push(await run("."));
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(
+    ["ENOENT .", "ENOENT ./", "ENOENT ..", "", "ENOENT .", "/gone/sub (deleted)", "ENOENT ."].map(result =>
+      Array(3).fill(result),
+    ),
+  );
   expect(exitCode).toBe(0);
 });
 
@@ -6180,6 +6389,12 @@ it("lchown succeeds on every platform", async () => {
   }
 });
 
+it("an id beyond 2 ** 32 is printed as in Node.js", () => {
+  expect(() => fs.fchownSync(0, 2 ** 53, 0)).toThrow(
+    RangeError(`The value of "uid" is out of range. It must be >= -1 && <= 4294967295. Received 9_007_199_254_740_992`),
+  );
+});
+
 it("open flags verification", async () => {
   const invalid = 4_294_967_296;
   expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
@@ -7109,6 +7324,92 @@ it.skipIf(isWindows)(
   },
 );
 
+it.skipIf(isWindows)("async fs.readv and fs.writev stay off a WebAssembly.Memory block that grow() freed", async () => {
+  using dir = tempDir("fs-vector-wasm", {});
+  const fifoPath = join(String(dir), "v.fifo");
+  mkfifo(fifoPath);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import fs from "node:fs";
+        const TOTAL = 16 * 65536; // 1 MB, which is 16 pipe buffers
+        const newMemory = () => new WebAssembly.Memory({ initial: 16, maximum: 24 });
+        const claimFreedBlock = () => Array.from({ length: 4 }, () => Buffer.from(newMemory().buffer).fill(0xee));
+        const fd = fs.openSync(process.env.FIFO_PATH, fs.constants.O_RDWR);
+        const call = (fn, ...args) =>
+          new Promise((resolve, reject) => fn(fd, ...args, (err, n) => (err ? reject(err) : resolve(n))));
+
+        // The fifo is empty, so the pool thread waits in readv(2) until the memory has grown.
+        let mem = newMemory();
+        const plain = Buffer.alloc(2);
+        const read = call(fs.readv, [new Uint8Array(mem.buffer, 16, 4), plain, new Uint8Array(mem.buffer, 64, 8)], null);
+        mem.grow(1);
+        const claimed = claimFreedBlock();
+        fs.writeSync(fd, "0123456789");
+        const bytesRead = await read;
+        const got = [Buffer.from(mem.buffer, 16, 4), plain, Buffer.from(mem.buffer, 64, 8)].map(String);
+        const untouched = claimed.every(bytes => bytes.equals(Buffer.alloc(TOTAL, 0xee)));
+
+        // After one pipe buffer is read, the pool thread is still inside writev(2) with the rest.
+        mem = newMemory();
+        const written = call(fs.writev, [new Uint8Array(mem.buffer).fill(0x41)], null);
+        const chunk = Buffer.alloc(65536);
+        let drained = await call(fs.read, chunk, 0, chunk.length, null);
+        mem.grow(1);
+        claimed.push(...claimFreedBlock());
+        let foreignChunks = 0;
+        while (drained < TOTAL) {
+          const n = await call(fs.read, chunk, 0, chunk.length, null);
+          if (!chunk.subarray(0, n).equals(Buffer.alloc(n, 0x41))) foreignChunks++;
+          drained += n;
+        }
+        console.log(JSON.stringify({ bytesRead, got, untouched, foreignChunks, written: await written }));
+        process.exit(0);
+      `,
+    ],
+    // Without fast memory, \`grow()\` moves the block on every platform.
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", FIFO_PATH: fifoPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({
+    bytesRead: 10,
+    got: ["0123", "45", "6789\0\0\0\0"],
+    untouched: true,
+    foreignChunks: 0,
+    written: 1048576,
+  });
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+it("async fs.write copies only the bytes it writes out of a WebAssembly.Memory or a resizable ArrayBuffer", async () => {
+  using dir = tempDir("fs-write-slice", {});
+  const size = 64 * 1024 * 1024;
+  for (const buffer of [
+    new WebAssembly.Memory({ initial: size / 65536 }).buffer,
+    new ArrayBuffer(size, { maxByteLength: size * 2 }),
+  ]) {
+    const view = new Uint8Array(buffer).fill(0x41, 4096, 4196);
+    const path = join(String(dir), "out");
+    const fd = fs.openSync(path, "w");
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    const before = process.memoryUsage.rss();
+    fs.write(fd, view, 4096, 100, 0, (err, written) => (err ? reject(err) : resolve(written)));
+    // The copy lives until the callback runs.
+    const copied = process.memoryUsage.rss() - before;
+    expect(await promise).toBe(100);
+    fs.closeSync(fd);
+    expect(fs.readFileSync(path)).toEqual(Buffer.alloc(100, 0x41));
+    expect(copied).toBeLessThan(size / 2);
+  }
+});
+
 // A sync call reads the path after the option getters ran. It reads the bytes captured at call time
 // when a getter shrinks the buffer.
 it("sync fs calls read a Buffer path captured at call time when an option getter shrinks its resizable ArrayBuffer", async () => {
@@ -7179,7 +7480,7 @@ it.if(isPosix)("realpath reports ENAMETOOLONG when cwd plus the path exceeds the
 
   // Each relative path is within the per-argument limit and only its absolute
   // form is too long. `longPath` does not exist. `deep` does, so the native
-  // variants open it and find out when they ask for the path of the descriptor.
+  // variants find out when the system has resolved it and cannot say where it is.
   const script = `
     const fs = require("node:fs");
     const longPath = "a".repeat(4090);
@@ -7732,7 +8033,7 @@ describe("fs.Utf8Stream", () => {
 
 describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows during the read", () => {
   // The fifo is empty, so the pool thread waits in read(2) until the memory has grown.
-  async function run(view: string, env: Record<string, string>) {
+  async function run(view: string, env: Record<string, string>, result = "view") {
     using dir = tempDir("fs-read-wasm-grow", {
       "run.mjs": `
         import fs from "node:fs";
@@ -7745,7 +8046,8 @@ describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows d
         mem.grow(1);
         fs.writeSync(fd, Buffer.alloc(100, 0x41));
         const { err, bytesRead } = await promise;
-        const bytes = view.byteLength ? Buffer.from(view).subarray(0, 65536) : Buffer.alloc(0);
+        const result = ${result};
+        const bytes = result.byteLength ? Buffer.from(result).subarray(0, 65536) : Buffer.alloc(0);
         console.log(JSON.stringify({
           err: err?.code ?? null,
           bytesRead,
@@ -7780,6 +8082,14 @@ describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows d
     // Without the Gigacage, the freed block is unmapped and read(2) into it fails with EFAULT.
     expect(await run("mem.buffer", { Malloc: "1" })).toEqual({
       stdout: { err: null, bytesRead: 100, first: -1, count: 0, untouched: 0 },
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.each(["0", "1"])("writes the bytes into the grown memory, useWasmFastMemory=%s", async fastMemory => {
+    const env = { BUN_JSC_useWasmFastMemory: fastMemory };
+    expect(await run("mem.buffer, 16, 8192", env, "new Uint8Array(mem.buffer)")).toEqual({
+      stdout: { err: null, bytesRead: 100, first: 80, count: 100, untouched: 8092 },
       exitCode: 0,
     });
   });

@@ -145,7 +145,11 @@ pub struct Loader {
     /// only populated with files specified explicitly (e.g. --env-file arg)
     pub(crate) custom_files_loaded: StringSet,
 
+    /// Hides the `[Nms] ".env"` line and the `error loading .env file` lines.
     pub quiet: bool,
+
+    /// Hides the `[Nms] ".env"` line only.
+    pub quiet_loaded_files: bool,
 
     pub(crate) did_load_process: bool,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
@@ -229,20 +233,16 @@ impl Loader {
         buf: &'b mut PathBuffer,
     ) -> Option<&'b ZStr> {
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists.
-        // NLL workaround: compute the length in an inner scope so the borrow of `buf` for the
-        // executable check ends before we either return a fresh borrow or fall through to `which`.
-        let env_len = self
+        if let Some(node) = self
             .get(b"NODE")
             .or_else(|| self.get(b"npm_node_execpath"))
             .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
-            .map(|node| {
-                buf[..node.len()].copy_from_slice(node);
-                buf[node.len()] = 0;
-                node.len()
-            });
-        if let Some(len) = env_len {
-            if bun_sys::is_executable_file_path(ZStr::from_buf(&buf[..], len)) {
-                return Some(ZStr::from_buf(&buf[..], len));
+        {
+            buf[..node.len()].copy_from_slice(node);
+            buf[node.len()] = 0;
+            let node = ZStr::from_buf(&buf[..], node.len());
+            if bun_sys::is_executable_file_path(node) {
+                return Some(node);
             }
         }
 
@@ -548,6 +548,7 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: StringSet::new(),
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -561,6 +562,7 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -575,6 +577,7 @@ impl Loader {
             default_files_loaded: self.default_files_loaded,
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: self.quiet,
+            quiet_loaded_files: self.quiet_loaded_files,
             did_load_process: self.did_load_process,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -650,7 +653,7 @@ impl Loader {
             }
         }
 
-        if !self.quiet && self.loaded_count() > loaded_before {
+        if !self.quiet && !self.quiet_loaded_files && self.loaded_count() > loaded_before {
             self.print_loaded(start);
         }
         Ok(())

@@ -4447,6 +4447,23 @@ describe("iterator result consumers", () => {
     }).toEqual({ async: [1, 2, 3], sync: ["s1", "s2"] });
   });
 
+  test("ReadableStream.from over a sync generator, pipe aborted during the first read", async () => {
+    let finished = false;
+    function* gen() {
+      try {
+        yield 1;
+        yield 2;
+      } finally {
+        finished = true;
+      }
+    }
+    const controller = new AbortController();
+    const piped = ReadableStream.from(gen()).pipeTo(new WritableStream(), { signal: controller.signal });
+    controller.abort();
+    expect(await piped.catch(e => e.name)).toBe("AbortError");
+    expect(finished).toBe(true);
+  });
+
   test("ReadableStream.from over an async iterator whose results have accessors", async () => {
     const reads = [];
     let i = 0;
@@ -5032,6 +5049,7 @@ describe("direct stream edge cases", () => {
         "thrown after close(error)",
       ],
     ])("close(error) from %s: the caller's try/catch is the only report", async (_, pull, message) => {
+      using dir = tempDir("direct-close-error-report", {});
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -5044,6 +5062,7 @@ describe("direct stream edge cases", () => {
             "new Response(s).arrayBuffer()": s => new Response(s).arrayBuffer(),
             "Bun.readableStreamToBytes": s => Bun.readableStreamToBytes(s),
             "Bun.readableStreamToArrayBuffer": s => Bun.readableStreamToArrayBuffer(s),
+            "Bun.write(file, new Response(s))": s => Bun.write(${JSON.stringify(join(String(dir), "out.txt"))}, new Response(s)),
           };
           const out = {};
           for (const [name, consume] of Object.entries(consumers)) {
@@ -5067,9 +5086,45 @@ describe("direct stream edge cases", () => {
         "new Response(s).arrayBuffer()": "caught: " + message,
         "Bun.readableStreamToBytes": "caught: " + message,
         "Bun.readableStreamToArrayBuffer": "caught: " + message,
+        "Bun.write(file, new Response(s))": "caught: " + message,
       });
       expect(exitCode).toBe(0);
     });
+
+    // Bun.write() rejects with the throw, so a caller that ignores the rejection gets that one report.
+    test.concurrent(
+      "Bun.write: close(error) from a sync pull() that then throws is reported once when the caller ignores the rejection",
+      async () => {
+        using dir = tempDir("direct-close-error-ignored", {});
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+          const unhandled = [];
+          process.on("unhandledRejection", e => unhandled.push(e?.message));
+          process.on("exit", () => console.log(JSON.stringify(unhandled)));
+          const s = new ReadableStream({
+            type: "direct",
+            pull(c) {
+              c.write("partial");
+              c.close(new Error("source failed"));
+              throw new Error("thrown after close(error)");
+            },
+          });
+          Bun.write(${JSON.stringify(join(String(dir), "out.txt"))}, new Response(s));
+          `,
+          ],
+          env: bunEnv,
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect({ unhandled: JSON.parse(stdout), exitCode }).toEqual({
+          unhandled: ["thrown after close(error)"],
+          exitCode: 0,
+        });
+      },
+    );
 
     // close(error) rejects the promise the caller holds, so the caller decides whether the rejection is handled.
     test.concurrent(

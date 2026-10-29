@@ -1,5 +1,5 @@
 use bun_core::strings::EncodingNonAscii;
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringView, strings};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal};
 use bun_jsc::{JSValue, bun_string_jsc};
 use bun_sys::UV_E;
@@ -41,8 +41,7 @@ pub(crate) fn uv_translate_sys_error(errno: f64) -> i32 {
     }
     #[cfg(windows)]
     {
-        // SAFETY: pure translation function.
-        let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(n) };
+        let uv_err = bun_libuv_sys::uv_translate_sys_error(n);
         if uv_err != 0 { uv_err } else { -UV_E::INVAL }
     }
     #[cfg(not(windows))]
@@ -152,7 +151,7 @@ pub(crate) fn parse_env<'a>(heap: &JsHeap<'a>, content: &[u8]) -> bindgen::Resul
         // A key like `0=` or `2023=` is an array index. `put` asserts on those.
         obj.put_may_be_index(
             global,
-            &BunString::from_bytes(k),
+            &StringView::from_bytes(k),
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         )?;
     }

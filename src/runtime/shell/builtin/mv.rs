@@ -112,16 +112,14 @@ impl Mv {
                 let cwd = Builtin::cwd(interp, cmd);
                 let target_idx = Self::state_mut(interp, cmd).args.target_idx;
                 let target = ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(target_idx));
-                let evtloop = Builtin::event_loop(interp, cmd);
                 let mut task = Box::new(ShellMvCheckTargetTask {
                     cmd,
                     cwd,
                     target,
                     result: None,
                     done: false,
-                    task: ShellTask::new(evtloop),
+                    task: ShellTask::for_builtin(interp, cmd),
                 });
-                task.task.interp = interp.as_ctx_ptr();
                 // SAFETY: `task` is heap-allocated and outlives the worker
                 // call (held in `MvState::CheckTarget` below).
                 unsafe { ShellTask::schedule(&raw mut *task) };
@@ -214,7 +212,6 @@ impl Mv {
                 const BATCH: usize = ShellMvBatchedTask::BATCH_SIZE;
                 let task_count = n_sources.div_ceil(BATCH);
                 let cwd = Builtin::cwd(interp, cmd);
-                let evtloop = Builtin::event_loop(interp, cmd);
                 let (sources_start, target_idx, no_clobber) = {
                     let me = Self::state_mut(interp, cmd);
                     (
@@ -243,7 +240,7 @@ impl Mv {
                         cwd,
                         error_signal: None,
                         err: None,
-                        task: ShellTask::new(evtloop),
+                        task: ShellTask::for_builtin(interp, cmd),
                     });
                 }
 
@@ -256,7 +253,6 @@ impl Mv {
                 };
                 // Now that the AtomicBool has its final address, point
                 // every task at it and schedule.
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if let MvState::Executing {
                     error_signal,
                     tasks,
@@ -266,7 +262,6 @@ impl Mv {
                     let sig = BackRef::new(&*error_signal);
                     for t in tasks.iter_mut() {
                         t.error_signal = Some(sig);
-                        t.task.interp = interp_ptr;
                         // SAFETY: `t` lives in `MvState::Executing::tasks`,
                         // which is fully populated before any task is scheduled
                         // and never grown afterward, so its address is stable
@@ -304,9 +299,31 @@ impl Mv {
         }
     }
 
+    /// `Builtin::after_stop`: `mv` ends when its pool tasks are back, because they live in this state.
+    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
+        match &Self::state_mut(interp, cmd).state {
+            MvState::CheckTarget(task) => task.done,
+            MvState::Executing {
+                task_count,
+                tasks_done,
+                ..
+            } => tasks_done >= task_count,
+            MvState::Idle | MvState::Done | MvState::WaitingWriteErr { .. } | MvState::Err => true,
+        }
+    }
+
     fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
-        if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
+        let stopped = Builtin::of(interp, cmd).is_stopped();
+        let me = Self::state_mut(interp, cmd);
+        if let MvState::CheckTarget(t) = &mut me.state {
             t.done = true;
+            if stopped {
+                // `Drop` closes the directory the check opened.
+                if let Some(Ok(fd)) = t.result.take() {
+                    me.args.target_fd = fd;
+                }
+                return Builtin::done_stopped(interp, cmd).run(interp);
+            }
         }
         Self::next(interp, cmd).run(interp);
     }
@@ -332,6 +349,12 @@ impl Mv {
             *tasks_done += 1;
             (*tasks_done >= *task_count, err.is_some())
         };
+        if Builtin::of(interp, cmd).is_stopped() {
+            if all_done {
+                Builtin::done_stopped(interp, cmd).run(interp);
+            }
+            return;
+        }
         if all_done {
             if had_err {
                 let e = match &mut Self::state_mut(interp, cmd).state {
@@ -476,6 +499,7 @@ impl ShellMvBatchedTask {
                 this.target.as_bytes(),
                 &this.sources[0],
                 this.no_clobber,
+                &this.task,
                 &mut buf,
             ) {
                 this.err = Some(e);
@@ -489,6 +513,7 @@ impl ShellMvBatchedTask {
             this.cwd,
             &this.target,
             this.no_clobber,
+            &this.task,
         ) {
             this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
@@ -506,6 +531,7 @@ impl ShellMvBatchedTask {
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
         no_clobber: bool,
+        task: &ShellTask,
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::E;
 
@@ -532,7 +558,7 @@ impl ShellMvBatchedTask {
         }
         match bun_sys::renameat(src_dir, src, dst_dir, dst) {
             Err(e) if e.get_errno() == E::EXDEV => {
-                Self::move_across_devices(src_dir, src, dst_dir, dst, None).map_err(|e| {
+                Self::move_across_devices(src_dir, src, dst_dir, dst, None, task).map_err(|e| {
                     if e.path.is_empty() {
                         e.with_path(src.as_bytes())
                     } else {
@@ -548,12 +574,14 @@ impl ShellMvBatchedTask {
     ///
     /// `output` is `None` for `mv`'s operand. Below the operand, it's the `(st_dev, st_ino)` of the
     /// directory being copied into. The walk must not enter it, or it would copy its own output.
+    /// A stopped `mv` ends the walk with `ECANCELED`, so no level removes a source directory that still has entries.
     fn move_across_devices(
         src_dir: bun_sys::Fd,
         src: &ZStr,
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
         output: Option<(u64, u64)>,
+        task: &ShellTask,
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::{Dir, E, File, O, S, Tag};
 
@@ -635,6 +663,9 @@ impl ShellMvBatchedTask {
             let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
             let mut nbuf = bun_paths::path_buffer_pool::get();
             while let Some(entry) = iter.next()? {
+                if task.stopped() {
+                    return Err(bun_sys::Error::from_code(E::ECANCELED, Tag::rename));
+                }
                 let name = entry.name.slice_u8();
                 if name.len() >= bun_paths::MAX_PATH_BYTES {
                     return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
@@ -642,7 +673,7 @@ impl ShellMvBatchedTask {
                 nbuf[..name.len()].copy_from_slice(name);
                 nbuf[name.len()] = 0;
                 let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z, Some(output))?;
+                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z, Some(output), task)?;
             }
             #[cfg(unix)]
             let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
@@ -757,6 +788,7 @@ impl ShellMvBatchedTask {
         target: &[u8],
         src: &ZStr,
         no_clobber: bool,
+        task: &ShellTask,
         buf: &mut PathBuffer,
     ) -> Result<(), bun_sys::Error> {
         let base = resolve_path::basename(src.as_bytes());
@@ -770,7 +802,7 @@ impl ShellMvBatchedTask {
         } else {
             let path_in_dir =
                 resolve_path::normalize_buf_z::<bun_paths::platform::Auto>(base, &mut buf[..]);
-            Self::do_rename(cwd, src, target_fd, path_in_dir, no_clobber)
+            Self::do_rename(cwd, src, target_fd, path_in_dir, no_clobber, task)
         };
         result.map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
@@ -790,6 +822,7 @@ impl ShellMvBatchedTask {
             if self
                 .error_signal
                 .is_some_and(|sig| sig.load(Ordering::SeqCst))
+                || self.task.stopped()
             {
                 // Another batch hit an error — abort the move loop, but still
                 // post back to the main thread so `tasks_done` reaches
@@ -802,6 +835,7 @@ impl ShellMvBatchedTask {
                 self.target.as_bytes(),
                 &self.sources[i],
                 self.no_clobber,
+                &self.task,
                 &mut buf,
             ) {
                 self.err = Some(e);

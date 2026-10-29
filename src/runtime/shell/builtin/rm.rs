@@ -41,6 +41,8 @@ pub(crate) struct ExecState {
     pub(crate) error_signal: AtomicBool,
     pub(crate) output_done: AtomicUsize,
     pub(crate) output_count: AtomicUsize,
+    /// The outputs in `output_count` that reached the main thread; the rest are verbose lists still on their way from the pool.
+    pub(crate) output_begun: usize,
     pub(crate) tasks_done: usize,
     pub(crate) started: bool,
 }
@@ -49,6 +51,13 @@ impl ExecState {
     #[inline]
     fn output_drained(&self) -> bool {
         self.output_done.load(Ordering::SeqCst) >= self.output_count.load(Ordering::SeqCst)
+    }
+
+    /// A stopped `rm` is over when every operand has reported and no verbose list is on its way.
+    #[inline]
+    fn stopped_idle(&self) -> bool {
+        self.tasks_done >= self.total_tasks
+            && self.output_begun >= self.output_count.load(Ordering::SeqCst)
     }
 }
 
@@ -251,6 +260,7 @@ impl Rm {
                                 error_signal: AtomicBool::new(false),
                                 output_done: AtomicUsize::new(0),
                                 output_count: AtomicUsize::new(0),
+                                output_begun: 0,
                                 tasks_done: 0,
                                 started: false,
                             });
@@ -302,7 +312,6 @@ impl Rm {
                         let cwd = Builtin::cwd(interp, cmd);
                         let evtloop = Builtin::event_loop(interp, cmd);
                         let opts = Self::state_mut(interp, cmd).opts;
-                        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                         let (args_start, argc) = {
                             let me = Self::state_mut(interp, cmd);
                             let RmState::Exec(e) = &mut me.state else {
@@ -321,7 +330,7 @@ impl Rm {
                         for i in args_start..argc {
                             let root = Builtin::of(interp, cmd).arg_bytes(i);
                             let task = ShellRmTask::create(
-                                cmd, opts, root, cwd, sig, out_count, evtloop, interp_ptr,
+                                cmd, opts, root, cwd, sig, out_count, evtloop, interp,
                             );
                             // SAFETY: freshly heap-allocated.
                             unsafe { ShellRmTask::schedule(task) };
@@ -348,6 +357,16 @@ impl Rm {
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, 1)
+    }
+
+    /// `Builtin::after_stop`: `rm` ends when the pool is through with it, because its tasks point into this state.
+    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
+        match &Self::state_mut(interp, cmd).state {
+            RmState::Exec(exec) => exec.stopped_idle(),
+            RmState::Idle | RmState::ParseOpts { .. } | RmState::Done { .. } | RmState::Err(_) => {
+                true
+            }
+        }
     }
 
     pub(crate) fn on_io_writer_chunk(
@@ -413,10 +432,19 @@ impl Rm {
             (exec.tasks_done, exec.total_tasks)
         };
 
+        if Builtin::of(interp, cmd).is_stopped() {
+            if matches!(&Self::state_mut(interp, cmd).state, RmState::Exec(exec) if exec.stopped_idle())
+            {
+                Builtin::done_stopped(interp, cmd).run(interp);
+            }
+            return;
+        }
+
         if let Some(s) = errstr {
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
                 if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                     exec.output_count.fetch_add(1, Ordering::SeqCst);
+                    exec.output_begun += 1;
                 }
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
                 Builtin::of_mut(interp, cmd)
@@ -472,6 +500,17 @@ impl Rm {
                 ShellRmTask::decr_pending_and_maybe_deinit(tm);
             }
         });
+
+        if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.output_begun += 1;
+        }
+        if Builtin::of(interp, cmd).is_stopped() {
+            if matches!(&Self::state_mut(interp, cmd).state, RmState::Exec(exec) if exec.stopped_idle())
+            {
+                return Builtin::done_stopped(interp, cmd);
+            }
+            return Yield::done();
+        }
 
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
@@ -669,7 +708,7 @@ impl ShellRmTask {
         error_signal: bun_ptr::BackRef<AtomicBool>,
         output_count: bun_ptr::BackRef<AtomicUsize>,
         evtloop: EventLoopHandle,
-        interp: *mut Interpreter,
+        interp: &Interpreter,
     ) -> *mut ShellRmTask {
         let join_style = JoinStyle::from_path(root_path);
         // Separate allocation — see the comment on `root_task`.
@@ -690,7 +729,7 @@ impl ShellRmTask {
                 callback: DirTask::work_pool_callback,
             },
         }));
-        let mut boxed = Box::new(ShellRmTask {
+        let boxed = Box::new(ShellRmTask {
             cmd,
             opts,
             cwd,
@@ -701,9 +740,8 @@ impl ShellRmTask {
             err: bun_threading::Guarded::new(None),
             join_style,
             event_loop: evtloop,
-            task: ShellTask::new(evtloop),
+            task: ShellTask::for_builtin(interp, cmd),
         });
-        boxed.task.interp = interp;
         let raw = bun_core::heap::into_raw(boxed);
         // SAFETY: both freshly leaked; exclusive.
         unsafe { (*root_task).task_manager = raw };
@@ -781,6 +819,12 @@ impl ShellRmTask {
         }
     }
 
+    /// Another operand failed or the builtin was stopped: the walk ends at its next check.
+    #[inline]
+    fn aborted(&self) -> bool {
+        self.error_signal().load(Ordering::SeqCst) || self.task.stopped()
+    }
+
     #[inline]
     fn error_signal(&self) -> &AtomicBool {
         // `error_signal` is a `BackRef` into the boxed `Rm` ExecState which
@@ -797,7 +841,7 @@ impl ShellRmTask {
         is_absolute: bool,
         kind_hint: EntryKindHint,
     ) {
-        if self.error_signal().load(Ordering::SeqCst) {
+        if self.aborted() {
             return;
         }
         // SAFETY: `parent_dir` is live for the duration of its run_from_thread_pool_impl.
@@ -808,7 +852,7 @@ impl ShellRmTask {
 
     /// Takes ownership of `path`.
     fn enqueue_no_join(&self, parent: *mut DirTask, path: ZBox, kind_hint: EntryKindHint) {
-        if self.error_signal().load(Ordering::SeqCst) {
+        if self.aborted() {
             return;
         }
         // SAFETY: `parent` is live; reuse its `task_manager` (preserves the
@@ -1037,7 +1081,7 @@ impl ShellRmTask {
             }
         });
 
-        if self.error_signal().load(Ordering::SeqCst) {
+        if self.aborted() {
             return Ok(());
         }
 
@@ -1063,7 +1107,7 @@ impl ShellRmTask {
                 Ok(Some(ent)) => ent,
             };
             // TODO this seems bad maybe better to listen to kqueue/epoll event
-            if (i & 3) == 0 && self.error_signal().load(Ordering::SeqCst) {
+            if (i & 3) == 0 && self.aborted() {
                 break Ok(());
             }
             i += 1;
@@ -1137,7 +1181,7 @@ impl ShellRmTask {
             *need_to_wait_out = false;
         }
 
-        if self.error_signal().load(Ordering::SeqCst) {
+        if self.aborted() {
             return Ok(());
         }
 
@@ -1353,7 +1397,12 @@ impl DirTask {
         // overlap any DirTask and the field-level `&mut` taken inside
         // `verbose_deleted` cannot pop its tag under Stacked Borrows.
         let tm = unsafe { &*tm_ptr };
-        let waiting = match tm.remove_entry(this, is_absolute) {
+        let removed = if tm.task.stopped() {
+            Ok(false)
+        } else {
+            tm.remove_entry(this, is_absolute)
+        };
+        let waiting = match removed {
             Ok(waiting) => waiting,
             Err(err) => {
                 tm.handle_err(err);
@@ -1472,7 +1521,7 @@ impl DirTask {
             (*this).subtask_count.store(1, Ordering::SeqCst);
             let tm = &*(*this).task_manager;
             let mut do_post_run = true;
-            if !tm.error_signal().load(Ordering::SeqCst) {
+            if !tm.aborted() {
                 match tm.remove_entry_dir_after_children(this) {
                     Err(e) => tm.handle_err(e),
                     Ok(deleted) => {

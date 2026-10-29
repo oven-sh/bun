@@ -93,6 +93,13 @@ impl Yield {
     pub(crate) fn run(self, interp: &Interpreter) {
         let tag: &'static str = (&self).into();
         let _depth = DbgDepthGuard::enter(tag);
+        #[cfg(debug_assertions)]
+        let _frame = {
+            interp.trampolines.set(interp.trampolines.get() + 1);
+            scopeguard::guard((), |()| {
+                interp.trampolines.set(interp.trampolines.get() - 1)
+            })
+        };
 
         // A pipeline starts multiple "threads" of execution (`cmd1 | cmd2 | cmd3`).
         // We start cmd1, return to the pipeline, start cmd2, etc. — so we keep
@@ -101,7 +108,6 @@ impl Yield {
         // PERF: profile if hot; smallvec::SmallVec<[NodeId; 4]> would avoid
         // the heap allocation.
         let mut pipeline_stack: Vec<NodeId> = Vec::with_capacity(4);
-        let mut rejection = None;
 
         // Tail-call trampoline: `loop { state = match state { ... } }`.
         let mut state = self;
@@ -127,14 +133,11 @@ impl Yield {
                     written,
                     err,
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
-                Yield::Failed(id) => interp.fail(id, &mut rejection),
+                Yield::Failed(id) => interp.fail(id),
                 Yield::Suspended | Yield::Done => {
                     if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
                         y
                     } else {
-                        if let Some(rejection) = rejection {
-                            interp.reject(rejection);
-                        }
                         return;
                     }
                 }

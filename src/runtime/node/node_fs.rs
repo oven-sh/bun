@@ -2010,6 +2010,10 @@ mod _async_tasks {
             // thread) may hold `&Self` to the same parent concurrently; `ParentRef`
             // invariant: the parent outlives all subtasks (subtask_count refcount).
             let parent = cp_task.get();
+            if parent.stopped() {
+                drop(self);
+                return NewAsyncCpTask::on_subtask_done(cp_task.as_mut_ptr());
+            }
 
             // TODO: error strings on node_fs will die
             let mut node_fs = NodeFS::default();
@@ -2068,6 +2072,12 @@ mod _async_tasks {
     }
 
     impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
+        /// The shell stopped the `cp` this copy belongs to: nothing more is copied.
+        #[inline]
+        fn stopped(&self) -> bool {
+            IS_SHELL && self.shelltask.is_some_and(|task| task.task.stopped())
+        }
+
         pub(crate) fn on_copy(
             &self,
             src: impl AsRef<[OSPathChar]>,
@@ -2340,6 +2350,9 @@ mod _async_tasks {
             // Shared borrow only — once `cp_async_directory` spawns `CpSingleTask`s,
             // other workpool threads concurrently hold `&Self` to this same allocation.
             let this = unsafe { &**_done };
+            if this.stopped() {
+                return;
+            }
 
             let args = &this.args;
             let mut src_buf = bun_paths::os_path_buffer_pool::get();
@@ -2523,6 +2536,9 @@ mod _async_tasks {
             let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), src_dir_len as usize) };
             // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
             let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
+            if this_ref.stopped() {
+                return Ok(());
+            }
 
             #[cfg(target_os = "macos")]
             {
@@ -2588,6 +2604,9 @@ mod _async_tasks {
                     Ok(Some(e)) => e,
                     Ok(None) => break,
                 };
+                if this_ref.stopped() {
+                    return Ok(());
+                }
                 let cname = current.name.slice();
 
                 // The accumulated path for deep directory trees can exceed the fixed

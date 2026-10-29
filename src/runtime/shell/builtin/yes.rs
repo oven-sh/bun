@@ -6,6 +6,7 @@ use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
+use core::cell::Cell;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum State {
@@ -74,6 +75,7 @@ impl Yes {
                 cmd,
                 evtloop,
                 concurrent_task: EventLoopTask::from_event_loop(evtloop),
+                queued: Cell::new(false),
             });
         }
 
@@ -155,6 +157,12 @@ impl Yes {
         Builtin::write_failing_error(interp, cmd, buf, exit_code)
     }
 
+    /// `Builtin::after_stop`: a queued `YesTask` cannot be taken back, so `yes` ends when that task runs.
+    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
+        let task = &Self::state_mut(interp, cmd).task;
+        task.as_ref().is_none_or(|task| !task.queued.get())
+    }
+
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -195,6 +203,8 @@ pub(crate) struct YesTask {
     pub(crate) cmd: NodeId,
     pub(crate) evtloop: EventLoopHandle,
     pub(crate) concurrent_task: EventLoopTask,
+    /// On the event loop, where it names `cmd`: a stopped `yes` is not reported before the task has run.
+    queued: Cell<bool>,
 }
 
 impl Taskable for YesTask {
@@ -219,6 +229,7 @@ impl YesTask {
         // Js/Mini discriminants agree. `owner`/`mini` are live event-loop
         // backrefs (single-threaded shell).
         unsafe {
+            (*this).queued.set(true);
             match (*this).evtloop {
                 // Next loop iteration, after I/O has had a turn.
                 EventLoopHandle::Js { owner } => {
@@ -244,9 +255,24 @@ impl YesTask {
     /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
     /// in [`enqueue`](Self::enqueue).
     pub(crate) fn run_from_main_thread(this: &Self) {
+        if this.report_stopped() {
+            return;
+        }
         // SAFETY: `interp` was set in `Yes::start` and outlives the task.
         let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
         Yes::write_no_io_loop(interp, cmd).run(interp);
+    }
+
+    /// The task is off the event loop. `true` when its `yes` was stopped meanwhile: the builtin is reported, which can free `self`.
+    fn report_stopped(&self) -> bool {
+        self.queued.set(false);
+        // SAFETY: as in `run_from_main_thread`.
+        let (interp, cmd) = unsafe { (&*self.interp, self.cmd) };
+        if !Builtin::of(interp, cmd).is_stopped() {
+            return false;
+        }
+        Builtin::done_stopped(interp, cmd).run(interp);
+        true
     }
 
     /// Signature matches

@@ -18,6 +18,44 @@ pub(crate) struct ShellAsyncTask {
     pub node: NodeId,
 }
 
+/// The task of a stop (`Interpreter::run_stop_task`). It names no builtin: a node can be freed and its slot reused before the task runs.
+pub(crate) struct ShellStopTask {
+    pub interp: *mut Interpreter,
+    /// The node that threw, parked by `Interpreter::fail`, or `NodeId::NONE`.
+    pub failed: NodeId,
+    /// The promise's `reject` and the error, for the first failure of a script.
+    pub rejection: Option<(bun_jsc::Strong, bun_jsc::Strong)>,
+}
+
+impl bun_event_loop::Taskable for ShellStopTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellStopTask;
+    /// The VM is going and the finalizer tears the interpreter down: only the box is freed.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract. It is the box `queue_stop_task` made, and nothing else frees an unrun one.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl ShellStopTask {
+    /// SAFETY: `this` is the box `queue_stop_task` queued; its interpreter is live, because `finish` waits for this.
+    pub(crate) unsafe fn run_from_main_thread(this: *mut Self) {
+        // SAFETY: fn contract.
+        let task = unsafe { bun_core::heap::take(this) };
+        // SAFETY: fn contract.
+        unsafe { &*task.interp }.run_stop_task(task.failed, task.rejection);
+    }
+
+    /// Mini-loop trampoline.
+    pub(crate) fn run_from_main_thread_mini(this: *mut Self, _: *mut core::ffi::c_void) {
+        // SAFETY: the task `queue_stop_task` queued on its own mini loop.
+        unsafe { Self::run_from_main_thread(this) };
+    }
+}
+
 /// Stat task backing shell conditional expressions (`[ -f x ]` etc.). Wraps an
 /// inner [`ShellTask`].
 #[repr(C)]
@@ -89,7 +127,7 @@ impl bun_event_loop::Taskable for ShellGlobTask {
 impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: &mut Self) {
-        match Self::walk_impl(&mut this.walker, &mut this.result) {
+        match Self::walk_impl(&mut this.walker, &mut this.result, &this.task) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => this.err = Some(ShellGlobErr::Syscall(e)),
             Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
@@ -115,10 +153,8 @@ impl ShellGlobTask {
         expansion: NodeId,
         walker: bun_glob::BunGlobWalkerZ,
     ) {
-        let mut task = ShellTask::new(interp.event_loop);
-        task.interp = interp.as_ctx_ptr();
         let this = bun_core::heap::alloc(ShellGlobTask {
-            task,
+            task: ShellTask::for_glob(interp),
             expansion,
             walker,
             result: Vec::new(),
@@ -132,12 +168,16 @@ impl ShellGlobTask {
     fn walk_impl(
         walker: &mut bun_glob::BunGlobWalkerZ,
         result: &mut Vec<Vec<u8>>,
+        task: &ShellTask,
     ) -> Result<bun_sys::Result<()>, crate::Error> {
         let mut iter = bun_glob::walk::Iterator::new(walker);
         if let Err(e) = iter.init()? {
             return Ok(Err(e));
         }
         loop {
+            if task.stopped() {
+                return Ok(Ok(()));
+            }
             match iter.next()? {
                 Err(e) => return Ok(Err(e)),
                 Ok(None) => return Ok(Ok(())),

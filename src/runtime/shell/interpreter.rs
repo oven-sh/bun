@@ -30,7 +30,7 @@ use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
 use core::cell::Cell;
 use core::fmt;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_sys::{self, Fd};
 
@@ -254,8 +254,19 @@ pub(crate) enum OutputNeedsIOSafeGuard {
     OutputNeedsIo,
 }
 
-/// The shell promise's `reject` function and the error to call it with. Kept on the stack, where the GC sees it.
+/// The shell promise's `reject` function and the error to call it with. The stop task roots both until it runs.
 pub(crate) type Rejection = (crate::jsc::JSValue, crate::jsc::JSValue);
+
+/// Why `Interpreter::stop_in_flight` stops what a script runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StopCause {
+    /// A node threw a JS error (`Interpreter::fail`).
+    Failed,
+    /// A foreground child died of a Ctrl+C: the terminal sent it to every process, so none is signalled from here.
+    Interrupted,
+    /// The `Bun.ModuleGraph` whose script started this was disposed.
+    ContextStopped,
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Interpreter
@@ -288,8 +299,16 @@ pub(crate) struct Interpreter {
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
     /// child the script spawns belongs to it, and once it stops the script runs no further.
     pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
+    /// Armed in that context from `run_from_js` to `finish`: disposing the graph stops the script.
+    abort_handle: bun_jsc::AbortHandle,
+    /// `halted()` for pool threads: a glob walk of the script ends on it.
+    halt_signal: AtomicBool,
 
+    /// What `finish` waits for besides the root script: `&` commands and stop tasks.
     pub(crate) async_commands_executing: Cell<u32>,
+    /// `Yield::run` frames of this script on the stack: a stop task runs at zero.
+    #[cfg(debug_assertions)]
+    pub(crate) trampolines: Cell<u32>,
 
     // JSC_BORROW: always borrowed, never owned. Stored raw because the struct
     // is heap-allocated and outlives any single &JSGlobalObject borrow scope.
@@ -310,6 +329,21 @@ pub(crate) struct Interpreter {
     /// Null when constructed from JS (no `ContextData` is reachable).
     pub(crate) command_ctx: *mut bun_options_types::context::ContextData,
 }
+
+bun_jsc::impl_abort_handle_owner!(Interpreter, abort_handle, |this, cause| {
+    // SAFETY: trait contract, `this` is live.
+    let this = unsafe { &*this };
+    // The script starts no command any more, and its glob walks end.
+    this.halt(InterpreterFlags::set_context_stopped);
+    // VM teardown stops nothing that runs: the finalizer frees the interpreter.
+    let teardown = matches!(
+        cause,
+        bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
+    );
+    if !teardown && this.stop_in_flight(StopCause::ContextStopped) {
+        this.queue_stop_task(NodeId::NONE, None);
+    }
+});
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
@@ -333,6 +367,14 @@ impl InterpreterFlags {
     }
     pub(crate) fn set_failed(&mut self, v: bool) {
         if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
+    }
+    /// The `Bun.ModuleGraph` of the script is disposed (the interpreter's `AbortHandle`).
+    pub(crate) fn set_context_stopped(&mut self) {
+        self.0 |= 0b1000
+    }
+    /// `failed`, or the graph of the script was disposed.
+    pub(crate) const fn halted(self) -> bool {
+        self.0 & 0b1100 != 0
     }
 }
 
@@ -559,7 +601,11 @@ impl Interpreter {
             }),
             keep_alive: JsCell::new(bun_io::KeepAlive::default()),
             context: Cell::new(None),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<Interpreter>(),
+            halt_signal: AtomicBool::new(false),
             async_commands_executing: Cell::new(0),
+            #[cfg(debug_assertions)]
+            trampolines: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
             // Starts at `None` so `async_cmd_done` only finishes once
@@ -681,7 +727,6 @@ impl Interpreter {
         };
 
         // ── run ────────────────────────────────────────────────────────────
-        interp.exit_code.set(Some(1));
         if let Err(e) = interp.run() {
             let name = e.name();
             drop(interp);
@@ -870,11 +915,9 @@ impl Interpreter {
         }
     }
 
-    /// A sequencing state stops early: Ctrl+C cut the member short, or the script failed.
+    /// A sequencing state stops early: Ctrl+C cut the member short, or the script is halted.
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
-        self.context_stopped()
-            || self.failed()
-            || self.node(id).base().is_some_and(|b| b.interrupted)
+        self.halted() || self.node(id).base().is_some_and(|b| b.interrupted)
     }
 
     /// Whose script the shell's completion continues: the one that started it (a `Bun.ModuleGraph`'s),
@@ -884,13 +927,6 @@ impl Interpreter {
             Some(context) => context,
             None => bun_jsc::ContextId::NONE,
         }
-    }
-
-    /// The `Bun.ModuleGraph` whose script started this was disposed (or its realm is going).
-    pub(crate) fn context_stopped(&self) -> bool {
-        self.context
-            .get()
-            .is_some_and(|id| !bun_jsc::virtual_machine::VirtualMachine::get().is_context_live(id))
     }
 
     /// Some ancestor is a member of a multi-command pipeline.
@@ -1041,6 +1077,11 @@ impl Interpreter {
     pub(crate) fn async_cmd_done(&self, async_id: NodeId) {
         Async::actually_deinit(self, async_id);
         self.free_node(async_id);
+        self.release_finish_hold();
+    }
+
+    /// An `&` command or a stop task is over: `finish` runs when the last one is.
+    fn release_finish_hold(&self) {
         self.async_commands_executing
             .set(self.async_commands_executing.get() - 1);
         if self.async_commands_executing.get() == 0 {
@@ -1224,12 +1265,13 @@ impl Interpreter {
         );
 
         if matches!(self.event_loop, EventLoopHandle::Js { .. }) {
+            self.abort_handle.leave();
             self.exit_code.set(Some(exit_code));
             // Roots the wrapper until the promise is settled.
             let this_value = self.this_value.replace(JsRef::empty());
             if let Some(this_jsvalue) = this_value.try_get() {
                 if self.failed() {
-                    // The trampoline that ran `fail` rejects the promise.
+                    // The stop task that `fail` queued rejected the promise.
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                 } else if let Some(resolve) = js::resolve_get_cached(this_jsvalue) {
@@ -1296,41 +1338,146 @@ impl Interpreter {
         self.flags.get().failed()
     }
 
-    /// Node `id` threw and holds nothing in flight: kill the subprocesses and wind the tree down.
-    /// The first failure fills `rejection`, which the trampoline passes to `reject` once it holds no node.
-    pub(crate) fn fail(&self, id: NodeId, rejection: &mut Option<Rejection>) -> Yield {
-        if let Some(first) = self.take_failure() {
-            *rejection = Some(first);
-        }
-        if self.failed() {
-            let node_count = self.nodes.get().len();
-            for i in 0..node_count {
-                let cmd = NodeId(i as u32);
-                if matches!(self.node(cmd).kind(), StateKind::Cmd) {
-                    Cmd::kill_subprocess(self, cmd);
-                }
-            }
-        }
-        let parent = self
-            .node(id)
-            .base()
-            .map_or(NodeId::INTERPRETER, |b| b.parent);
-        self.child_done(parent, id, 1)
+    /// The script failed or its graph was disposed: no command starts any more.
+    #[inline]
+    pub(crate) fn halted(&self) -> bool {
+        self.flags.get().halted()
     }
 
-    /// Runs JS, which can turn the event loop and free any node of the script.
-    pub(crate) fn reject(&self, (reject, error): Rejection) {
-        let global_this = self
-            .global_this_ref()
-            .expect("take_failure returned a rejection on the Js path");
-        let _entered = self.event_loop.entered();
-        global_this.bun_vm().event_loop_mut().run_callback(
-            self.task_context(),
-            reject,
-            global_this,
-            crate::jsc::JSValue::UNDEFINED,
-            &[error],
-        );
+    /// Set a halting flag, for `halted()` and for the pool (`halt_signal`).
+    fn halt(&self, set: fn(&mut InterpreterFlags)) {
+        self.update_flags(set);
+        self.halt_signal.store(true, Ordering::Relaxed);
+    }
+
+    /// Node `id` threw: stop what runs and queue the task that reports `id` and rejects, so no JS runs under the trampoline.
+    pub(crate) fn fail(&self, id: NodeId) -> Yield {
+        let rejection = self.take_failure();
+        if !self.failed() {
+            let parent = self
+                .node(id)
+                .base()
+                .map_or(NodeId::INTERPRETER, |b| b.parent);
+            return self.child_done(parent, id, 1);
+        }
+        if let Node::Cmd(cmd) = self.node_mut(id) {
+            // Parked until the task reports it: a stop leaves a `Done` command alone.
+            cmd.exit_code = Some(1);
+            cmd.state = crate::shell::states::cmd::CmdState::Done;
+        }
+        self.stop_in_flight(StopCause::Failed);
+        self.queue_stop_task(id, rejection);
+        Yield::suspended()
+    }
+
+    /// Stop every command that still runs (`Cmd::stop`); `true` when a builtin now waits for a stop task. Reports and frees nothing.
+    pub(crate) fn stop_in_flight(&self, cause: StopCause) -> bool {
+        let mut stopped_builtin = false;
+        for i in 0..self.nodes.get().len() {
+            let id = NodeId(i as u32);
+            match self.node(id).kind() {
+                StateKind::Cmd => stopped_builtin |= Cmd::stop(self, id, cause),
+                // Nothing of these is stopped: each ends with its children, or with its own error message or `[[ ]]` stat.
+                StateKind::Script
+                | StateKind::Stmt
+                | StateKind::Binary
+                | StateKind::Pipeline
+                | StateKind::Subshell
+                | StateKind::IfClause
+                | StateKind::Async
+                | StateKind::Assign
+                | StateKind::Expansion
+                | StateKind::Condexpr
+                | StateKind::Free => {}
+            }
+        }
+        stopped_builtin
+    }
+
+    /// Queue the task of a stop (`run_stop_task`); `finish` waits for it.
+    pub(crate) fn queue_stop_task(&self, failed: NodeId, rejection: Option<Rejection>) {
+        use crate::shell::dispatch_tasks::ShellStopTask;
+        self.async_commands_executing
+            .set(self.async_commands_executing.get() + 1);
+        let rejection = rejection.map(|(reject, error)| {
+            let global = self
+                .global_this_ref()
+                .expect("a rejection comes from the Js path");
+            (
+                bun_jsc::Strong::create(reject, global),
+                bun_jsc::Strong::create(error, global),
+            )
+        });
+        let task = bun_core::heap::into_raw(Box::new(ShellStopTask {
+            interp: self.as_ctx_ptr(),
+            failed,
+            rejection,
+        }));
+        match self.event_loop {
+            EventLoopHandle::Js { owner } => owner.enqueue_task(bun_jsc::Task::init(task)),
+            EventLoopHandle::Mini(mut mini) => {
+                let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
+                    task,
+                    ShellStopTask::run_from_main_thread_mini,
+                );
+                // SAFETY: the shell's own mini loop, on its thread.
+                unsafe { mini.get_mut() }
+                    .enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
+            }
+        }
+    }
+
+    /// A stop task's turn, with no frame of this script on the stack: report the stopped builtins and `failed`, reject, then let `finish` run.
+    pub(crate) fn run_stop_task(
+        &self,
+        failed: NodeId,
+        rejection: Option<(bun_jsc::Strong, bun_jsc::Strong)>,
+    ) {
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(self.trampolines.get(), 0, "stop task under a shell frame");
+        let mut i = 0;
+        // Reporting one can free nodes and allocate others: the length is read each time.
+        while i < self.nodes.get().len() {
+            let id = NodeId(i as u32);
+            i += 1;
+            match self.node(id).kind() {
+                StateKind::Cmd => Cmd::finish_stopped(self, id),
+                // See `stop_in_flight`.
+                StateKind::Script
+                | StateKind::Stmt
+                | StateKind::Binary
+                | StateKind::Pipeline
+                | StateKind::Subshell
+                | StateKind::IfClause
+                | StateKind::Async
+                | StateKind::Assign
+                | StateKind::Expansion
+                | StateKind::Condexpr
+                | StateKind::Free => {}
+            }
+        }
+        if failed != NodeId::NONE {
+            let parent = self
+                .node(failed)
+                .base()
+                .expect("the failed node stays parked until its stop task reports it")
+                .parent;
+            self.child_done(parent, failed, 1).run(self);
+        }
+        if let Some((reject, error)) = rejection {
+            let global_this = self
+                .global_this_ref()
+                .expect("a rejection comes from the Js path");
+            let _entered = self.event_loop.entered();
+            global_this.bun_vm().event_loop_mut().run_callback(
+                self.task_context(),
+                reject.get(),
+                global_this,
+                crate::jsc::JSValue::UNDEFINED,
+                &[error.get()],
+            );
+        }
+        self.release_finish_hold();
     }
 
     /// Take the pending exception and set `failed`; `Some` when the promise still has to be rejected.
@@ -1361,7 +1508,7 @@ impl Interpreter {
         if self.failed() {
             return None;
         }
-        self.update_flags(|f| f.set_failed(true));
+        self.halt(|f| f.set_failed(true));
 
         let error = error?;
         let this_jsvalue = self.this_value.try_get()?;
@@ -1391,10 +1538,16 @@ impl Interpreter {
         }
         self.this_value.with_mut(|r| r.upgrade(global_this));
         let vm = global_this.bun_vm();
-        self.context.set(
-            vm.as_graph_context(vm.context_of_caller())
-                .map(bun_jsc::ScriptExecutionContext::id),
-        );
+        let context = vm.as_graph_context(vm.context_of_caller());
+        self.context
+            .set(context.map(bun_jsc::ScriptExecutionContext::id));
+        if let Some(context) = context {
+            // SAFETY: the interpreter is the heap allocation its JS wrapper owns; `finish` and its drop disarm the handle.
+            unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
+            if self.abort_handle.context_stopped() {
+                self.halt(InterpreterFlags::set_context_stopped);
+            }
+        }
 
         let shell = self.root_shell.as_ptr();
         let ast = &raw const self.args.get().script_ast;
@@ -2558,6 +2711,12 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     /// needs, and drives the first state transition. The box is reclaimed by
     /// [`Self::deinit`] (via `heap::take`) when the task reaches `Done`.
     pub(crate) fn start(me: Box<Self>, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
+        if crate::shell::builtin::Builtin::of(interp, me.parent).is_stopped() {
+            // Pool work that came back after `Builtin::stop`: nothing is written for it.
+            let parent = me.parent;
+            drop(me);
+            return P::on_done(interp, parent);
+        }
         // Leak so `P::write_*` can stash `this` as the IOWriter's `ChildPtr`;
         // address is stable for the task's lifetime. Re-derive `&mut` per
         // step (the `P::*` callbacks re-enter via raw `this`, not a reborrow
@@ -2623,6 +2782,14 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         // SAFETY: `this` is the live heap-allocated `OutputTask` guaranteed by
         // this fn's caller contract; forwarded unchanged to `next`.
         unsafe { Self::next(this, interp) }
+    }
+
+    /// Free the queued tasks of a stopped builtin: `Builtin::stop` cancelled the chunks that would have completed them.
+    pub(crate) fn release_queued(queue: &mut std::collections::VecDeque<*mut Self>) {
+        for task in queue.drain(..) {
+            // SAFETY: a queued task is the live box `start` leaked; only its cancelled chunk would have freed it.
+            drop(unsafe { bun_core::heap::take(task) });
+        }
     }
 
     /// Fires `on_done` then frees.
@@ -2707,6 +2874,8 @@ pub(crate) struct ShellTask {
     /// field. Set at `ShellTask::new`; cleared (raw-ptr) only when the task
     /// is freed.
     pub(crate) interp: *mut Interpreter,
+    /// The owner's stop flag (`Builtin::stopped`, or `halt_signal` for a glob): once set, the pool body is skipped.
+    pub(crate) stop: Option<bun_ptr::BackRef<AtomicBool>>,
     /// Intrusive concurrent-task node for the worker→main bounce. JS arm holds
     /// a [`ConcurrentTask`](bun_event_loop::ConcurrentTask::ConcurrentTask),
     /// mini arm holds an `AnyTaskWithExtraContext`.
@@ -2739,8 +2908,32 @@ impl ShellTask {
             event_loop: parent.event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
+            stop: parent.stop,
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(parent.event_loop),
         }
+    }
+
+    /// A pool task of the builtin that `cmd` runs.
+    pub(crate) fn for_builtin(interp: &Interpreter, cmd: NodeId) -> Self {
+        let builtin = crate::shell::builtin::Builtin::of(interp, cmd);
+        let mut task = Self::new(interp.event_loop);
+        task.interp = interp.as_ctx_ptr();
+        task.stop = Some(bun_ptr::BackRef::new(&builtin.stopped));
+        task
+    }
+
+    /// A pool task of a glob expansion: it ends when the script is halted.
+    pub(crate) fn for_glob(interp: &Interpreter) -> Self {
+        let mut task = Self::new(interp.event_loop);
+        task.interp = interp.as_ctx_ptr();
+        task.stop = Some(bun_ptr::BackRef::new(&interp.halt_signal));
+        task
+    }
+
+    /// The owner was stopped: pool work does nothing more. `Relaxed`: a latch that orders no other memory, and a read that misses it does one more step, as a read just before the store does.
+    #[inline]
+    pub(crate) fn stopped(&self) -> bool {
+        self.stop.is_some_and(|stop| stop.load(Ordering::Relaxed))
     }
 
     pub(crate) fn new(event_loop: EventLoopHandle) -> Self {
@@ -2755,6 +2948,7 @@ impl ShellTask {
             event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
+            stop: None,
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
         }
     }
@@ -2883,7 +3077,9 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
         let ctx = C::from_work_task(task);
         // The worker thread is the sole accessor until `on_finish` publishes
         // the task back; the `&mut` ends before that call.
-        C::run_from_thread_pool(&mut *ctx);
+        if !(*task.cast::<ShellTask>()).stopped() {
+            C::run_from_thread_pool(&mut *ctx);
+        }
         ShellTask::on_finish::<C>(ctx);
     }
 }

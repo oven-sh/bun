@@ -162,19 +162,21 @@ const raiseCtrlC = `
   };
 `;
 
-async function runInTerminal(cmd: string[], cwd: string) {
+async function runInTerminal(cmd: string[], cwd: string, env = bunEnv) {
   let output = "";
   const decoder = new TextDecoder();
   await using proc = Bun.spawn({
     cmd,
     cwd,
-    env: bunEnv,
+    env,
     // Own session / pseudoconsole, so the Ctrl+C stays between `bun run` and the script.
     terminal: {
       cols: 200,
       rows: 24,
       data(_t, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
+        // A builtin `yes` fills the terminal until it is stopped: the end is what the tests read.
+        if (output.length > 1 << 20) output = output.slice(-(1 << 16));
       },
     },
   });
@@ -317,6 +319,177 @@ test.skipIf(!isLinux)(
   },
   // 20 runs of a debug build need more than the default 5 seconds.
   30_000,
+);
+
+// A builtin of the script runs inside `bun run`, so the Ctrl+C that kills the
+// script's children does not reach it. It is stopped with them: `bun run` used
+// to stay until the builtin ended by itself, and a `cat` that reads the
+// terminal does not. (The builtin `cat` is the default on Windows only.)
+test.concurrent("a builtin of the script is stopped when Ctrl+C kills a child (--shell=bun)", async () => {
+  using dir = tempDir("run-ctrl-c-builtin", {
+    "package.json": JSON.stringify({
+      name: "t",
+      scripts: { go: 'cat | bun child.js; bun -e "console.log(String.fromCharCode(78,79,80,69))"' },
+    }),
+    "child.js": `${raiseCtrlC}
+      setInterval(() => {}, 1000);
+      console.log("ready");
+      raiseCtrlC();
+    `,
+  });
+
+  const { text, exitCode, signalCode } = await runInTerminal([bunExe(), "run", "--shell=bun", "go"], String(dir), {
+    ...bunEnv,
+    BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1",
+  });
+  expect(text).toContain("ready");
+  expect(text).not.toContain("NOPE");
+  if (isWindows) {
+    expect(exitCode).toBe(0x3a);
+  } else {
+    expect(signalCode).toBe("SIGINT");
+  }
+});
+
+// With the builtin as the last member, it decides how the pipeline ended: it
+// takes the Ctrl+C as the child did, so the script ends there and the next
+// command does not run. The script runs in the Bun shell each way it is
+// started here. `yes` is a builtin on every platform (it fills the terminal
+// until it is stopped, so it is here once); `cat` by default on Windows only.
+const nope = 'bun -e "console.log(String.fromCharCode(78,79,80,69))"';
+const afterKilledChild = [
+  { name: "yes, bun exec", script: `bun child.js | yes 1>&2; ${nope}`, cmd: ["exec"] },
+  { name: "cat, bun run --shell=bun", script: `bun child.js | cat; ${nope}`, cmd: ["run", "--shell=bun", "go"] },
+  { name: "cat, a .sh file", script: `bun child.js | cat; ${nope}`, cmd: ["./go.sh"] },
+  // The stopped `cat` is in the command substitution of a `[[ ]]`, which then ends with no word to test.
+  { name: "cat in a [[ ]], bun exec", script: `bun child.js | [[ -z $(cat) ]]; ${nope}`, cmd: ["exec"] },
+];
+test.concurrent.each(afterKilledChild)(
+  "a builtin after the child that Ctrl+C kills ends the script ($name)",
+  async ({ script, cmd }) => {
+    using dir = tempDir("run-ctrl-c-builtin-last", {
+      "package.json": JSON.stringify({ name: "t", scripts: { go: script } }),
+      "go.sh": script,
+      "child.js": `${raiseCtrlC}
+        setInterval(() => {}, 1000);
+        raiseCtrlC();
+      `,
+    });
+
+    const { text, exitCode, signalCode } = await runInTerminal(
+      [bunExe(), ...cmd, ...(cmd[0] === "exec" ? [script] : [])],
+      String(dir),
+      { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    );
+    expect(text).not.toContain("NOPE");
+    if (isWindows) {
+      expect(exitCode).toBe(0x3a);
+    } else {
+      expect(signalCode).toBe("SIGINT");
+    }
+  },
+);
+
+// The second member is still expanding its words when the Ctrl+C comes: the
+// command substitution is cut short, by the signal or by the stop of the
+// builtin in it. The member does not go on to run with what the substitution
+// had printed, so its file is never made. A process in the substitution has to
+// be there to take the Ctrl+C, so the child waits for it: one that `bun run`
+// spawns after the Ctrl+C never gets it.
+const cutSubstitution = [
+  { name: "a process", substitution: "bun prints.js", waitsFor: "prints.ready" },
+  { name: "a builtin", substitution: "cat", waitsFor: "" },
+];
+test.concurrent.each(cutSubstitution)(
+  "a command whose substitution Ctrl+C cuts short does not start ($name)",
+  async ({ substitution, waitsFor }) => {
+    using dir = tempDir("run-ctrl-c-substitution", {
+      "package.json": JSON.stringify({
+        name: "t",
+        scripts: { go: `bun child.js | echo started $(${substitution}) > out.txt` },
+      }),
+      "prints.js": `
+        console.log("partial");
+        require("fs").writeFileSync("prints.ready", "");
+        setInterval(() => {}, 1000);
+      `,
+      "child.js": `${raiseCtrlC}
+        const { existsSync } = require("fs");
+        const waitsFor = ${JSON.stringify(waitsFor)};
+        setInterval(() => {}, 1000);
+        const timer = setInterval(() => {
+          if (waitsFor && !existsSync(waitsFor)) return;
+          clearInterval(timer);
+          raiseCtrlC();
+        }, 5);
+      `,
+    });
+
+    const { exitCode, signalCode } = await runInTerminal([bunExe(), "run", "--shell=bun", "go"], String(dir), {
+      ...bunEnv,
+      BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1",
+    });
+    expect(existsSync(join(String(dir), "out.txt"))).toBe(false);
+    if (isWindows) {
+      expect(exitCode).toBe(0x3a);
+    } else {
+      expect(signalCode).toBe("SIGINT");
+    }
+  },
+);
+
+// Only the builtins are stopped. A child that handles the Ctrl+C is left to
+// finish what it does with it: it writes its file only once `bun run` has
+// reaped the sibling that died. With a builtin after the sibling, the builtin
+// is stopped and reported while the script still waits for that child.
+const handlesCtrlC = [
+  { name: "--shell=bun", script: "bun handles.js | bun dies.js" },
+  { name: "--shell=bun, before a builtin", script: "bun handles.js | bun dies.js | cat" },
+];
+test.concurrent.each(handlesCtrlC)(
+  "a child that handles the Ctrl+C outlives the one it killed ($name)",
+  async ({ script }) => {
+    using dir = tempDir("run-ctrl-c-sibling", {
+      "package.json": JSON.stringify({ name: "t", scripts: { go: script } }),
+      "handles.js": `
+      const { readFileSync, writeFileSync } = require("fs");
+      process.on("SIGINT", () => {
+        const sibling = Number(readFileSync("dies.pid", "utf8"));
+        const timer = setInterval(() => {
+          try {
+            process.kill(sibling, 0);
+          } catch {
+            clearInterval(timer);
+            writeFileSync("handled", "");
+            process.exit(0);
+          }
+        }, 5);
+      });
+      setInterval(() => {}, 1000);
+      writeFileSync("handles.ready", "");
+    `,
+      "dies.js": `${raiseCtrlC}
+      const { existsSync, writeFileSync } = require("fs");
+      writeFileSync("dies.pid", String(process.pid));
+      const timer = setInterval(() => {
+        if (!existsSync("handles.ready")) return;
+        clearInterval(timer);
+        raiseCtrlC();
+      }, 5);
+    `,
+    });
+
+    const { exitCode, signalCode } = await runInTerminal([bunExe(), "run", "--shell=bun", "go"], String(dir), {
+      ...bunEnv,
+      BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1",
+    });
+    expect(existsSync(join(String(dir), "handled"))).toBe(true);
+    if (isWindows) {
+      expect(exitCode).toBe(0x3a);
+    } else {
+      expect(signalCode).toBe("SIGINT");
+    }
+  },
 );
 
 describe.concurrent.each([

@@ -426,9 +426,8 @@ impl FutexImpl {
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
-    // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
-    unsafe { (*ptr).lock() }
+extern "C" fn Bun__lock(lock: &ReleaseImpl) {
+    lock.lock()
 }
 
 // These have to be a size known to C.

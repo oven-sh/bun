@@ -11,17 +11,14 @@ mod _impl {
 
     impl BufferVectorized {
         /// # Safety
-        /// `str` must point to a valid `EncodedSlice` and `buf_ptr` must point to a writable
-        /// buffer of at least `fill_length` bytes.
+        /// `buf_ptr` must point to `fill_length` writable bytes that do not overlap `str`'s.
         #[unsafe(export_name = "Bun__Buffer_fill")]
         pub(crate) unsafe extern "C" fn fill(
-            str: *const EncodedSlice,
+            str: &EncodedSlice,
             buf_ptr: *mut u8,
             fill_length: usize,
             encoding: Encoding,
         ) -> bool {
-            // SAFETY: caller (C++) passes a valid EncodedSlice pointer.
-            let str = unsafe { &*str };
             if str.is_empty() {
                 return true;
             }

@@ -1325,7 +1325,7 @@ impl Readable {
                 fd.close();
             }
             // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
-            // a CowFd redirect; the owner closes it.
+            // the `Cmd`'s `redirection_fd`; the owner closes it.
             Readable::Fd => {
                 *self = Readable::Closed;
             }

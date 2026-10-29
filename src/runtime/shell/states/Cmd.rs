@@ -6,7 +6,7 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, closefd, log};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
@@ -24,7 +24,7 @@ pub(crate) struct Cmd {
     pub(crate) state: CmdState,
     pub args: Vec<Vec<u8>>,
     pub(crate) redirection_file: Vec<u8>,
-    pub(crate) redirection_fd: Option<*mut CowFd>,
+    pub(crate) redirection_fd: Option<bun_sys::Fd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
 }
@@ -846,7 +846,7 @@ impl Cmd {
                         )));
                     }
                 };
-                interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
+                interp.as_cmd_mut(this).redirection_fd = Some(redirfd);
                 set_stdio_from_redirect(stdio, flags, redirfd);
             }
         }
@@ -905,8 +905,7 @@ impl Cmd {
             me.args.clear();
             me.redirection_file.clear();
             if let Some(fd) = me.redirection_fd.take() {
-                // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
-                CowFd::deref(fd);
+                closefd(fd);
             }
             core::mem::take(&mut me.exec)
         };

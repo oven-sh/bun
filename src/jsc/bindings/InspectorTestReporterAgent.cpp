@@ -31,7 +31,7 @@ enum class BunTestType : uint8_t {
     Describe,
 };
 
-void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, const BunString* name, BunTestType item_type, int parentId)
+void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, int testId, const BunString* name, BunTestType item_type, int parentId)
 {
     auto str = name->toWTFString(BunString::ZeroCopy);
 
@@ -47,7 +47,7 @@ void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent
         ASSERT_NOT_REACHED();
     }
 
-    agent->reportTestFound(callFrame, testId, str, type, parentId);
+    agent->reportTestFound(testId, str, type, parentId);
 }
 
 void Bun__TestReporterAgentReportTestFoundWithLocation(Inspector::InspectorTestReporterAgent* agent, int testId, const BunString* name, BunTestType item_type, int parentId, const BunString* sourceURL, int line)
@@ -159,7 +159,7 @@ Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
     return {};
 }
 
-void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name, Protocol::TestReporter::TestType type, int parentId)
+void InspectorTestReporterAgent::reportTestFound(int testId, const String& name, Protocol::TestReporter::TestType type, int parentId)
 {
     if (!m_enabled)
         return;
@@ -171,7 +171,7 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
     auto* globalObject = &m_globalObject;
     auto& vm = JSC::getVM(globalObject);
 
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+    JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         if (Zig::isImplementationVisibilityPrivate(visitor))
             return WTF::IterationStatus::Continue;
 
@@ -182,11 +182,7 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
 
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.
-            if (sourceURLForFrame.isEmpty()) {
-                auto* codeBlock = visitor->codeBlock();
-                ASSERT(codeBlock);
-
-                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
+            if (auto* codeBlock = sourceURLForFrame.isEmpty() ? visitor->codeBlock() : nullptr) {
                 const auto& source = codeBlock->source();
 
                 // source.isNull() is true when the SourceProvider is a null pointer.

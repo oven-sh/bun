@@ -1,0 +1,100 @@
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="state-machines-in-loops.js" displayPath="state-machines-in-loops.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=4657
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{}]} module=m0
+data d1 root=Object{layout=L0} module=m0
+data d2 root=Array{contents=anything elements=[Number{}, Number{value=2}, Number{value=9}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v5)
+  b1(v6):
+    LoopHint
+    v8 = Boolean boolean=true
+    v9 = Integer
+    v10 = Integer integer=25
+    v11 = Call v1, -, v8, v9, v3, v10 calleeName="guardedEntry"
+    v12 = Boolean
+    v13 = Integer integer=1
+    v14 = Integer integer=25
+    v15 = Call v1, -, v12, v13, v3, v14 calleeName="guardedEntry"
+    v16 = String string="a"
+    v17 = Data data=d1
+    v18 = Data data=d2
+    v19 = Convert v18 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v20 = Integer integer=100
+    v21 = Call v1, -, v16, v17, v19, v20 calleeName="guardedEntry"
+    v22 = Increment v6
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v23)
+}
+function f1 name="guardedEntry" module=m0 position=784 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|boolean|string flags=[IsExpected]}, {type=anything}, {type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|boolean|string, v1: anything, v2: undefined|null|string|Array, v3: anything):
+    v4 = String string="none"
+    v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]}
+    v6 = ToBoolean v0
+    Branch v6 -> taken b1(| 0), notTaken b8(| 0)
+  b1(v7):
+    v8 = ToBoolean v1
+    Branch v8 -> taken b2(| 0), notTaken b7(| 0)
+  b2(v9):
+    v10 = Integer integer=1
+    v11 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v12 = Integer
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = String string=""
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]}
+    LoopHint
+    Switch v11 cases=[1, 2] -> case b3(| 0), case b4(| 0), otherwise b6()
+  b3(v17):
+    v18 = Integer integer=1
+    v19 = Add v13, v18
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = String string="x"
+    v22 = Add v15, v21
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b5(v20, v23, v17)
+  b4(v24):
+    v25 = Integer integer=10
+    v26 = Add v13, v25
+    v27 = Convert v26 declared={type=number flags=[IsExpected]}
+    v28 = String string="y"
+    v29 = Add v15, v28
+    v30 = Convert v29 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b5(v27, v30, v24)
+  b5(v31, v32, v33):
+    v34 = Convert v3 declared={type=number flags=[IsExpected]}
+    v35 = String string=":"
+    v36 = Add v32, v35
+    v37 = Add v36, v31
+    v38 = Convert v37 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v38
+  b6():
+    v39 = Add v15, v13
+    v40 = Convert v39 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v40
+  b7(v41):
+    Jump -> next b9()
+  b8(v42):
+    Jump -> next b9()
+  b9():
+    Return v5
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f3 callPosition=784 parent=3 isTailCall=true module=m0}, {callee=f3 callPosition=784 parent=2 isTailCall=true module=m0}, {callee=f3 callPosition=784 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }

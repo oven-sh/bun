@@ -1,0 +1,65 @@
+// RUN: lower
+
+// FILE: main.ts
+declare const console: { log(...values: unknown[]): void };
+function f0(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f1(s % 3) + s; } return s + t; }
+function f1(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f2(s % 3) + s; } return s + t; }
+function f2(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f3(s % 3) + s; } return s + t; }
+function f3(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f4(s % 3) + s; } return s + t; }
+function f4(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f5(s % 3) + s; } return s + t; }
+function f5(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f6(s % 3) + s; } return s + t; }
+function f6(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f7(s % 3) + s; } return s + t; }
+function f7(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f8(s % 3) + s; } return s + t; }
+function f8(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f9(s % 3) + s; } return s + t; }
+function f9(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f10(s % 3) + s; } return s + t; }
+function f10(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f11(s % 3) + s; } return s + t; }
+function f11(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f12(s % 3) + s; } return s + t; }
+function f12(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f13(s % 3) + s; } return s + t; }
+function f13(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f14(s % 3) + s; } return s + t; }
+function f14(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f15(s % 3) + s; } return s + t; }
+function f15(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f16(s % 3) + s; } return s + t; }
+function f16(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f17(s % 3) + s; } return s + t; }
+function f17(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f18(s % 3) + s; } return s + t; }
+function f18(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f19(s % 3) + s; } return s + t; }
+function f19(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f20(s % 3) + s; } return s + t; }
+function f20(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f21(s % 3) + s; } return s + t; }
+function f21(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f22(s % 3) + s; } return s + t; }
+function f22(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f23(s % 3) + s; } return s + t; }
+function f23(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f24(s % 3) + s; } return s + t; }
+function f24(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f25(s % 3) + s; } return s + t; }
+function f25(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f26(s % 3) + s; } return s + t; }
+function f26(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f27(s % 3) + s; } return s + t; }
+function f27(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f28(s % 3) + s; } return s + t; }
+function f28(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f29(s % 3) + s; } return s + t; }
+function f29(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f30(s % 3) + s; } return s + t; }
+function f30(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f31(s % 3) + s; } return s + t; }
+function f31(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f32(s % 3) + s; } return s + t; }
+function f32(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f33(s % 3) + s; } return s + t; }
+function f33(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f34(s % 3) + s; } return s + t; }
+function f34(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f35(s % 3) + s; } return s + t; }
+function f35(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f36(s % 3) + s; } return s + t; }
+function f36(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f37(s % 3) + s; } return s + t; }
+function f37(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f38(s % 3) + s; } return s + t; }
+function f38(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f39(s % 3) + s; } return s + t; }
+function f39(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f40(s % 3) + s; } return s + t; }
+function f40(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f41(s % 3) + s; } return s + t; }
+function f41(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f42(s % 3) + s; } return s + t; }
+function f42(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f43(s % 3) + s; } return s + t; }
+function f43(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f44(s % 3) + s; } return s + t; }
+function f44(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f45(s % 3) + s; } return s + t; }
+function f45(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f46(s % 3) + s; } return s + t; }
+function f46(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f47(s % 3) + s; } return s + t; }
+function f47(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f48(s % 3) + s; } return s + t; }
+function f48(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f49(s % 3) + s; } return s + t; }
+function f49(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f50(s % 3) + s; } return s + t; }
+function f50(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f51(s % 3) + s; } return s + t; }
+function f51(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f52(s % 3) + s; } return s + t; }
+function f52(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f53(s % 3) + s; } return s + t; }
+function f53(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f54(s % 3) + s; } return s + t; }
+function f54(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f55(s % 3) + s; } return s + t; }
+function f55(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f56(s % 3) + s; } return s + t; }
+function f56(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f57(s % 3) + s; } return s + t; }
+function f57(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f58(s % 3) + s; } return s + t; }
+function f58(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f59(s % 3) + s; } return s + t; }
+function f59(x: number) { let s = 0, t = 1; for (let i = 0; i < x; i++) { s = s + t; t = f0(s % 3) + s; } return s + t; }
+console.log(f0(2));

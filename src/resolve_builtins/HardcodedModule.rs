@@ -9,8 +9,8 @@ pub enum HardcodedModule {
     Bun,
     #[strum(serialize = "abort-controller")]
     AbortController,
-    #[strum(serialize = "bun:app")]
-    BunApp,
+    #[strum(serialize = "bun:bake")]
+    BunBake,
     #[strum(serialize = "bun:ffi")]
     BunFfi,
     #[strum(serialize = "bun:jsc")]
@@ -207,7 +207,7 @@ bun_core::comptime_string_map! {
     pub static HARDCODED_MODULE_MAP: HardcodedModule = {
         // Bun
         b"bun" => HardcodedModule::Bun,
-        b"bun:app" => HardcodedModule::BunApp,
+        b"bun:bake" => HardcodedModule::BunBake,
         b"bun:ffi" => HardcodedModule::BunFfi,
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
@@ -710,7 +710,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
         },
     ),
     entry!("bun:test"),
-    entry!("bun:app"),
+    entry!("bun:bake"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),
     entry!("bun:main"),
@@ -835,10 +835,20 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
 ];
 
 static EXPOSE_INTERNALS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static ARE_INTERNALS_SEALED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Node's `--expose-internals`.
 pub fn expose_internals_enabled() -> bool {
-    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed)
+    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed) && !are_internals_sealed()
+}
+
+pub fn are_internals_sealed() -> bool {
+    ARE_INTERNALS_SEALED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn seal_internals() {
+    ARE_INTERNALS_SEALED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn set_expose_internals_enabled(enabled: bool) {
@@ -876,11 +886,15 @@ pub(crate) extern "C" fn Bun__streamIterEnabled() -> bool {
 /// scan) so introspection APIs like `require.resolve.paths` agree with
 /// `require` about what is a builtin.
 pub fn stream_iter_alias_gated(name: &[u8]) -> bool {
-    (name == b"stream/iter"
+    is_stream_iter_alias(name) && !stream_iter_enabled()
+}
+
+/// A stream/iter specifier: a builtin only with `--experimental-stream-iter`.
+fn is_stream_iter_alias(name: &[u8]) -> bool {
+    name == b"stream/iter"
         || name == b"node:stream/iter"
         || name == b"zlib/iter"
-        || name == b"node:zlib/iter")
-        && !stream_iter_enabled()
+        || name == b"node:zlib/iter"
 }
 
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
@@ -938,5 +952,21 @@ impl Alias {
             return lookup(&NODE_ALIAS_MAP, name);
         }
         None
+    }
+
+    /// Programs import `bun:fs` (#16883), so `bun:` + a bare Node builtin name means that builtin.
+    #[inline]
+    pub fn bun_prefixed_builtin(specifier: &[u8]) -> Option<&[u8]> {
+        Self::bare_node_builtin(specifier.strip_prefix(b"bun:")?)
+    }
+
+    // Reads no flag or mode: the answer goes into cached output. A name behind a flag is not kept.
+    #[cold]
+    #[inline(never)]
+    fn bare_node_builtin(name: &[u8]) -> Option<&[u8]> {
+        (!name.starts_with(b"node:")
+            && !is_stream_iter_alias(name)
+            && lookup(&NODE_ALIAS_MAP, name).is_some())
+        .then_some(name)
     }
 }

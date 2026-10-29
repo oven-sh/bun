@@ -224,7 +224,8 @@ where
 }
 
 impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> {
-    // No `on_open` override — adoption of an already-connected socket.
+    // No `on_open` / `on_connect_error` override — adoption of an already-connected socket.
+    // No `on_end` override — the socket doesn't allow half-open, so uSockets closes it right after.
 
     fn on_data(this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, data: &[u8]) -> JsResult<()> {
         Self::handle_data(this, data);
@@ -253,16 +254,6 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
     fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
         let _guard = RefPtr::from_this(this);
         this.handle_timeout(s);
-        Ok(())
-    }
-    fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = RefPtr::from_this(this);
-        this.handle_end(s);
-        Ok(())
-    }
-    fn on_connect_error(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32) -> JsResult<()> {
-        let _guard = RefPtr::from_this(this);
-        this.handle_connect_error(s, code);
         Ok(())
     }
     fn on_handshake(

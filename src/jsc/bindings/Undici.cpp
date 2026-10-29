@@ -7,6 +7,7 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "ZigGlobalObject.h"
 
+#include "GeneratedResponse.h"
 #include "JSFetchHeaders.h"
 #include "JSDOMFormData.h"
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -32,10 +33,11 @@ using namespace WebCore;
 JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto fields = std::make_tuple(
-        globalObject->JSResponseConstructor(),
-        globalObject->JSRequestConstructor(),
+        Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSResponse>(globalObject),
+        Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSRequest>(globalObject),
         WebCore::JSFetchHeaders::getConstructor(vm, globalObject),
         WebCore::JSDOMFormData::getConstructor(vm, globalObject),
         globalObject->JSDOMFileConstructor(),
@@ -50,9 +52,14 @@ JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
     auto* obj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
         std::tuple_size_v<decltype(fields)>);
 
+    bool hasException = false;
     Bun::Algo::Tuple::forEachIndexed(std::move(fields), [&](std::size_t index, auto&& field) {
+        if (hasException)
+            return;
         obj->putDirectIndex(globalObject, index, field);
+        hasException = !!scope.exception();
     });
+    RETURN_IF_EXCEPTION(scope, {});
 
     return obj;
 }

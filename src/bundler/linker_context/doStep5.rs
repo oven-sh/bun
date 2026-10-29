@@ -325,7 +325,11 @@ impl LinkerContext<'_> {
                     .unwrap()
                     .get(ref_)
                     .unwrap();
-                let use_: &mut SymbolUse = symbol_uses.get_ptr_mut(ref_).unwrap();
+                // The parser drops the entry if a replaced macro call was the last plain use.
+                let use_: &mut SymbolUse = symbol_uses
+                    .get_or_put_value(*ref_, SymbolUse::default())
+                    .expect("OOM")
+                    .value_ptr;
 
                 // Rare path: this import is a TypeScript enum
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {
@@ -561,10 +565,7 @@ impl LinkerContext<'_> {
                 key: Some(Expr::allocate(
                     arena,
                     // TODO: test emoji work as expected (relevant for WASM exports)
-                    // SAFETY: `alias` borrows the worker arena which outlives the
-                    // link pass; `E::String::data: &'static [u8]` is the arena
-                    // erasure used throughout the AST.
-                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                    E::String::init(alias),
                     loc,
                 )),
                 value: Some(Expr::allocate(
@@ -609,12 +610,7 @@ impl LinkerContext<'_> {
                     ..Default::default()
                 });
                 setter_properties.push(G::Property {
-                    key: Some(Expr::allocate(
-                        arena,
-                        // SAFETY: as for the getter key above.
-                        E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
-                        loc,
-                    )),
+                    key: Some(Expr::allocate(arena, E::String::init(alias), loc)),
                     value: Some(Expr::allocate(
                         arena,
                         E::Arrow {

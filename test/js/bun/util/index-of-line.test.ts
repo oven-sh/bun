@@ -1,5 +1,5 @@
 import { indexOfLine } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("indexOfLine handles non-number offset", () => {
@@ -163,4 +163,148 @@ test("console async iterator splits lines after a truncated multi-byte lead byte
   expect(stdout).toStartWith('"\ufffd"\n"b"\n');
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+const helloWorld = [104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100, 10, 33]; // "hello\nworld\n!"
+
+test("indexOfLine takes an ArrayBuffer or a view of one", () => {
+  const bytes = new Uint8Array(helloWorld);
+  expect(indexOfLine(bytes.buffer)).toBe(5);
+  expect(indexOfLine(new DataView(bytes.buffer, 6))).toBe(5);
+  expect(indexOfLine(bytes.subarray(6))).toBe(5);
+  expect(indexOfLine(new Uint16Array([0x0a00, 0x000a]))).toBe(1);
+  expect(indexOfLine(Buffer.from("ab\ncd"))).toBe(2);
+
+  for (const notABuffer of [undefined, null, 1, "a\nb", {}, [10], helloWorld, Symbol(), new Blob(["a\nb"])] as any[]) {
+    expect(() => indexOfLine(notABuffer)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "buffer must be an ArrayBuffer or ArrayBufferView",
+      }),
+    );
+  }
+  // @ts-expect-error
+  expect(() => indexOfLine()).toThrow("buffer must be an ArrayBuffer or ArrayBufferView");
+});
+
+test("indexOfLine converts the offset to a number, drops the fraction and starts no earlier than 0", () => {
+  const bytes = new Uint8Array(helloWorld);
+  const from = (offset: unknown) => indexOfLine(bytes, offset as number);
+  expect([5, 5.5, 5.999, 6, 11, 11.9, 12, 13, 1e9].map(from)).toEqual([5, 5, 5, 11, 11, 11, -1, -1, -1]);
+  expect([-1, -5.5, -Infinity, -0, NaN].map(from)).toEqual([5, 5, 5, 5, 5]);
+  expect([2 ** 53, 2 ** 63, 2 ** 64, Infinity].map(from)).toEqual([-1, -1, -1, -1]);
+  expect(["4294967302", "Infinity", "1e300", { valueOf: () => 2 ** 32 + 6 }].map(from)).toEqual([-1, -1, -1, -1]);
+  expect(["-4294967290", "-Infinity"].map(from)).toEqual([5, 5]);
+  expect(["6", " 6 ", "x", "", null, true, [6], new Number(6), { valueOf: () => 6 }].map(from)).toEqual([
+    11, 11, 5, 5, 5, 5, 11, 11, 11,
+  ]);
+  expect(() => from(Symbol())).toThrow(
+    expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
+  );
+});
+
+test("indexOfLine takes the offset as a BigInt too", () => {
+  const bytes = new Uint8Array(helloWorld);
+  const from = (offset: unknown) => indexOfLine(bytes, offset as bigint);
+  expect([0n, 5n, 6n, 11n, 12n, 13n, 10n ** 9n].map(from)).toEqual([5, 5, 11, 11, -1, -1, -1]);
+  expect([Object(6n), { valueOf: () => 6n }].map(from)).toEqual([11, 11]);
+  expect([-1n, -(2n ** 70n)].map(from)).toEqual([5, 5]);
+  // Nothing wraps.
+  expect([2n ** 32n + 6n, 2n ** 63n, 2n ** 64n + 6n, 10n ** 400n].map(from)).toEqual([-1, -1, -1, -1]);
+  expect(from(-(2n ** 64n) + 6n)).toBe(5);
+});
+
+test("indexOfLine looks at the buffer before it converts the offset, and reads its bytes after", () => {
+  const valueOf = jest.fn(() => 0);
+  expect(() => indexOfLine("" as any, { valueOf } as any)).toThrow("buffer must be an ArrayBuffer or ArrayBufferView");
+  expect(valueOf).not.toHaveBeenCalled();
+
+  const resizable = new ArrayBuffer(helloWorld.length, { maxByteLength: 32 });
+  const view = new Uint8Array(resizable);
+  view.set(helloWorld);
+  expect(
+    indexOfLine(view, {
+      valueOf() {
+        resizable.resize(3);
+        return 0;
+      },
+    } as any),
+  ).toBe(-1);
+
+  const growable = new SharedArrayBuffer(4, { maxByteLength: 32 });
+  expect(
+    indexOfLine(growable, {
+      valueOf() {
+        growable.grow(8);
+        new Uint8Array(growable)[6] = 10;
+        return 0;
+      },
+    } as any),
+  ).toBe(6);
+});
+
+test("indexOfLine searches a SharedArrayBuffer and a view of one", () => {
+  const shared = new SharedArrayBuffer(helloWorld.length);
+  const view = new Uint8Array(shared);
+  view.set(helloWorld);
+  expect(indexOfLine(shared)).toBe(5);
+  expect(indexOfLine(shared, 6)).toBe(11);
+  expect(indexOfLine(view, 6)).toBe(11);
+  expect(indexOfLine(view.subarray(6))).toBe(5);
+  expect(indexOfLine(new DataView(shared, 12))).toBe(-1);
+});
+
+// What it finds can be gone by the time it returns, so the index is all there is to check.
+test("indexOfLine searches a SharedArrayBuffer that another thread is writing", async () => {
+  const length = 4096;
+  const shared = new SharedArrayBuffer(length);
+  const stop = new Int32Array(new SharedArrayBuffer(4));
+  const url = URL.createObjectURL(
+    new Blob(
+      [
+        `
+        self.onmessage = ({ data: { shared, stop } }) => {
+          const bytes = new Uint8Array(shared);
+          postMessage("writing");
+          for (let i = 0; Atomics.load(stop, 0) === 0; i = (i + 1) % bytes.length) bytes[i] = bytes[i] === 10 ? 97 : 10;
+          postMessage("stopped");
+        };
+        `,
+      ],
+      { type: "application/javascript" },
+    ),
+  );
+  const worker = new Worker(url);
+  const message = () =>
+    new Promise<string>((resolve, reject) => {
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = reject;
+    });
+  try {
+    const writing = message();
+    worker.postMessage({ shared, stop });
+    expect(await writing).toBe("writing");
+
+    let outOfRange = 0;
+    const fromTheStart = new Set<number>();
+    // Until the writer has been seen to run.
+    for (let i = 0; i < 20_000 || fromTheStart.size < 2; i++) {
+      const offset = i % length;
+      const index = indexOfLine(shared, offset);
+      if (!(index === -1 || (Number.isInteger(index) && index >= offset && index < length))) outOfRange++;
+      fromTheStart.add(indexOfLine(shared));
+      // The test's timeout can only end a loop that yields.
+      if (i % 1024 === 1023) await new Promise(setImmediate);
+    }
+    expect(outOfRange).toBe(0);
+
+    const stopped = message();
+    Atomics.store(stop, 0, 1);
+    expect(await stopped).toBe("stopped");
+  } finally {
+    Atomics.store(stop, 0, 1);
+    worker.terminate();
+    URL.revokeObjectURL(url);
+  }
 });

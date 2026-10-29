@@ -1640,33 +1640,23 @@ impl VirtualMachine {
         self.as_mut().debugger.as_deref_mut()
     }
 
-    /// Safe `&mut uws::Loop` accessor for the per-VM uSockets loop. Same
-    /// single-JS-thread soundness contract as [`Self::event_loop_mut`].
+    /// Safe `&uws::Loop` accessor for the per-VM uSockets loop.
     #[inline(always)]
-    #[allow(clippy::mut_from_ref)]
-    pub fn uws_loop_mut(&self) -> &mut uws::Loop {
+    pub fn uws_loop_ref(&self) -> &uws::Loop {
         // SAFETY: `uws_loop()` returns the per-VM loop pointer; non-null on
         // the JS thread once `init()` ran; JS thread only (`!Sync`).
-        unsafe { &mut *self.uws_loop() }
+        unsafe { &*self.uws_loop() }
     }
 
-    /// Safe `&mut PlatformEventLoop` accessor for `event_loop_handle` (the
+    /// Safe `&PlatformEventLoop` accessor for `event_loop_handle` (the
     /// uws loop on POSIX, libuv loop on Windows). `None` only before
-    /// `ensure_waker()` runs. Consolidates the open-coded raw deref of
-    /// `self.event_loop_handle.unwrap()` at the `EventLoop::tick*` /
-    /// `update_counts` call sites into one SAFETY block.
-    ///
-    /// Same single-JS-thread soundness contract as [`Self::uws_loop_mut`] —
-    /// the `PlatformEventLoop` is a separate heap allocation (uws/uv-owned),
-    /// so the returned `&mut` cannot alias any field of `self`.
+    /// `ensure_waker()` runs.
     #[inline(always)]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn platform_loop_opt(&self) -> Option<&mut PlatformEventLoop> {
+    pub(crate) fn platform_loop_opt(&self) -> Option<&PlatformEventLoop> {
         // SAFETY: when `Some`, `event_loop_handle` was set in `init()` /
         // `ensure_waker()` to the live per-VM uws/uv loop and remains valid
-        // for the VM lifetime. Single-JS-thread invariant per `unsafe impl
-        // Sync` — only the owning JS thread reborrows mutably.
-        self.event_loop_handle.map(|h| unsafe { &mut *h })
+        // for the VM lifetime.
+        self.event_loop_handle.map(|h| unsafe { &*h })
     }
 
     /// Read-then-zero `pending_unref_counter`. `swap(0)` so a concurrent
@@ -1786,7 +1776,7 @@ impl VirtualMachine {
     }
 
     /// Per-callback hot path: `drain_microtasks_with_global` calls
-    /// `uws_loop_mut()` (→ this) every time the microtask queue drains, and
+    /// `uws_loop_ref()` (→ this) every time the microtask queue drains, and
     /// the only call site there is already gated on
     /// `event_loop_handle.is_some()`.
     #[inline(always)]
@@ -2638,7 +2628,7 @@ impl VirtualMachine {
         }
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
-        vm.uws_loop_mut().drain_closed_sockets();
+        vm.uws_loop_ref().drain_closed_sockets();
         // Nothing schedules a WTFTimer any more: the timer heap's loop handles
         // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
         if let Some(hooks) = hooks {
@@ -2657,8 +2647,7 @@ impl VirtualMachine {
             if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
                 rare.detach_socket_groups_from_loop();
             }
-            // SAFETY: this thread's loop; nothing ticks it any more.
-            let uws_loop = unsafe { &*vm.uws_loop() };
+            let uws_loop = vm.uws_loop_ref();
             uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
             bun_uws::free_thread_loop();
             teardown_log!("teardown: uSockets loop freed");

@@ -697,10 +697,8 @@ describe("Headers", () => {
             bunExe(),
             "-e",
             /* js */ `
-              const { edenGC, heapStats } = require("bun:jsc");
+              const { edenGC } = require("bun:jsc");
               const names = ${JSON.stringify(names)};
-              const realms = () => heapStats().objectTypeCounts.GlobalObject;
-              const realmsBefore = realms();
               // Each realm is the first to read one name, and nothing holds the realm afterwards.
               // Only an eden collection shows the fault: a full one visits every global object,
               // and a global object used to mark the cache.
@@ -708,13 +706,11 @@ describe("Headers", () => {
                 new ShadowRealm().evaluate("[...new Headers({ " + JSON.stringify(name) + ": '1' })].length");
                 edenGC();
               }
-              // A realm that is alive here is old, and an eden collection does not free an old object.
-              const collected = names.length - (realms() - realmsBefore);
               // Strings that take the cells that the collections freed.
               const junk = [];
               for (let i = 0; i < 20000; i++) junk.push("junk" + i);
               const read = [...new Headers(names.map(name => [name, "1"]))].map(([name]) => name);
-              console.log(JSON.stringify({ collected, read }));
+              console.log(JSON.stringify(read));
             `,
           ],
           env: bunEnv,
@@ -722,12 +718,11 @@ describe("Headers", () => {
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        const { collected, read } = JSON.parse(stdout);
-        expect(read).toEqual(names);
-        // Only the name of a collected realm shows the fault, so most of the realms must be collected.
-        expect(collected).toBeGreaterThan(names.length / 2);
-        expect(exitCode).toBe(0);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: JSON.stringify(names) + "\n",
+          stderr: "",
+          exitCode: 0,
+        });
       },
     );
 

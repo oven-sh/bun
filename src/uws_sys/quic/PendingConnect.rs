@@ -17,7 +17,7 @@ bun_opaque::opaque_ffi! {
 // with no `noalias`/`readonly` attribute — handle-only shims are `safe fn`.
 unsafe extern "C" {
     safe fn us_quic_pending_connect_addrinfo(pc: &mut PendingConnect) -> *mut c_void;
-    safe fn us_quic_pending_connect_resolved(pc: &mut PendingConnect) -> *mut Socket;
+    safe fn us_quic_pending_connect_resolved(pc: &mut PendingConnect) -> Option<&mut Socket>;
     safe fn us_quic_pending_connect_cancel(pc: &mut PendingConnect);
 }
 
@@ -27,9 +27,7 @@ impl PendingConnect {
     }
 
     pub fn resolved(&mut self) -> Option<&mut Socket> {
-        // SAFETY: C returns null or a valid `us_quic_socket_t*`; `Socket` is an
-        // opaque ZST handle so `&mut` carries no aliasing assumptions.
-        unsafe { us_quic_pending_connect_resolved(self).as_mut() }
+        us_quic_pending_connect_resolved(self)
     }
 
     pub fn cancel(&mut self) {

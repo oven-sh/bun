@@ -511,6 +511,75 @@ describeEachMachine("Mach-O $name", machine => {
       expectCleanRuns({ programResult, trimmedResult });
     });
 
+    // Rust's `vec.extend_from_slice(&[0; 4])` passes the end of the array: the name of the literal and an addend.
+    test("follows the name of a literal whatever is added to it", async () => {
+      using dir = tempDir("trim-macho-reader", {
+        ...sources,
+        "text.S": `.section __TEXT,__literal8,8byte_literals\nl_named_number: .quad 0x1122334455667788\nl_behind: .quad 0x99aabbccddeeff00\n.section __DATA,__const\n.globl _past_number\n.p2align 3\n_past_number: .quad l_named_number + 8\n.quad l_named_number + 4096\n.subsections_via_symbols\n`,
+        "main.c": mainReading("past_number"),
+      });
+      const { linkOutput, file, section, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects: objectsWithText,
+      });
+      expect(statisticOf(linkOutput, "literalsNotFollowed")).toBe(0);
+      const { offset, size } = section("__TEXT,__literals")!;
+      const literals = file.subarray(offset, offset + size);
+      expect(literals.includes(Buffer.from("8877665544332211", "hex"))).toBe(true);
+      expect(literals.includes(Buffer.from("00ffeeddccbbaa99", "hex"))).toBe(false);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
+    // The linker sees a sound object, and the reader another in its place: the linker refuses some of these.
+    test.each([
+      {
+        title: "names a literal that is not in the image, and retains every literal",
+        literals: "l_number: .quad 0x99aabbccddeeff00",
+        reason: "00ffeeddccbbaa99 is not among the literals of the image",
+      },
+      {
+        title: "names a name behind the last literal, and retains every literal",
+        literals: ".quad 0x1122334455667788\nl_number:",
+        reason: "l_number is behind the last whole literal of its section",
+      },
+      {
+        title: "names an address behind the last whole literal, and retains every literal",
+        literals: ".quad 0x1122334455667788\nL_number: .long 5",
+        name: "L_number",
+        reason: "0x8 is behind the last whole literal of its section",
+      },
+      {
+        title: "passes over a literal that it cannot read where the reference is not in the image",
+        literals: "l_number: .quad 0x1122334455667788\nl_end:",
+        more: "_stripped_cell: .quad l_end\n",
+      },
+    ])("$title", async ({ literals, name = "l_number", more = "", reason }) => {
+      const cellOf = (literals: string, name: string, more: string) =>
+        `.section __TEXT,__literal8,8byte_literals\n${literals}\n.section __DATA,__const\n.globl _cell_of_number\n.p2align 3\n_cell_of_number: .quad ${name}, ${name}\n${more}.subsections_via_symbols\n`;
+      using dir = tempDir("trim-macho-reader", {
+        ...sources,
+        "text.S": cellOf("l_number: .quad 0x1122334455667788", "l_number", ""),
+        "other_text.S": cellOf(literals, name, more),
+        "main.c": mainReading("cell_of_number"),
+      });
+      const folder = String(dir);
+      const { executable, map, exportedSymbols } = await linkByHand(machine, folder, objectsWithText);
+      const read = () => {
+        const { graph, statistics, remarks } = readMachOGraph(executable, map, [], exportedSymbols);
+        const isRoot = new Set(graph.isRoot.filter((_, node) => graph.output[node] === "__TEXT,__literals"));
+        return { literalsNotFollowed: statistics.literalsNotFollowed, remarks, isRoot: [...isRoot] };
+      };
+      const allFollowed = { literalsNotFollowed: 0, remarks: [], isRoot: [0] };
+      expect(read()).toEqual(allFollowed);
+      await compile(machine, folder, "other_text");
+      copyFileSync(join(folder, "other_text.o"), join(folder, "text.o"));
+      const place = new RegExp(`^a literal is not followed: \\S*text\\.o: \\S*_cell_of_number: ${reason}$`);
+      expect(read()).toEqual(
+        reason === undefined
+          ? allFollowed
+          : { literalsNotFollowed: 1, remarks: [expect.stringMatching(place)], isRoot: [1] },
+      );
+    });
+
     test("follows a pointer that only the fixups show into a single unit of the interpreter's assembly", async () => {
       const cellHolding = (value: string) =>
         `.section __DATA,__const\n.globl _retained_cell\n.p2align 3\n_retained_cell: .quad ${value}\n.subsections_via_symbols\n`;

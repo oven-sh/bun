@@ -19,6 +19,7 @@ import {
   perMachine,
   sortedByIndex,
   sources,
+  statisticOf,
   type LinkedProgram,
 } from "./link-macho-support.ts";
 import {
@@ -206,10 +207,8 @@ describeEachMachine("Mach-O $name", machine => {
       if (at < 0) throw new Error(`program has no literal ${JSON.stringify(text)} in __TEXT,__literals`);
       return literalSection.address + at;
     };
-    const removableCells = (result: LinkedProgram) =>
-      [onlyFeature, inBoth, onlyRetained].map(text =>
-        [0, 4, 8, 12].map(offset => result.isRemovableAt(literalAt(result, text) + offset)).join(),
-      );
+    const removableCells = (result: LinkedProgram, texts = [onlyFeature, inBoth, onlyRetained]) =>
+      texts.map(text => [0, 4, 8, 12].map(offset => result.isRemovableAt(literalAt(result, text) + offset)).join());
 
     test("only the feature reads is removable; one retained code reads, alone or too, is retained", async () => {
       using dir = tempDir("trim-macho-literals", literals);
@@ -237,6 +236,49 @@ describeEachMachine("Mach-O $name", machine => {
       expect(result.isRemovableAt(literalAt(result, pointed))).toBe(false);
       expectCleanRuns(result);
     });
+
+    test.each([
+      {
+        reference: "a pointer",
+        assembly: ".section __DATA,__const\n.globl _end_of_named\n.p2align 3\n_end_of_named: .quad l_named + 16\n",
+        declaration: "extern const char *const end_of_named;",
+        end: "end_of_named",
+      },
+      {
+        reference: "an instruction",
+        assembly: `.text\n.globl _end_of_named\n.p2align 2\n_end_of_named:${perMachine("adrp x0, l_named@PAGE+16\nadd x0, x0, l_named@PAGEOFF+16", "leaq l_named+16(%rip), %rax")}ret\n`,
+        declaration: "const char *end_of_named(void);",
+        end: "end_of_named()",
+      },
+    ])(
+      "$reference of retained code names is retained whatever is added to the name, and not the one behind it in the object",
+      async ({ assembly, declaration, end }) => {
+        const named = "sixteen by names";
+        // The linker lays literals out as it comes to them, so main.c's first lies behind `named`: `linked()` takes a
+        // pointer of retained code to what can be removed for one that dangles.
+        using dir = tempDir("trim-macho-literals", {
+          ...literals,
+          "more.c": `
+            ${vector} ${comparingFunction("feature_compares", onlyFeature)} ${comparingFunction("feature_shares", inBoth)} ${comparingFunction("feature_names", named)}
+            int more(int x) { return feature_compares((sixteen){ x })[0] + feature_shares((sixteen){ x })[1] + feature_names((sixteen){ x })[2]; }
+          `,
+          "named.S": `.section __TEXT,__literal16,16byte_literals\n.p2align 4\nl_named: .ascii ${JSON.stringify(named)}\n.ascii ${JSON.stringify(onlyFeature)}\n${assembly}.subsections_via_symbols\n`,
+          "main.c": `
+            ${start} ${vector} ${comparingFunction("retained_compares", onlyRetained)} ${comparingFunction("retained_shares", inBoth)} ${declaration}
+            int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : retained_compares((sixteen){ 's' })[0] == -1 && retained_shares((sixteen){ 's' })[0] == -1 && ${end}[-1] == 's' ? 0 : 1; }
+          `,
+        });
+        const result = await linked(machine, String(dir), { objects: [...objects, "named"] });
+        expect(statisticOf(result.linkOutput, "literalsNotFollowed")).toBe(0);
+        expect(removableCells(result, [onlyFeature, inBoth, onlyRetained, named])).toEqual([
+          "true,true,true,true",
+          "false,false,false,false",
+          "false,false,false,false",
+          "false,false,false,false",
+        ]);
+        expectCleanRuns(result);
+      },
+    );
   });
 
   describe("the layout", () => {

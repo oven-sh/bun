@@ -1991,8 +1991,6 @@ where
                     if let Some(response) = self.response_mut() {
                         if let Some(mut headers_) = response.swap_init_headers() {
                             self.do_write_headers(&mut headers_);
-                            // `HeadersRef` releases the +1 ref in Drop; do NOT
-                            // call `.deref()` explicitly (would double-free).
                             drop(headers_);
                         }
                     }
@@ -3833,10 +3831,6 @@ where
 
             self.do_write_status(status);
             self.do_write_headers(&mut headers_);
-            // `HeadersRef` is RAII — its Drop
-            // already calls `WebCore__FetchHeaders__deref`, so an explicit
-            // `.deref()` here would resolve (via DerefMut) to the inherent
-            // `FetchHeaders::deref` and double-free the C++ object.
             drop(headers_);
         } else if needs_content_range {
             status = 206;

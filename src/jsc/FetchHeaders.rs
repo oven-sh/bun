@@ -7,7 +7,7 @@ use bun_core::{EncodedSlice, String as BunString, StringPointer};
 use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
-    /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see `deref`).
+    /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see [`HeadersRef`]).
     pub struct FetchHeaders;
 }
 
@@ -40,7 +40,7 @@ impl core::ops::DerefMut for HeadersRef {
 impl Drop for HeadersRef {
     #[inline]
     fn drop(&mut self) {
-        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.0.as_ptr()));
+        WebCore__FetchHeaders__deref(self);
     }
 }
 
@@ -285,10 +285,6 @@ impl FetchHeaders {
         host_fn::from_js_host_call_generic(global, || {
             WebCore__FetchHeaders__cloneThis(self, global)
         })
-    }
-
-    pub fn deref(&mut self) {
-        WebCore__FetchHeaders__deref(self)
     }
 
     /// Aborts if `names`, `values` or `buf` is smaller than what `count()` reported.

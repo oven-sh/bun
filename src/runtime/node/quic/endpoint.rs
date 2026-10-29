@@ -18,7 +18,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 use super::callbacks;
-use super::ffi::lsquic_callback;
+use super::ffi::{NqVtable, lsquic_callback};
 use super::now_ns;
 use super::session::{self, QuicSession, SOCKADDR_IN_LEN, SOCKADDR_IN6_LEN, StoredAddr};
 use super::stream;
@@ -187,10 +187,10 @@ pub(crate) struct QuicEndpoint {
     /// MUST stay the first field — `ea_get_ssl_ctx`'s `peer_ctx` is the
     /// QuicEndpoint pointer, and the C shim's thunk reads
     /// `*(us_nq_vtable**)peer_ctx` to recover the vtable.
-    vtable_ptr: *const lsquic::NqVtable,
+    vtable_ptr: *const NqVtable,
     /// The vtable storage itself; `vtable_ptr` and `ea_stream_if_ctx` point
     /// into this box, so it must outlive both engines.
-    vtable: JsCell<Option<Box<lsquic::NqVtable>>>,
+    vtable: JsCell<Option<Box<NqVtable>>>,
     /// Borrowed views into JSC-owned ArrayBuffers (the wrapper owns both the
     /// ArrayBuffer and this struct, so the pointers are valid for our life).
     state: *mut EndpointState,
@@ -1097,6 +1097,11 @@ impl QuicEndpoint {
             }
         });
         lsquic::debug_assert_layout();
+        debug_assert_eq!(
+            lsquic::us_nq_vtable_size(),
+            core::mem::size_of::<NqVtable>(),
+            "us_nq_vtable layout mismatch between node_quic_shim.c and quic/ffi.rs"
+        );
 
         let mut bind_config = BindConfig::default();
         let mut block_list = None;
@@ -1229,8 +1234,8 @@ impl QuicEndpoint {
         let raw: *mut Self = this_value.payload_ptr().as_ptr();
         let global = cx.global();
 
-        let vt = Box::new(lsquic::NqVtable {
-            owner: raw.cast(),
+        let vt = Box::new(NqVtable {
+            owner: raw,
             on_new_conn: session::on_new_conn,
             on_hsk_done: session::on_hsk_done,
             on_hsk_confirmed: session::on_hsk_confirmed,
@@ -2021,7 +2026,7 @@ impl QuicEndpoint {
             lsquic::us_nq_engine_new(
                 is_server as c_int,
                 is_http as c_int,
-                self.vtable_ptr.cast_mut(),
+                self.vtable_ptr.cast_mut().cast(),
                 settings.as_ptr(),
                 core::ptr::null(),
             )
@@ -2633,7 +2638,7 @@ impl QuicEndpoint {
         self.pending_verneg.with_mut(Vec::clear);
         self.vtable.with_mut(|vt| {
             if let Some(vt) = vt.as_mut() {
-                vt.owner = null_mut();
+                vt.owner = null();
                 vt.on_stream_close = stream::QuicStream::on_close_detached;
                 vt.on_conn_closed = QuicSession::on_closed_detached;
             }

@@ -233,7 +233,7 @@ unsafe extern "C" {
     safe fn WebWorker__postOutOfMemoryError(proxy: *mut c_void);
     safe fn WebWorker__postFailedToStartError(proxy: *mut c_void);
     /// The address space a compiled program's thread needs for its tables, taken
-    /// by the thread that starts it. False: there is none. `pages` may be null.
+    /// by the thread that starts it. False: there is none. `*pages` may be null.
     safe fn Bun__AOT__tryReservePagesForNewThread(
         pages: &mut *mut c_void,
         threads_are_ending: bool,

@@ -1117,10 +1117,9 @@ impl JSGlobalObject {
         })
     }
 
-    /// Returns a freshly-created `napi_env` owned by this global, for use by
+    /// Returns a freshly-created `napi_env` on which C++ leaks a ref, for use by
     /// the FFI module. The concrete `NapiEnv` struct lives in `bun_runtime`
-    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
-    /// callers in `bun_runtime` cast to `*mut NapiEnv`.
+    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }

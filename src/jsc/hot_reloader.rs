@@ -370,6 +370,15 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     _event_loop: PhantomData<*mut EventLoopType>,
 }
 
+/// How the reloader finds the entry point again after a save that replaces its file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EntryWatch {
+    /// Through the watch of its directory. The watcher has that watch only in the project.
+    ByDirectory,
+    /// By its path, also where the watcher leaves out its directory. Not on Windows.
+    ByPath,
+}
+
 pub struct MainFile {
     /// Includes a trailing "/"
     // `'static` is the API contract of `enable_hot_module_reloading`
@@ -703,7 +712,11 @@ where
     /// `this` must point to a live `Ctx` (VirtualMachine / DevServer / BundleV2)
     /// that outlives the leaked `NewHotReloader` allocated here — i.e. for the
     /// process lifetime.
-    pub unsafe fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
+    pub unsafe fn enable_hot_module_reloading(
+        this: *mut Ctx,
+        entry_path: Option<&'static [u8]>,
+        entry_watch: EntryWatch,
+    ) {
         // SAFETY: precondition — `this` is the live owning `Ctx`; it outlives
         // the reloader allocated below. Borrows are scoped per access.
         if unsafe { (*this).is_watcher_enabled() } {
@@ -748,14 +761,16 @@ where
         );
 
         #[cfg(not(windows))]
-        {
+        if entry_watch == EntryWatch::ByPath {
             // SAFETY: the watcher thread does not run yet, so nothing else reads `reloader`.
             let main = unsafe { &(*reloader).main };
             if main.dir_hash != 0 {
                 // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
-                unsafe { (*watcher_ptr).add_entry_point_directory(main.dir, main.dir_hash) };
+                unsafe { (*watcher_ptr).find_entry_point_by_path(main.hash, main.dir) };
             }
         }
+        #[cfg(windows)]
+        let _ = entry_watch;
 
         // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
@@ -874,6 +889,13 @@ where
         #[cfg(windows)]
         let _ = (changed_files, parents, file_descriptors, rfs);
         let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
+        // SAFETY: the Watcher outlives this call, and `entry_point` is written only before its thread starts.
+        let finds_entry_by_path = unsafe { (*ctx).entry_point() } == Some(self.main.hash);
+        // The state of the entry point that is found by its path, for the code after the loop.
+        let mut entry_is_missing = false;
+        let mut entry_is_evicted = false;
+        #[cfg(not(windows))]
+        let mut entry_directory: Option<bun_watcher::WatchItemIndex> = None;
 
         for event in events.iter() {
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
@@ -892,8 +914,13 @@ where
 
             match kind {
                 bun_watcher::Kind::File => {
+                    // The file that this watch is on no longer has the path of the entry point.
+                    let entry_lost_path = finds_entry_by_path
+                        && current_hash == self.main.hash
+                        && event.op.intersects(WatchOp::DELETE | WatchOp::RENAME);
                     if !bun_watcher::WATCHES_BY_PATH
-                        && (event.op.contains(WatchOp::DELETE)
+                        && (entry_lost_path
+                            || event.op.contains(WatchOp::DELETE)
                             || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE))
                     {
                         // SAFETY: the Watcher outlives this call (it owns the
@@ -921,13 +948,23 @@ where
                         ));
                     }
 
+                    if entry_lost_path {
+                        entry_is_evicted = true;
+                        // A reload finds nothing to load until the directory reports the name again.
+                        self.main.is_waiting_for_dir_change = !bun_sys::exists(self.main.file);
+                        if self.main.is_waiting_for_dir_change {
+                            entry_is_missing = true;
+                            continue;
+                        }
+                    }
+
                     if event
                         .op
                         .intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME)
                     {
                         record_changed_path(file_path);
                         if IS_KQUEUE {
-                            if event.op.contains(WatchOp::RENAME) {
+                            if event.op.contains(WatchOp::RENAME) && !entry_lost_path {
                                 // Special case for entrypoint: defer reload until we get
                                 // a directory write event confirming the file exists.
                                 // This handles vim's save process which renames the old file
@@ -961,6 +998,37 @@ where
                     }
                     #[cfg(not(windows))]
                     {
+                        // `Watcher::watch_entry_point_directory` added this item. The other files in it keep only their own watches.
+                        if finds_entry_by_path && current_hash == self.main.dir_hash {
+                            let names_entry = if IS_KQUEUE {
+                                self.main.is_waiting_for_dir_change
+                                    && event.op.contains(WatchOp::WRITE)
+                            } else {
+                                let name = bun_paths::basename(self.main.file);
+                                event
+                                    .names(changed_files)
+                                    .iter()
+                                    .flatten()
+                                    .any(|changed| changed.as_bytes() == name)
+                            };
+                            if names_entry && bun_sys::exists(self.main.file) {
+                                let _ = self.ctx_mut().bust_dir_cache(
+                                    strings::paths::without_trailing_slash_windows_path(file_path),
+                                );
+                                self.main.is_waiting_for_dir_change = false;
+                                record_changed_path(self.main.file);
+                                current_task.append(self.main.hash);
+                            }
+                            // The watch of the file covers the path again.
+                            let file_is_watched = hashes.iter().zip(kinds).any(|(hash, kind)| {
+                                *hash == self.main.hash && *kind == bun_watcher::Kind::File
+                            });
+                            if file_is_watched && !self.main.is_waiting_for_dir_change {
+                                entry_directory = Some(event.index);
+                            }
+                            continue;
+                        }
+
                         let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
                         let mut entries_option: Option<*mut Fs::DirEntry> = None;
 
@@ -1292,6 +1360,25 @@ where
             }
         }
 
+        #[cfg(not(windows))]
+        if entry_is_missing {
+            // SAFETY: the Watcher outlives this call and its thread holds `mutex` here. Nothing below reads the columns above.
+            unsafe { (*ctx).watch_entry_point_directory(self.main.dir, self.main.dir_hash) };
+            // The file can be back before the watch of its directory starts.
+            if bun_sys::exists(self.main.file) {
+                self.main.is_waiting_for_dir_change = false;
+                record_changed_path(self.main.file);
+                current_task.append(self.main.hash);
+            }
+        } else if let Some(index) = entry_directory
+            && !entry_is_evicted
+        {
+            // SAFETY: the Watcher outlives this call and its thread holds `mutex` here.
+            unsafe { (*ctx).unwatch_entry_point_directory(index) };
+        }
+        #[cfg(windows)]
+        let _ = (entry_is_missing, entry_is_evicted);
+
         // Drop order (LIFO): `_flush` guard → Output::flush() +
         // ctx.flush_evictions(), then `current_task` guard → enqueue(). See
         // the note on `current_task` above for why this order matters.
@@ -1409,5 +1496,7 @@ fn __bun_jsc_enable_hot_module_reloading_for_bundler(
     // SAFETY: `bv2` is the `&mut *Box<BundleV2<'static>>` formed in
     // `BundleV2::init`; the lifetime is `'static` for the only caller (build
     // command leaks the CLI arena), and the box is leaked under --watch.
-    unsafe { BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None) };
+    unsafe {
+        BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None, EntryWatch::ByDirectory)
+    };
 }

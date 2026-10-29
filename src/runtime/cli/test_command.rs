@@ -2353,6 +2353,7 @@ impl TestCommand {
                         jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
                             std::ptr::from_mut::<VirtualMachine>(vm),
                             None,
+                            jsc::hot_reloader::EntryWatch::ByDirectory,
                         );
                     }
                 }
@@ -2363,6 +2364,7 @@ impl TestCommand {
                         jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
                             std::ptr::from_mut::<VirtualMachine>(vm),
                             None,
+                            jsc::hot_reloader::EntryWatch::ByDirectory,
                         );
                     }
                     run_compiled::watch_files_of_check(vm);

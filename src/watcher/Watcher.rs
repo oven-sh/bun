@@ -118,6 +118,8 @@ pub struct Watcher {
     /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
     pub(crate) watchloop_handle: bun_core::AtomicCell<bool>,
     pub(crate) cwd: &'static [u8],
+    /// The file of [`Watcher::find_entry_point_by_path`]. Written before `start`.
+    pub(crate) entry_point: Option<HashType>,
     pub(crate) thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
     /// `watch_loop` and the platform `watch_loop_cycle`.
@@ -196,6 +198,7 @@ impl Watcher {
             watchlist: WatchList::default(),
             mutex: Mutex::default(),
             cwd: top_level_dir,
+            entry_point: None,
             ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,
@@ -748,8 +751,10 @@ impl Watcher {
         }
         let _ = parent_watch_item;
 
+        // A stored descriptor keeps a replaced file alive, and inotify then reports nothing to the watch of that file.
+        let stores_fd = REQUIRES_FILE_DESCRIPTORS || self.entry_point != Some(hash);
         match self.append_file_assume_capacity::<CLONE_FILE_PATH>(
-            fd,
+            if stores_fd { fd } else { Fd::INVALID },
             file_path,
             hash,
             parent_dir_hash,
@@ -780,7 +785,11 @@ impl Watcher {
             bstr::BStr::new(display_path)
         );
 
-        Ok(FdOwnership::Watcher)
+        Ok(if stores_fd {
+            FdOwnership::Watcher
+        } else {
+            FdOwnership::Caller
+        })
     }
 
     #[inline]
@@ -793,12 +802,41 @@ impl Watcher {
         self.cwd
     }
 
-    /// Watches the directory of the entry point when `is_eligible_directory` leaves it out: a replaced entry file is found again through it.
+    /// Finds the entry point again by its path after a save that replaces its file, when `is_eligible_directory` leaves out its directory. Call before `start`.
     #[cfg(not(windows))]
-    pub fn add_entry_point_directory(&mut self, dir: &'static [u8], hash: HashType) {
+    pub fn find_entry_point_by_path(&mut self, hash: HashType, dir: &[u8]) {
         if !self.is_eligible_directory(dir) {
-            let _ = self.add_directory::<false>(Fd::INVALID, dir, hash);
+            self.entry_point = Some(hash);
         }
+    }
+
+    /// The file of [`Watcher::find_entry_point_by_path`].
+    #[inline]
+    pub fn entry_point(&self) -> Option<HashType> {
+        self.entry_point
+    }
+
+    /// Watches the directory of the entry point while its path has no file. For the watcher thread: it holds `mutex`, and it reads no watchlist column after this call.
+    #[cfg(not(windows))]
+    pub fn watch_entry_point_directory(&mut self, dir: &'static [u8], hash: HashType) {
+        debug_assert!(self.mutex.is_held_by_current_thread());
+        if self.index_of(hash).is_none() {
+            self.watchlist
+                .ensure_unused_capacity(1)
+                .unwrap_or_else(|_| bun_core::out_of_memory());
+            let _ = self.append_directory_assume_capacity::<false>(Fd::INVALID, dir, hash);
+        }
+    }
+
+    /// Ends the watch of [`Watcher::watch_entry_point_directory`]. For the watcher thread, which holds `mutex`.
+    #[cfg(not(windows))]
+    pub fn unwatch_entry_point_directory(&mut self, index: WatchItemIndex) {
+        debug_assert!(self.mutex.is_held_by_current_thread());
+        // A kqueue watch ends when `flush_evictions` closes the descriptor. An inotify watch does not.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        self.platform
+            .unwatch(self.watchlist.items_eventlist_index()[index as usize]);
+        self.remove_at_index::<false>(WatchItemKind::Directory, index, 0, &[]);
     }
 
     pub fn add_directory<const CLONE_FILE_PATH: bool>(
@@ -898,7 +936,8 @@ impl Watcher {
 
         if let Some(index) = self.index_of(hash) {
             let mut ownership = FdOwnership::Caller;
-            if feature_flags::ATOMIC_FILE_WATCHER && fd.is_valid() {
+            if feature_flags::ATOMIC_FILE_WATCHER && fd.is_valid() && self.entry_point != Some(hash)
+            {
                 // Upgrade a path-only entry (`add_file_by_path_slow` inserts
                 // fd-less, e.g. the `--hot` entrypoint) so `hot_reloader`'s
                 // directory-event recovery sees a valid fd. A valid stored fd

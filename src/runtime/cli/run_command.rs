@@ -14,6 +14,7 @@ use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::{self as core, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
+use bun_jsc::hot_reloader::EntryWatch;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
@@ -1198,17 +1199,21 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
 
         vm.load_extra_env_and_source_code_printer();
+        let mut entry_watch = EntryWatch::ByDirectory;
         if let Some(entry) = entry
             && entry_kind == EntryPath::Unresolved
             && vm.module_loader.eval_source.is_none()
         {
             match Self::resolve_entry_path(vm, entry, Self::preserve_symlinks_main(ctx)) {
-                Some(resolved) if resolved != entry => {
-                    vm.set_main_for_argv(entry);
-                    vm.set_main(Some(resolved));
-                    run_entry = Some(resolved);
+                Some(resolved) => {
+                    // `node --watch` restarts for a save that replaces the entry file, also outside the project.
+                    entry_watch = EntryWatch::ByPath;
+                    if resolved != entry {
+                        vm.set_main_for_argv(entry);
+                        vm.set_main(Some(resolved));
+                        run_entry = Some(resolved);
+                    }
                 }
-                Some(_) => {}
                 // A preload can create the entry point, so this resolve must leave nothing in the resolver cache.
                 None => Self::forget_entry_path(vm, entry),
             }
@@ -1248,6 +1253,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
+            entry_watch,
             unchecked: (is_checked && watches).then_some(match entry {
                 Some(_) => Unchecked::Main(loader),
                 None => Unchecked::Project,
@@ -1448,6 +1454,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: Some(entry),
+            entry_watch: EntryWatch::ByDirectory,
             unchecked: None,
         }
         .start()
@@ -1469,6 +1476,8 @@ pub(crate) struct Run<'a> {
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena). `None` for `bun bake`, which has no entry module.
     entry_path: Option<&'static [u8]>,
+    /// How `--hot` and `--watch` find `entry_path` again after a save that replaces its file.
+    entry_watch: EntryWatch,
     /// `--check` under `--watch`: what to type check before the program runs. With errors the
     /// program is not run, and the process waits for a change.
     unchecked: Option<Unchecked>,
@@ -1530,6 +1539,7 @@ impl Run<'_> {
             ctx,
             vm,
             entry_path: mut entry,
+            entry_watch,
             unchecked,
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
@@ -1642,6 +1652,7 @@ impl Run<'_> {
                         bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
                             std::ptr::from_mut::<VirtualMachine>(vm),
                             entry,
+                            entry_watch,
                         )
                     }
                     // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the kill signal's JS handlers run first, as in watch mode.
@@ -1660,6 +1671,7 @@ impl Run<'_> {
                         bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
                             std::ptr::from_mut::<VirtualMachine>(vm),
                             entry,
+                            entry_watch,
                         )
                     }
                     bun_jsc::posix_signal_handle::enable_watch_mode_signals(

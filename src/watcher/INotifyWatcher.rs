@@ -182,6 +182,13 @@ impl INotifyWatcher {
         result
     }
 
+    /// Ends a watch that `watch_path` or `watch_dir` returned.
+    pub(crate) fn unwatch(&mut self, watch: EventListIndex) {
+        debug_assert!(self.loaded);
+        let rc = bun_sys::linux::inotify_rm_watch(self.fd.native(), watch);
+        bun_core::scoped_log!(watcher, "inotify_rm_watch({}, {}) = {}", self.fd, watch, rc);
+    }
+
     pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
         use bun_sys::linux::IN;
 

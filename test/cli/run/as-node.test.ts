@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { bunEnv, bunExe, fakeNodeRun, isLinux, isMacOS, isWindows, tempDir } from "../../harness";
 
@@ -383,44 +383,66 @@ describe("fake node cli", () => {
   // Not for Windows: its watcher does not read `MainFile`, and a rename over a file that is open can fail there.
   describe.concurrent.skipIf(isWindows)("a watcher reloads an entry point that is replaced", () => {
     const source = (n: number) => `console.log("ready ${n}"); globalThis.timer ??= setInterval(() => {}, 1000);`;
-    const entryPoints = [
+    const inProject = [
       { name: "a directory", cwd: ".", arg: "./pkg", file: "pkg/index.js" },
       { name: "`.`", cwd: "pkg", arg: ".", file: "pkg/index.js" },
       { name: "a file without its extension", cwd: ".", arg: "./pkg/entry", file: "pkg/entry.js" },
       { name: "a symlink", cwd: ".", arg: "./bin/link", file: "pkg/cli.js" },
-      // The watcher does not watch a directory outside the working directory for the files in it.
-      { name: "a directory outside the working directory", cwd: "work", arg: "../pkg", file: "pkg/index.js" },
-      { name: "a file outside the working directory", cwd: "work", arg: "../pkg/index.js", file: "pkg/index.js" },
     ];
-    type EntryPoint = (typeof entryPoints)[number];
+    // The watcher does not watch a directory outside the working directory for the files in it.
+    const outside = [
+      { name: "a directory", cwd: "work", arg: "../pkg", file: "pkg/index.js" },
+      { name: "a file without its extension", cwd: "work", arg: "../pkg/entry", file: "pkg/entry.js" },
+      { name: "a file", cwd: "work", arg: "../pkg/index.js", file: "pkg/index.js" },
+    ];
+    type EntryPoint = { cwd: string; arg: string; file: string };
 
-    function project({ file }: EntryPoint) {
-      const temp = tempDir("fake-node-hot", { "pkg/package.json": "{}", "work/package.json": "{}", [file]: source(1) });
+    function project({ file }: EntryPoint, files: Record<string, string> = {}) {
+      const temp = tempDir("fake-node-hot", {
+        "pkg/package.json": "{}",
+        "work/package.json": "{}",
+        "stage/trace.log": "",
+        [file]: source(1),
+        ...files,
+      });
       mkdirSync(join(temp, "bin"));
       symlinkSync(join("..", "pkg", "cli.js"), join(temp, "bin", "link"));
       return temp;
     }
 
-    function node(temp: string, flag: string, { cwd, arg }: EntryPoint) {
+    function run(temp: string, args: string[], { cwd }: EntryPoint, argv0 = "node") {
       return Bun.spawn({
-        cmd: [bunExe(), flag, arg],
-        argv0: "node",
+        cmd: [bunExe(), ...args],
+        argv0,
         cwd: join(temp, cwd),
-        env: { ...bunEnv, NODE_ENV: undefined },
+        env: { ...bunEnv, NODE_ENV: undefined, BUN_WATCHER_TRACE: join(temp, "stage", "trace.log") },
         stdout: "pipe",
         stderr: "pipe",
       });
     }
 
-    function replaceByRename(temp: string, { file }: EntryPoint) {
-      writeFileSync(join(temp, file + ".tmp"), source(2));
-      renameSync(join(temp, file + ".tmp"), join(temp, file));
+    // The new file is written in another directory, so the rename is the only event in the directory of the entry point.
+    function replaceByRename(temp: string, { file }: EntryPoint, n: number) {
+      writeFileSync(join(temp, "stage", "new.js"), source(n));
+      renameSync(join(temp, "stage", "new.js"), join(temp, file));
+    }
+
+    // The events of each batch, by watched path. The watcher writes a batch before it handles it.
+    function batches(temp: string): Record<string, { events: string[] }>[] {
+      const lines = readFileSync(join(temp, "stage", "trace.log"), "utf8").split("\n");
+      return lines.slice(0, -1).map(line => JSON.parse(line).files);
+    }
+
+    const batchesOf = (temp: string, path: string) => batches(temp).filter(files => join(temp, path) in files);
+
+    async function batchWith(temp: string, path: string, event: string) {
+      while (!batchesOf(temp, path).some(files => files[join(temp, path)].events.includes(event))) await Bun.sleep(1);
     }
 
     // Only inotify finds a file again that is deleted first.
-    test.skipIf(!isLinux).each(entryPoints)("--hot, $name, deleted and then created", async entryPoint => {
+    test.skipIf(!isLinux).each(inProject)("--hot, $name, deleted and then created", async entryPoint => {
       using temp = project(entryPoint);
-      await using proc = node(temp, "--hot", entryPoint);
+      await using proc = run(temp, ["--hot", entryPoint.arg], entryPoint);
       const stdout = proc.stdout.getReader();
       await until(stdout, "ready 1");
       rmSync(join(temp, entryPoint.file));
@@ -430,27 +452,131 @@ describe("fake node cli", () => {
       await until(stdout, "ready 2");
     });
 
-    test.each(entryPoints)("--hot, $name, replaced by a rename", async entryPoint => {
-      using temp = project(entryPoint);
-      await using proc = node(temp, "--hot", entryPoint);
-      const stdout = proc.stdout.getReader();
-      await until(stdout, "ready 1");
-      replaceByRename(temp, entryPoint);
-      await until(stdout, "ready 2");
+    describe.each(["--hot", "--watch"])("%s", flag => {
+      test.each(inProject)("$name, replaced by a rename", async entryPoint => {
+        using temp = project(entryPoint);
+        await using proc = run(temp, [flag, entryPoint.arg], entryPoint);
+        const stdout = proc.stdout.getReader();
+        await until(stdout, "ready 1");
+        replaceByRename(temp, entryPoint, 2);
+        await until(stdout, "ready 2");
+      });
+
+      // The second rename shows that the watch is on the file that has the path now.
+      test.each(outside)("$name outside the working directory, replaced by a rename two times", async entryPoint => {
+        using temp = project(entryPoint);
+        await using proc = run(temp, [flag, entryPoint.arg], entryPoint);
+        const stdout = proc.stdout.getReader();
+        await until(stdout, "ready 1");
+        replaceByRename(temp, entryPoint, 2);
+        await until(stdout, "ready 2");
+        replaceByRename(temp, entryPoint, 3);
+        await until(stdout, "ready 3");
+      });
+
+      // While the path has no file, nothing reloads. The watcher then finds the new file through the directory.
+      test.each(outside)("$name outside the working directory, deleted and then created", async entryPoint => {
+        using temp = project(entryPoint);
+        await using proc = run(temp, [flag, entryPoint.arg], entryPoint);
+        const stdout = proc.stdout.getReader();
+        await until(stdout, "ready 1");
+        rmSync(join(temp, entryPoint.file));
+        await batchWith(temp, entryPoint.file, "delete");
+        writeFileSync(join(temp, entryPoint.file), source(2));
+        await until(stdout, "ready 2");
+      });
+
+      test.each(outside)("$name outside the working directory, renamed away and then created", async entryPoint => {
+        using temp = project(entryPoint);
+        await using proc = run(temp, [flag, entryPoint.arg], entryPoint);
+        const stdout = proc.stdout.getReader();
+        await until(stdout, "ready 1");
+        renameSync(join(temp, entryPoint.file), join(temp, entryPoint.file + "~"));
+        await batchWith(temp, entryPoint.file, "rename");
+        writeFileSync(join(temp, entryPoint.file), source(2));
+        await until(stdout, "ready 2");
+      });
     });
 
-    test.each(entryPoints)("--watch, $name, replaced by a rename", async entryPoint => {
+    // The files beside an entry point outside the working directory keep only their own watches.
+    test.each([
+      { name: "the node shim, a directory", argv0: "node", arg: "../pkg" },
+      { name: "bun, a file", argv0: "bun", arg: "../pkg/index.js" },
+    ])("--hot, $name outside the working directory: a write to another file there starts no reload", async row => {
+      const entryPoint = { cwd: "work", arg: row.arg, file: "pkg/index.js" };
       using temp = project(entryPoint);
-      await using proc = node(temp, "--watch", entryPoint);
+      await using proc = run(temp, ["--hot", row.arg], entryPoint, row.argv0);
+      const stdout = proc.stdout.getReader();
+      let seen = await until(stdout, "ready 1");
+      for (let i = 0; i < 20; i++) appendFileSync(join(temp, "pkg", "app.log"), "line\n");
+      writeFileSync(join(temp, entryPoint.file), source(2));
+      seen += await until(stdout, "ready 2");
+      expect({
+        before: seen.slice(0, seen.indexOf("ready 2")),
+        watched: [...new Set(batches(temp).flatMap(files => Object.keys(files)))],
+      }).toEqual({ before: "ready 1\n", watched: [join(temp, entryPoint.file)] });
+    });
+
+    test("--hot, a directory outside the working directory: while the entry file is missing, a new file beside it starts no reload", async () => {
+      const entryPoint = outside[0];
+      using temp = project(entryPoint);
+      await using proc = run(temp, ["--hot", entryPoint.arg], entryPoint);
+      const stdout = proc.stdout.getReader();
+      let seen = await until(stdout, "ready 1");
+      rmSync(join(temp, entryPoint.file));
+      await batchWith(temp, entryPoint.file, "delete");
+      // The watch of the directory starts when the watcher handles the batch of the delete.
+      for (let i = 0; batchesOf(temp, "pkg/").length === 0; i++) {
+        writeFileSync(join(temp, "pkg", `other-${i}.js`), "");
+        await Bun.sleep(1);
+      }
+      writeFileSync(join(temp, entryPoint.file), source(2));
+      seen += await until(stdout, "ready 2");
+      proc.kill();
+      // A debug build prints a line for each reload. A reload while the file is missing prints an error.
+      const stderr = (await proc.stderr.text()).replaceAll("DEBUG: Reloading...\n", "");
+      expect({ before: seen.slice(0, seen.indexOf("ready 2")), stderr }).toEqual({ before: "ready 1\n", stderr: "" });
+    });
+
+    test("--hot, a directory outside the working directory: the watch of the directory ends when the entry file is back", async () => {
+      const entryPoint = outside[0];
+      using temp = project(entryPoint);
+      await using proc = run(temp, ["--hot", entryPoint.arg], entryPoint);
       const stdout = proc.stdout.getReader();
       await until(stdout, "ready 1");
-      replaceByRename(temp, entryPoint);
+      rmSync(join(temp, entryPoint.file));
+      await batchWith(temp, entryPoint.file, "delete");
+      writeFileSync(join(temp, entryPoint.file), source(2));
       await until(stdout, "ready 2");
+      // The watcher drops the watch of the directory at its next event. The batch of the write after it is handled later.
+      writeFileSync(join(temp, "pkg", "other-0.js"), "");
+      writeFileSync(join(temp, entryPoint.file), source(3));
+      await until(stdout, "ready 3");
+      const ofDirectory = batchesOf(temp, "pkg/").length;
+      for (let i = 1; i <= 5; i++) writeFileSync(join(temp, "pkg", `other-${i}.js`), "");
+      writeFileSync(join(temp, entryPoint.file), source(4));
+      await until(stdout, "ready 4");
+      expect(batchesOf(temp, "pkg/").length).toBe(ofDirectory);
+    });
+
+    // The watcher has no watch in the directory of the entry point before the entry point loads.
+    test("--watch, a directory outside the working directory: a preload that writes the entry file starts the program one time", async () => {
+      const entryPoint = outside[0];
+      using temp = project(entryPoint, {
+        "work/preload.js": `
+          const { appendFileSync, writeFileSync } = require("fs");
+          appendFileSync(__dirname + "/starts", "start\\n");
+          writeFileSync(__dirname + "/../pkg/index.js", ${JSON.stringify(source(1))});
+        `,
+      });
+      await using proc = run(temp, ["--watch", "-r", "./preload.js", entryPoint.arg], entryPoint);
+      await until(proc.stdout.getReader(), "ready 1");
+      expect(readFileSync(join(temp, "work", "starts"), "utf8")).toBe("start\n");
     });
   });
 });
 
-// Reads until `text` arrives. It throws when the stream ends first, so a child that exits fails the test.
+// Reads until `text` arrives, and returns what it read. It throws when the stream ends first, so a child that exits fails the test.
 async function until(reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> }, text: string) {
   const decoder = new TextDecoder();
   let seen = "";
@@ -459,6 +585,7 @@ async function until(reader: { read(): Promise<{ done: boolean; value?: Uint8Arr
     if (done) throw new Error(`the stream ended before ${JSON.stringify(text)}, after ${JSON.stringify(seen)}`);
     seen += decoder.decode(value, { stream: true });
   }
+  return seen;
 }
 
 async function runAsNode(cwd: string, args: string[], env?: Record<string, string>) {

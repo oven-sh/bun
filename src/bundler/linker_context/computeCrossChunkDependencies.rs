@@ -555,9 +555,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             index_sort::sort_slice_unstable_by(lazy_chunk_indices, |a, b| a.cmp(b));
 
             let chunk = &mut chunks[chunk_index];
-            // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
-            // invariant), so `writable_slice` would form `&mut [T]` over
-            // invalid bit patterns. Push into reserved capacity instead.
+            // Pushed, not written into an uninitialised `&mut [T]`: `import_kind` is an enum.
             chunk.cross_chunk_imports.reserve(lazy_chunk_indices.len());
             for &lazy_chunk_index in lazy_chunk_indices.iter() {
                 chunk.cross_chunk_imports.push(chunk::ChunkImport {

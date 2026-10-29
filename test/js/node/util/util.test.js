@@ -641,11 +641,25 @@ describe("util", () => {
         `out.first = fast("red");
          util.inspect.colors = { __proto__: null, red: [95, 39], mine: [96, 39] };
          out.fast = [fast("red"), fast("bold"), fast("mine")];
-         out.slow = [slow("red"), slow("bold"), slow("mine")];`,
+         out.slow = [slow("red"), slow("bold"), slow("mine")];
+         try { util.styleText(["bold"], "x", noValidate); } catch (error) { out.message = error.message; }`,
         {
           first: sgr(31),
           fast: [sgr(31), sgr(1, 22), sgr(96)],
           slow: [sgr(95), invalidValue, sgr(96)],
+          message: "The argument 'format' must be one of: 'red', 'mine'. Received 'bold'",
+        },
+      ],
+      [
+        "the table replaced before the snapshot",
+        `out.first = [slow("red"), onTerminal("red")];
+         util.inspect.colors = { __proto__: null, red: [95, 39] };
+         out.slow = [slow("red"), onTerminal("red"), slow("bold")];
+         out.fast = [fast("red"), fast("bold")];`,
+        {
+          first: [sgr(31), sgr(31)],
+          slow: [sgr(95), sgr(95), invalidValue],
+          fast: [sgr(95), invalidValue],
         },
       ],
       [
@@ -824,7 +838,7 @@ describe("util", () => {
       expect(exitCode).toBe(0);
     }
 
-    // Not concurrent: a debug build takes a second to start, and longer when thirteen start at once.
+    // Not concurrent: a debug build takes a second to start, and longer when all the cases start at once.
     it.each(cases)("bun: %s", (_, script, expected) => check(bunExe(), script, expected));
 
     // Node.js reads the table on every slow call since v26.4.0.

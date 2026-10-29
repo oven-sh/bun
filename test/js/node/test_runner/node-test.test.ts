@@ -88,6 +88,75 @@ describe("node:test", () => {
     });
   });
 
+  test("should fail tests whose hooks, bodies, or inline suite callbacks fail under --concurrent too", async () => {
+    // node:test reports such a failure by passing it to bun:test's done callback. In a concurrent
+    // group that printed the error between tests and reported the test itself as passing.
+    const { exitCode, stdout, stderr } = await runTests(["07-failing-hooks.js"], {}, ["--concurrent"]);
+    expect(stdout).toContain("SUB_BODY_RAN=false");
+    expect({ summary: report(stderr).summary, exitCode }).toEqual({ summary: { pass: 0, fail: 10 }, exitCode: 1 });
+  });
+
+  test.each([
+    { mode: "serially", args: [] },
+    { mode: "under --concurrent", args: ["--concurrent"] },
+  ])("should fail each test whose failure node:test passes to done(), $mode", async ({ args }) => {
+    const { exitCode, stderr } = await runTests(["31-failure-kinds.js"], {}, args);
+    expect({ ...report(stderr), exitCode }).toEqual({
+      tests: {
+        "a test body that throws": "fail",
+        "a failed assertion": "fail",
+        "a rejected promise": "fail",
+        "an unmet t.plan()": "fail",
+        "a test that passes": "pass",
+        "a test after the failures that waits for an unref'd immediate": "pass",
+      },
+      summary: { pass: 2, fail: 4 },
+      exitCode: 1,
+    });
+  });
+
+  // run() sets BUN_TEST_DRAIN_EVENT_LOOP for its children. The interval that the failed test
+  // left would keep the drain of the event loop from ending, so a file that failed does not drain.
+  test.each(["node:test", "bun:test"])(
+    "should exit after a failed %s file that left a handle open under BUN_TEST_DRAIN_EVENT_LOOP",
+    async module => {
+      // A child that keeps draining is killed after 20s and fails on `signalCode`, not on the test's own timeout.
+      const { exitCode, signalCode, stdout, stderr } = await runTests(
+        ["32-failure-leaves-handle.js"],
+        { BUN_TEST_DRAIN_EVENT_LOOP: "1", TEST_MODULE: module },
+        [],
+        20_000,
+      );
+      expect(stdout).toContain("EXIT 1");
+      expect(stdout).not.toContain("BEFORE_EXIT");
+      expect({ ...report(stderr), exitCode, signalCode }).toEqual({
+        tests: { "fails and leaves an interval": "fail" },
+        summary: { pass: 0, fail: 1 },
+        exitCode: 1,
+        signalCode: null,
+      });
+    },
+  );
+
+  test("should fail a suite whose before() or after() hook fails instead of reporting its tests as passing", async () => {
+    // Suite-level hooks hand their failure to the done callback of a bun:test beforeAll/afterAll
+    // hook. It was printed as an unhandled error between tests, and the suite's tests still ran
+    // and were reported as passing.
+    const { exitCode, stdout, stderr } = await runTests(["30-failing-suite-hooks.js"]);
+    expect(stdout).not.toContain("BODY_RAN_AFTER_FAILED_BEFORE");
+    expect(stderr).toContain("error: suite after() failed");
+    expect(stderr).toContain("error: suite before() failed");
+    expect({ ...report(stderr), exitCode }).toEqual({
+      tests: {
+        "suite whose after() fails > passes on its own": "pass",
+        "suite whose after() fails > (unnamed)": "fail",
+        "suite whose before() fails > (unnamed)": "fail",
+      },
+      summary: { pass: 1, fail: 2 },
+      exitCode: 1,
+    });
+  });
+
   test("should support done callbacks in tests and hooks", async () => {
     const { exitCode, stderr } = await runTests(["10-done-callbacks.js"]);
     expect(stderr).toContain("2 pass");
@@ -122,8 +191,12 @@ describe("node:test", () => {
     });
   });
 
-  test("should run todo bodies under --todo instead of registering an empty function", async () => {
-    const { exitCode, stderr } = await runTests(["13-todo-bodies.js"], {}, ["--todo"]);
+  // A todo body reports its expected failure through done() as well.
+  test.each([
+    { mode: "", args: ["--todo"] },
+    { mode: " and --concurrent", args: ["--todo", "--concurrent"] },
+  ])("should run todo bodies under --todo$mode instead of registering an empty function", async ({ args }) => {
+    const { exitCode, stderr } = await runTests(["13-todo-bodies.js"], {}, args);
     expect(stderr).toContain("2 todo");
     expect(stderr).toContain("1 pass");
     expect({ exitCode, stderr }).toMatchObject({
@@ -325,23 +398,36 @@ describe("node:test", () => {
   });
 });
 
-async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
+/** The verdict `bun test` printed for each test, and the counts in its summary. */
+function report(stderr: string) {
+  return {
+    tests: Object.fromEntries(
+      Array.from(stderr.matchAll(/^\((pass|fail)\) (.+?)(?: \[[\d.]+m?s\])?\r?$/gm), ([, verdict, name]) => [
+        name,
+        verdict,
+      ]),
+    ),
+    summary: Object.fromEntries(
+      Array.from(stderr.matchAll(/^ *(\d+) (pass|fail|errors?)\r?$/gm), ([, count, kind]) => [kind, Number(count)]),
+    ),
+  };
+}
+
+// `timeout` kills a child that does not exit on its own; the caller then sees its `signalCode`.
+async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = [], timeout?: number) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
-  const {
-    exited,
-    stdout: stdoutStream,
-    stderr: stderrStream,
-  } = spawn({
+  const proc = spawn({
     cmd: [bunExe(), "test", ...args, ...testPaths],
     env: { ...bunEnv, ...env },
     stderr: "pipe",
+    timeout,
   });
   const [exitCode, stdout, stderr] = await Promise.all([
-    exited,
-    new Response(stdoutStream).text(),
-    new Response(stderrStream).text(),
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
   ]);
-  return { exitCode, stdout, stderr };
+  return { exitCode, signalCode: proc.signalCode, stdout, stderr };
 }
 
 describe("node:test mock", () => {

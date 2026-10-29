@@ -719,9 +719,10 @@ impl BunTest {
                 RefDataValue::Execution {
                     group_index: self.execution.group_index,
                     entry_data: Some(EntryData {
+                        file_generation: self.bun_test_root.file_generation,
                         sequence_index: active_sequence_index,
                         entry: active_entry.as_ptr().cast::<()>(),
-                        remaining_repeat_count: sequence.remaining_repeat_count as i64,
+                        attempt: sequence.attempt,
                     }),
                 }
             }
@@ -797,6 +798,15 @@ impl BunTest {
         Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
+    fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
+        if let Some(strong) = clone_active_strong() {
+            // An `entry` that is over fails nothing; the error prints between tests or is dropped.
+            strong.get().on_uncaught_exception(global_this, Some(error), false, entry);
+            return;
+        }
+        let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error, false);
+    }
+
     pub(crate) fn bun_test_done_callback(
         cx: &mut JsScope<'_>,
         this_value: JsLocal<'_>,
@@ -812,6 +822,9 @@ impl BunTest {
         let value = error.to_js();
 
         let was_error = !value.is_empty_or_undefined_or_null();
+        if was_error && !this.called.get() {
+            this.errored.set(true);
+        }
         if this.called.get() {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
@@ -819,7 +832,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                Self::on_done_error(global_this, &this.entry, value);
             }
         }
         this.called.set(true);
@@ -1116,7 +1129,7 @@ impl BunTest {
 
         if cfg_done_parameter {
             bun_core::scoped_log!(bun_test_group, "callTestCallback -> appending done callback param: data {}", cfg_data);
-            done_callback = DoneCallback::create_unbound(global_this);
+            done_callback = DoneCallback::create_unbound(global_this, cfg_data);
             done_arg = match DoneCallback::bind(done_callback, global_this) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1177,10 +1190,12 @@ impl BunTest {
         // over-count and the done-callback path would never observe
         // `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
+        let mut done_errored = false;
         if !done_callback.is_empty() && !result.is_empty() {
             if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
                 if dcb_data.called.get() {
                     // done callback already called or the callback errored; add result immediately
+                    done_errored = dcb_data.errored.get();
                 } else {
                     let r = Self::ref_(this_strong, cfg_data);
                     let alias = NonNull::new(r.as_ptr())
@@ -1228,6 +1243,11 @@ impl BunTest {
                             Bun__TestScope__Describe2__bunTestCatch,
                         );
                         // TODO: properly propagate exception upwards
+                        if done_errored {
+                            // `done(err)` ends the entry without the promise, here as in `bun_test_done_callback`.
+                            // SAFETY: re-derived after the JS callback returned; sole `&mut` at this point.
+                            unsafe { (*this).add_result(cfg_data) };
+                        }
                         return None;
                     }
                     PromiseStatus::Fulfilled => {
@@ -1271,6 +1291,10 @@ impl BunTest {
         let _ = is_rejection;
 
         let handle_status: HandleUncaughtExceptionResult = match self.phase {
+            // The entry is gone with its file. It must not fail the scope this file is collecting.
+            _ if user_data.names_an_earlier_file(self.bun_test_root.file_generation) => {
+                HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
+            }
             Phase::Collection => self.collection.handle_uncaught_exception(user_data),
             Phase::Done => HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests,
             Phase::Execution => self.execution.handle_uncaught_exception(user_data),
@@ -1393,9 +1417,11 @@ impl Drop for BunTest {
 // `ExecutionEntry` owned by `BunTest::execution`.
 #[derive(Copy, Clone)]
 pub(crate) struct EntryData {
+    /// `BunTestRoot::file_generation` of the entry's file. A later file can reuse the address in `entry`.
+    pub(crate) file_generation: u32,
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
-    pub(crate) remaining_repeat_count: i64,
+    pub(crate) attempt: u32,
 }
 
 // Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
@@ -1419,6 +1445,10 @@ pub(crate) enum RefDataValue {
 }
 
 impl RefDataValue {
+    pub(crate) fn names_an_earlier_file(&self, file_generation: u32) -> bool {
+        matches!(self, RefDataValue::Execution { entry_data: Some(entry_data), .. } if entry_data.file_generation != file_generation)
+    }
+
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;
@@ -1462,8 +1492,8 @@ impl fmt::Display for RefDataValue {
                 if let Some(ed) = entry_data {
                     write!(
                         f,
-                        "execution: group_index={},sequence_index={},entry_index={:x},remaining_repeat_count={}",
-                        group_index, ed.sequence_index, ed.entry as usize, ed.remaining_repeat_count
+                        "execution: group_index={},sequence_index={},entry_index={:x},attempt={}",
+                        group_index, ed.sequence_index, ed.entry as usize, ed.attempt
                     )
                 } else {
                     write!(f, "execution: group_index={}", group_index)

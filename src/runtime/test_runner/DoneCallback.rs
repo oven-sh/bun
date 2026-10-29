@@ -4,21 +4,26 @@ use bun_ptr::{JsCell, RefPtr};
 use core::cell::Cell;
 
 use crate::generated_bindgen::bun_test::Bun__BunTest__bunTestDoneCallback;
-use crate::test_runner::bun_test::{group_begin, RefData};
+use crate::test_runner::bun_test::{group_begin, RefData, RefDataValue};
 
 pub(crate) struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
     pub(crate) r#ref: JsCell<Option<RefPtr<RefData>>>,
+    /// The first call passed an error.
+    pub(crate) errored: Cell<bool>,
     pub(crate) called: Cell<bool>, // = false
+    pub(crate) entry: RefDataValue,
 }
 
 impl DoneCallback {
-    pub(crate) fn create_unbound(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn create_unbound(global: &JSGlobalObject, entry: RefDataValue) -> JSValue {
         let _g = group_begin!();
 
         let done_callback = DoneCallback {
             r#ref: JsCell::new(None),
+            errored: Cell::new(false),
             called: Cell::new(false),
+            entry,
         };
 
         let value = done_callback.to_js(global);

@@ -93,13 +93,6 @@ pub(crate) struct Execution {
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
     pub(crate) on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
-    /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
-    /// set/restored alongside it. `get_current_state_data()` can't name a
-    /// sequence inside a concurrent group; this can, for code re-entered from
-    /// the microtask drain inside `run_test_callback` (node:test's runtime
-    /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
-    /// stamped).
-    pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -159,6 +152,9 @@ pub(crate) struct ExecutionSequence {
     pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
+    pub(crate) attempt: u32,
+    /// Bit `n` is set when attempt `n` failed and a retry replaced it.
+    pub(crate) retried_attempts: u64,
     pub(crate) result: Result,
     pub(crate) executing: bool,
     pub(crate) started_at: Timespec,
@@ -183,6 +179,8 @@ impl ExecutionSequence {
             remaining_repeat_count: repeat_count,
             remaining_retry_count: retry_count,
             // defaults:
+            attempt: 0,
+            retried_attempts: 0,
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
@@ -281,7 +279,6 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
-            on_stack_entry_data: core::cell::Cell::new(None),
         }
     }
 
@@ -459,6 +456,12 @@ impl Execution {
             ));
             return None;
         };
+        // SAFETY: `self` is the `execution` field of a live `BunTest`, and `bun_test_root` is another field of it.
+        let root = unsafe { (*self.bun_test()).bun_test_root };
+        if entry_data.file_generation != root.file_generation {
+            group_log::log(format_args!("runOneCompleted: the data is for an earlier file"));
+            return None;
+        }
         // Spec compares `this.activeGroup() != data.group(buntest)` by pointer; both index into
         // `self.groups`, so equality is exactly `group_index == self.group_index`. Comparing the
         // index avoids materializing a `&mut BunTest` that would alias `&mut self`.
@@ -478,9 +481,9 @@ impl Execution {
             return None;
         }
         let sequence = &mut self.sequences[seq_abs];
-        if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
+        if sequence.attempt != entry_data.attempt {
             group_log::log(format_args!(
-                "runOneCompleted: the data is for a previous repeat count (outdated)",
+                "runOneCompleted: the data is for a previous retry or repeat (outdated)",
             ));
             return None;
         }
@@ -496,6 +499,25 @@ impl Execution {
         }
         group_log::log(format_args!("runOneCompleted: the data is valid and current"));
         Some((NonNull::from(sequence), NonNull::from(group)))
+    }
+
+    /// `data` names an attempt of a sequence of this file that failed and was retried. The retry reported that failure.
+    fn is_retried_attempt(&mut self, data: &RefDataValue) -> bool {
+        let RefDataValue::Execution { group_index, entry_data: Some(entry_data) } = data else {
+            return false;
+        };
+        // SAFETY: `self` is the `execution` field of a live `BunTest`, and `bun_test_root` is another field of it.
+        let root = unsafe { (*self.bun_test()).bun_test_root };
+        if entry_data.file_generation != root.file_generation {
+            return false;
+        }
+        let Some(group) = self.groups.get(*group_index) else {
+            return false;
+        };
+        let seq_abs = group.sequence_start + entry_data.sequence_index;
+        seq_abs < group.sequence_end
+            && entry_data.attempt < u64::BITS
+            && self.sequences[seq_abs].retried_attempts & (1 << entry_data.attempt) != 0
     }
 
     /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics) because they point into
@@ -539,6 +561,9 @@ impl Execution {
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
+                if sequence.attempt < u64::BITS {
+                    sequence.retried_attempts |= 1 << sequence.attempt;
+                }
                 Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
@@ -745,12 +770,16 @@ impl Execution {
         }
 
         // Preserve retry/repeat counts across reset
-        *sequence = ExecutionSequence::init(
-            sequence.first_entry,
-            sequence.test_entry,
-            sequence.remaining_retry_count,
-            sequence.remaining_repeat_count,
-        );
+        *sequence = ExecutionSequence {
+            attempt: sequence.attempt.wrapping_add(1),
+            retried_attempts: sequence.retried_attempts,
+            ..ExecutionSequence::init(
+                sequence.first_entry,
+                sequence.test_entry,
+                sequence.remaining_retry_count,
+                sequence.remaining_repeat_count,
+            )
+        };
 
         // Snapshot counters are keyed by full test name and incremented on every
         // toMatchSnapshot() call. Without this reset, retries / repeats would
@@ -773,6 +802,10 @@ impl Execution {
         let Some((sequence_ptr, _group_ptr)) =
             self.get_current_and_valid_execution_sequence(user_data)
         else {
+            if self.is_retried_attempt(user_data) {
+                // A retry absorbs the failure of the attempt it replaced, late errors included.
+                return HandleUncaughtExceptionResult::HideError;
+            }
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
         };
         // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
@@ -1007,9 +1040,10 @@ fn step_sequence_one(
         group_log::log(format_args!("runSequence queued callback"));
 
         let entry_data = EntryData {
+            file_generation: buntest.bun_test_root.file_generation,
             sequence_index,
             entry: next_item_ptr.as_ptr() as *const (),
-            remaining_repeat_count: sequence.remaining_repeat_count as i64,
+            attempt: sequence.attempt,
         };
         let callback_data = RefDataValue::Execution {
             group_index: this.group_index,
@@ -1018,14 +1052,11 @@ fn step_sequence_one(
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
         let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
-        let prev_on_stack_data = this.on_stack_entry_data.replace(Some(entry_data));
         let on_stack_cell = &raw const this.on_stack_entry;
-        let on_stack_data_cell = &raw const this.on_stack_entry_data;
-        // SAFETY: both cells point into `buntest.execution`, which is
+        // SAFETY: the cell points into `buntest.execution`, which is
         // never moved during execution (arena-owned BunTest behind an Rc).
         let _restore = scopeguard::guard((), move |()| unsafe {
             (*on_stack_cell).set(prev_on_stack);
-            (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
         if BunTest::run_test_callback(

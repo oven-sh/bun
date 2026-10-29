@@ -900,6 +900,8 @@ async function once(emitter: EmitterOrTarget, type: $Node.EventName, options: On
 Object.defineProperty(once, "name", { value: "once" });
 
 const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
+// `value` before `done` is deliberate: it is the order of a generator result, so `Bun::getIteratorResult` reads these
+// by slot. Node.js v26.4.0 put `done` first here with a lint autofix (nodejs/node#63526). Bun does not follow that.
 function createIterResult(value: unknown, done: boolean) {
   return { value, done } as IteratorResult<unknown, undefined>;
 }

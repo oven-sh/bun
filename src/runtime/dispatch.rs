@@ -1349,12 +1349,9 @@ pub(crate) unsafe fn __bun_fire_timer(
             )
         }
         EventLoopTimerTag::WorkerWaitsForRoom => {
-            feature_timer_arm!(
-                [WorkerConstructor],
-                WebWorker,
-                room_timer,
-                |c, _now, _vm| WebWorker::on_room_timer(c)
-            )
+            feature_timer_arm!([WorkerConstructor], WebWorker, room_timer, |c, _now, vm| {
+                (*c).on_room_timer(&*vm)
+            })
         }
         EventLoopTimerTag::GcRepeating => {
             timer_arm!(

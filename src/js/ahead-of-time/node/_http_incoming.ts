@@ -41,6 +41,7 @@ const {
 } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kCapture: typeof shared.kCapture = shared.kCapture;
+const domainHooks = shared.domainHooks;
 const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
 const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
 const abortedSymbol: typeof http.abortedSymbol = http.abortedSymbol;
@@ -239,6 +240,10 @@ function IncomingMessage(
       this.upgrade = false;
       this._events = preallocatedEvents();
       this._readableState = createUnreadByteState(nativeHighWaterMark);
+      if (domainHooks.bindEmitter !== undefined) {
+        ("unlikely");
+        domainHooks.bindEmitter(this);
+      }
       this[kShapeMode] = true;
       this._maxListeners = undefined;
       this[kCapture] = EventEmitterPrototype[kCapture];

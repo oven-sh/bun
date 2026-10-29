@@ -34,7 +34,7 @@ const {
 } = require("internal/validators");
 const { addAbortListener } = require("internal/abort_listener");
 const shared = require("internal/shared");
-const { resistStopPropagation } = shared;
+const { resistStopPropagation, domainHooks } = shared;
 
 const types = require("node:util/types");
 let inspect: ((value: unknown, opts?: object) => string) | undefined;
@@ -186,6 +186,10 @@ declare global {
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions) {
+  if (domainHooks.bindEmitter !== undefined) {
+    ("unlikely");
+    domainHooks.bindEmitter(this);
+  }
   if (!IS_COMPILED_AHEAD_OF_TIME) {
     if (this._events === undefined || this._events === (this as any).__proto__._events) {
       this._events = Object.create(null);

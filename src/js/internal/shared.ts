@@ -463,6 +463,13 @@ const originals: {
     | undefined;
 } = { eventEmitter: undefined };
 
+// Filled by node:domain when it loads. Every text that constructs an emitter gives `bindEmitter` the emitter first, as the
+// EventEmitter.init that node's lib/domain.js installs does. `active` tells an AsyncResource which domain it is made in.
+const domainHooks: {
+  bindEmitter: ((emitter: object) => void) | undefined;
+  active: (() => $Node.Domain | null | undefined) | undefined;
+} = { bindEmitter: undefined, active: undefined };
+
 export default {
   isStoppedModuleGraphRunning,
   kInternalAssertionSuffix,
@@ -498,4 +505,5 @@ export default {
   kInternalSendOptions,
 
   originals,
+  domainHooks,
 } as const;

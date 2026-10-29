@@ -47,6 +47,7 @@ const {
   isStoppedModuleGraphRunning,
 } = require("internal/shared");
 const shared = require("internal/shared");
+const domainHooks = shared.domainHooks;
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary, loadChild } = require("internal/cluster/isPrimary");
@@ -3115,6 +3116,10 @@ function ServerResponse(
 ): void {
   if (options === kHandle) {
     const events: $Node.HttpResponseEvents = { __proto__: null, finish: emitResponseFinish };
+    if (domainHooks.bindEmitter !== undefined) {
+      ("unlikely");
+      domainHooks.bindEmitter(this);
+    }
     this._events = events as any;
     this._eventsCount = 0;
     this[kShapeMode] = false;
@@ -3182,6 +3187,10 @@ function ServerResponse(
   }
   const exchange = makeExchange(this, null, noResponseEvents, null);
   exchange.flags = EXCHANGE_HAS_PENDING_CALLBACKS;
+  if (domainHooks.bindEmitter !== undefined) {
+    ("unlikely");
+    domainHooks.bindEmitter(this);
+  }
   this._events = Object.create(null);
   this._eventsCount = 0;
   this[kShapeMode] = false;

@@ -28,6 +28,7 @@
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
+const { domainHooks } = require("internal/shared");
 // SameValue in pure operators. Node compares stores with the primordial
 // ObjectIs; capturing Object.is here would still inherit a patch applied
 // before this module was lazily loaded.
@@ -35,8 +36,6 @@ function sameValue(a, b) {
   if (a === b) return a !== 0 || 1 / a === 1 / b;
   return a !== a && b !== b;
 }
-
-let domainActiveGetter: (() => any) | null = null;
 
 class Frame {
   readonly storage: AsyncLocalStorage;
@@ -333,11 +332,9 @@ class AsyncLocalStorage<T = any> {
     }
   }
 
-  // getStore() without going through the userland-patchable prototype method.
+  // getStore() for the asserts: they must not call a `getStore` that a program has replaced.
   #peek(): T | undefined {
-    var start = get();
-    if (start === undefined || isMasked(start, this)) return this.#defaultValue;
-    var bound = find(start, this);
+    var bound = lookup(get(), this);
     return bound === undefined ? this.#defaultValue : (bound.value as T);
   }
 
@@ -360,7 +357,12 @@ class AsyncLocalStorage<T = any> {
 
   getStore(): T | undefined {
     $debug("getStore " + (this as any).__id__);
-    return this.#peek();
+    var start = get();
+    if (start === undefined || isMasked(start, this)) return this.#defaultValue;
+    for (var f: Frame | undefined = start; f !== undefined; f = f.prev) {
+      if (f.storage === this) return f.value as T;
+    }
+    return this.#defaultValue;
   }
 
   withScope(store) {
@@ -412,8 +414,9 @@ class AsyncResource {
     this.#snapshot = get();
     this.#triggerAsyncId = triggerAsyncId;
 
-    if (domainActiveGetter !== null) {
-      const domain = domainActiveGetter();
+    const activeDomain = domainHooks.active;
+    if (activeDomain !== undefined) {
+      const domain = activeDomain();
       if (domain != null) {
         Object.defineProperty(this, "domain", {
           __proto__: null,
@@ -680,8 +683,6 @@ const asyncWrapProviders = {
   INSPECTORJSBINDING: 57,
 };
 
-const kSetDomainActiveGetter = Symbol.for("::bunternal::async_hooks.setDomainActiveGetter");
-
 export type { Frame };
 
 export default {
@@ -692,7 +693,4 @@ export default {
   executionAsyncResource,
   asyncWrapProviders,
   AsyncResource,
-  [kSetDomainActiveGetter](fn: () => any) {
-    domainActiveGetter = fn;
-  },
 };

@@ -2,20 +2,45 @@
 // Port of node v26.3.0 lib/domain.js. Async propagation rides on
 // AsyncLocalStorage instead of node's createHook init/before/after hooks.
 const EventEmitter = require("node:events");
-const asyncHooks = require("node:async_hooks");
-const { AsyncLocalStorage } = asyncHooks;
+const { AsyncLocalStorage } = require("node:async_hooks");
+const { domainHooks } = require("internal/shared");
 
 const ObjectDefineProperty = Object.defineProperty;
 const ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeSlice = Array.prototype.slice;
-const ArrayPrototypeSplice = Array.prototype.splice;
+const ArrayPrototypeSplice: (this: unknown[], start: number, deleteCount?: number) => unknown[] =
+  Array.prototype.splice;
 const ArrayPrototypePush = Array.prototype.push;
 const AlsGetStore = AsyncLocalStorage.prototype.getStore;
 const AlsEnterWith = AsyncLocalStorage.prototype.enterWith;
 const ProcessNextTick = process.nextTick;
 
 const setDomainErrorHandler = $newCppFunction("BunProcess.cpp", "jsFunctionSetDomainErrorHandler", 2);
+
+type AnyFunction = (...args: any[]) => unknown;
+
+declare global {
+  namespace $Node {
+    interface Domain extends EventEmitter {
+      members: unknown[];
+      domain?: Domain | null;
+      _errorHandler(er: unknown): boolean;
+      enter(): void;
+      exit(): void;
+      add(ee: object): void;
+      remove(ee: object): void;
+      run(fn: AnyFunction, ...args: unknown[]): unknown;
+      intercept(cb: AnyFunction): AnyFunction;
+      bind(cb: AnyFunction): AnyFunction;
+    }
+  }
+}
+
+interface DomainError extends Error {
+  domainBound?: unknown;
+  domainThrown?: boolean;
+}
 
 const exports: any = {};
 
@@ -196,6 +221,7 @@ function fatalErrorDispatch(er: any, atEntryPoint: boolean) {
 
 class Domain extends EventEmitter {
   members: any[];
+  declare domain?: Domain | null;
 
   constructor() {
     super();
@@ -264,7 +290,7 @@ class Domain extends EventEmitter {
 
     const thisDomain = this.domain;
     if (thisDomain && ee instanceof Domain) {
-      for (let d = thisDomain; d; d = d.domain) {
+      for (let d: Domain | null | undefined = thisDomain; d; d = d.domain) {
         if (ee === d) return;
       }
     }
@@ -324,7 +350,7 @@ class Domain extends EventEmitter {
 
 function intercepted(_this: any, self: any, cb: any, fnargs: IArguments) {
   if (fnargs[0] && fnargs[0] instanceof Error) {
-    const er = fnargs[0];
+    const er: DomainError = fnargs[0];
     er.domainBound = cb;
     er.domainThrown = false;
     ObjectDefineProperty(er, "domain", {
@@ -420,9 +446,10 @@ EventEmitter.prototype.emit = function emit(this: any, ...args: any[]) {
   return ret;
 };
 
-const eventInit = EventEmitter.init;
-EventEmitter.init = function init(this: any, opts: any) {
-  ObjectDefineProperty(this, "domain", {
+// node puts a function in EventEmitter.init that does this and then calls the init that was there:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L446. Here every text that constructs an emitter calls it first.
+domainHooks.bindEmitter = function bindEmitter(emitter: any) {
+  ObjectDefineProperty(emitter, "domain", {
     __proto__: null,
     configurable: true,
     enumerable: false,
@@ -430,14 +457,11 @@ EventEmitter.init = function init(this: any, opts: any) {
     writable: true,
   } as PropertyDescriptor);
   const active = currentActive();
-  if (active && typeof active._errorHandler === "function" && !(this instanceof Domain)) {
-    this.domain = active;
+  if (active && typeof active._errorHandler === "function" && !(emitter instanceof Domain)) {
+    emitter.domain = active;
   }
-
-  return eventInit.$call(this, opts);
 };
-
-asyncHooks[Symbol.for("::bunternal::async_hooks.setDomainActiveGetter")](currentActive);
+domainHooks.active = currentActive;
 setDomainErrorHandler(fatalErrorDispatch, domainWouldClaim);
 
 export default exports;

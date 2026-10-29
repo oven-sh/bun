@@ -1064,20 +1064,29 @@ console.log("About manifest:", aboutHtml);
         "a0.png": "a0",
         "a/c.png": "c",
       });
-      const [server] = printers(await build(String(dir), { splitting: true }));
-      const [manifest] = parseManifests(server.text);
-      expect(manifest.files.map(file => [file.loader, file.input])).toEqual([
-        ["js", "index.html"],
-        ["html", "index.html"],
-        ["js", "lazy/x.js"],
-        ["js", "lazy0.js"],
-        ["css", "index.html"],
-        ["css", "lazy/x.js"],
-        ["css", "lazy0.js"],
-        ["file", "a/c.png"],
-        ["file", "a0.png"],
-        ["file", "b.png"],
-      ]);
+      const outputs = await build(String(dir), { splitting: true });
+      const [manifest] = parseManifests(printers(outputs)[0].text);
+      // Each entry's loader and input, and a part of the file that its path must name.
+      const expected = [
+        ["js", "index.html", `console.log("client")`],
+        ["html", "index.html", `<html>`],
+        ["js", "lazy/x.js", `console.log("x")`],
+        ["js", "lazy0.js", `console.log("lazy 0")`],
+        ["css", "index.html", `color: green`],
+        ["css", "lazy/x.js", `.x {`],
+        ["css", "lazy0.js", `.lazy0 {`],
+        ["file", "a/c.png", "c"],
+        ["file", "a0.png", "a0"],
+        ["file", "b.png", "b"],
+      ];
+      expect(manifest.files.map(file => [file.loader, file.input])).toEqual(
+        expected.map(([loader, input]) => [loader, input]),
+      );
+      const text = (path: string) => outputs.find(output => "./" + output.path === path)!.text;
+      const named = manifest.files.map((file, i) =>
+        file.loader === "file" ? text(file.path) === expected[i][2] : text(file.path).includes(expected[i][2]),
+      );
+      expect(named).toEqual(expected.map(() => true));
     });
 
     // `bun build` writes the chunks to disk itself.

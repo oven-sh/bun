@@ -9767,7 +9767,13 @@ declare module "bun" {
      *   A damaged JPEG that libjpeg-turbo would decode with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
      *   Blocks with no data come back flat grey.
+     *   A JPEG with more than 500 scans rejects. Encoders write about 10, and
+     *   each scan costs a pass over the whole image.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_OUT_OF_MEMORY` — a codec reported a failed allocation. The JPEG
+     *   codec reports all of its own. Elsewhere in the pipeline a failed
+     *   allocation can end the process, so keep `maxPixels` within what your
+     *   memory allows.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
@@ -9779,6 +9785,7 @@ declare module "bun" {
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_OUT_OF_MEMORY"
       | "ERR_INVALID_STATE";
 
     /**

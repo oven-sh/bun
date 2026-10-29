@@ -2453,13 +2453,7 @@ pub mod bv2_impl {
             }
 
             if self.graph.pending_items == 0 {
-                let this: *mut Self = self;
-                // reshaped for borrowck — `&self.graph` and
-                // `self` go to the same call. Take a raw ptr so the two `&mut` don't
-                // overlap from rustc's view.
-                // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
-                // fields and the `BundleV2` callback surface; no aliasing UB.
-                if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
+                if self.drain_deferred_tasks() {
                     return false;
                 }
                 return true;
@@ -2672,21 +2666,12 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
-                    // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
-                    // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
-                    // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
-                    // until after the last `*value_ptr` access below.
-                    let (found_existing, value_ptr): (bool, *mut u32) = {
-                        let entry = self
-                            .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
-                            .expect("oom");
-                        (
-                            entry.found_existing,
-                            std::ptr::from_mut::<u32>(entry.value_ptr),
-                        )
-                    };
-                    if !found_existing {
+                    let entry = self.graph.build_graphs[target]
+                        .get_or_put(path_primary.text)
+                        .expect("oom");
+                    if !entry.found_existing {
+                        // `enqueue_parse_task` below borrows all of `self`.
+                        let value_ptr: *mut u32 = entry.value_ptr;
                         let loader: Loader = 'brk: {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
@@ -2717,7 +2702,7 @@ pub mod bv2_impl {
                                 import_record.original_target,
                             )
                             .expect("oom");
-                        // SAFETY: see `value_ptr` note above.
+                        // SAFETY: nothing has touched `build_graphs[target]` since `get_or_put`.
                         unsafe { *value_ptr = idx };
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
@@ -2731,8 +2716,7 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize]
                                 .as_mut_slice()
                                 [import_record.import_record_index as usize];
-                        // SAFETY: see `value_ptr` note above.
-                        record.source_index = Index::init(unsafe { *value_ptr });
+                        record.source_index = Index::init(*entry.value_ptr);
                     }
                     return;
                 }
@@ -5870,10 +5854,7 @@ pub mod bv2_impl {
                             if LinkerContext::scan_css_imports(
                                 u32::try_from(index).expect("int cast"),
                                 import_records.as_slice(),
-                                // `scan_css_imports` takes the column as a raw
-                                // `*const` slice (the scanImportsAndExports caller holds raw
-                                // SoA pointers); it only reads via `is_none()`.
-                                std::ptr::from_ref(css_asts),
+                                css_asts,
                                 sources,
                                 loaders,
                                 &mut log,

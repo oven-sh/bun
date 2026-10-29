@@ -18,7 +18,18 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { spawn as cpSpawn, spawnSync as cpSpawnSync } from "node:child_process";
+import {
+  closeSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -1805,6 +1816,82 @@ describe("argv0", () => {
     expect(output.trim()).toBe(bunExe());
     await proc.exited;
   });
+
+  // The path of the error is cmd[0], not the argv[0] that the child was to receive.
+  describe.each([
+    ["undefined", undefined],
+    ['"x"', "x"],
+    ['""', ""],
+  ])("argv0: %s, a spawn that fails names cmd[0] as its path", (_, argv0) => {
+    // What spawn() and spawnSync() throw for the same command.
+    const thrown = (cmd: string[], env: Record<string, string | undefined> = bunEnv) => {
+      const options = { cmd, argv0, env, stdin: "ignore", stdout: "ignore", stderr: "ignore" } as const;
+      const attempt = (start: () => unknown) => {
+        try {
+          start();
+        } catch (error: any) {
+          return {
+            code: error.code,
+            path: error.path,
+            messageNamesCmd0: String(error.message).includes(`'${cmd[0]}'`),
+          };
+        }
+        return "did not throw";
+      };
+      return [attempt(() => spawn(options)), attempt(() => spawnSync(options))];
+    };
+
+    it("the file does not exist", () => {
+      using dir = tempDir("spawn-argv0-enoent", {});
+      // With the extension, Windows gives the name to the system and does not search for it first.
+      const missing = join(String(dir), "no-such-executable.exe");
+      const expected = { code: "ENOENT", path: missing, messageNamesCmd0: true };
+      expect(thrown([missing])).toEqual([expected, expected]);
+    });
+
+    // The file is found on PATH and its interpreter is not: the path is the name as given, not where it was found.
+    it.skipIf(isWindows)("a name from PATH that cannot start", () => {
+      using dir = tempDir("spawn-argv0-badtool", {});
+      writeFileSync(join(String(dir), "badtool"), "#!/no/such/interpreter\n", { mode: 0o755 });
+      const expected = { code: "ENOENT", path: "badtool", messageNamesCmd0: true };
+      expect(thrown(["badtool"], { ...bunEnv, PATH: String(dir) + path.delimiter + bunEnv.PATH })).toEqual([
+        expected,
+        expected,
+      ]);
+    });
+
+    // ELOOP is not one of the codes that name a missing or forbidden file.
+    it.skipIf(isWindows)("the file is a symlink to itself", () => {
+      using dir = tempDir("spawn-argv0-eloop", {});
+      const loop = join(String(dir), "loop");
+      symlinkSync("loop", loop);
+      const expected = { code: "ELOOP", path: loop, messageNamesCmd0: true };
+      expect(thrown([loop])).toEqual([expected, expected]);
+    });
+  });
+
+  // node:child_process names the file as the path of a spawn that fails. A cgroup failure still names the cgroup.
+  it.skipIf(!isLinux)(
+    "node:child_process keeps the cgroup as the path of a spawn that could not enter it",
+    async () => {
+      using dir = tempDir("spawn-argv0-cgroup", {});
+      const missing = join(String(dir), "no-such-cgroup");
+      const fields = (error: any) => ({ code: error?.code, path: error?.path });
+
+      const { promise, resolve, reject } = Promise.withResolvers<Error>();
+      const child = cpSpawn("true", [], { cgroup: missing } as any);
+      child.on("error", resolve);
+      child.on("spawn", () => reject(new Error("the spawn did not fail")));
+
+      expect({
+        spawnSync: fields(cpSpawnSync("true", [], { cgroup: missing } as any).error),
+        spawn: fields(await promise),
+      }).toEqual({
+        spawnSync: { code: "ENOENT", path: missing },
+        spawn: { code: "ENOENT", path: missing },
+      });
+    },
+  );
 });
 
 describe("option combinations", () => {

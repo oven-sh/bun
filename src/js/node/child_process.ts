@@ -677,6 +677,9 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   const resultError = result.error;
   if (resultError) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1127-L1129
+    // A spawn that could not enter `options.cgroup` keeps the cgroup as its path.
+    if (typeof resultError.errno === "number" && options.cgroup == null) resultError.path = options.file;
     resultError.syscall = "spawnSync " + options.file;
     resultError.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
@@ -1550,6 +1553,8 @@ class ChildProcess extends EventEmitter {
         exCode === "ENOENT"
       ) {
         this.#handle = null;
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L286-L291
+        if (options.cgroup == null) (ex as SystemError).path = this.spawnfile;
         (ex as SystemError).syscall = "spawn " + this.spawnfile;
         (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
         process.nextTick(() => {

@@ -6,7 +6,7 @@ use std::io::Write as _;
 use crate::ipc as IPC;
 #[cfg(not(windows))]
 use bun_core::StackCheck;
-use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
+use bun_core::{Output, Timespec, TimespecMockMode, Utf8Bytes, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
@@ -81,6 +81,8 @@ struct Argv0Result {
     argv0: ZBox,
     /// Was arena-owned `[:0]u8`; caller stashes in its `Vec<ZBox>` backing store.
     arg0: ZBox,
+    /// `cmd[0]` as the caller gave it: the `path` of a spawn that fails.
+    file: Utf8Bytes<'static>,
 }
 
 // This is split into a separate function to conserve stack space.
@@ -147,6 +149,7 @@ fn get_argv0(
         } else {
             ZBox::from_bytes(arg0.slice())
         },
+        file: arg0,
     })
 }
 
@@ -155,6 +158,8 @@ fn get_argv0(
 /// `storage` receives ownership of every NUL-terminated string whose pointer is
 /// pushed into `argv` / `argv0`; the caller's `Vec<ZBox>`
 /// is dropped after `spawn_process` returns.
+///
+/// Returns `cmd[0]` as the caller gave it.
 fn get_argv(
     global_this: &JSGlobalObject,
     args: JSValue,
@@ -163,7 +168,7 @@ fn get_argv(
     argv0: &mut Option<*const c_char>,
     argv: &mut Vec<CStrPtr>,
     storage: &mut Vec<ZBox>,
-) -> JsResult<()> {
+) -> JsResult<Utf8Bytes<'static>> {
     if args.is_empty_or_undefined_or_null() {
         return Err(
             global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
@@ -260,7 +265,7 @@ fn get_argv(
             global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
         );
     }
-    Ok(())
+    Ok(argv0_result.file)
 }
 
 /// Bun.spawn() calls this.
@@ -393,6 +398,8 @@ fn spawn_maybe_sync(
     // (process-lifetime; centralised non-null deref in `VirtualMachine`).
     let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
     let mut argv: Vec<CStrPtr> = Vec::new();
+    // The `path` of a spawn that fails, like Node's `options.file`. argv[0] can be `argv0`.
+    let file: Utf8Bytes<'static>;
     let cmd_value: JSValue;
     let mut detached = false;
     let mut args = args_;
@@ -605,7 +612,7 @@ fn spawn_maybe_sync(
                 path = new_path;
             }
 
-            get_argv(
+            file = get_argv(
                 cx.global(),
                 cmd_value,
                 path,
@@ -906,7 +913,7 @@ fn spawn_maybe_sync(
                 }
             }
         } else {
-            get_argv(
+            file = get_argv(
                 cx.global(),
                 cmd_value,
                 path,
@@ -1216,30 +1223,25 @@ fn spawn_maybe_sync(
                         .global()
                         .throw_value(c.target.blame(&err).to_js(cx.global())));
                 }
-                match err.get_errno() {
-                    errno @ (sys::Errno::EACCES
-                    | sys::Errno::ENOENT
-                    | sys::Errno::EPERM
-                    | sys::Errno::EISDIR
-                    | sys::Errno::ENOTDIR) => {
-                        let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
-                            // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                            // string we built above (lives in `cstr_storage`).
-                            ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
-                        } else {
-                            ZStr::EMPTY
-                        };
-                        if !display_path.as_bytes().is_empty() {
-                            let mut systemerror = err.with_path(display_path).to_system_error();
-                            if errno == sys::Errno::ENOENT {
-                                systemerror.errno = -UV_E::NOENT;
-                            }
-                            return Err(cx.global().throw_value(
-                                SystemError::from(systemerror).to_error_instance(cx.global()),
-                            ));
-                        }
+                let errno = err.get_errno();
+                // The path on a spawn-layer error is argv[0] or the resolved executable.
+                if !err.path.is_empty()
+                    || matches!(
+                        errno,
+                        sys::Errno::EACCES
+                            | sys::Errno::ENOENT
+                            | sys::Errno::EPERM
+                            | sys::Errno::EISDIR
+                            | sys::Errno::ENOTDIR
+                    )
+                {
+                    let mut systemerror = err.with_path(file.slice()).to_system_error();
+                    if errno == sys::Errno::ENOENT {
+                        systemerror.errno = -UV_E::NOENT;
                     }
-                    _ => {}
+                    return Err(cx.global().throw_value(
+                        SystemError::from(systemerror).to_error_instance(cx.global()),
+                    ));
                 }
 
                 return Err(cx.global().throw_value(err.to_js(cx.global())));

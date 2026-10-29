@@ -15,17 +15,7 @@
 // every platform rather than only showing up as a Windows size bump.
 
 import { describe, expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  isASAN,
-  isDebug,
-  isFreeBSD,
-  isLinux,
-  isWindows,
-  preadExact,
-  readElf64ProgramHeaders,
-} from "harness";
+import { bunEnv, bunExe, isDebug, isFreeBSD, isLinux, isWindows, preadExact, readElf64ProgramHeaders } from "harness";
 import { closeSync, openSync } from "node:fs";
 
 /**
@@ -101,13 +91,13 @@ describe("static TLS footprint", () => {
 // dynamic loader writes to it (it copies environ, stdin, stdout and stderr there) before any code of Bun runs.
 //
 // A mapping smaller than a huge page holds no such stretch, wherever the link puts it. At 2 MB or more it depends on the
-// address the link gave .bss whether every process takes 2 MB more, so any change to Bun can switch that on, and
-// test/aot/perf/start.test.ts fails for that build alone.
+// address the link gave .bss whether every process takes 2 MB more, so any change to Bun can switch that on.
 //
-// When one of these fails, allocate the large table at its first use instead of declaring it zero-filled.
+// The link holds the size below 2 MB (zeroFilledBelow in scripts/build/binary-expectations.ts), and so does
+// test/aot/perf/start.test.ts. When one of them fails, allocate a large table at its first use instead of declaring it
+// zero-filled. The test here holds the tables that were moved that way.
 describe("zero-filled data", () => {
   const smallestPage = 4096n;
-  const hugePage = 2 * 1024 * 1024;
   const [PT_LOAD, PF_W] = [1, 2];
   const pageUp = (address: bigint) => ((address + smallestPage - 1n) / smallestPage) * smallestPage;
 
@@ -119,14 +109,6 @@ describe("zero-filled data", () => {
       .map(segment => ({ start: pageUp(segment.vaddr + segment.filesz), end: pageUp(segment.vaddr + segment.memsz) }))
       .filter(mapping => mapping.end > mapping.start);
   }
-
-  // A debug build and AddressSanitizer make .bss several times larger, and nobody measures their memory. The link of a
-  // build that ships holds the same limit (zeroFilledBelow in scripts/build/binary-expectations.ts).
-  test.skipIf(!isLinux || isDebug || isASAN)("is smaller than a transparent huge page", () => {
-    const sizes = zeroFilledMappings(bunExe()).map(mapping => Number(mapping.end - mapping.start));
-    expect(sizes.length).toBeGreaterThan(0);
-    expect(Math.max(...sizes)).toBeLessThan(hugePage);
-  });
 
   // The Huffman tables of HPACK (768 KB, which only a process that speaks HTTP/2 or HTTP/3 fills) were zero-filled
   // data. A new process reads its own zero-filled data before and after its first HTTP/2 request: the longest stretch

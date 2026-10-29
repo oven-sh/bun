@@ -29,11 +29,13 @@ for f in abort targets; do
 done
 $CXX -O3 -fPIC -std=c++20 ${CPU[@]+"${CPU[@]}"} ${KERNEL[@]+"${KERNEL[@]}"} -Ivendor/highway -Isrc/jsc/bindings \
   -c src/jsc/bindings/highway_hpack.cpp -o "$SUP/highway_hpack.o"
-rm -f "$SUP/libbun_bench_cdeps.a"
-ar rcs "$SUP/libbun_bench_cdeps.a" "$SUP"/*.o
+# Cargo goes by the flags and not by the file, so a changed kernel needs another name to be linked.
+LIB=$SUP/libbun_bench_cdeps-$(cksum <"$SUP/highway_hpack.o" | cut -d' ' -f1).a
+rm -f "$SUP"/libbun_bench_cdeps*.a
+ar rcs "$LIB" "$SUP"/*.o
 
 CXXLIB=stdc++
 [ "$(uname -s)" = Darwin ] && CXXLIB=c++
-export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=$PWD/$SUP/libbun_bench_cdeps.a -Clink-arg=-l$CXXLIB"
+export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=$PWD/$LIB -Clink-arg=-l$CXXLIB"
 export CARGO_PROFILE_BENCH_LTO=${CARGO_PROFILE_BENCH_LTO:-fat}
 exec cargo bench -p bun_hpack --bench hpack -- "$@"

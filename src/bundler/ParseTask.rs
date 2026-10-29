@@ -47,7 +47,7 @@ mod EventLoop {
 }
 
 // the per-file parse arena is held as `bump: &'static Bump` (the
-// worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
+// worker arena is pinned for the entire bundle pass — see `Worker::arena`),
 // so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
 // borrows directly. No erasure helper is needed; `StoreStr::new` covers the
 // remaining AST-string sites (`E::String.data`, `FileLoaderHash.key`).
@@ -2229,10 +2229,7 @@ pub mod parse_worker {
         log: &mut Log,
         entry: &mut CacheEntry,
     ) -> core::result::Result<Success<'static>, AnyError> {
-        // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
-        // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
-        // reads through the returned ASTs.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*this.arena) };
+        let bump: &'static Bump = this.arena();
         let worker_ctx = this.ctx;
 
         let mut transpiler = this.transpiler_for_target(task.known_target);

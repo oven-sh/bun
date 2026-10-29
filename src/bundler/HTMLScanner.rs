@@ -2,7 +2,6 @@ use core::marker::PhantomData;
 use std::borrow::Cow;
 
 use crate::Error;
-use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
@@ -69,16 +68,13 @@ impl<'a> HTMLScanner<'a> {
 
 impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // In HTML, sometimes people do /src/index.js
-        // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir(),
-                &[&input_path[1..]],
-            )
-        }
+        // A root-relative URL (`/src/index.js`) is stored as written, see `RootRelativeUrl`.
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
-        else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
+        let path_to_use: &[u8] = if input_path.len() > 2
+            && input_path[0] != b'.'
+            && input_path[0] != b'/'
+            && input_path[1] != b'/'
+        {
             'blk: {
                 let Some(index_of_dot) = bun_core::strings::last_index_of_char(input_path, b'.')
                 else {
@@ -105,8 +101,15 @@ impl<'a> HTMLScanner<'a> {
             input_path
         };
 
-        let owned: &'static [u8] =
-            Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
+        let leak = |bytes: &[u8]| -> &'static [u8] {
+            Box::leak(AstAlloc::vec_from_slice(bytes).into_boxed_slice())
+        };
+        let owned = leak(path_to_use);
+        let original_path = if core::ptr::eq(path_to_use, input_path) {
+            owned
+        } else {
+            leak(input_path)
+        };
         let record = ImportRecord {
             path: FsPath::init(owned),
             kind,
@@ -114,7 +117,7 @@ impl<'a> HTMLScanner<'a> {
             tag: ImportRecordTag::default(),
             loader: None,
             source_index: AstIndex::default(),
-            original_path: b"",
+            original_path,
             flags: ImportRecordFlags::default(),
         };
 
@@ -158,6 +161,139 @@ pub fn scan_import_records(
     let mut scanner = HTMLScanner::init(log, source);
     scanner.scan(&source.contents)?;
     Ok(scanner.import_records)
+}
+
+/// One leading `/`. `//host/path` is protocol-relative and stays a URL.
+pub fn is_root_relative_url(url: &[u8]) -> bool {
+    url.len() > 1 && url[0] == b'/' && url[1] != b'/'
+}
+
+/// `<root>/favicon.png` for `/favicon.png`, in a thread-local buffer until the next join.
+pub fn rebase_root_relative_url<'r>(root: &'r [u8], url: &[u8]) -> &'r [u8] {
+    debug_assert!(is_root_relative_url(url));
+    resolve_path::join_abs_string::<platform::Auto>(root, &[&url[1..]])
+}
+
+/// Lookup order of a root-relative HTML URL: `root_dir` when set, the HTML file's directory, `cwd`.
+pub struct RootRelativeBases<'a> {
+    dirs: [&'a [u8]; 3],
+    len: usize,
+}
+
+impl<'a> RootRelativeBases<'a> {
+    pub fn init(importer: &'a [u8], root_dir: &'a [u8], cwd: &'a [u8]) -> Self {
+        let mut bases = Self {
+            dirs: [b""; 3],
+            len: 0,
+        };
+        if !root_dir.is_empty() {
+            bases.push(root_dir);
+        }
+        let dir = resolve_path::dirname::<platform::Auto>(importer);
+        // On Windows the dirname of `C:\index.html` is `C:`, not a base.
+        let dir = if cfg!(windows) && dir.len() == 2 && importer.len() > 2 {
+            &importer[..3]
+        } else {
+            dir
+        };
+        bases.push(dir);
+        bases.push(cwd);
+        bases
+    }
+
+    fn push(&mut self, dir: &'a [u8]) {
+        let same = |other: &&[u8]| strip_trailing_sep(other) == strip_trailing_sep(dir);
+        if dir.is_empty() || self.as_slice().iter().any(same) {
+            return;
+        }
+        self.dirs[self.len] = dir;
+        self.len += 1;
+    }
+
+    pub fn as_slice(&self) -> &[&'a [u8]] {
+        &self.dirs[..self.len]
+    }
+}
+
+/// A root-relative HTML URL and the file it names under each of its `RootRelativeBases`.
+pub struct RootRelativeUrl<'r> {
+    url: &'r [u8],
+    candidates: [&'r [u8]; 3],
+    len: usize,
+    /// The index of the candidate `next_retry` hands out.
+    retry: usize,
+}
+
+impl<'r> RootRelativeUrl<'r> {
+    /// `None` unless the URL of `record`, an import of the HTML file `importer`, is root-relative.
+    pub fn of_record(
+        record: &ImportRecord<'r>,
+        importer: &[u8],
+        root_dir: &[u8],
+        arena: &'r bun_alloc::Arena,
+    ) -> Option<Self> {
+        let url = record.original_path;
+        if !is_root_relative_url(url) {
+            return None;
+        }
+        let bases = RootRelativeBases::init(importer, root_dir, bun_core::top_level_dir());
+        let mut this = Self {
+            url,
+            candidates: [b""; 3],
+            len: bases.as_slice().len(),
+            retry: 1,
+        };
+        for (candidate, base) in this.candidates.iter_mut().zip(bases.as_slice()) {
+            *candidate = arena.alloc_slice_copy(rebase_root_relative_url(base, url));
+        }
+        Some(this)
+    }
+
+    pub fn candidates(&self) -> &[&'r [u8]] {
+        &self.candidates[..self.len]
+    }
+
+    pub fn first(&self) -> &'r [u8] {
+        self.candidates[0]
+    }
+
+    /// The next candidate after the previous one was not found.
+    pub fn next_retry(&mut self) -> Option<&'r [u8]> {
+        let next = *self.candidates().get(self.retry)?;
+        self.retry += 1;
+        Some(next)
+    }
+
+    /// The first candidate again, after the directory caches were re-read.
+    pub fn restart(&mut self) -> &'r [u8] {
+        self.retry = 1;
+        self.first()
+    }
+
+    /// Evicts the cached directory of every candidate. True when any was cached.
+    pub fn bust_dir_caches(&self, resolver: &mut bun_resolver::Resolver, importer: &[u8]) -> bool {
+        let mut busted = false;
+        for candidate in self.candidates() {
+            busted |= resolver.bust_dir_cache_from_specifier(importer, candidate);
+        }
+        busted
+    }
+
+    /// The user marked the URL as written, or one of its candidates, external.
+    pub fn is_user_external(&self, resolver: &bun_resolver::Resolver) -> bool {
+        resolver.is_user_external(self.url)
+            || self
+                .candidates()
+                .iter()
+                .any(|candidate| resolver.is_user_external(candidate))
+    }
+}
+
+fn strip_trailing_sep(dir: &[u8]) -> &[u8] {
+    match dir {
+        [rest @ .., last] if !rest.is_empty() && bun_paths::is_sep_native(*last) => rest,
+        _ => dir,
+    }
 }
 
 type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;

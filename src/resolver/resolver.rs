@@ -1022,6 +1022,13 @@ impl<'a> Resolver<'a> {
         self.matches_user_external_pattern(import_path)
     }
 
+    /// `--external` named `import_path`, as an absolute path or a wildcard pattern.
+    pub fn is_user_external(&self, import_path: &[u8]) -> bool {
+        self.matches_user_external_pattern(import_path)
+            || (self.opts.external.abs_paths.count() > 0
+                && self.opts.external.abs_paths.contains(import_path))
+    }
+
     /// True iff `import_path` matches a user-supplied `--external` wildcard
     /// pattern. Does NOT consider `packages = external`; use
     /// `isExternalPattern` for the combined check.

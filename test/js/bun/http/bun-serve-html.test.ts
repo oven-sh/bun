@@ -752,6 +752,41 @@ async function runServeFixture(dir: { toString(): string }, env: Record<string, 
   return { stdout: stdout.trim(), stderr, exitCode };
 }
 
+// A root-relative URL (`/favicon.png`) in an html route names a file under the
+// page's directory, then under the cwd, the same as `bun build` with the default root.
+describe("html route with a root-relative url", () => {
+  test.concurrent("resolves under the page's directory in both modes", async () => {
+    using dir = tempDir("bun-serve-html-root-relative", {
+      "site/index.html": `<!DOCTYPE html><html><head><link rel="icon" href="/favicon.png"><script type="module" src="/src/app.ts"></script></head></html>`,
+      "site/favicon.png": "site favicon",
+      "site/src/app.ts": `console.log("app");`,
+      "favicon.png": "cwd favicon, must not be used",
+      "serve.ts": /*ts*/ `
+        import page from "./site/index.html";
+
+        async function serveOnce(development) {
+          using server = Bun.serve({ port: 0, development, routes: { "/": page } });
+          const response = await fetch(server.url);
+          const text = await response.text();
+          const iconHref = text.match(/<link rel="icon" href="([^"]+)"/)?.[1] ?? null;
+          const icon = iconHref === null ? null : await (await fetch(new URL(iconHref, server.url))).text();
+          const scriptSrc = text.match(/<script[^>]*\\ssrc="([^"]+)"/)?.[1] ?? null;
+          const scriptStatus = scriptSrc === null ? null : (await fetch(new URL(scriptSrc, server.url))).status;
+          return { status: response.status, icon, scriptStatus };
+        }
+
+        console.log(JSON.stringify({ dev: await serveOnce(true), prod: await serveOnce(false) }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    const served = { status: 200, icon: "site favicon", scriptStatus: 200 };
+    expect({ result: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+      result: { dev: served, prod: served },
+      exitCode: 0,
+    });
+  });
+});
+
 // The runtime turns a module into an HTMLBundle when its loader is html, and
 // the loader can come from an import attribute or from a bunfig [loader] entry
 // as well as from the .html extension. The dev server and the production build

@@ -179,6 +179,32 @@ describe("bundler metafile", () => {
     expect(imp.original).toBe("./lib/helper.js");
   });
 
+  // The HTML scanner stores each URL as written, so `original` is the URL, whether it is
+  // root-relative, bare, or a plain relative path.
+  test("metafile imports of an HTML entry keep the URL as written", async () => {
+    using dir = tempDir("metafile-html-original", {
+      "site/index.html": `<!doctype html><link rel="stylesheet" href="/style.css"><script type="module" src="app.ts"></script><img src="./logo.svg">`,
+      "site/app.ts": `console.log("app");`,
+      "site/style.css": `body { color: red; }`,
+      "site/logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/site/index.html`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const inputs = (result.metafile as Metafile).inputs as Record<string, MetafileInput>;
+    const page = Object.entries(inputs).find(([path]) => path.endsWith("index.html"))![1];
+    // `path` is relative to the cwd. Only its file name is stable here.
+    expect(page.imports.map(({ path, ...imp }) => ({ ...imp, file: path.split(/[\\/]/).pop() }))).toEqual([
+      { file: "style.css", kind: "import-rule", original: "/style.css" },
+      { file: "app.ts", kind: "import-statement", original: "app.ts" },
+      { file: "logo.svg", kind: "url-token", original: "./logo.svg" },
+    ]);
+  });
+
   test("metafile without option returns undefined", async () => {
     using dir = tempDir("metafile-disabled-test", {
       "test.js": `console.log("test");`,

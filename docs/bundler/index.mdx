@@ -1123,6 +1123,8 @@ With `.` as `root`, the generated file structure looks like this:
     └── settings.js
 ```
 
+For an HTML entrypoint, `root` is also the base for URLs that start with a single `/`. `<script src="/src/app.ts">` in `pages/index.html` is `pages/src/app.ts` by default, or `src/app.ts` with `root: "."`. If the file does not exist under `root`, Bun looks for it next to the HTML file, then under the current working directory.
+
 ### publicPath
 
 A prefix added to any import paths in bundled code.

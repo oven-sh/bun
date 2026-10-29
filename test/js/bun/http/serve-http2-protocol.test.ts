@@ -1224,6 +1224,7 @@ describe.concurrent("Bun.serve http2 protocol", () => {
       sent: Buffer.concat([Buffer.alloc(49146, "aebaeb", "hex"), Buffer.from("aebaff", "hex")]),
     },
     { bytes: 65532, huffman: false, sent: Buffer.alloc(65532, "p") },
+    { bytes: 65536, huffman: false, sent: Buffer.alloc(65536, "p") },
   ])("a response header value of $bytes bytes is sent with huffman: $huffman", async ({ bytes, huffman, sent }) => {
     const raw = await RawH2.connect(fx.port, secure, { settings: setting(5, (1 << 24) - 1) });
     try {

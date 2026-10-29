@@ -3314,6 +3314,25 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
+  // That setting is about the table a session decodes with.
+  test.each([0, 65536])("the encoder's table has 4096 bytes with headerTableSize: %d", async headerTableSize => {
+    const { srv, seen, port } = await listen();
+    const client = http2.connect(`http://127.0.0.1:${port}`, { settings: { headerTableSize } });
+    client.on("error", () => {});
+    try {
+      await once(client, "localSettings");
+      // 60 entries of 100 bytes, of which 40 fit.
+      const value = Buffer.alloc(64, "v").toString();
+      const headers = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`x-${10 + i}`, value]));
+      for (let i = 0; i < 2; i++) await get(client, { ":path": "/", ...headers });
+      expect(seen[1]).toMatchObject(headers);
+      expect(client.state.deflateDynamicTableSize).toBe(4000);
+    } finally {
+      client.destroy();
+      srv.close();
+    }
+  });
+
   // The two entries of a request have 57 and 50 bytes: none fits, each evicts the other, both stay.
   test.each([0, 64, 128])("requests keep working with headerTableSize: %d on the server", async headerTableSize => {
     const { srv, seen, port } = await listen({ settings: { headerTableSize } });

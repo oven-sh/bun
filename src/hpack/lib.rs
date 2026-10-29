@@ -380,6 +380,9 @@ mod tests {
         decoder.set_max_capacity(100);
         assert!(decode(&mut decoder, &hex("3f45")).is_ok());
         assert_eq!(decode(&mut decoder, &hex("3f46")), Err(Error::Invalid));
+        decoder.set_max_capacity(1 << 16);
+        assert!(decode(&mut decoder, &hex("3fe1ff03 4003782d610131")).is_ok());
+        assert_eq!(decoder.table_size(), 36);
     }
 
     #[test]
@@ -549,6 +552,20 @@ mod tests {
     }
 
     #[test]
+    fn eos_anywhere_in_a_huffman_string() {
+        for (before, after) in (0..20).flat_map(|before| [0, 7, 30].map(|after| (before, after))) {
+            let string = [vec![b'a'; before], vec![b'\n'], vec![b'a'; after]].concat();
+            let mut coded = Vec::new();
+            huffman::encode(&string, &mut coded);
+            // The code of a line feed is EOS but for its last two bits.
+            for bit in [5 * before + 28, 5 * before + 29] {
+                coded[bit / 8] |= 0x80 >> (bit % 8);
+            }
+            assert_eq!(decode_huffman(&coded, 99), Err(Error::Invalid));
+        }
+    }
+
+    #[test]
     fn a_lower_capacity_gives_memory_back() {
         let mut decoder = Decoder::new();
         decoder.set_max_capacity(65536);
@@ -626,6 +643,7 @@ mod tests {
             "41",                // no value
             "0003782d61",        // no value
             "000001 61",         // empty name
+            "008001 61",         // the same, Huffman coded
             "822182",            // size update after a field
             "82210161",          // the same, where 21 0161 could pass for a literal
             "8220",              // size update after a field, at the end
@@ -774,6 +792,7 @@ mod tests {
                 indexing == Indexing::Never,
             );
             assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
+            assert_eq!(encoder.table_size(), decoder.table_size());
         }
     }
 
@@ -942,6 +961,21 @@ mod tests {
         encoder.set_max_capacity(95);
         let block = encode(&mut encoder, "x-a", "new", Indexing::Add);
         assert_eq!(representation(&block[2..]), "added");
+    }
+
+    #[test]
+    fn a_growing_history_keeps_its_order() {
+        let mut encoder = Encoder::with_history();
+        skip_values(&mut encoder, 0..15);
+        encoder.set_max_capacity(1024);
+        // It holds 10 to 19, and the oldest is in the middle.
+        skip_values(&mut encoder, 15..20);
+        encoder.set_max_capacity(4096);
+        // Full again after 32 more. The one after those pushed out 10.
+        skip_values(&mut encoder, 20..53);
+        let mut add = |value| representation(&encode(&mut encoder, "x-a", value, Indexing::Add));
+        assert_eq!(add("11"), "added");
+        assert_eq!(add("10"), "skipped");
     }
 
     #[test]
@@ -1346,12 +1380,14 @@ mod tests {
     /// HAProxy took an index of 2^31 or more for a negative one, which is under any limit (CVE-2018-14645).
     #[test]
     fn an_index_far_past_the_tables() {
-        for index in [63, 1 << 16, 1 << 31, (1 << 31) + 62, u32::MAX] {
+        let cut_short = [8, 16, 31].map(|bits| (1 << bits) + 62);
+        let others = [63, (1 << 8) + 2, 1 << 16, 1 << 31, u32::MAX];
+        for index in others.into_iter().chain(cut_short) {
             for (flags, prefix_bits) in [(0x80, 7), (0x40, 6), (0x10, 4), (0x00, 4)] {
                 // One entry, which an index that wraps around or is cut short would find.
                 let mut block = hex("4003782d610131");
                 integer::encode(&mut block, flags, prefix_bits, index);
-                block.extend(hex("0161"));
+                block.extend(hex(if flags == 0x80 { "" } else { "0161" }));
                 let decoded = decode(&mut Decoder::new(), &block);
                 assert_eq!(decoded, Err(Error::Invalid), "{index} {flags}");
             }

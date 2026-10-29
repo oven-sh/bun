@@ -1960,6 +1960,18 @@ export function isIPv6() {
   return isIP("IPv6");
 }
 
+/**
+ * The zones to bind `::1%<zone>` with: the name of the loopback interface ("lo", "lo0"), which Windows does not have,
+ * and a name that no interface has, which is no zone. Empty when no interface has `::1`.
+ */
+export function ipv6LoopbackZones(): string[] {
+  const loopback = Object.entries(os.networkInterfaces()).find(([, addresses]) =>
+    addresses?.some(({ address }) => address === "::1"),
+  )?.[0];
+  if (loopback === undefined) return [];
+  return [...(isWindows ? [] : [loopback]), "nosuch0"];
+}
+
 export function isIPv4() {
   return isIP("IPv4");
 }

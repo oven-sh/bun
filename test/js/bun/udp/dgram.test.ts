@@ -391,6 +391,16 @@ test.skipIf(isWindows)("_createSocketHandle() returns a negative errno when the 
   expect(err).toBe(-22);
 });
 
+// The wrap binds with the zone of the address, as libuv's uv_ip6_addr does. Linux tells the two apart
+// for a link-local address: EINVAL (-22) with no zone, EADDRNOTAVAIL (-99) when "lo" does not have it.
+test.skipIf(process.platform !== "linux")("_createSocketHandle() binds an IPv6 address with its zone", () => {
+  const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  expect({
+    zone: _createSocketHandle("fe80::1%lo", 0, "udp6"),
+    noZone: _createSocketHandle("fe80::1", 0, "udp6"),
+  }).toEqual({ zone: -99, noZone: -22 });
+});
+
 // The duplicate-adoption guard must trip synchronously: libuv reports EEXIST
 // from the second uv_udp_open() of the same descriptor even in the same tick.
 test.skipIf(isWindows)("bind({ fd }) rejects a same-tick duplicate adoption", async () => {

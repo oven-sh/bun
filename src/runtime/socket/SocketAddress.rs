@@ -972,7 +972,7 @@ pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
 }
 
 /// A `%zone` is an interface name (`en0`) everywhere but Windows, where it is already the index.
-fn scope_index(zone: &[u8]) -> u32 {
+pub(crate) fn scope_index(zone: &[u8]) -> u32 {
     #[cfg(not(windows))]
     {
         let mut buf = [0u8; 64];
@@ -985,14 +985,14 @@ fn scope_index(zone: &[u8]) -> u32 {
             }
         }
     }
-    let mut idx: u32 = 0;
-    for &b in zone {
-        if !b.is_ascii_digit() {
-            return 0;
-        }
-        idx = idx.wrapping_mul(10).wrapping_add((b - b'0') as u32);
-    }
-    idx
+    zone.iter()
+        .try_fold(0u32, |idx, &b| {
+            if !b.is_ascii_digit() {
+                return None;
+            }
+            idx.checked_mul(10)?.checked_add(u32::from(b - b'0'))
+        })
+        .unwrap_or(0)
 }
 
 #[cfg(windows)]
@@ -1021,4 +1021,36 @@ pub(crate) mod inet {
     pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub(crate) use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
     pub(crate) type socklen_t = super::ares::ares_socklen_t;
+}
+
+/// The address of a bind or listen host that Node.js's `net.isIP()` takes: a dotted quad or an IPv6 address, with a `%zone` in its grammar. Any other host stays with the resolver, as in Node.js, a zone that `net.isIP()` refuses included.
+pub(crate) fn parse_bind_address(host: &[u8], port: u16) -> Option<bun_sys::net::Address> {
+    if let Some(ip) = bun_core::ip_address::parse_strict(host) {
+        return Some(bun_sys::net::Address::from_ip(ip, port));
+    }
+    let ip = bun_core::ip_address::parse_zoned_ipv6_host(host)?;
+    let (_, zone) = strings::split_once_char(host, b'%')?;
+    let mut address = bun_sys::net::Address::from_ip(core::net::IpAddr::V6(ip), port);
+    address.set_scope_id(scope_index(zone));
+    Some(address)
+}
+
+/// [`parse_bind_address`] for uSockets' bind and listen constructors: 1 and `out` filled, or 0 when the resolver reads `host`; `host` must be NUL-terminated and `out` writable.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__parseBindAddress(
+    host: *const core::ffi::c_char,
+    port: u16,
+    out: *mut bun_sys::posix::sockaddr_storage,
+) -> c_int {
+    if host.is_null() || out.is_null() {
+        return 0;
+    }
+    // SAFETY: caller contract — `host` is a NUL-terminated C string.
+    let bytes = unsafe { core::ffi::CStr::from_ptr(host) }.to_bytes();
+    let Some(address) = parse_bind_address(bytes, port) else {
+        return 0;
+    };
+    // SAFETY: caller contract — `out` is a writable `sockaddr_storage`.
+    unsafe { *out = address.into_storage() };
+    1
 }

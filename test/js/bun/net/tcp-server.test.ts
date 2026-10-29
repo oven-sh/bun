@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, ipv6LoopbackZones, isWindows } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -56,6 +56,46 @@ it("remoteAddress works", async () => {
     port: server.port,
   });
   await prom;
+});
+
+// A hostname that is an address is bound as it is written, with no resolver.
+// A zone is the index of the interface that it names, and a name that no
+// interface has is no zone, as libuv reads it for node:net. glibc's getaddrinfo
+// refuses both on ::1, and Bun.listen threw "Failed to listen at" with no code.
+it.each(ipv6LoopbackZones())("listens on ::1%%%s, which has a zone", async zone => {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const hostname = `::1%${zone}`;
+  using server = Bun.listen({
+    hostname,
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.end("hello");
+      },
+      data() {},
+    },
+  });
+  expect({ hostname: server.hostname, port: server.port }).toEqual({ hostname, port: expect.any(Number) });
+  const chunks: string[] = [];
+  await Bun.connect({
+    hostname: "::1",
+    port: server.port,
+    socket: {
+      data(_socket, data) {
+        chunks.push(decoder.decode(data));
+      },
+      close() {
+        resolve(chunks.join(""));
+      },
+      error(_socket, error) {
+        reject(error);
+      },
+      connectError(_socket, error) {
+        reject(error);
+      },
+    },
+  });
+  expect(await promise).toBe("hello");
 });
 
 it("should not allow invalid tls option", () => {

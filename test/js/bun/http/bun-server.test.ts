@@ -4,6 +4,7 @@ import {
   bunEnv,
   bunExe,
   bunRun,
+  ipv6LoopbackZones,
   isWindows,
   normalizeBunSnapshot,
   rejectUnauthorizedScope,
@@ -264,6 +265,22 @@ describe.concurrent("Server", () => {
       expect({ status: response.status, text: await response.text() }).toEqual({ status: 200, text: "Hello" });
     }
   });
+
+  // A zone is the index of the interface that it names, and a name that no
+  // interface has is no zone. A URL has no zone, so `server.url` is without it.
+  test.each(ipv6LoopbackZones().flatMap(zone => [`::1%${zone}`, `[::1%${zone}]`]))(
+    "allows listen on the IPv6 hostname %p, which has a zone",
+    async hostname => {
+      using server = Bun.serve({ hostname, port: 0, fetch: () => new Response("Hello") });
+      expect({ hostname: server.hostname, address: server.address, url: server.url.href }).toEqual({
+        hostname,
+        address: { address: "::1", family: "IPv6", port: server.port },
+        url: `http://[::1]:${server.port}/`,
+      });
+      const response = await fetch(server.url);
+      expect({ status: response.status, text: await response.text() }).toEqual({ status: 200, text: "Hello" });
+    },
+  );
 
   test("abort signal on server", async () => {
     {

@@ -6,6 +6,7 @@ import {
   bunExe,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
+  ipv6LoopbackZones,
   isIPv6,
   isWindows,
   randomPort,
@@ -206,6 +207,35 @@ describe("udpSocket()", () => {
         connect: { hostname: "example!!!!!.com", port: 443 },
       }),
     ).toThrow();
+  });
+
+  // A hostname that is an address is bound as it is written, with no resolver.
+  // A zone is the index of the interface that it names, and a name that no
+  // interface has is no zone, as libuv reads it for node:dgram. glibc's
+  // getaddrinfo refuses both on ::1, and the bind failed with "bind ENOENT".
+  test.each(ipv6LoopbackZones())("binds ::1%%%s, which has a zone", async zone => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const hostname = `::1%${zone}`;
+    const server = await udpSocket({
+      hostname,
+      socket: {
+        data(_socket, data) {
+          resolve(data.toString());
+        },
+      },
+    });
+    const client = await udpSocket({ hostname: "::1" });
+    try {
+      expect({ hostname: server.hostname, address: server.address }).toEqual({
+        hostname,
+        address: { address: "::1", family: "IPv6", port: server.port },
+      });
+      client.send("hello", server.port, "::1");
+      expect(await promise).toBe("hello");
+    } finally {
+      client.close();
+      server.close();
+    }
   });
 
   // The bind and the connect option both resolve their hostname with a

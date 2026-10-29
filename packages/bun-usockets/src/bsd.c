@@ -1275,8 +1275,102 @@ int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd) {
 #endif
 }
 
+/* The constructors below bind one AF_INET or AF_INET6 address. A numeric host takes them and never
+ * reaches getaddrinfo(3), which refuses a zone name on an address that is not link-local. */
+static socklen_t bsd_inet_addr_length(const struct sockaddr_storage *addr) {
+    return addr->ss_family == AF_INET6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
+}
+
+/* bsd_bind_listen_fd for a sockaddr. */
+static LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_addr(LIBUS_SOCKET_DESCRIPTOR listenFd, const struct sockaddr_storage *addr, int options, int *error) {
+    if (bsd_set_reuse(listenFd, options) != 0) {
+        *error = LIBUS_ERR;
+        return LIBUS_SOCKET_ERROR;
+    }
+
+#if defined(SO_REUSEADDR) && !_WIN32
+    int one = 1;
+    setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
+
+#ifdef IPV6_V6ONLY
+    if (addr->ss_family == AF_INET6) {
+        int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            *error = LIBUS_ERR;
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
+#endif
+
+    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) addr, bsd_inet_addr_length(addr), 512, error)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    return listenFd;
+}
+
+static LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_addr(const struct sockaddr_storage *addr, int options, int *error) {
+    LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, error);
+    if (listenFd == LIBUS_SOCKET_ERROR) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    if (bsd_bind_listen_addr(listenFd, addr, options, error) == LIBUS_SOCKET_ERROR) {
+        bsd_close_socket(listenFd);
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    return listenFd;
+}
+
+static LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket_addr(const struct sockaddr_storage *addr, int options, int *out_port, int *error) {
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, error);
+    if (fd == LIBUS_SOCKET_ERROR) {
+        return LIBUS_SOCKET_ERROR;
+    }
+#if defined(SO_REUSEADDR) && !defined(_WIN32)
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
+#ifdef IPV6_V6ONLY
+    if (addr->ss_family == AF_INET6) {
+        int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &enabled, sizeof(enabled));
+    }
+#endif
+    int rc;
+    do
+        rc = bind(fd, (const struct sockaddr *) addr, bsd_inet_addr_length(addr));
+    while (IS_EINTR(rc));
+    if (rc != 0) {
+        *error = LIBUS_ERR;
+        bsd_close_socket(fd);
+        return LIBUS_SOCKET_ERROR;
+    }
+#ifdef _WIN32
+    /* As in bsd_create_bound_socket: listen before the socket is duplicated for a worker. */
+    if (listen(fd, 511) != 0) {
+        *error = LIBUS_ERR;
+        bsd_close_socket(fd);
+        return LIBUS_SOCKET_ERROR;
+    }
+#endif
+    struct bsd_addr_t tmp;
+    if (bsd_local_addr(fd, &tmp) == 0) {
+        *out_port = bsd_addr_get_port(&tmp);
+    } else {
+        *out_port = ntohs(addr->ss_family == AF_INET6 ? ((const struct sockaddr_in6 *) addr)->sin6_port : ((const struct sockaddr_in *) addr)->sin_port);
+    }
+    return fd;
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error) {
     bsd_winsock_ensure();
+    struct sockaddr_storage literal;
+    if (host && Bun__parseBindAddress(host, (uint16_t) port, &literal)) {
+        return bsd_create_bound_socket_addr(&literal, options, out_port, error);
+    }
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_flags = AI_PASSIVE;
@@ -1359,6 +1453,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
     bsd_winsock_ensure();
+    struct sockaddr_storage literal;
+    if (host && Bun__parseBindAddress(host, (uint16_t) port, &literal)) {
+        return bsd_create_listen_socket_addr(&literal, options, error);
+    }
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -1746,8 +1844,48 @@ int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int
     return 0;
 }
 
+static LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket_addr(const struct sockaddr_storage *addr, int options, int *err) {
+    LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(addr->ss_family, SOCK_DGRAM, 0, err);
+    if (listenFd == LIBUS_SOCKET_ERROR) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    if (bsd_set_reuse(listenFd, options) != 0) {
+        *err = LIBUS_ERR;
+        bsd_close_socket(listenFd);
+        return LIBUS_SOCKET_ERROR;
+    }
+
+#ifdef IPV6_V6ONLY
+    if (addr->ss_family == AF_INET6) {
+        int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            *err = LIBUS_ERR;
+            bsd_close_socket(listenFd);
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
+#endif
+
+    bsd_apply_udp_recv_options(listenFd, addr->ss_family, options);
+
+    if (bind(listenFd, (const struct sockaddr *) addr, bsd_inet_addr_length(addr))) {
+        *err = LIBUS_ERR;
+        bsd_close_socket(listenFd);
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    *err = 0;
+    return listenFd;
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
     bsd_winsock_ensure();
+    struct sockaddr_storage literal;
+    if (host && Bun__parseBindAddress(host, (uint16_t) port, &literal)) {
+        int literal_err;
+        return bsd_create_udp_socket_addr(&literal, options, err != NULL ? err : &literal_err);
+    }
     if (err != NULL) {
         *err = 0;
     }

@@ -434,22 +434,6 @@ impl FetchTasklet {
         self.sink.map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    /// Mutable access to the request-body streaming buffer while `Some` (this
-    /// side holds one of the two initial intrusive refs from
-    /// `ThreadSafeStreamBuffer::new`; released in `clear_sink`). Detached
-    /// lifetime so the borrow does not conflict with disjoint `&mut self`
-    /// access at call sites — the buffer lives in a separate heap allocation
-    /// shared with the HTTP thread (mutex-guarded internally).
-    #[inline]
-    pub(crate) fn stream_buffer_mut<'r>(&self) -> Option<&'r mut ThreadSafeStreamBuffer> {
-        // SAFETY: see doc comment: the counted ref keeps the pointee live, and the
-        // mutex inside `ThreadSafeStreamBuffer` serialises every cross-thread
-        // access (`buffer` and the drain callback alike).
-        self.request_body_streaming_buffer
-            .as_ref()
-            .map(|p| unsafe { &mut *p.as_ptr() })
-    }
-
     fn ref_(&self) {
         // SAFETY: `self` is live; `ref_` only touches the interior-mutable
         // atomic counter.
@@ -508,8 +492,7 @@ impl FetchTasklet {
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // The HTTP thread may still be using its ref; `clear_drain_callback`
             // synchronises with it through the buffer's mutex.
-            // SAFETY: kept live by `buffer`.
-            unsafe { (*buffer.as_ptr()).clear_drain_callback() };
+            buffer.clear_drain_callback();
         }
     }
 
@@ -2130,15 +2113,10 @@ impl FetchTasklet {
             }
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
             // thread), so the same raw pointer can be handed to both sides.
-            let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::default());
-            // SAFETY: fresh heap allocation from `ThreadSafeStreamBuffer::new` (heap::alloc);
-            // exclusively owned here until shared below.
-            unsafe {
-                (*buffer).set_drain_callback::<FetchTasklet>(
-                    FetchTasklet::on_write_request_data_drain,
-                    fetch_tasklet_ptr,
-                );
-            }
+            let buffer = ThreadSafeStreamBuffer::new(
+                FetchTasklet::on_write_request_data_drain,
+                fetch_tasklet_ptr,
+            );
             // SAFETY: adopts one of the two initial refs.
             fetch_tasklet.request_body_streaming_buffer = Some(unsafe { RefPtr::from_raw(buffer) });
             fetch_tasklet.http.as_mut().unwrap().request_body =
@@ -2283,12 +2261,12 @@ impl FetchTasklet {
             self.request_body_len_written = written;
         }
         let len = utf8_len as BlobSizeType;
-        let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
+        let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer.as_deref() else {
             return Writable::Done;
         };
-        // Mutex guards `buffer` against the HTTP thread; released when
-        // `stream_buffer` drops. Borrow is detached from `self` (see accessor).
-        let mut stream_buffer = thread_safe_stream_buffer.lock();
+        // Mutex guards `buffer` against the HTTP thread; released when `locked` drops.
+        let mut locked = thread_safe_stream_buffer.lock();
+        let stream_buffer = &mut locked.buffer;
 
         // dont have backpressure so we will schedule the data to be written
         // if we have backpressure the onWritable will drain the buffer
@@ -2366,7 +2344,8 @@ impl FetchTasklet {
             }
             if !self.skip_chunked_framing() {
                 // Using chunked transfer encoding, send the terminating chunk
-                let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
+                let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer.as_deref()
+                else {
                     // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
                     FetchTasklet::deref(this_ptr);
                     return;
@@ -2375,6 +2354,7 @@ impl FetchTasklet {
                 // the lock guard drops.
                 let _ = thread_safe_stream_buffer
                     .lock()
+                    .buffer
                     .write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: fire-and-forget
             }
             if let Some(http_) = self.http.as_mut() {

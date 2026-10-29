@@ -3603,7 +3603,7 @@ impl<'a> Resolver<'a> {
         let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
             core::ptr::null_mut();
         let mut needs_iter = true;
-        let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
+        let mut in_place: Option<&'static mut Fs::file_system::DirEntry> = None;
         let open_dir = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
             Ok(d) => d,
             Err(err) => {
@@ -3623,19 +3623,15 @@ impl<'a> Resolver<'a> {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
-                    in_place = Some(std::ptr::from_mut(*entries));
+                    in_place = Some(&mut **entries);
                 }
             }
         }
 
         if needs_iter {
-            // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to slots
-            // in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this fn and
-            // are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
             let mut new_entry = Fs::file_system::DirEntry::init(
-                if let Some(existing) = in_place {
-                    // SAFETY: see block-wide note above.
-                    unsafe { &*existing }.dir
+                if let Some(existing) = &in_place {
+                    existing.dir
                 } else {
                     Fs::file_system::DirnameStore::instance()
                         .append_slice(dir_path)
@@ -3657,18 +3653,16 @@ impl<'a> Resolver<'a> {
             while let Ok(Some(_value)) = dir_iterator.next() {
                 new_entry
                     .add_entry_with_store(
-                        // SAFETY: see block-wide note above.
-                        in_place.map(|existing| unsafe { &mut (*existing).data }),
+                        in_place.as_deref_mut().map(|existing| &mut existing.data),
                         &_value,
                         &mut filename_store,
                     )
                     .expect("unreachable");
             }
-            if let Some(existing) = in_place {
-                // SAFETY: see block-wide note above.
+            if let Some(existing) = &mut in_place {
                 // NOTE: `StringHashMap` (std::HashMap newtype)
                 // has no separate `clear_and_free`; `clear()` drops all entries.
-                unsafe { &mut *existing }.data.clear();
+                existing.data.clear();
             }
 
             if self.store_fd {
@@ -3676,13 +3670,12 @@ impl<'a> Resolver<'a> {
             }
             // NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
             // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
-            let dir_entries_ptr = match in_place {
+            let dir_entries = match in_place {
                 Some(p) => {
-                    // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
-                    unsafe { *p = new_entry };
+                    *p = new_entry;
                     p
                 }
-                None => bun_core::heap::into_raw(Box::new(new_entry)),
+                None => Box::leak(Box::new(new_entry)),
             };
 
             bun_core::scoped_log!(
@@ -3690,19 +3683,14 @@ impl<'a> Resolver<'a> {
                 "readdir({}, {}) = {}",
                 open_dir,
                 bstr::BStr::new(dir_path),
-                // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly
-                // boxed entry (see block-wide note above).
-                unsafe { (*dir_entries_ptr).data.count() },
+                dir_entries.data.count(),
             );
 
             dir_entries_option = rfs!()
                 .entries
                 .put(
                     &mut cached_dir_entry_result,
-                    Fs::file_system::real_fs::EntriesOption::Entries(
-                        // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
-                        unsafe { &mut *dir_entries_ptr },
-                    ),
+                    Fs::file_system::real_fs::EntriesOption::Entries(dir_entries),
                 )
                 .expect("unreachable");
         }
@@ -4801,6 +4789,7 @@ impl<'a> Resolver<'a> {
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
             let mut needs_iter = true;
+            // Raw: inside a loop, borrowck rejects the `'static` reborrow of `entries` (E0499).
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {

@@ -3,7 +3,7 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 
 let tmp: string;
@@ -271,6 +271,125 @@ describe("fs.promises.glob", () => {
     expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
   });
 }); // </fs.promises.glob>
+
+// Node v26.12.1 ships brace-expansion 5.0.9. Node v26.3.0 shipped 5.0.5. The lists are the output of Node v26.12.1.
+describe("brace expansion", () => {
+  // `{},}` is a group of `}` and the empty string. 5.0.5 lost the empty string when the group came after
+  // another group.
+  describe("a `{},}` group after another group keeps its empty alternative", () => {
+    const files = { a: "", "a}": "", b: "", "b}": "", "1": "", "1}": "", "2": "", "2}": "", c: "" };
+
+    describe.each<[string, (pattern: string, options: fs.GlobOptionsWithoutFileTypes) => Promise<string[]>]>([
+      ["fs.globSync", async (pattern, options) => fs.globSync(pattern, options)],
+      [
+        "fs.glob",
+        (pattern, options) => {
+          const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+          fs.glob(pattern, options, (err, paths) => (err ? reject(err) : resolve(paths)));
+          return promise;
+        },
+      ],
+      ["fs.promises.glob", (pattern, options) => Array.fromAsync(fs.promises.glob(pattern, options))],
+    ])("%s", (_name, glob) => {
+      it.each([
+        ["{a,b}{},}", ["a", "a}", "b", "b}"]],
+        ["{1..2}{},}", ["1", "1}", "2", "2}"]],
+      ])("in the pattern %p", async (pattern, expected) => {
+        using dir = tempDir("fs-glob-braces", files);
+        expect((await glob(pattern, { cwd: String(dir) })).sort()).toStrictEqual(expected);
+      });
+
+      it("in an exclude pattern", async () => {
+        using dir = tempDir("fs-glob-braces", files);
+        const paths = await glob("*", { cwd: String(dir), exclude: ["{a,b}{},}"] });
+        expect(paths.sort()).toStrictEqual(["1", "1}", "2", "2}", "c"]);
+      });
+    });
+
+    // One row for each way to expand the group in front. A row matches each of its names with and without the `}`.
+    describe("whatever the group in front is", () => {
+      const rows: [string, string, string[]][] = [
+        ["a sequence that counts down", "{3..1}{},}", ["1", "2", "3"]],
+        ["a sequence with a step", "{0..8..4}{},}", ["0", "4", "8"]],
+        ["a sequence with a negative step", "{8..0..-4}{},}", ["0", "4", "8"]],
+        ["a sequence with the padding of its second bound", "{10..08}{},}", ["08", "09", "10"]],
+        ["a padded sequence that starts below zero", "{-01..1}{},}", ["-01", "000", "001"]],
+        ["a sequence of letters with a step", "{p..t..2}{},}", ["p", "r", "t"]],
+        ["a sequence of letters that counts down", "{t..p..2}{},}", ["p", "r", "t"]],
+        ["a sequence of capital letters", "{J..L}{},}", ["J", "K", "L"]],
+        ["`${`, which opens no group", "x${a,b}{},}", ["x${a,b}"]],
+        ["`${` after a group", "{a,b}${c}{},}", ["a${c}", "b${c}"]],
+        ["`${` before a sequence", "${a,b}{1..2}{},}", ["${a,b}1", "${a,b}2"]],
+        ["a group whose only comma is in a nested group", "x{{a,b}}{},}", ["x{a}", "x{b}"]],
+        ["a group that stays one string", "{${a,b}}{},}", ["{${a,b}}"]],
+        ["a group with a nested sequence", "{a,b{1..2}}{},}", ["a", "b1", "b2"]],
+        ["a nested group with text after it", "y{c,d{e,f}g}{},}", ["yc", "ydeg", "ydfg"]],
+        ["a group with an empty alternative and one more group", "{,a}{c,d}{},}", ["ac", "ad", "c", "d"]],
+      ];
+      // Names that a wrong expansion of one of the rows matches.
+      const decoys = "5 5} 07 11 01 q s $a a$c xa xb b3 yd ydg {a} 00 -1 1}} M x$a x$b x${a,b}x".split(" ");
+      const withAndWithoutBrace = (names: string[]) => names.flatMap(name => [name, name + "}"]).sort();
+
+      let dir: string;
+      beforeAll(() => {
+        const names = rows.flatMap(([, , names]) => withAndWithoutBrace(names)).concat(decoys);
+        dir = tempDirWithFiles("fs-glob-braces", Object.fromEntries(names.map(name => [name, ""])));
+      });
+      afterAll(() => fs.promises.rm(dir, { recursive: true, force: true }));
+
+      it.each(rows)("%s: %p", (_name, pattern, names) => {
+        expect(fs.globSync(pattern, { cwd: dir }).sort()).toStrictEqual(withAndWithoutBrace(names));
+      });
+    });
+  });
+
+  // 5.0.5 had no limit on the length. The junk alternatives expand to equal strings that end in a run of slashes:
+  // minimatch keeps one of them and splits it at the slashes, so these long patterns cost little.
+  describe("the list of expansions is cut where its total length passes 4,000,000 characters", () => {
+    const fill = (length: number, char: string) => Buffer.alloc(length, char).toString();
+    /** 2^groups equal expansions of `length` characters each. */
+    const junk = (groups: number, length: number) => fill(5 * groups, "{x,x}") + fill(length - groups, "/");
+    const pad = (length: number) => "z" + fill(length - 1, "/");
+
+    it.each([
+      ["`a` ends on character 4,000,000 and stays", `{${junk(7, 31249)},${pad(127)},a}`, ["a"]],
+      ["`a` ends on character 4,000,001 and goes", `{${junk(7, 31249)},${pad(128)},a}`, []],
+      [
+        "`ab` of a second group ends on character 4,000,000 and stays",
+        `{${junk(6, 31000)},${pad(15966)},a}{,b}`,
+        ["a", "ab"],
+      ],
+      ["`ab` of a second group ends on character 4,000,002 and goes", `{${junk(6, 31000)},${pad(15967)},a}{,b}`, ["a"]],
+      ["a group is cut to what fits, and the next prefix goes on", `{,q}{a,${junk(7, 31250)}}`, ["a", "qa"]],
+    ])("%s", (_name, pattern, expected) => {
+      using dir = tempDir("fs-glob-braces", { a: "", ab: "", qa: "" });
+      expect(fs.globSync(pattern, { cwd: String(dir) }).sort()).toStrictEqual(expected);
+    });
+  });
+
+  // A `{}` group has no alternatives, so this pattern is the name of one file. 5.0.5 expanded the rest of the
+  // pattern twice for each such group (CVE-2026-13149): 2^32 times here, which the spawn timeout does not wait for.
+  it("a run of `{},` groups does not take exponential time", async () => {
+    const name = "a" + Buffer.alloc(3 * 32, "{},").toString();
+    using dir = tempDir("fs-glob-braces", { [name]: "" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(JSON.stringify(require("node:fs").globSync(${JSON.stringify(name)})))`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify([name]),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 60_000);
+});
 
 describe("fs.globSync exclude with withFileTypes", () => {
   it("invokes the exclude callback with Dirents when cwd differs from process.cwd()", () => {

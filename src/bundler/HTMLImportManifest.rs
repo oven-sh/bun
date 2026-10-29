@@ -330,89 +330,109 @@ pub(crate) fn emit(
 
     let additional_output_files = &graph.additional_output_files;
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
-    let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len())?;
 
-    for (chunk_index, ch) in chunks.iter().enumerate() {
-        if chunks_to_write.is_set(chunk_index) {
-            if !first {
-                writer.write_all(b",")?;
-            }
-            first = false;
-
-            let input: &[u8] = if !ch.entry_point.is_entry_point() {
-                b""
-            } else {
-                source_path_relative_to_root(
-                    &mut input_buffer,
-                    root_dir,
-                    sources[ch.entry_point.source_index() as usize].path.text,
-                )
-            };
-
-            write_entry_item(
-                writer,
-                &mut refs,
-                input,
-                Entry::Chunk(chunk_index as u32),
-                ch.content.loader(),
-                if ch.entry_point.is_entry_point() {
-                    OutputKind::EntryPoint
-                } else {
-                    OutputKind::Chunk
-                },
-            )?;
-        }
+    // One tree has to give one listing. The order of the CSS chunks and the order of
+    // the copied files follow the order in which the scan found their files, so the
+    // stylesheets and the assets are listed by source path.
+    let mut listed: Vec<u32> = (0..chunks.len() as u32)
+        .filter(|&chunk_index| chunks_to_write.is_set(chunk_index as usize))
+        .collect();
+    let is_stylesheet =
+        |chunk_index: u32| matches!(chunks[chunk_index as usize].content, Content::Css(_));
+    let mut stylesheets: Vec<u32> = listed
+        .iter()
+        .copied()
+        .filter(|&i| is_stylesheet(i))
+        .collect();
+    stylesheets.sort_unstable_by_key(|&chunk_index| {
+        let ch = &chunks[chunk_index as usize];
+        (
+            sources[ch.entry_point.source_index() as usize].path.text,
+            ch.isolated_hash,
+        )
+    });
+    for (slot, stylesheet) in listed
+        .iter_mut()
+        .filter(|i| is_stylesheet(**i))
+        .zip(stylesheets)
+    {
+        *slot = stylesheet;
     }
 
-    for (i, output_file) in additional_output_files.iter().enumerate() {
-        // Only print the file once.
-        if already_visited_output_file.is_set(i) {
-            continue;
+    for chunk_index in listed {
+        let ch = &chunks[chunk_index as usize];
+        if !first {
+            writer.write_all(b",")?;
         }
+        first = false;
 
+        let input: &[u8] = if !ch.entry_point.is_entry_point() {
+            b""
+        } else {
+            source_path_relative_to_root(
+                &mut input_buffer,
+                root_dir,
+                sources[ch.entry_point.source_index() as usize].path.text,
+            )
+        };
+
+        write_entry_item(
+            writer,
+            &mut refs,
+            input,
+            Entry::Chunk(chunk_index),
+            ch.content.loader(),
+            if ch.entry_point.is_entry_point() {
+                OutputKind::EntryPoint
+            } else {
+                OutputKind::Chunk
+            },
+        )?;
+    }
+
+    let mut assets: Vec<(&[u8], &crate::options::OutputFile)> = Vec::new();
+    for output_file in additional_output_files.iter() {
         if let Some(source_index) = output_file.source_index.unwrap() {
-            if source_index.get() == server_source_index {
-                continue;
-            }
-            let bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
-
-            if bits.has_intersection(&entry_point_bits) {
-                already_visited_output_file.set(i);
-                if !first {
-                    writer.write_all(b",")?;
-                }
-                first = false;
-
-                let path_for_key = source_path_relative_to_root(
-                    &mut input_buffer,
-                    root_dir,
-                    sources[source_index.get() as usize].path.text,
-                );
-
-                let path: &[u8] = if inject_compiler_filesystem_prefix {
-                    temp_buffer.clear();
-                    temp_buffer.extend_from_slice(public_path);
-                    temp_buffer.extend_from_slice(strings::remove_leading_dot_slash(
-                        &output_file.dest_path,
-                    ));
-                    &temp_buffer[..]
-                } else {
-                    &output_file.dest_path[..]
-                };
-
-                write_entry_item(
-                    writer,
-                    &mut refs,
-                    path_for_key,
-                    Entry::Asset {
-                        path,
-                        hash: output_file.hash.value,
-                    },
-                    output_file.loader,
-                    output_file.output_kind,
-                )?;
+            if source_index.get() != server_source_index
+                && file_entry_bits[source_index.get() as usize].has_intersection(&entry_point_bits)
+            {
+                assets.push((sources[source_index.get() as usize].path.text, output_file));
             }
         }
+    }
+    assets.sort_unstable_by_key(|&(source_path, output_file)| {
+        (source_path, &output_file.dest_path[..])
+    });
+
+    for (source_path, output_file) in assets {
+        if !first {
+            writer.write_all(b",")?;
+        }
+        first = false;
+
+        let path_for_key = source_path_relative_to_root(&mut input_buffer, root_dir, source_path);
+
+        let path: &[u8] = if inject_compiler_filesystem_prefix {
+            temp_buffer.clear();
+            temp_buffer.extend_from_slice(public_path);
+            temp_buffer
+                .extend_from_slice(strings::remove_leading_dot_slash(&output_file.dest_path));
+            &temp_buffer[..]
+        } else {
+            &output_file.dest_path[..]
+        };
+
+        write_entry_item(
+            writer,
+            &mut refs,
+            path_for_key,
+            Entry::Asset {
+                path,
+                hash: output_file.hash.value,
+            },
+            output_file.loader,
+            output_file.output_kind,
+        )?;
     }
 
     writer.write_all(b"]}")?;

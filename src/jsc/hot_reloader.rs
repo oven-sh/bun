@@ -814,8 +814,7 @@ where
                 if !file_descriptors[file].is_valid() {
                     continue;
                 }
-                // A stored descriptor keeps a replaced inode alive, so the watch of the file stays on it.
-                // Off the watchlist, the reload watches the name again.
+                // The stored descriptor keeps a replaced inode alive: the reload must add the file again to watch the new one.
                 self.stop_watching(&file_paths[file], file, ctx);
                 self.reload_watched_file(&file_paths[file], hashes[file], current_task);
                 reloaded += 1;

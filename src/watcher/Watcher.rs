@@ -1228,9 +1228,7 @@ impl WatchList {
         ))
     }
 
-    /// A folder has two spellings, with a trailing separator and without. When the Directory item of
-    /// the other spelling of `path` watches another folder than `watch_descriptor` does, that is the
-    /// folder that was at this path before: returns its watch descriptor. Else `NO_FOLDER`.
+    /// The watch descriptor of the folder that was at `path` before: that of the item with the other spelling of `path` (trailing separator or none), if it watches another folder.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn folder_before(
         &self,
@@ -1318,8 +1316,7 @@ impl Iterator for FilesNamed<'_> {
             if self.folder_before == NO_FOLDER {
                 return None;
             }
-            // The folder at this path can be another one than when a file was added. Such a file has the
-            // watch descriptor of the folder before.
+            // A file that was added under the folder before has the watch descriptor of that folder.
             self.watch_descriptor = core::mem::replace(&mut self.folder_before, NO_FOLDER);
             self.candidates = self
                 .list
@@ -1343,8 +1340,7 @@ pub struct WatchItem {
     pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
-    /// Of a File item: the `eventlist_index` of the Directory item of its folder, or `NO_FOLDER`.
-    /// Of a Directory item: [`WatchList::folder_before`].
+    /// The `eventlist_index` of a file's folder when the file was added, or a folder's `WatchList::folder_before`. `NO_FOLDER` if none.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub folder_watch_descriptor: platform::EventListIndex,
 }

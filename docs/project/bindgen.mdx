@@ -369,7 +369,9 @@ for a string that is no rope at all, to inline in front of everything else, and
 `latin1.substring(heap, start, end)`, which shares the characters, and all of them are the operand
 itself; `latin1.substrings_unchecked(heap, ranges)` makes several with one call.
 `heap.create_latin1_string(characters)` makes a new one, and `heap.create_latin1_string_with(length, fill)`
-one that `fill` writes in place. It is also a result. `b.string.allowStringObject.local` takes a
+one that `fill` writes in place. Both end the process when the characters cannot be allocated;
+`heap.try_create_latin1_string(characters)` answers with an error instead, for as many characters as JavaScript
+cares to pass. It is also a result. `b.string.allowStringObject.local` takes a
 `String` object too: the `String` objects among the arguments are converted first, in the order of
 the arguments, and the types are checked after that. `src/runtime/node/path.rs` is written this way.
 

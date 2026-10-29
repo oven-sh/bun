@@ -822,7 +822,7 @@ impl TranspilerJob {
 
         // Only
         // initialised on the `is_node_override` branch and only read through
-        // `parse_options.virtual_source` (raw-ptr borrow).
+        // `parse_options.virtual_source`.
         // The write is `Cow::Borrowed`/borrowed-path
         // only, so skipping `Drop` is sound.
         let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
@@ -922,11 +922,7 @@ impl TranspilerJob {
                     contents: std::borrow::Cow::Borrowed(code),
                     ..Default::default()
                 });
-                // SAFETY: `fallback_source` outlives `parse_options` (declared
-                // earlier in fn scope); raw-ptr borrow avoids tying
-                // `parse_options`'s `'static` source lifetime to this stack slot.
-                parse_options.virtual_source =
-                    Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(src) });
+                parse_options.virtual_source = Some(src);
             }
         }
 

@@ -1539,13 +1539,6 @@ pub struct SourceMapDataTask {
     pub(crate) thread_task: ThreadPoolLib::Task,
 }
 
-// SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
-// `OwnedTask: Send` route). `ctx` is a backref into `BundleV2.linker`
-// (`LinkerContext: Send`); `source_index`/`thread_task` are POD. The callback
-// only writes the per-`source_index` SoA cell (see `run_line_offset`
-// CONCURRENCY note), so moving the task to a worker thread is sound.
-unsafe impl Send for SourceMapDataTask {}
-
 impl Default for SourceMapDataTask {
     fn default() -> Self {
         Self {
@@ -1838,11 +1831,6 @@ pub struct GenerateChunkCtx<'a> {
     /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
     pub(crate) chunk: bun_ptr::BackRef<Chunk<'a>, bun_ptr::Mut>,
 }
-// SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
-// shared reads are read-only.
-unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
-// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
-unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
 
 impl<'a> GenerateChunkCtx<'a> {
     /// Recover a shared borrow of the owning `BundleV2` via container_of from

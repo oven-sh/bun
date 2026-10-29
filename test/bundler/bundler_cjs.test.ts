@@ -1056,6 +1056,319 @@ describe("bundler", () => {
     },
   });
 
+  // Only an own `default` property counts. With an inherited one, the default
+  // import is the whole `module.exports`. `bun run` prints "1 inherited" too.
+  itBundled("cjs/__toESM_esModule_with_inherited_default", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        console.log(lib.named, lib.default);
+      `,
+      "/lib.cjs": /* js */ `
+        module.exports = Object.create({ default: "inherited" });
+        Object.defineProperty(module.exports, "__esModule", { value: true });
+        module.exports.named = 1;
+      `,
+    },
+    run: {
+      stdout: "1 inherited",
+    },
+  });
+
+  // An own `default` counts whatever its descriptor is: not enumerable, an
+  // accessor, or a property of a function. The conversion does not call the
+  // accessor: `reads` is 0 until the code uses the import.
+  itBundled("cjs/__toESM_esModule_own_default_kinds", {
+    files: {
+      "/entry.js": /* js */ `
+        import hidden from "./hidden.cjs";
+        import accessor from "./accessor.cjs";
+        import fn from "./fn.cjs";
+        console.log(hidden, globalThis.reads, accessor, globalThis.reads, fn);
+      `,
+      "/hidden.cjs": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        Object.defineProperty(exports, "default", { value: "hidden" });
+      `,
+      "/accessor.cjs": /* js */ `
+        globalThis.reads = 0;
+        Object.defineProperty(exports, "__esModule", { value: true });
+        Object.defineProperty(exports, "default", {
+          enumerable: true,
+          get() {
+            globalThis.reads++;
+            return "accessor";
+          },
+        });
+      `,
+      "/fn.cjs": /* js */ `
+        module.exports = function () {};
+        module.exports.__esModule = true;
+        module.exports.default = "fn";
+      `,
+    },
+    run: {
+      stdout: "hidden 0 accessor 1 fn",
+    },
+  });
+
+  // For a Proxy, the names that `ownKeys` lists decide. `listed.cjs` lists
+  // `default` and gives no descriptor for it. `unlisted.cjs` has a descriptor
+  // for `default` and does not list it, so its default import is the Proxy.
+  itBundled("cjs/__toESM_esModule_proxy_own_default", {
+    files: {
+      "/entry.js": /* js */ `
+        import listed from "./listed.cjs";
+        import unlisted from "./unlisted.cjs";
+        console.log(listed, typeof unlisted);
+      `,
+      "/listed.cjs": /* js */ `
+        module.exports = new Proxy(
+          { __esModule: true, default: "listed" },
+          {
+            getOwnPropertyDescriptor: (target, key) =>
+              key === "default" ? undefined : Reflect.getOwnPropertyDescriptor(target, key),
+          },
+        );
+      `,
+      "/unlisted.cjs": /* js */ `
+        module.exports = new Proxy(
+          { __esModule: true, default: "unlisted" },
+          { ownKeys: target => Reflect.ownKeys(target).filter(key => key !== "default") },
+        );
+      `,
+    },
+    run: {
+      stdout: "listed object",
+    },
+  });
+
+  // ============================================================================
+  // A require cycle. The host is an ES module that requires the bundle while
+  // its own body still runs, and the bundle imports the host as an external.
+  // `require()` of the host returns its live namespace: a read of an export
+  // that is not initialized yet throws a ReferenceError. `__toESM` builds the
+  // ES module view without a read of `default`, so the bundle loads.
+  //
+  // Each host runs two times: with the bundle, and with the source file of
+  // the bundle. The two runs must print the same line.
+  // ============================================================================
+
+  // Requires the plugin, then initializes its exports, then calls report().
+  const cycleHost = (exportsAfterRequire: string) => /* js */ `
+    const plugin = require(process.argv[2] ?? "./out.js");
+    ${exportsAfterRequire}
+    export const n = 1;
+    console.log(plugin.report());
+  `;
+  const runBundleThenSource = (stdout: string) => [
+    { file: "/host.mjs", stdout },
+    { file: "/host.mjs", args: ["./plugin.ts"], stdout },
+  ];
+  // The host's namespace has no `kind`, so "default 1" proves that the default
+  // import is the host's default export.
+  const reportHostDefault = /* ts */ `
+    import Host, { n } from "./host.mjs";
+    export function report() {
+      return Host.kind + " " + n;
+    }
+  `;
+
+  // An `export default` expression has no value until its statement runs.
+  itBundled("cjs/__toESM_require_cycle_default_expression", {
+    files: {
+      "/plugin.ts": reportHostDefault,
+    },
+    runtimeFiles: {
+      "/host.mjs": cycleHost(`export default { kind: "default" };`),
+    },
+    external: ["./host.mjs"],
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("./host.mjs"))');
+    },
+    run: runBundleThenSource("default 1"),
+  });
+
+  // The same for a `const` that the host exports as `default`. `--bytecode`
+  // output is CommonJS for target bun, and the bundle must load from its
+  // `.jsc`: JSC logs a cache hit for it.
+  itBundled("cjs/__toESM_require_cycle_default_alias_bytecode", {
+    files: {
+      "/plugin.ts": reportHostDefault,
+    },
+    runtimeFiles: {
+      "/host.mjs": cycleHost(`const Host = class { static kind = "default"; }; export { Host as default };`),
+    },
+    external: ["./host.mjs"],
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    run: [
+      {
+        file: "/host.mjs",
+        env: { BUN_JSC_verboseDiskCache: "1" },
+        stdout: "default 1",
+        stderr: /\[Disk Cache\] Cache hit for sourceCode/,
+      },
+      { file: "/host.mjs", args: ["./plugin.ts"], stdout: "default 1" },
+    ],
+  });
+
+  // The host does not require the plugin itself. A module that the host
+  // imports does, so the body of the host did not start yet and not even a
+  // class declaration has a value.
+  itBundled("cjs/__toESM_require_cycle_from_dependency_of_host", {
+    files: {
+      "/plugin.ts": reportHostDefault,
+    },
+    runtimeFiles: {
+      "/host.mjs": /* js */ `
+        import { plugin } from "./loader.mjs";
+        export default class Host {
+          static kind = "default";
+        }
+        export const n = 1;
+        console.log(plugin.report());
+      `,
+      "/loader.mjs": /* js */ `
+        export const plugin = require(process.argv[2] ?? "./out.js");
+      `,
+    },
+    external: ["./host.mjs"],
+    target: "bun",
+    format: "cjs",
+    run: runBundleThenSource("default 1"),
+  });
+
+  // `import *`: the view lists `default` and reads it only on use.
+  itBundled("cjs/__toESM_require_cycle_namespace_import", {
+    files: {
+      "/plugin.ts": /* ts */ `
+        import * as ns from "./host.mjs";
+        export function report() {
+          return ns.default.kind + " " + ns.n + " " + Object.keys(ns);
+        }
+      `,
+    },
+    runtimeFiles: {
+      "/host.mjs": cycleHost(`export default { kind: "default" };`),
+    },
+    external: ["./host.mjs"],
+    target: "bun",
+    format: "cjs",
+    run: runBundleThenSource("default 1 default,n"),
+  });
+
+  // Re-exports that the bundle itself never reads. `export *` goes through
+  // `__reExport`, which takes the same live namespace.
+  itBundled("cjs/__toESM_require_cycle_reexport", {
+    files: {
+      "/plugin.ts": /* ts */ `
+        export { default as Host } from "./host.mjs";
+        export * as ns from "./host.mjs";
+        export * from "./host.mjs";
+      `,
+    },
+    runtimeFiles: {
+      "/host.mjs": /* js */ `
+        const plugin = require(process.argv[2] ?? "./out.js");
+        export default { kind: "default" };
+        export const n = 1;
+        console.log(plugin.Host.kind, plugin.ns.n, plugin.ns.default === plugin.Host, plugin.n);
+      `,
+    },
+    external: ["./host.mjs"],
+    target: "bun",
+    format: "cjs",
+    run: runBundleThenSource("default 1 true 1"),
+  });
+
+  // The same external import in IIFE output.
+  itBundled("cjs/__toESM_require_cycle_format_iife", {
+    files: {
+      "/plugin.ts": /* ts */ `
+        import Host, { n } from "./host.mjs";
+        globalThis.report = () => Host.kind + " " + n;
+      `,
+    },
+    runtimeFiles: {
+      "/host.mjs": /* js */ `
+        require(process.argv[2] ?? "./out.js");
+        export default { kind: "default" };
+        export const n = 1;
+        console.log(globalThis.report());
+      `,
+    },
+    external: ["./host.mjs"],
+    target: "bun",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(__require("./host.mjs"))');
+    },
+    run: runBundleThenSource("default 1"),
+  });
+
+  // The read stays where the code does it. A use of the default import before
+  // the host initializes it throws the ReferenceError, and a later use works.
+  itBundled("cjs/__toESM_require_cycle_early_read_throws_at_the_read", {
+    files: {
+      "/plugin.ts": /* ts */ `
+        import Host from "./host.mjs";
+        let early;
+        try {
+          early = Host.kind;
+        } catch (e) {
+          early = e.name;
+        }
+        export function report() {
+          return early + " " + Host.kind;
+        }
+      `,
+    },
+    runtimeFiles: {
+      "/host.mjs": cycleHost(`export default { kind: "default" };`),
+    },
+    external: ["./host.mjs"],
+    target: "bun",
+    format: "cjs",
+    run: runBundleThenSource("ReferenceError default"),
+  });
+
+  // A bundled CommonJS file hands the live namespace on as its
+  // `module.exports`, so ES module output converts one too. The default import
+  // is the `default` export of that namespace, as for the external import
+  // above. Only the bundle runs here: `bun run` of these files reads every
+  // export of the namespace when it converts `wrap.cjs`, and throws on `n`.
+  itBundled("cjs/__toESM_require_cycle_through_bundled_cjs", {
+    files: {
+      "/plugin.ts": /* ts */ `
+        import Host, { n } from "./wrap.cjs";
+        export function report() {
+          return Host.kind + " " + n;
+        }
+      `,
+      "/wrap.cjs": /* js */ `
+        const host = require("./host.mjs");
+        if (host) module.exports = host;
+      `,
+    },
+    runtimeFiles: {
+      "/host.mjs": cycleHost(`export default { kind: "default" };`),
+    },
+    external: ["./host.mjs"],
+    target: "bun",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toESM(require_wrap())");
+    },
+    run: {
+      file: "/host.mjs",
+      stdout: "default 1",
+    },
+  });
+
   // ============================================================================
   // The nearest package.json decides "type", with or without a "name". A dual
   // package marks its ESM build with a nameless `dist/esm/package.json` that

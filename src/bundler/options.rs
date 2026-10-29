@@ -1575,7 +1575,7 @@ impl<'a> BundleOptions<'a> {
 
     /// Shared-borrow the per-Transpiler `Log`.
     ///
-    /// SAFETY: `self.log` is non-null: `Transpiler::init_in_place` validates
+    /// SAFETY: `self.log` is non-null: `Transpiler::init` validates
     /// the pointer via `NonNull::new(log).expect(..)` before storing it and
     /// before calling `from_api` (which has no other callers).
     /// The pointee is the caller-owned arena `Log` which outlives `self`. The

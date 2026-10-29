@@ -777,9 +777,7 @@ impl MachoSigner {
                 .chunks(PAGE_SIZE)
                 .zip(hashes.as_chunks_mut::<HASH_SIZE>().0)
             {
-                let mut digest = [0u8; HASH_SIZE];
-                sha256_hash(page, &mut digest);
-                hash.copy_from_slice(&digest);
+                bun_sha_hmac::sha::SHA256::hash(page, hash);
             }
         });
 
@@ -815,13 +813,6 @@ const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
 const CSSLOT_CODEDIRECTORY: u32 = 0;
 const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
-
-/// `bun.sha.SHA256.hash(bytes, out, null)`.
-#[inline]
-pub(crate) fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
-    // SAFETY: engine is null (default).
-    unsafe { bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut()) };
-}
 
 #[cfg(test)]
 mod tests {

@@ -821,7 +821,7 @@ pub(crate) fn post_process_js_chunk(
 // renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
 // share that lifetime.
 pub(crate) fn generate_entry_point_tail_js<'a>(
-    c: &'a mut LinkerContext,
+    c: &'a LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     source_index: IndexInt,
@@ -1275,9 +1275,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
-        require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaCallback::init::<
-            LinkerContext,
-        >(c),
+        require_or_import_meta_for_source_callback: Some(
+            js_printer::RequireOrImportMetaCallback::init(c),
+        ),
 
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,

@@ -120,32 +120,21 @@ pub(crate) fn write_request(
         }
     }
 
-    encode_header(
-        session,
-        &mut encoded,
-        b":method",
-        request.method,
-        Indexing::Add,
-    )?;
-    encode_header(session, &mut encoded, b":scheme", b"https", Indexing::Add)?;
-    encode_header(
-        session,
-        &mut encoded,
-        b":authority",
-        authority,
-        Indexing::Add,
-    )?;
-    encode_header(
-        session,
-        &mut encoded,
-        b":path",
-        if !request.path.is_empty() {
-            request.path
-        } else {
-            b"/"
-        },
-        Indexing::Add,
-    )?;
+    let mut encode = |name: &[u8], value: &[u8], indexing| {
+        session
+            .hpack_encoder
+            .encode(&mut encoded, name, value, indexing)
+            .map_err(|_| crate::Error::UnableToEncode)
+    };
+    let path: &[u8] = if request.path.is_empty() {
+        b"/"
+    } else {
+        request.path
+    };
+    encode(b":method", request.method, Indexing::Add)?;
+    encode(b":scheme", b"https", Indexing::Add)?;
+    encode(b":authority", authority, Indexing::Add)?;
+    encode(b":path", path, Indexing::Add)?;
 
     for h in request.headers {
         // §8.2.1: field names MUST be lowercase on the wire. copy_lowercase_if_needed
@@ -179,7 +168,7 @@ pub(crate) fn write_request(
                 RequestHeader::Expect => {}
             }
         }
-        encode_header(session, &mut encoded, name, h.value(), indexing)?;
+        encode(name, h.value(), indexing)?;
     }
 
     // request_body points into original_request_body.bytes (lives in client.state).
@@ -402,17 +391,4 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
             return false;
         }
     }
-}
-
-fn encode_header(
-    session: &mut ClientSession,
-    encoded: &mut Vec<u8>,
-    name: &[u8],
-    value: &[u8],
-    indexing: Indexing,
-) -> crate::Result<()> {
-    session
-        .hpack_encoder
-        .encode(encoded, name, value, indexing)
-        .map_err(|_| crate::Error::UnableToEncode)
 }

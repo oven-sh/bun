@@ -393,14 +393,14 @@ mod process {
     unsafe extern "C" {
         /// The linker's name for the header of the executable it links. dyld's image 0 is not
         /// always that one: it puts the libraries of `DYLD_INSERT_LIBRARIES` in front.
+        /// It is mapped read-only for the life of the process, so reading it is safe.
         #[link_name = "_mh_execute_header"]
-        static MAIN_EXECUTABLE_HEADER: bun_sys::macho::mach_header_64;
+        safe static MAIN_EXECUTABLE_HEADER: bun_sys::macho::mach_header_64;
     }
 
     pub(super) fn find_identity() -> Result<[u8; 16], IdentityError> {
         let header_address = &raw const MAIN_EXECUTABLE_HEADER;
-        // SAFETY: the header of the main executable is mapped for the life of the process.
-        let header = unsafe { header_address.read() };
+        let header = MAIN_EXECUTABLE_HEADER;
         if header.magic != MH_MAGIC_64 {
             return Err(IdentityError::UnrecognizedExecutable);
         }

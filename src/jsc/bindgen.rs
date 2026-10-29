@@ -892,7 +892,7 @@ impl PinnedBytes {
                 Pinned::String(utf8)
             }
         };
-        // SAFETY: the string is thread-isolated, and the buffer pinned and GC-rooted.
+        // SAFETY: the string is thread-isolated, and the buffer is GC-rooted with its bytes pinned or copied.
         Ok(Self(unsafe { ThreadIsolated::new(pinned) }))
     }
 }

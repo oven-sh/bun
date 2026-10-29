@@ -317,9 +317,9 @@ test.each([
     303,
   ],
 ])("SourceMap rejects a VLQ of more than 8 digits that %s", (_, mappings, at) => {
-  expect(() => new SourceMap({ version: 3, sources: ["a.js"], names: [], mappings })).toThrow(
-    new SyntaxError(`Missing original column value at ${at}`),
-  );
+  const construct = () => new SourceMap({ version: 3, sources: ["a.js"], names: [], mappings });
+  expect(construct).toThrow(SyntaxError);
+  expect(construct).toThrow(new SyntaxError(`Missing original column value at ${at}`));
 });
 
 test("error.stack of // @bun code is remapped through a VLQ written with 9 digits", async () => {

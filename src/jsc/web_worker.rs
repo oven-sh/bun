@@ -1486,13 +1486,16 @@ impl WebWorker {
             return;
         }
         let global = vm.global();
-        let result: jsc::JsResult<(JSValue, BunString)> = (|| {
-            let err = vm_log.to_js(global, format_args!("Error in worker"))?;
+        let result: jsc::JsResult<Option<(JSValue, BunString)>> = (|| {
+            let Some(err) = vm_log.errors_to_js(global, format_args!("Error in worker"))? else {
+                return Ok(None);
+            };
             let str = err.to_bun_string(global)?;
-            Ok((err, str))
+            Ok(Some((err, str)))
         })();
         let (err, str) = match result {
-            Ok(pair) => pair,
+            Ok(Some(pair)) => pair,
+            Ok(None) => return,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(err) => {
                 // The worker's start sequence is its outermost frame: building the error from the

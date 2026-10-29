@@ -70,8 +70,7 @@ pub(crate) fn validate_path(
     Box::from(out)
 }
 
-/// The default `root`: the directory that holds every entry point. When that directory is above
-/// the working directory, the root is the working directory and an entry point above it is named `../<file>`.
+/// The default `root`: the directory that holds every entry point, or the working directory when that is below it.
 pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) -> Vec<u8> {
     let paths: Vec<Vec<u8>> = entry_points
         .iter()

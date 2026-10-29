@@ -220,8 +220,8 @@ struct Outer<'a> {
     dialect: CodeDialect,
     /// `saveDiagnosticsLength`
     diagnostics: usize,
-    /// A decorator that an expression of a tag leaves stray belongs to the comment, where TypeScript keeps it: no
-    /// statement list takes it.
+    /// A decorator that an expression of a tag leaves stray (`@import x y` reads `y * @returns` as its module
+    /// specifier) stays inside the tag, as in TypeScript's tree: no statement list takes it.
     stray_decorators: usize,
 }
 

@@ -83,6 +83,9 @@ jobs:
   miri:
     name: cargo miri test
     runs-on: ubuntu-latest
+    # scripts/rust-miri.ts stops a crate after 45 minutes and names the test
+    # that did not finish. This is for what that limit does not cover.
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

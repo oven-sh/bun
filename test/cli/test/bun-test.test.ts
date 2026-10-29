@@ -1754,7 +1754,7 @@ describe("bun test", () => {
       "a deleted argv": [`delete process.argv;`, { argv: "undefined", frozen: false }],
       "a value that is no array": [`process.argv = 7;`, { argv: "7", frozen: false }],
       "a frozen array": [`Object.freeze(process.argv);`, { argv: ["file 2"], frozen: true }],
-      // The storage that a frozen array has under bun test --aot.
+      // The storage that a frozen array has in a VM that runs ahead-of-time compiled code.
       "an array frozen in place": [
         `Object.freeze(process.argv);
          if (!describe(process.argv).includes("FreezeElementsInPlace")) throw new Error("not frozen in place");`,

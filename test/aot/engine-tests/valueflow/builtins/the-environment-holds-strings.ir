@@ -1,6 +1,8 @@
 # env = process.env; env.HOME.length; env.A = "text"; env.B = { toString: converted }; Bun.env.C
 # process.env and Bun.env answer one object of the host. Native code has put a string under every name that it has, so a read answers a string or, where there is nothing, undefined: no object that nobody knows.
 # Of what is stored the object keeps a string, which code that the stored object names makes.
+# On Windows the object is a Proxy that the library makes.
+# REQUIRES: not-windows
 # RUN: valueflow-why values=f0:v2 values=f0:v3 values=f0:v11
 # CHECK: values=f0:v2
 # CHECK: operand 0 {{*}} 1 members: [[environment]]

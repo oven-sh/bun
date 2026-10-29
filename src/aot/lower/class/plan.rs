@@ -12,6 +12,7 @@ use super::{
 };
 use crate::ir::ClassSlot;
 use crate::lower::decorators::{self, InitializerLists};
+use crate::lower::transpiled::TranspiledFile;
 
 pub(in crate::lower) fn runtime_members(
     hir: &hir::File<'_>,
@@ -284,17 +285,22 @@ pub(super) fn plan_class(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     settings: &TranspileSettings,
+    transpiled: Option<&TranspiledFile>,
     class: ClassId,
 ) -> ClassPlan {
     let transform = compute_class_transform(hir, bound, class);
     let is_asked_to_assign = hir.has_typescript_semantics()
         && settings.use_define_for_class_fields == Some(false)
         && transform != ClassTransform::Standard;
-    // A field under a computed key stays a field, and with it every other field of the class. A parameter property is no field.
-    let has_computed_instance_key = runtime_members(hir, class).any(|member| {
-        has_computed_field_key(hir, member) && !hir[member].flags.contains(Flags::STATIC)
-    });
-    let field_semantics = if is_asked_to_assign && !has_computed_instance_key {
+    // A field under a key that the transpiler prints as neither a string nor a number stays a field, and with it every other field of the class.
+    // A parameter property is no field.
+    let keeps_fields = match transpiled {
+        Some(transpiled) => !transpiled.assigns_fields_of_class_at(hir[class].text_start),
+        None => runtime_members(hir, class).any(|member| {
+            has_computed_field_key(hir, member) && !hir[member].flags.contains(Flags::STATIC)
+        }),
+    };
+    let field_semantics = if is_asked_to_assign && !keeps_fields {
         FieldSemantics::Assign
     } else {
         FieldSemantics::Define
@@ -368,13 +374,14 @@ fn find_member_slot(
     }
 }
 
-pub(crate) fn class_slots(
+pub(in crate::lower) fn class_slots(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     settings: &TranspileSettings,
+    transpiled: Option<&TranspiledFile>,
     class: ClassId,
 ) -> SmallVec<[ClassSlot; 4]> {
-    let plan = plan_class(hir, bound, settings, class);
+    let plan = plan_class(hir, bound, settings, transpiled, class);
     let mut slots: SmallVec<[ClassSlot; 4]> = smallvec![ClassSlot::ClassObject];
     if has_instance_brand(hir, bound, class) {
         slots.push(ClassSlot::ClassToken);

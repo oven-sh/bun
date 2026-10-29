@@ -1,10 +1,11 @@
 // The program names next to nothing. Which names are read and which functions are called is only known at run time, so --trim removes what stands behind them.
 // Reading a name gives what it gives in the whole executable. Calling a function that was removed throws an error that the program can catch.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const evaluates = `import { readFileSync } from "node:fs";
 console.log(new Function(readFileSync(process.argv[2], "utf8"))());
@@ -108,14 +109,14 @@ if (!canTrim)
     "SKIPPED: names-from-run-time-in-a-trimmed-executable.test.ts: this build of Bun doesn't support --trim",
   );
 
-(canTrim && !unsupported && !isWindows ? describe : describe.skip)("in a trimmed executable", () => {
+(canTrim && !unsupported ? describe : describe.skip)("in a trimmed executable", () => {
   test(
     "every name that text from run time reads is what it is in the whole executable",
     () =>
       slot(async () => {
         using dir = tempDir("names-from-run-time", { "program.js": evaluates, "text.txt": readsEveryName });
         const folder = String(dir);
-        const build = [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile"];
+        const build = [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", "program.js", "--outfile"];
         built(await spawned([...build, "whole"], folder, bunEnv));
         built(await spawned([...build, "trimmed", "--trim"], folder, bunEnv));
         const whole = await spawned([join(folder, "whole"), "text.txt"], folder, bunEnv);
@@ -136,7 +137,17 @@ if (!canTrim)
         const folder = String(dir);
         built(
           await spawned(
-            [bunExe(), "build", "--compile", "--aot", "--trim", "program.js", "--outfile", "trimmed"],
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...withoutDebugInformation,
+              "--aot",
+              "--trim",
+              "program.js",
+              "--outfile",
+              "trimmed",
+            ],
             folder,
             bunEnv,
           ),
@@ -166,7 +177,17 @@ if (!canTrim)
         const folder = String(dir);
         built(
           await spawned(
-            [bunExe(), "build", "--compile", "--aot", "--trim", "program.js", "--outfile", "trimmed"],
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...withoutDebugInformation,
+              "--aot",
+              "--trim",
+              "program.js",
+              "--outfile",
+              "trimmed",
+            ],
             folder,
             bunEnv,
           ),

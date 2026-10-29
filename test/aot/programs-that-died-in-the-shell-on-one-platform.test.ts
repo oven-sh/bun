@@ -4,8 +4,8 @@
 // the scripts need.
 import { expect, test } from "bun:test";
 import { join } from "path";
+import { unsupported } from "./harness/commands";
 import { run } from "./harness/run";
-import { unsupported } from "./run-programs";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
 const programs = [
@@ -15,11 +15,11 @@ const programs = [
   // Its kin, so that the same run says what that death needs. Stores to frozen arrays throw and are caught, and the run does not count.
   "arrays/frozen-array-error-messages",
   // Arrays are frozen and the run counts, and nothing throws.
-  "arrays/elements-of-frozen-arrays-that-fit-are-not-coerced",
+  "arrays/elements-frozen-arrays-fit-not-coerced",
   // Linux on x64, a shell built with assertions: signal 6 as they stand and at each of the three heats. A module of the image loads another
   // under a name that the program computes, and the shell took the path of the first for a URL.
-  "modules/two-loads-of-a-module-that-cannot-be-linked-give-one-error",
-  "structural-types/a-module-imported-by-a-computed-name-is-untyped",
+  "modules/two-loads-module-cannot-linked-give",
+  "structural-types/module-imported-by-computed-name-untyped",
 ];
 
 /** What shell/quick.py passes over for now is printed, so that every run on that platform says where the shell died. The other lines. */

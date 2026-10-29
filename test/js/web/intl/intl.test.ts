@@ -16,7 +16,7 @@ import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen } from "
 // ICU they were generated against; macOS uses Apple's libicucore, so snapshot
 // diffs there are expected and not a regression. The structural sweep below
 // runs everywhere.
-const SNAPSHOT_ICU_VERSION = "78.3";
+const SNAPSHOT_ICU_VERSION = "79.1";
 const snapshotIf = !isMacOS && process.versions.icu === SNAPSHOT_ICU_VERSION ? test : test.skip;
 
 const LOCALES = ["en", "de", "fr", "ja", "ko", "ru", "zh", "zh-Hant", "ar", "th", "es-419", "pt-PT"] as const;

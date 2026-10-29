@@ -5,13 +5,28 @@ use std::str::FromStr;
 
 const COMMENT_MARK: &str = "//";
 const DEFAULT_PREFIX: &str = "CHECK";
-const RESERVED_NAMES: [&str; 6] = ["RUN", "FORM", "OPTIONS", "DIAGNOSTIC", "STATISTIC", "CHECK"];
+const RESERVED_NAMES: [&str; 12] = [
+    "RUN",
+    "FORM",
+    "OPTIONS",
+    "DIAGNOSTIC",
+    "STATISTIC",
+    "CHECK",
+    "FILE",
+    "LINK",
+    "ENTRY",
+    "CWD",
+    "SAME",
+    "GENERATED",
+];
 const TEST_FILE_EXTENSIONS: [&str; 8] =
     [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 const DECLARATION_FILE_EXTENSIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 const MAX_CHECK_COUNT: u32 = 1000;
 const MAX_TYPESCRIPT_CODE_DIGITS: usize = 9;
-const DIAGNOSTIC_SYNTAX: &str = "DIAGNOSTIC is written <name> [ <count> ]";
+const DIAGNOSTIC_SYNTAX: &str = "DIAGNOSTIC is written <name> [ <count> | <file>:<line> ]";
+const LINK_SYNTAX: &str = "LINK is written <path> -> <target>";
+const SAME_SYNTAX: &str = "SAME is written <prefix> <prefix>";
 const STATISTIC_SYNTAX: &str = "STATISTIC is written <name> = | >= | <= <n>";
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -42,9 +57,39 @@ pub struct OptionWord {
     pub line: u32,
 }
 
+/// `file`: from the folder of the test, or from the root of its sections.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Place {
+    pub file: String,
+    pub line: u32,
+}
+
 pub struct ExpectedDiagnostic {
     pub name: DiagnosticName,
     pub count: Option<u32>,
+    pub place: Option<Place>,
+    pub line: u32,
+}
+
+/// What stands between a `FILE` line and the next, or `GENERATED`, or the end.
+pub struct Section {
+    pub path: String,
+    pub text: String,
+}
+
+pub struct Link {
+    pub path: String,
+    pub target: String,
+}
+
+pub struct SameRuns {
+    pub prefixes: [String; 2],
+    pub line: u32,
+}
+
+/// Every line below `line` is a check line that the driver has written.
+pub struct Generated {
+    pub functions: Vec<String>,
     pub line: u32,
 }
 
@@ -64,6 +109,14 @@ pub struct CheckGroup {
 pub struct TestFile {
     pub runs: Vec<RunDirective>,
     pub option_words: Vec<OptionWord>,
+    /// Those of `OPTIONS(<prefix>)`.
+    pub option_words_of_runs: Vec<(String, OptionWord)>,
+    pub sections: Vec<Section>,
+    pub links: Vec<Link>,
+    pub entry_points: Vec<String>,
+    pub working_directory: Option<String>,
+    pub same_runs: Vec<SameRuns>,
+    pub generated: Option<Generated>,
     pub check_groups: Vec<CheckGroup>,
     pub diagnostics: Vec<ExpectedDiagnostic>,
     pub statistics: Vec<ExpectedStatistic>,
@@ -95,16 +148,53 @@ pub fn parse_test_file(text: &str) -> TestFile {
         if let Err(error) = validate_check_lines(&group.lines) {
             file.errors.push(error);
         }
+        let is_compared = |same: &SameRuns| same.prefixes.contains(&group.prefix);
         if group.lines.is_empty()
             && group.prefix != DEFAULT_PREFIX
+            && file.generated.is_none()
+            && !file.same_runs.iter().any(is_compared)
             && let Some(run) = file.runs.iter().find(|run| run.prefix == group.prefix)
         {
             let message = format!("no line has the prefix {}", group.prefix);
             file.errors.push(TestFailure::new(run.line, message));
         }
     }
+    file.sections = split_sections(text);
     file.errors.sort_by_key(|error| error.line);
     file
+}
+
+fn split_sections(text: &str) -> Vec<Section> {
+    let mut sections: Vec<Section> = Vec::new();
+    for line in text.split_inclusive('\n') {
+        let directive = split_directive(line.trim_end_matches(['\r', '\n']), 0);
+        match directive.filter(|directive| directive.parenthesized.is_none()) {
+            Some(directive) if directive.name == "GENERATED" => break,
+            Some(directive) if directive.name == "FILE" => sections.push(Section {
+                path: directive.value.to_owned(),
+                text: String::new(),
+            }),
+            _ => {
+                if let Some(section) = sections.last_mut() {
+                    section.text.push_str(line);
+                }
+            }
+        }
+    }
+    sections
+}
+
+fn parse_path(word: &str) -> Result<String, String> {
+    let is_below_root = !word.is_empty()
+        && !word.starts_with('/')
+        && !word.contains('\\')
+        && word
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..");
+    match is_below_root {
+        true => Ok(word.to_owned()),
+        false => Err(format!("{word} is no path below the root, written with /")),
+    }
 }
 
 pub fn holds(comparison: StatisticComparison, actual: u64, expected: u64) -> bool {
@@ -202,6 +292,13 @@ fn find_group(groups: &[CheckGroup], prefix: &str) -> Option<usize> {
 }
 
 impl TestFile {
+    /// Those of `OPTIONS`, then those of `OPTIONS(<prefix>)`.
+    pub fn option_words_for(&self, prefix: &str) -> Vec<&OptionWord> {
+        let own = self.option_words_of_runs.iter();
+        let own = own.filter(|(of, _)| of == prefix).map(|(_, word)| word);
+        self.option_words.iter().chain(own).collect()
+    }
+
     pub fn check_lines_for(&self, prefix: &str) -> &[CheckLine] {
         let group = find_group(&self.check_groups, prefix).expect("every RUN has a check group");
         &self.check_groups[group].lines
@@ -210,7 +307,70 @@ impl TestFile {
     fn parse_directive(&mut self, directive: &DirectiveLine<'_>) -> Result<(), String> {
         match (directive.name, directive.parenthesized) {
             ("RUN", _) => self.parse_run(directive),
+            ("OPTIONS", Some(_)) if directive.value.is_empty() => {
+                Err("OPTIONS needs a word".to_owned())
+            }
+            ("OPTIONS", Some(prefix)) => {
+                if find_group(&self.check_groups, prefix).is_none() {
+                    return Err(format!("no RUN has the prefix {prefix}"));
+                }
+                let line = directive.line;
+                let words = split_words(directive.value).map(str::to_owned);
+                self.option_words_of_runs
+                    .extend(words.map(|word| (prefix.to_owned(), OptionWord { word, line })));
+                Ok(())
+            }
             (name, Some(_)) => Err(format!("unknown directive {name}(..)")),
+            ("FILE", None) => parse_path(directive.value).map(drop),
+            ("LINK", None) => {
+                let words: Vec<&str> = split_words(directive.value).collect();
+                let [path, "->", target] = words[..] else {
+                    return Err(LINK_SYNTAX.to_owned());
+                };
+                self.links.push(Link {
+                    path: parse_path(path)?,
+                    target: parse_path(target)?,
+                });
+                Ok(())
+            }
+            ("ENTRY", None) => {
+                for word in split_words(directive.value) {
+                    self.entry_points.push(parse_path(word)?);
+                }
+                Ok(())
+            }
+            ("CWD", None) => {
+                self.working_directory = Some(parse_path(directive.value)?);
+                Ok(())
+            }
+            ("SAME", None) => {
+                let words: Vec<&str> = split_words(directive.value).collect();
+                let [first, second] = words[..] else {
+                    return Err(SAME_SYNTAX.to_owned());
+                };
+                for prefix in [first, second] {
+                    if find_group(&self.check_groups, prefix).is_none() {
+                        return Err(format!("no RUN has the prefix {prefix}"));
+                    }
+                }
+                self.same_runs.push(SameRuns {
+                    prefixes: [first.to_owned(), second.to_owned()],
+                    line: directive.line,
+                });
+                Ok(())
+            }
+            ("GENERATED", None) => {
+                let functions: Vec<String> =
+                    split_words(directive.value).map(str::to_owned).collect();
+                if functions.is_empty() {
+                    return Err("GENERATED needs the names of functions, or *".to_owned());
+                }
+                self.generated = Some(Generated {
+                    functions,
+                    line: directive.line,
+                });
+                Ok(())
+            }
             ("FORM", None) => Err("FORM is for the engine's tests".to_owned()),
             ("OPTIONS", None) if directive.value.is_empty() => {
                 Err("OPTIONS needs a word".to_owned())
@@ -286,11 +446,19 @@ impl TestFile {
 
     fn parse_diagnostic(&mut self, directive: &DirectiveLine<'_>) -> Result<(), String> {
         let words: Vec<&str> = split_words(directive.value).collect();
-        let (word, count) = match words[..] {
+        let (word, second) = match words[..] {
             [word] => (word, None),
-            [word, count] => (word, Some(count)),
+            [word, second] => (word, Some(second)),
             _ => return Err(DIAGNOSTIC_SYNTAX.to_owned()),
         };
+        let place = second.and_then(|second| {
+            let (file, line) = second.rsplit_once(':')?;
+            Some(Place {
+                file: parse_path(file).ok()?,
+                line: parse_decimal(line)?,
+            })
+        });
+        let count = second.filter(|_| place.is_none());
         let Some(name) = parse_diagnostic_name(word) else {
             return Err(format!("unknown diagnostic {word}"));
         };
@@ -299,12 +467,17 @@ impl TestFile {
             Some(Some(count)) if count > 0 => Some(count),
             Some(_) => return Err("the count must be above 0".to_owned()),
         };
-        if self.diagnostics.iter().any(|listed| listed.name == name) {
+        let is_listed = |listed: &ExpectedDiagnostic| {
+            listed.name == name
+                && (listed.place.is_none() || place.is_none() || listed.place == place)
+        };
+        if self.diagnostics.iter().any(is_listed) {
             return Err(format!("{word} is listed twice"));
         }
         self.diagnostics.push(ExpectedDiagnostic {
             name,
             count,
+            place,
             line: directive.line,
         });
         Ok(())
@@ -760,5 +933,94 @@ mod tests {
         assert_eq!(outcomes(Equal), [false, true, false]);
         assert_eq!(outcomes(AtLeast), [false, true, true]);
         assert_eq!(outcomes(AtMost), [true, true, false]);
+    }
+
+    fn messages_of(text: &str) -> Vec<String> {
+        let errors = parse_test_file(text).errors;
+        errors.into_iter().map(|error| error.message).collect()
+    }
+
+    #[test]
+    fn sections_run_to_the_next_file_line() {
+        let text = "// RUN: link\nhead\n// FILE: a.ts\nA\n// CHECK: x\n// FILE: b/c.json\n{}\n// GENERATED: *\n// CHECK: y\n";
+        let file = parse_test_file(text);
+        assert!(file.errors.is_empty());
+        let sections: Vec<(&str, &str)> = (file.sections.iter())
+            .map(|section| (section.path.as_str(), section.text.as_str()))
+            .collect();
+        let expected = [("a.ts", "A\n// CHECK: x\n"), ("b/c.json", "{}\n")];
+        assert_eq!(sections, expected);
+        assert_eq!(file.generated.map(|generated| generated.line), Some(8));
+    }
+
+    #[test]
+    fn paths_stay_below_the_root() {
+        for path in ["/a", "../a", "a/../b", "a\\b", "a//b", "./a"] {
+            let expected = format!("{path} is no path below the root, written with /");
+            for directive in ["FILE", "ENTRY", "CWD"] {
+                let text = format!("// RUN: link\n// {directive}: {path}\n");
+                assert_eq!(messages_of(&text), [expected.clone()], "{directive}");
+            }
+        }
+        assert_eq!(messages_of("// RUN: link\n// LINK: a b\n"), [LINK_SYNTAX]);
+        let file =
+            parse_test_file("// RUN: link\n// LINK: a/b -> c\n// ENTRY: x.ts y/z.ts\n// CWD: y\n");
+        assert!(file.errors.is_empty());
+        assert_eq!(
+            (file.links[0].path.as_str(), file.links[0].target.as_str()),
+            ("a/b", "c")
+        );
+        assert_eq!(file.entry_points, ["x.ts", "y/z.ts"]);
+        assert_eq!(file.working_directory.as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn a_diagnostic_is_listed_once_for_each_place() {
+        let file = parse_test_file(
+            "// RUN: link\n// DIAGNOSTIC: TS2322 a.ts:2\n// DIAGNOSTIC: TS2322 b/c.ts:7\n// DIAGNOSTIC: TS1 3\n",
+        );
+        assert!(file.errors.is_empty());
+        let places: Vec<Option<(&str, u32)>> = (file.diagnostics.iter())
+            .map(|listed| {
+                listed
+                    .place
+                    .as_ref()
+                    .map(|place| (place.file.as_str(), place.line))
+            })
+            .collect();
+        assert_eq!(places, [Some(("a.ts", 2)), Some(("b/c.ts", 7)), None]);
+        assert_eq!(file.diagnostics[2].count, Some(3));
+        for second in ["TS2322 a.ts:2", "TS2322", "TS2322 2"] {
+            let text =
+                format!("// RUN: link\n// DIAGNOSTIC: TS2322 a.ts:2\n// DIAGNOSTIC: {second}\n");
+            assert_eq!(messages_of(&text), ["TS2322 is listed twice"], "{second}");
+        }
+    }
+
+    #[test]
+    fn options_of_one_run_follow_those_of_all() {
+        let file = parse_test_file(
+            "// RUN: link\n// RUN(B): link\n// SAME: CHECK B\n// OPTIONS(B): threads=4\n// OPTIONS: erase-types\n",
+        );
+        assert!(file.errors.is_empty());
+        let words_for = |prefix: &str| -> Vec<String> {
+            let words = file.option_words_for(prefix);
+            words.into_iter().map(|word| word.word.clone()).collect()
+        };
+        assert_eq!(words_for("CHECK"), ["erase-types"]);
+        assert_eq!(words_for("B"), ["erase-types", "threads=4"]);
+        assert_eq!(
+            messages_of("// RUN: link\n// OPTIONS(B): threads=4\n"),
+            ["no RUN has the prefix B"]
+        );
+        assert_eq!(
+            messages_of("// RUN: link\n// SAME: CHECK B\n"),
+            ["no RUN has the prefix B"]
+        );
+        assert_eq!(messages_of("// RUN: link\n// SAME: CHECK\n"), [SAME_SYNTAX]);
+        assert_eq!(
+            messages_of("// RUN(FILE): link\n"),
+            ["FILE cannot be a prefix"]
+        );
     }
 }

@@ -325,6 +325,14 @@ impl PostgresSQLQuery {
 
     fn end_copy_in(&self, failure: Option<&[u8]>) {
         let Some(connection) = self.copy_connection(CopyStream::writes) else {
+            // A writable exists only on a CopyBoth session: in `Readable` the server has ended
+            // its side, and the client's CopyDone is already out. An abort still rejects.
+            if let (Some(message), Some(connection)) = (
+                failure,
+                self.copy_connection(|copy| copy == CopyStream::Readable),
+            ) {
+                self.reject_aborted(&connection, message);
+            }
             return;
         };
         if self.flags.get().copy != CopyStream::BothOpen {
@@ -334,17 +342,21 @@ impl PostgresSQLQuery {
         }
         self.end_copy_both(&connection);
         if let Some(message) = failure {
-            let err = create_postgres_error(
-                connection.global(),
-                message,
-                &PostgresErrorOptions {
-                    code: b"ERR_POSTGRES_QUERY_CANCELLED",
-                    ..Default::default()
-                },
-            )
-            .unwrap_or_else(|err| connection.global().take_error(err));
-            self.reject_in_flight(err, connection.global());
+            self.reject_aborted(&connection, message);
         }
+    }
+
+    fn reject_aborted(&self, connection: &PostgresSQLConnection, message: &[u8]) {
+        let err = create_postgres_error(
+            connection.global(),
+            message,
+            &PostgresErrorOptions {
+                code: b"ERR_POSTGRES_QUERY_CANCELLED",
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|err| connection.global().take_error(err));
+        self.reject_in_flight(err, connection.global());
     }
 
     /// The client's CopyDone, for an abort too: a walsender ends the session on a CopyFail.

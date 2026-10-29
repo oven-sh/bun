@@ -5,6 +5,7 @@ import { bunEnv, bunExe, describeWithContainer, tempDir, withoutAsanQuarantine }
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import {
+  pgBackendKeyData,
   pgCommandComplete,
   pgCopyBothResponse,
   pgCopyData,
@@ -1028,7 +1029,7 @@ describe.concurrent("START_REPLICATION", () => {
    * A walsender: CopyBothResponse and `data` to the START_REPLICATION, a CopyDone and the end of the command to the
    * client's. A `pgHold` first keeps the CopyBothResponse back until `release()`; `queried` says that it is held.
    */
-  const walsender = async (wire: string[], data: (Buffer | typeof pgHold)[] = []) => {
+  const walsender = async (wire: string[], data: (Buffer | typeof pgHold)[] = [], startupFrames: Buffer[] = []) => {
     const queried = Promise.withResolvers<void>();
     const reply = data.map(frame => (frame === pgHold ? frame : pgCopyData(frame)));
     if (reply[0] === pgHold) reply.splice(1, 0, pgCopyBothResponse([0]));
@@ -1039,7 +1040,7 @@ describe.concurrent("START_REPLICATION", () => {
       if (!body.toString().startsWith("START_REPLICATION")) return selectOne;
       queried.resolve();
       return reply;
-    });
+    }, startupFrames);
     return { ...server, queried: queried.promise };
   };
   const connect = (port: number) => new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1 });
@@ -1227,9 +1228,15 @@ describe.concurrent("START_REPLICATION", () => {
     }
   });
 
+  // With a BackendKeyData the CancelRequest goes out and the query is not rejected before the answer, so the
+  // CopyBothResponse opens the session: the CopyDone that ends it comes from the cancelled stream.
   test("cancel() before the server has answered", async () => {
     const wire: string[] = [];
-    const { port, server, release, queried } = await walsender(wire, [pgHold, Buffer.from("k1")]);
+    const { port, server, release, queried } = await walsender(
+      wire,
+      [pgHold, Buffer.from("k1")],
+      [pgBackendKeyData(1, 2)],
+    );
     try {
       await using sql = connect(port);
       const query = sql.unsafe("START_REPLICATION 0/0");
@@ -1238,6 +1245,36 @@ describe.concurrent("START_REPLICATION", () => {
       await reader.cancel();
       release();
       expect(failure(await outcome(query))).toMatchObject(cancelled);
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "c ", "Q select 1 as x"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("abort() after the server has ended its side rejects with the reason", async () => {
+    const wire: string[] = [];
+    // The server ends first, so the client's CopyDone goes out on its own. Hold the server's
+    // CommandComplete and ReadyForQuery so the abort lands while the query is still open.
+    const gotCopyDone = Promise.withResolvers<import("node:net").Socket>();
+    const { port, server } = await pgMockServer((type, body, socket) => {
+      wire.push(type + " " + body.toString().replaceAll("\0", ""));
+      if (type === "Q" && body.toString().startsWith("START_REPLICATION")) {
+        return [pgCopyBothResponse([0]), pgCopyData(Buffer.from("k1")), pgCopyDone()];
+      }
+      if (type === "Q") return selectOne;
+      if (type === "c") gotCopyDone.resolve(socket);
+    });
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      const writer = query.writable().getWriter();
+      expect(text((await reader.read()).value)).toBe("k1");
+      await writer.abort(new Error("boom"));
+      expect(failure(await outcome(query))).toEqual({ ...cancelled, errno: undefined, message: "Error: boom" });
+      // End the command now: the rejected query drops the results, and the connection runs the next one.
+      (await gotCopyDone.promise).write(Buffer.concat(endOfCommand));
       expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
       expect(wire).toEqual(["Q START_REPLICATION 0/0", "c ", "Q select 1 as x"]);
     } finally {

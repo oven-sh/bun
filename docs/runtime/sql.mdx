@@ -1615,13 +1615,17 @@ function standbyStatusUpdate(lsn: bigint) {
 await sql.unsafe("CREATE_REPLICATION_SLOT my_slot TEMPORARY LOGICAL pgoutput").simple();
 const query = sql.unsafe("START_REPLICATION SLOT my_slot LOGICAL 0/0 (proto_version '4', publication_names 'my_pub')");
 const writer = query.writable().getWriter();
+// The LSN of the last record the application has processed. The slot resumes there after a
+// reconnect, so never report the server's end of WAL: that can lie beyond unprocessed records.
+let confirmed = 0n;
 for await (const message of query.readable()) {
   const view = new DataView(message.buffer, message.byteOffset, message.byteLength);
   if (message[0] === 0x77 /* 'w' */) {
     decode(message.subarray(25)); // the output plugin's bytes
-    await writer.write(standbyStatusUpdate(view.getBigUint64(9))); // the end of this record
+    confirmed = view.getBigUint64(1); // this record's LSN
+    await writer.write(standbyStatusUpdate(confirmed));
   } else if (message[0] === 0x6b /* 'k' */ && message[17] === 1) {
-    await writer.write(standbyStatusUpdate(view.getBigUint64(1))); // the server asked for a reply
+    await writer.write(standbyStatusUpdate(confirmed)); // the server asked for a reply
   }
 }
 ```

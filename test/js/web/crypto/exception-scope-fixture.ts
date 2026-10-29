@@ -54,6 +54,9 @@ const cases: Record<string, () => Promise<unknown>> = {
   "digest ok": () => crypto.subtle.digest("SHA-256", new Uint8Array(4)),
   "digest bogus": () => crypto.subtle.digest("bogus", new Uint8Array(4)),
   "digest thrower": () => crypto.subtle.digest(thrower, new Uint8Array(4)),
+  "digest supports fractional length": async () => supports("digest", "SHA-256", 8.5),
+  "digest supports length out of range": async () => supports("digest", "SHA-256", -8),
+  "digest supports symbol": async () => supports("digest", "SHA-256", Symbol()),
 
   "generateKey ok": () => crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]),
   "generateKey bogus": () => crypto.subtle.generateKey(bad, false, ["sign"]),
@@ -72,6 +75,7 @@ const cases: Record<string, () => Promise<unknown>> = {
     crypto.subtle.deriveKey(pbkdf2, pb, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]),
 
   "deriveBits ok": () => crypto.subtle.deriveBits(pbkdf2, pb, 64),
+  "deriveBits length out of range": () => crypto.subtle.deriveBits(pbkdf2, pb, -1),
   "deriveBits bogus": () => crypto.subtle.deriveBits(bad, pb, 64),
 
   "importKey ok": () =>
@@ -90,6 +94,7 @@ const cases: Record<string, () => Promise<unknown>> = {
   "wrapKey bogus": () => crypto.subtle.wrapKey("raw", hm, kw, bad),
   "wrapKey thrower": () => crypto.subtle.wrapKey("raw", hm, kw, thrower),
   "wrapKey supports rejected value": async () => supports("wrapKey", { name: "AES-CBC", iv }, "AES-GCM"),
+  "wrapKey supports without additionalAlgorithm": async () => supports("wrapKey", "AES-KW"),
   // wrapKey("jwk", ...) serializes the exported JWK with JSON.stringify, which invokes an
   // inherited Object.prototype.toJSON. That throw lands between the synchronous export
   // callback's toJS<IDLDictionary<JsonWebKey>> and the AES-KW wrap.

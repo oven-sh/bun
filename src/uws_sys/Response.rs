@@ -11,7 +11,6 @@
 //! - Maintains zero-cost abstractions over the underlying µWebSockets API
 
 use core::ffi::{c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
@@ -83,10 +82,7 @@ pub struct PerMessageDeflateParams {
 /// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
 /// extern type (Nomicon pattern).
 #[repr(C)]
-pub struct Response<const SSL: bool> {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+pub struct Response<const SSL: bool>(c::uws_res);
 
 impl<const SSL: bool> Response<SSL> {
     #[inline(always)]
@@ -109,15 +105,10 @@ impl<const SSL: bool> Response<SSL> {
         std::ptr::from_mut::<Self>(self).cast::<c::uws_res>()
     }
 
-    /// `&mut uws_res` view of self for `safe fn` shims. Both types are
-    /// `#[repr(C)]` opaque ZSTs with `UnsafeCell<[u8; 0]>`, so the cast is a
-    /// no-op and the reference is ABI-identical to the non-null pointer the C
-    /// shim expects.
+    /// `&mut uws_res` view of self for `safe fn` shims.
     #[inline]
     fn as_raw(&mut self) -> &mut c::uws_res {
-        // SAFETY: `Response<SSL>` and `c::uws_res` are layout-identical opaque
-        // ZSTs over the same C++ object; the borrow reborrows `&mut self`.
-        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<c::uws_res>() }
+        &mut self.0
     }
 
     #[inline]
@@ -165,11 +156,7 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     pub(crate) fn state(&self) -> State {
-        // SAFETY: `Response<SSL>` and `c::uws_res` are layout-identical opaque
-        // ZSTs (both `UnsafeCell<[u8; 0]>`); the reborrow is a no-op cast.
-        c::uws_res_state(Self::ssl_flag() as c_int, unsafe {
-            &*std::ptr::from_ref::<Self>(self).cast::<c::uws_res>()
-        })
+        c::uws_res_state(Self::ssl_flag() as c_int, &self.0)
     }
 
     pub fn should_close_connection(&self) -> bool {

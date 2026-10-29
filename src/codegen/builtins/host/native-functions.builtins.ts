@@ -189,6 +189,27 @@ export default b.declarations(
     uses: { object: [b.runs("OwnKeys"), b.readsContents()], filter: converted },
     implementation: b.hostCall,
   }),
+  b.tuple("IteratorPreview", [newArrayOf(b.any).dense, b.bool, b.u32]),
+  // It steps a copy of the Map or Set iterator, so the iterator stays where it is and no code of the program runs. It answers what the collection has left, whether that comes in pairs, and how many entries are left. Anything else is refused with a TypeError.
+  b.static(cpp("UtilInspect.cpp", "jsFunctionPreviewEntries"), [
+    {
+      args: { iterator: b.union(b.instance("MapIterator"), b.instance("SetIterator")), limit: b.any.optional },
+      returns: b.layoutOf("IteratorPreview").fresh,
+      capability: "heap",
+      throws: true,
+      uses: { iterator: [b.readsContents(), b.reachableValuesStoredIn(b.result)], limit: b.inspected },
+      reads: ["CollectionStorage", "CollectionEntries"],
+      implementation: b.hostCall,
+    },
+    {
+      args: { iterator: b.any.optional, limit: b.any.optional },
+      returns: b.never,
+      capability: "heap",
+      throws: true,
+      uses: { iterator: b.inspected, limit: b.inspected },
+      implementation: b.hostCall,
+    },
+  ]),
   // It lists the own keys of the holder and asks first `except` and then the holder for the property under each: no getter of either runs. Of each function that the holder has for a value it reads `length`, and those without parameters it calls on the receiver. Of an object that such a call answers it asks whether it has @@iterator.
   b.static(cpp("BunCompiledModules.cpp", "jsFunctionCallOwnFunctionsWithoutParameters"), {
     args: { holder: b.object, except: b.object, receiver: b.any.optional },

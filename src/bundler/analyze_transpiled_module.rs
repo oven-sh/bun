@@ -1,5 +1,3 @@
-use bun_core;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from the printer crate
 //
@@ -530,9 +528,8 @@ impl ModuleInfoExt for ModuleInfo {
 // zig__renderDiff, zig__ModuleInfoDeserialized__toJSModuleRecord, and the
 // JSModuleRecord/IdentifierArray opaques: see bun_bundler_jsc::analyze_jsc
 
+/// C++ gives back the `Box` it took from `ResolvedSource.module_info`, never null.
 #[unsafe(no_mangle)]
-extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
-    // SAFETY: each C++ caller passes a non-null `Box` that came from `ResolvedSource.module_info`,
-    // and then clears its copy of the pointer or is itself being destroyed.
-    unsafe { bun_core::heap::destroy(info) }
+extern "C" fn zig__ModuleInfoDeserialized__deinit(info: Box<ModuleInfoDeserialized>) {
+    drop(info);
 }

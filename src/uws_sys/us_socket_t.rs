@@ -151,12 +151,12 @@ impl us_socket_t {
     }
 
     /// Returned slice is a view into `buf`.
-    pub(crate) fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
-        }
+    pub(crate) fn local_address<'a>(
+        &self,
+        buf: &'a mut [u8; 16],
+    ) -> Result<&'a [u8], crate::Error> {
+        let mut length: i32 = buf.len() as i32;
+        c::us_socket_local_address(self, buf, &mut length);
         if length < 0 {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
                 bun_errno::last_error() as u16,
@@ -167,12 +167,12 @@ impl us_socket_t {
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set.
-    pub(crate) fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
-        }
+    pub(crate) fn remote_address<'a>(
+        &self,
+        buf: &'a mut [u8; 16],
+    ) -> Result<&'a [u8], crate::Error> {
+        let mut length: i32 = buf.len() as i32;
+        c::us_socket_remote_address(self, buf, &mut length);
         if length < 0 {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
                 bun_errno::last_error() as u16,
@@ -515,15 +515,16 @@ mod c {
 
         pub(super) safe fn us_socket_local_port(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
-        pub(super) fn us_socket_remote_address(
-            s: *const us_socket_t,
-            buf: *mut u8,
-            length: *mut i32,
+        // Both write 0, 4 or 16 bytes to `buf`, whatever `*length` holds.
+        pub(super) safe fn us_socket_remote_address(
+            s: &us_socket_t,
+            buf: &mut [u8; 16],
+            length: &mut i32,
         );
-        pub(super) fn us_socket_local_address(
-            s: *const us_socket_t,
-            buf: *mut u8,
-            length: *mut i32,
+        pub(super) safe fn us_socket_local_address(
+            s: &us_socket_t,
+            buf: &mut [u8; 16],
+            length: &mut i32,
         );
         pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
         pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);

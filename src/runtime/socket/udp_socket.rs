@@ -1593,11 +1593,11 @@ impl UDPSocket {
         let Some(socket) = self.socket.get() else {
             return Ok(JSValue::UNDEFINED);
         };
-        let mut buf = [0u8; 64];
-        let mut length: i32 = 64;
+        let mut buf = [0u8; 16];
+        let mut length: i32 = 16;
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         let socket = uws::udp::Socket::opaque_mut(socket);
-        socket.bound_ip(buf.as_mut_ptr(), &mut length);
+        socket.bound_ip(&mut buf, &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         let port = socket.bound_port();
@@ -1618,10 +1618,10 @@ impl UDPSocket {
         let Some(socket) = self.socket.get() else {
             return Ok(JSValue::UNDEFINED);
         };
-        let mut buf = [0u8; 64];
-        let mut length: i32 = 64;
+        let mut buf = [0u8; 16];
+        let mut length: i32 = 16;
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        uws::udp::Socket::opaque_mut(socket).remote_ip(buf.as_mut_ptr(), &mut length);
+        uws::udp::Socket::opaque_mut(socket).remote_ip(&mut buf, &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         Self::create_sock_addr(cx.global(), address_bytes, connect_info.port)

@@ -142,6 +142,8 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
+    /// For the metafile: by source index, the size of each input that `process_files_to_copy` emptied.
+    pub(crate) copied_input_sizes: Vec<Option<usize>>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -182,6 +184,7 @@ impl<'a> LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
+            copied_input_sizes: Vec::new(),
         }
     }
 
@@ -858,6 +861,22 @@ impl<'a> LinkerContext<'a> {
     ) -> Result<Box<[Chunk<'a>]>, LinkError> {
         // SAFETY: forwarded; see fn-level contract.
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
+
+        if self.options.metafile {
+            // Read before emit: a build to disk or in memory then takes the asset files out of the graph.
+            let graph = self.parse_graph();
+            let assets = &graph.additional_output_files;
+            let mut sizes = Vec::new();
+            if !assets.is_empty() {
+                sizes.resize(graph.input_files.len(), None);
+            }
+            for asset in assets {
+                if let Some(source_index) = asset.source_index.unwrap() {
+                    sizes[source_index.get() as usize] = Some(asset.size);
+                }
+            }
+            self.copied_input_sizes = sizes;
+        }
 
         if self.options.source_maps != SourceMapOption::None {
             self.compute_data_for_source_map(reachable);

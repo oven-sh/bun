@@ -4,9 +4,8 @@ use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
 
 pub(crate) struct EVP {
-    pub ctx: boringssl::EVP_MD_CTX,
-    // FFI: BoringSSL EVP_MD singletons are static for the process lifetime.
-    md: *const boringssl::EVP_MD,
+    ctx: boringssl::EVP_MD_CTX,
+    md: &'static boringssl::EVP_MD,
     algorithm: Algorithm,
 }
 
@@ -150,18 +149,11 @@ impl EVP {
         self.algorithm
     }
 
-    /// # Safety
-    /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton).
-    pub(crate) fn init(algorithm: Algorithm, md: *const boringssl::EVP_MD) -> EVP {
+    pub(crate) fn init(algorithm: Algorithm, md: &'static boringssl::EVP_MD) -> EVP {
         bun_boringssl::load();
 
         let mut ctx: boringssl::EVP_MD_CTX = bun_core::ffi::zeroed();
-        boringssl::EVP_MD_CTX_init(&mut ctx);
-        // SAFETY: FFI into BoringSSL; ctx is initialised above. md is
-        // caller-validated (a static singleton). BoringSSL never reads the `ENGINE`.
-        unsafe {
-            let _ = boringssl::EVP_DigestInit_ex(&raw mut ctx, md, core::ptr::null_mut());
-        }
+        let _ = boringssl::EVP_DigestInit(&mut ctx, md);
         EVP { ctx, md, algorithm }
     }
 
@@ -224,9 +216,7 @@ impl EVP {
     }
 
     pub(crate) fn size(&self) -> u16 {
-        // SAFETY: FFI into BoringSSL; self.ctx was initialized in init() and is valid for
-        // the lifetime of EVP.
-        unsafe { boringssl::EVP_MD_CTX_size(&raw const self.ctx) as u16 }
+        boringssl::EVP_MD_size(self.md) as u16
     }
 
     pub(crate) fn copy(&self) -> Result<EVP, AllocError> {
@@ -251,7 +241,7 @@ impl EVP {
             // SAFETY: FFI into BoringSSL; EVP_get_digestbyname expects a NUL-terminated
             // C string, which `tag_cstr()` guarantees.
             let md = unsafe { boringssl::EVP_get_digestbyname(algorithm.tag_cstr().as_ptr()) };
-            if !md.is_null() {
+            if let Some(md) = md {
                 return Some(EVP::init(algorithm, md));
             }
         }

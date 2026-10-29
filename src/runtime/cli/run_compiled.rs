@@ -1588,8 +1588,7 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: [&[u8]; 2]) -> bool {
         return false;
     }
     // A store to a page that there is no room for ends the process. With the room taken first, it is an error of this call.
-    // SAFETY: the system checks the descriptor and the range.
-    if unsafe { libc::fallocate(descriptor.native(), 0, 0, length as libc::off_t) } != 0 {
+    if bun_sys::c::fallocate(descriptor.native(), 0, 0, length as libc::off_t) != 0 {
         return false;
     }
     let Ok(start) = bun_sys::mmap(

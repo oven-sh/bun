@@ -42,9 +42,6 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn source(&self) -> &[u8] {
         &self.p.source.contents
     }
-    fn arena(&self) -> &bun_alloc::Arena {
-        self.p.arena
-    }
 
     fn ref_name(&self, ref_: js_ast::Ref) -> &[u8] {
         self.p.load_name_from_ref(ref_)

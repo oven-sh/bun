@@ -162,6 +162,7 @@ pub fn generate_function<'a, R>(
         let compiled = maybe_compile_pending(
             &mut state,
             &mut host,
+            arena,
             &pending,
             body.slice_mut(),
             candidate.name.map(Name::bytes),
@@ -470,9 +471,6 @@ impl Host for GenerationHost<'_> {
     }
     fn source(&self) -> &[u8] {
         self.source
-    }
-    fn arena(&self) -> &Arena {
-        self.arena
     }
     fn ref_name(&self, ref_: Ref) -> &[u8] {
         let symbol = self.symbols.get(ref_.inner_index() as usize);

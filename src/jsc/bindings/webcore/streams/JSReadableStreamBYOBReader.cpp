@@ -122,7 +122,7 @@ static BYOBReadArguments convertBYOBReadArguments(JSC::VM& vm, JSGlobalObject* g
     BYOBReadArguments result;
     result.view = dynamicDowncast<JSArrayBufferView>(viewValue);
     if (!result.view) {
-        throwTypeError(globalObject, scope, "ReadableStreamBYOBReader.prototype.read requires an ArrayBufferView"_s);
+        Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "view"_s, "Buffer, TypedArray, or DataView"_s, viewValue);
         return result;
     }
     if (options.isUndefinedOrNull())

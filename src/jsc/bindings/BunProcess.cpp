@@ -3501,7 +3501,13 @@ extern "C" void Bun__Process__entryPointDidChange(Zig::GlobalObject* globalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto name = Identifier::fromString(vm, "argv"_s);
+
+    // No atom means no object of this VM has an `argv` property, so no array was built. Identifier::fromString would allocate that atom.
+    RefPtr<AtomStringImpl> atom = AtomStringImpl::lookUp("argv"_s.span8());
+    if (!atom) {
+        return;
+    }
+    PropertyName name(atom.get());
 
     // Not a get(): that would build the array, or call a getter the program installed.
     if (globalObject->hasProcessObject()) {

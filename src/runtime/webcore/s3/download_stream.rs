@@ -167,7 +167,7 @@ impl S3HttpDownloadStreamingTask {
             200 | 204 | 206 => state.request_error() != 0,
             _ => true,
         };
-        // SAFETY: as above.
+        // SAFETY: as above, and `mutex` is held: the HTTP thread fills the buffer under it.
         let pending = unsafe { (*this).reported_response_buffer.list.len() };
         bun_core::scoped_log!(
             S3,
@@ -178,7 +178,8 @@ impl S3HttpDownloadStreamingTask {
         );
         // An error body is collected whole; dont report empty chunks if we have more data to read
         if !has_more || (!failed && pending > 0) {
-            // SAFETY: as above; `take` leaves an empty buffer behind, and its borrow ends here.
+            // SAFETY: as above, and `mutex` is held, which guards the error and the buffer. `take`
+            // leaves an empty buffer behind, and its borrow ends here.
             let (callback, callback_context, request_error, body) = unsafe {
                 (
                     (*this).callback,

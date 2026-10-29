@@ -629,7 +629,11 @@ mod elf {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
+        // SAFETY: `&BUN_COMPILED.size` (c-bindings.cpp): never null, 8-byte aligned, written only in the file that `bun build --compile` produces.
         pub(super) safe fn Bun__getStandaloneModuleGraphELFVaddr() -> &'static u64;
+        // safe: one integer by value; reads the vector the kernel gave the process, 0 for an unknown type.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        safe fn getauxval(type_: core::ffi::c_ulong) -> core::ffi::c_ulong;
     }
 
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
@@ -677,9 +681,6 @@ mod elf {
     #[unsafe(no_mangle)]
     extern "C" fn Bun__sizeOfPayloadWithCompiledProgram() -> usize {
         use super::{Flags, Offsets, TRAILER};
-        unsafe extern "C" {
-            safe fn getauxval(type_: core::ffi::c_ulong) -> core::ffi::c_ulong;
-        }
 
         let vaddr = *Bun__getStandaloneModuleGraphELFVaddr();
         let first_header = getauxval(libc::AT_PHDR) as *const libc::Elf64_Phdr;

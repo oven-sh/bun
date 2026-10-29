@@ -1572,8 +1572,9 @@ describe("concurrent terminals on one Image", () => {
       const noise = bmp(33, 143, 0);
       for (let i = 54; i < noise.length; i++) noise[i] = (i * 37) & 255;
       const input = new Uint8Array(await new Bun.Image(noise).jpeg().bytes());
+      const view = Buffer.from(input.buffer);
       let sof = 2;
-      while (input[sof + 1] !== 0xc0) sof += 2 + ((input[sof + 2] << 8) | input[sof + 3]);
+      while (view.readUInt8(sof + 1) !== 0xc0) sof += 2 + view.readUInt16BE(sof + 2);
       // Between 143 and 15.
       const rewrite = () => { input[sof + 6] ^= 0x80; };
       `,
@@ -1581,7 +1582,8 @@ describe("concurrent terminals on one Image", () => {
   ])("doesn't crash when the %s input is rewritten while a pipeline is pending", async (_, setup) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", raceFixture(setup)],
-      env: bunEnv,
+      // bun test does not kill the child of a concurrent test that times out. This makes it exit with the test process.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });

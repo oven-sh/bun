@@ -1673,6 +1673,45 @@ pub fn run_dictionary_end(seed0: u64, iters: u64, qualities: u64) {
     println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
 }
 
+/// Qualities 5 to 9 with a window of 17 or 18 bits. The encoder finds a copy of 4 bytes, looks whether a better one starts a
+/// byte later, and finds one of 3 bytes from the last distance. That one, or what it is a copy of, starts at the last byte of
+/// the ring buffer or next to it.
+pub fn run_lazy_end(seed0: u64, iters: u64, qualities: u64) {
+    let qs = crate::args::qualities(qualities, 5..10);
+    let mut totals = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let lgwin = rng.range(17, 18);
+        let edge = (2usize << lgwin) - 5 + if rng.chance(2, 3) { 4 } else { rng.below(9) };
+        let distance = rng.range(40_000, 100_000);
+        // Where the copy of 3 bytes starts. The end of the ring buffer is the end of a block of input too, where the encoder
+        // does not look for copies, unless a flush has moved the blocks.
+        let at = if rng.chance(1, 8) { edge } else { edge + distance };
+        // Of 7 bits, or the encoder would store them as they are.
+        let mut data: Vec<u8> = (0..at + 100).map(|_| rng.next() as u8 & 0x7F).collect();
+        let differ = |data: &mut [u8], a: usize, b: usize| {
+            if data[a] == data[b] {
+                data[a] ^= 1;
+            }
+        };
+        // A long copy, which the encoder finds although it only looks at some positions by then. It sets the last distance.
+        data.copy_within(at - 69 - distance..at - 5 - distance, at - 69);
+        differ(&mut data, at - 5, at - 5 - distance);
+        data.copy_within(at - distance..at + 3 - distance, at);
+        differ(&mut data, at + 3, at + 3 - distance);
+        differ(&mut data, at - 1, at - 1 - distance);
+        // The copy of 4 bytes, from so far that 3 bytes from the last distance are enough of an improvement.
+        let far = at - 1 - rng.range(1024, 30_000);
+        data.copy_within(at - 1..at + 3, far);
+        differ(&mut data, far + 4, at + 3);
+        let params = vec![(1, q), (2, lgwin as u32)];
+        check("lazy-end", seed, &mut rng, &data, &params, &[], &mut totals);
+    }
+    println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
+}
+
 /// What `run_commands` knows of the encoder while it lays out the input.
 struct Commands {
     data: Vec<u8>,

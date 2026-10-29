@@ -306,6 +306,7 @@ pub fn run(args: &[String]) -> bool {
         Some("enc-reach") => shapes::run_reach(num(2, 1), num(3, 0xFFC)),
         Some("enc-dictionary-end") => shapes::run_dictionary_end(num(2, 1), num(3, 2000), num(4, 0xFE0)),
         Some("enc-huge-dictionary") => shapes::run_huge_dictionary(num(2, 1), num(3, 0xFE0)),
+        Some("enc-lazy-end") => shapes::run_lazy_end(num(2, 1), num(3, 200), num(4, 0x3E0)),
         Some("enc-commands") => shapes::run_commands(num(2, 1), num(3, 20), num(4, 0x3E0)),
         Some("enc-utf8") => shapes::run_utf8(num(2, 1), num(3, 2000), num(4, 0xC00)),
         Some("enc-offset-dict") => shapes::run_offset_dict(num(2, 1), num(3, 20), num(4, 0xFE0)),

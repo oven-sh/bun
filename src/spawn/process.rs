@@ -1068,14 +1068,10 @@ pub mod waiter_thread_posix {
         pub(crate) next: bun_threading::Link<TaskQueueEntry<T>>,
     }
 
-    // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TaskQueueEntry<T>>`.
-    unsafe impl<T: 'static> bun_threading::Linked for TaskQueueEntry<T> {
-        #[inline]
-        unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-            // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-            unsafe { core::ptr::addr_of!((*item).next) }
-        }
-    }
+    bun_core::intrusive_field!(
+        [T: 'static] TaskQueueEntry<T>,
+        next: bun_threading::Link<TaskQueueEntry<T>>
+    );
 
     pub type ConcurrentQueue<T> = UnboundedQueue<TaskQueueEntry<T>>;
 

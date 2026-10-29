@@ -306,14 +306,7 @@ pub(crate) struct ConcurrentTask {
     pub(crate) next: bun_threading::Link<ConcurrentTask>,
 }
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<ConcurrentTask>`.
-unsafe impl bun_threading::Linked for ConcurrentTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(ConcurrentTask, next: bun_threading::Link<ConcurrentTask>);
 
 impl FSEventsLoop {
     fn cf_thread_loop(&'static self) {

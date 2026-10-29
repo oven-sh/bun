@@ -1,6 +1,6 @@
 use core::fmt;
 use core::ptr::NonNull;
-use std::cell::UnsafeCell;
+use std::cell::{Cell, UnsafeCell};
 use std::rc::{Rc, Weak};
 
 use bun_collections::LinearFifo;
@@ -544,9 +544,7 @@ impl BunTestRoot {
 
         debug_assert!(self.active_file.is_some());
         if let Some(active) = &self.active_file {
-            // SAFETY: single-threaded; no other `&mut BunTest` is live during
-            // teardown. Write goes through `UnsafeCell` (see `BunTestCell::get`).
-            active.get().reporter = None;
+            active.file.reporter.set(None);
         }
         self.active_file = None; // drops the Rc (deinit)
     }
@@ -575,7 +573,7 @@ impl BunTestRoot {
             // reporter field via raw ptr instead — `Option<NonNull<_>>` is `Copy`.
             // SAFETY: single-threaded; `active_file` keeps the cell alive; raw
             // field read creates no intermediate `&BunTest`.
-            let reporter = unsafe { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
+            let reporter = unsafe { (*active_file.as_ptr()).file.reporter.get() };
             if let Some(reporter) = reporter {
                 // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
                 // `last_printed_dot` is `Cell<bool>` so a `&` borrow suffices.
@@ -623,10 +621,9 @@ pub enum Phase {
     Done,
 }
 
-pub(crate) struct BunTest {
+/// The part of `BunTest` that is read while its `execution` is borrowed.
+pub(crate) struct FileInfo {
     pub(crate) bun_test_root: bun_ptr::BackRef<BunTestRoot>,
-    pub(crate) in_run_loop: bool,
-    // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
     pub(crate) file_id: FileId,
     /// null if the runner has moved on to the next file but a strong reference to BunTest is still keeping it alive
     ///
@@ -635,7 +632,14 @@ pub(crate) struct BunTest {
     /// uncaught-exception handler) can write through it without deriving `&mut`
     /// from `&` (UB). The reporter is owned by `test_command::exec`'s stack
     /// frame, which never returns; `exit_file()` nulls this before drop.
-    pub(crate) reporter: Option<NonNull<CommandLineReporter>>,
+    /// A `Cell`: on `--bail` it is nulled while `handle_test_completed` holds a `&FileInfo`.
+    pub(crate) reporter: Cell<Option<NonNull<CommandLineReporter>>>,
+}
+
+pub(crate) struct BunTest {
+    pub(crate) file: FileInfo,
+    pub(crate) in_run_loop: bool,
+    // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
     pub(crate) timer: EventLoopTimer,
     pub(crate) result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
@@ -668,13 +672,11 @@ impl BunTest {
         let _g = group_begin!();
 
         BunTest {
-            bun_test_root: bun_ptr::BackRef::from(bun_test_root),
+            file: FileInfo { bun_test_root: bun_ptr::BackRef::from(bun_test_root), file_id, reporter: Cell::new(reporter) },
             in_run_loop: false,
             phase: Phase::Collection,
-            file_id,
             collection: Collection::init(hook_scope),
             execution: Execution::Execution::init(),
-            reporter,
             result_queue: ResultQueue::init(),
             default_concurrent,
             first_last,
@@ -1009,7 +1011,7 @@ impl BunTest {
                 debug::dump_describe(&self.collection.root_scope)?;
 
                 // SAFETY: reporter outlives every BunTest (see field doc).
-                let reporter = self.reporter.map(|reporter| unsafe { reporter.as_ref() });
+                let reporter = self.file.reporter.get().map(|reporter| unsafe { reporter.as_ref() });
                 let has_filter = reporter.is_some_and(|reporter| reporter.jest.filter_regex.is_some());
                 // Derive a per-file shuffle PRNG from (seed, file_path) so a
                 // file's test order depends only on the path and the printed
@@ -1019,7 +1021,7 @@ impl BunTest {
                 let mut per_file_prng: Option<bun_core::rand::DefaultPrng> = if let Some(reporter) = reporter {
                     'blk: {
                         let Some(seed) = reporter.jest.randomize_seed else { break 'blk None };
-                        let path = reporter.jest.files.items_source()[self.file_id as usize].path.text;
+                        let path = reporter.jest.files.items_source()[self.file.file_id as usize].path.text;
                         // Basename only so the hash is platform-independent (path
                         // separators and absolute prefixes differ on Windows).
                         Some(bun_core::rand::DefaultPrng::init(
@@ -1038,7 +1040,7 @@ impl BunTest {
                     randomize: should_randomize,
                 });
 
-                let root = self.bun_test_root.get();
+                let root = self.file.bun_test_root.get();
                 let beforeall_order: Order::AllOrderResult = if self.first_last.first {
                     order.generate_all_order(&root.hook_scope.before_all)?
                 } else {
@@ -1211,6 +1213,7 @@ impl BunTest {
                         // Track the `+1` handed to `Promise.then()` in case the promise never settles.
                         let raw_ref: *mut RefData = RefPtr::into_raw(this_ref);
                         this_strong
+                            .file
                             .bun_test_root
                             .get()
                             .pending_then_refs
@@ -1284,10 +1287,10 @@ impl BunTest {
             if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
                 break 'ctx core::ptr::null_mut();
             }
-            let Some(reporter) = self.reporter else {
+            let Some(reporter) = self.file.reporter.get() else {
                 break 'ctx core::ptr::null_mut();
             };
-            // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
+            // SAFETY: `FileInfo.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
             let reporter = unsafe { &mut *reporter.as_ptr() };
             if reporter.jest.test_options.reporters.junit {
@@ -1297,7 +1300,7 @@ impl BunTest {
             }
         };
 
-        self.bun_test_root.on_before_print();
+        self.file.bun_test_root.on_before_print();
         if matches!(
             handle_status,
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
@@ -1307,7 +1310,7 @@ impl BunTest {
             // `NonNull<CommandLineReporter>` carries write provenance from
             // `enter_file`'s `&mut`; single-threaded, no other borrow live.
             unsafe {
-                (*self.reporter.unwrap().as_ptr()).jest.unhandled_errors_between_tests += 1;
+                (*self.file.reporter.get().unwrap().as_ptr()).jest.unhandled_errors_between_tests += 1;
             }
             bun_core::pretty_errorln!(
                 "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",

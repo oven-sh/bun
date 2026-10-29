@@ -732,9 +732,10 @@ impl ShellSubprocess {
 
         // Two-phase init: allocate the Subprocess slot first so the stable
         // `*mut Subprocess` is available to `Writable::init` / `Readable::init`
-        // (they store it on StaticPipeWriter / PipeReader as a backref).
-        let mut slot = Box::<Subprocess>::new_uninit();
-        let subprocess: *mut Subprocess = slot.as_mut_ptr();
+        // (they store it on StaticPipeWriter / PipeReader as a backref). Freed via
+        // `heap::take` in `abort_after_failed_start` (POSIX) / Cmd teardown.
+        let subprocess: *mut Subprocess =
+            bun_core::heap::into_raw(Box::<Subprocess>::new_uninit()).cast();
         // SAFETY: `out_subproc` points at the `SubprocExec.child` slot inside
         // the heap-stable `Box<SubprocExec>` staged by the caller before this
         // call; no `&` to that slot is live (the caller's `&mut Cmd` borrow
@@ -789,12 +790,6 @@ impl ShellSubprocess {
                 abort_handle: jsc::AbortHandle::for_owner::<ShellSubprocess>(),
             });
         }
-        // Ownership of the now-initialised Box is released as a raw pointer
-        // (freed via `heap::take` in `abort_after_failed_start` / Cmd
-        // teardown). `MaybeUninit<T>` and `T` share layout, so the cast is
-        // sound.
-        // SAFETY: fully initialised by the `write` above.
-        let _ = bun_core::heap::into_raw(unsafe { slot.assume_init() });
         // SAFETY: `subprocess` is the just-allocated `ShellSubprocess`; the
         // owning `Cmd` outlives the `Process` exit callback. All accesses
         // below are scoped so no borrow of the Subprocess spans the

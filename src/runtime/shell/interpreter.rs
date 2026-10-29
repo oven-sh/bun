@@ -693,15 +693,7 @@ impl Interpreter {
         }
 
         // ── tick until done ────────────────────────────────────────────────
-        // The closure captures a raw pointer so borrowck doesn't see an
-        // overlap with `tick`'s `&mut self` on `mini`.
-        let interp_ptr: *const Interpreter = &raw const *interp;
-        mini.tick(core::ptr::null_mut(), |_ctx| {
-            // SAFETY: `interp` lives in this stack frame for the whole tick
-            // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so
-            // the read is sound even while tasks `tick` drains mutate it.
-            unsafe { (*interp_ptr).flags.get().done() }
-        });
+        mini.tick(core::ptr::null_mut(), |_ctx| interp.flags.get().done());
 
         Ok(interp.exit_code.get().expect("exit_code set by finish()"))
     }
@@ -1516,10 +1508,7 @@ impl Interpreter {
                     int -= 1;
                 }
 
-                if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::init_worker`
-                    // to a live `*WebWorker` for the worker's lifetime.
-                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                if let Some(worker) = vm.worker_ref() {
                     let argv = worker.argv();
                     if int as usize >= argv.len() {
                         return;
@@ -2926,10 +2915,9 @@ pub(crate) fn create_shell_interpreter<'a>(
     // SAFETY: the payload of `this_value`.
     let interp = unsafe { this_value.payload_ptr().as_ref() };
     interp.this_value.set(JsRef::init_weak(js_value));
-    interp.keep_alive.with_mut(|k| {
-        // SAFETY: `bun_vm_ptr()` is the live per-thread VM singleton.
-        k.ref_(unsafe { crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr()) })
-    });
+    interp
+        .keep_alive
+        .with_mut(|k| k.ref_(global.bun_vm().loop_ctx()));
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_value)
 }

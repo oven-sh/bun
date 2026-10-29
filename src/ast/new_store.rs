@@ -354,7 +354,7 @@ macro_rules! thread_local_ast_store {
             use ::core::cell::Cell;
             type Backing = $Backing;
 
-            // `#[thread_local]` (bare `__thread` slot) — `memory_allocator()` is
+            // `#[thread_local]` (bare `__thread` slot) — `MEMORY_ALLOCATOR` is
             // read on every node `alloc` (the hottest TLS in the parser), and
             // the `thread_local!` macro's `LocalKey` wrapper showed up in
             // next-lint profiles. All three are `Cell<ptr|bool>` (no destructor,
@@ -391,9 +391,8 @@ macro_rules! thread_local_ast_store {
                 unsafe { INSTANCE.get().as_mut() }
             }
             #[inline]
-            pub fn memory_allocator()
-            -> Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator, ::bun_ptr::Mut>> {
-                MEMORY_ALLOCATOR.get()
+            pub fn has_memory_allocator() -> bool {
+                MEMORY_ALLOCATOR.get().is_some()
             }
             #[inline]
             pub(crate) fn set_memory_allocator(
@@ -403,7 +402,7 @@ macro_rules! thread_local_ast_store {
             }
 
             pub fn create() {
-                if !instance().is_null() || memory_allocator().is_some() {
+                if !instance().is_null() || has_memory_allocator() {
                     return;
                 }
                 INSTANCE.set(Backing::init());
@@ -411,7 +410,7 @@ macro_rules! thread_local_ast_store {
 
             /// create || reset
             pub(crate) fn begin() {
-                if memory_allocator().is_some() {
+                if has_memory_allocator() {
                     return;
                 }
                 match instance_mut() {
@@ -425,7 +424,7 @@ macro_rules! thread_local_ast_store {
             }
 
             pub fn reset() {
-                if DISABLE_RESET.get() || memory_allocator().is_some() {
+                if DISABLE_RESET.get() || has_memory_allocator() {
                     return;
                 }
                 // Caller contract — instance is set when reset() is called.
@@ -447,7 +446,7 @@ macro_rules! thread_local_ast_store {
             }
 
             pub fn deinit() {
-                if instance().is_null() || memory_allocator().is_some() {
+                if instance().is_null() || has_memory_allocator() {
                     return;
                 }
                 // SAFETY: checked non-null above; `destroy` frees the `Store`
@@ -459,7 +458,7 @@ macro_rules! thread_local_ast_store {
             #[inline]
             pub(crate) fn assert() {
                 if cfg!(debug_assertions) {
-                    if instance().is_null() && memory_allocator().is_none() {
+                    if instance().is_null() && !has_memory_allocator() {
                         unreachable!("Store must be init'd");
                     }
                 }

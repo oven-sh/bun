@@ -728,7 +728,7 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
     // (via `Store::create()`). They live in TLS without a Drop, so each worker
     // thread strands a `Box<Store>` plus its lazily-allocated block chain when
     // the thread exits. `deinit()` is a no-op if a bundler arena currently owns
-    // the allocator (`memory_allocator()` is `Some`) or the store was never
+    // the allocator (`has_memory_allocator()`) or the store was never
     // created. After the `RuntimeState` drop above nothing on this thread
     // touches the stores again.
     bun_ast::expr::data::Store::deinit();

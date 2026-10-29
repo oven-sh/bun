@@ -221,7 +221,7 @@ impl ASTMemoryAllocator {
         self.arena_dirty = true;
         let mut ast_scope = Scope {
             current: Some(self),
-            previous: stmt::data::Store::memory_allocator(),
+            previous: None,
             previous_logger: ptr::null(),
             previous_ast_state: None,
             entered: false,
@@ -346,11 +346,11 @@ impl<'a> Default for Scope<'a> {
 impl<'a> Scope<'a> {
     pub fn enter(&mut self) {
         debug_assert!(
-            expr::data::Store::memory_allocator() == stmt::data::Store::memory_allocator()
+            expr::data::Store::MEMORY_ALLOCATOR.get() == stmt::data::Store::MEMORY_ALLOCATOR.get()
         );
         debug_assert!(!self.entered);
 
-        self.previous = expr::data::Store::memory_allocator();
+        self.previous = expr::data::Store::MEMORY_ALLOCATOR.get();
         self.previous_logger = crate::data_store_override();
         self.entered = true;
 

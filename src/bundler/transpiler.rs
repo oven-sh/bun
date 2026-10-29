@@ -268,7 +268,7 @@ impl<'a> Transpiler<'a> {
         // resets it; install/`--define` (which also use the block-store) hold
         // `StoreRef`s across reset, see `store_ast_alloc_heap` doc. Must mirror
         // the block-store's FULL early-return gate (`DISABLE_RESET ||
-        // memory_allocator().is_some()`, Stmt.rs `Store::reset`): macro
+        // has_memory_allocator()`, Stmt.rs `Store::reset`): macro
         // evaluation pins the store via `DisableStoreReset`, and
         // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
         // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
@@ -279,7 +279,7 @@ impl<'a> Transpiler<'a> {
         // into them (and the side module's debug assert that *its* state is
         // the installed one would fire).
         if !bun_ast::stmt::data::Store::disable_reset()
-            && bun_ast::stmt::data::Store::memory_allocator().is_none()
+            && !bun_ast::stmt::data::Store::has_memory_allocator()
         {
             bun_ast::store_ast_alloc_heap::reset();
         }

@@ -1083,23 +1083,18 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
-        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw
-        // pointer because the buffer is later freed via the default allocator
-        // (`MarkedArrayBuffer_deallocator` → `default_alloc::free`).
-        let buf: Box<[u8]> = Box::from(str);
-        let len = buf.len();
-        let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
-        // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
-        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
-        Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
+        Ok(MarkedArrayBuffer::from_bytes(
+            Box::from(str),
+            JSType::Uint8Array,
+        ))
     }
 
-    pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
+    pub fn from_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
-            buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),
             // An empty boxed slice has no backing allocation (dangling ptr):
             // nothing to own, so `destroy()` must not free it.
             owns_buffer: !bytes.is_empty(),
+            buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
         }
     }
 

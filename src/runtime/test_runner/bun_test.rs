@@ -948,12 +948,13 @@ impl BunTest {
                     min_timeout = min_timeout.min_ignore_epoch(timeout);
                 }
                 StepResult::Complete => {
-                    // SAFETY: short-lived reborrow; `advance` and `add_result` do not re-enter `.get()`.
-                    let this = unsafe { &mut *this };
-                    if this.advance(global_this)? == Advance::Exit {
-                        return Ok(());
+                    // SAFETY: short-lived reborrows; `advance` and `add_result` do not re-enter `.get()`.
+                    unsafe {
+                        if (*this).advance(global_this)? == Advance::Exit {
+                            return Ok(());
+                        }
+                        (*this).add_result(RefDataValue::Start);
                     }
-                    this.add_result(RefDataValue::Start);
                 }
             }
         }

@@ -447,31 +447,30 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v65: builtin(Console) = Builtin builtin=Console
 # CHECK-NEXT: v66: 12 = Integer integer=12
 # CHECK-NEXT: v67: undefined = CallBuiltin v65, v64, v66 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=60
-# CHECK-NEXT: v68: 1 = Integer integer=1
-# CHECK-NEXT: v69: Array<L9, Contiguous> = NewArray contents=L9 capacity=v68 allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v70: Array<L9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v69 provenType=Array<L9, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v71: 13 = Integer integer=13
-# CHECK-NEXT: v72: 0 = Integer
-# CHECK-NEXT: v73: L9 = NewObject -, v72, v71 layout=L9 fields=[0, 1] allocationSite=11 allocationClass=9
-# CHECK-NEXT: PropSet v73, v43 key="held"
-# CHECK-NEXT: v75: L9 = FinishObject v73
-# CHECK-NEXT: v76: int[0, 4294967295] = CallBuiltin v70, v75 overload=ArrayPrototypePush/0 accessSite=62
-# CHECK-NEXT: v77: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v78: 0 = Integer
-# CHECK-NEXT: v79: undefined|L9 = GetArrayElement v70, v78 arrayStorage=Contiguous level=Proven accessSite=65 [keyIsIntegral]
-# CHECK-NEXT: v80: L9 = RequireObjectCoercible v79 name="held"
-# CHECK-NEXT: v81: anything ~ number = PropGet v80 key="held" accessSite=66 receivers=[L9]
-# CHECK-NEXT: v82: 0 = Integer
-# CHECK-NEXT: v83: undefined|L9 = GetArrayElement v70, v82 arrayStorage=Contiguous level=Proven accessSite=67 [keyIsIntegral]
-# CHECK-NEXT: v84: L9 = RequireObjectCoercible v83 name="thirteen"
-# CHECK-NEXT: v85: 13 = Integer integer=13
-# CHECK-NEXT: v86: 0 = Integer
-# CHECK-NEXT: v87: undefined|L9 = GetArrayElement v70, v86 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral]
-# CHECK-NEXT: v88: L9 = ToObject v87 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v89: Array<string> = CallBuiltin -, v88 overload=ObjectKeys/0 accessSite=70
-# CHECK-NEXT: v90: Array<"held"|"thirteen", proven, pristine[Storage, Names, Dense]> = AssumeType v89 provenType=Array<"held"|"thirteen", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v91: string = CallBuiltin v90 overload=ArrayPrototypeJoin/0 accessSite=72
-# CHECK-NEXT: v92: undefined = CallBuiltin v77, v81, v85, v91 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=73
-# CHECK-NEXT: v93: undefined = Undefined
-# CHECK-NEXT: Return v93
+# CHECK-NEXT: v68: 13 = Integer integer=13
+# CHECK-NEXT: v69: 0 = Integer
+# CHECK-NEXT: v70: L9 = NewObject -, v69, v68 layout=L9 fields=[0, 1] allocationSite=11 allocationClass=9
+# CHECK-NEXT: PropSet v70, v43 key="held"
+# CHECK-NEXT: v72: L9 = FinishObject v70
+# CHECK-NEXT: v73: Array<L9, Contiguous> = NewArray v72 contents=L9 allocationSite=10 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v74: Array<L9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v73 provenType=Array<L9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v75: 1 = Integer integer=1
+# CHECK-NEXT: v76: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v77: 0 = Integer
+# CHECK-NEXT: v78: undefined|L9 = GetArrayElement v74, v77 arrayStorage=Contiguous level=Proven accessSite=65 [keyIsIntegral]
+# CHECK-NEXT: v79: L9 = RequireObjectCoercible v78 name="held"
+# CHECK-NEXT: v80: anything ~ number = PropGet v79 key="held" accessSite=66 receivers=[L9]
+# CHECK-NEXT: v81: 0 = Integer
+# CHECK-NEXT: v82: undefined|L9 = GetArrayElement v74, v81 arrayStorage=Contiguous level=Proven accessSite=67 [keyIsIntegral]
+# CHECK-NEXT: v83: L9 = RequireObjectCoercible v82 name="thirteen"
+# CHECK-NEXT: v84: 13 = Integer integer=13
+# CHECK-NEXT: v85: 0 = Integer
+# CHECK-NEXT: v86: undefined|L9 = GetArrayElement v74, v85 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral]
+# CHECK-NEXT: v87: L9 = ToObject v86 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v88: Array<string> = CallBuiltin -, v87 overload=ObjectKeys/0 accessSite=70
+# CHECK-NEXT: v89: Array<"held"|"thirteen", proven, pristine[Storage, Names, Dense]> = AssumeType v88 provenType=Array<"held"|"thirteen", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v90: string = CallBuiltin v89 overload=ArrayPrototypeJoin/0 accessSite=72
+# CHECK-NEXT: v91: undefined = CallBuiltin v76, v80, v84, v90 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=73
+# CHECK-NEXT: v92: undefined = Undefined
+# CHECK-NEXT: Return v92
 # CHECK-NEXT: }

@@ -295,8 +295,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             BuiltinId::Map => self.lower_map_of_entries(expression, site),
             BuiltinId::Set => self.lower_set_of_values(expression, site),
             BuiltinId::Object => self.lower_empty_object(expression, site),
+            BuiltinId::Array => self.lower_empty_array(expression, site),
             _ => None,
         }
+    }
+
+    /// `new Array()` is `[]`: the same storage, capacity planning and proofs.
+    fn lower_empty_array(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {
+        if !site.args.is_empty() {
+            return None;
+        }
+        let contents = self.file.array_literal_contents(expression);
+        let position = self.file.hir[expression].pos;
+        Some(self.lower_elements(contents, &[], &[], position))
     }
 
     fn lower_empty_object(&mut self, expression: ExprId, site: Call) -> Option<ValueId> {

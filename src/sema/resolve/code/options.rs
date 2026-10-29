@@ -23,6 +23,8 @@ pub struct CodeOptions {
     pub jsx: JsxSettings,
     pub forced_jsx_development: Option<bool>,
     pub max_computed_candidates: u32,
+    /// Compiled as JavaScript is: no other file takes a type of theirs for a fact.
+    pub files_without_types: Vec<Vec<u8>>,
 }
 
 /// The condition of `exports` and `imports` that names what `--aot` compiles.
@@ -61,6 +63,7 @@ impl CodeOptions {
             jsx: JsxSettings::default(),
             forced_jsx_development: None,
             max_computed_candidates: 1024,
+            files_without_types: Vec::new(),
         };
         options.add_custom_condition(AOT_CONDITION);
         options

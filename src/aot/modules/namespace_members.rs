@@ -5,16 +5,19 @@ use super::imports::{FileBinder, NamedMember, PendingBinding};
 use super::interop::{ImportPhase, ModuleKind};
 use super::order::{PlannedSite, SiteKey, SitePosition};
 use super::plan::{Member, ModuleRef, View};
+use super::requests::ScannedSite;
 use super::wrapped::InnerModuleKind;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{BuiltinNames, table};
 use crate::known_helpers::{Helper, KnownFunction, KnownReference, Shape as HelperShape};
+use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, Chain, ExprId, ExprKind, MemberKey, PatId, PatKind, PropKey, StmtKind, UnOp,
 };
+use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::util::SharedSort;
 
 /// A name that stands for a module: an import of its namespace or of its exports as a whole, or a holder.
@@ -153,12 +156,89 @@ impl FileBinder<'_, '_> {
             let root = roots[of_root[0].0];
             let mut is_needed_as_value = false;
             for &(_, reference) in of_root {
+                self.note_replaced_export(reference, root.stands_for);
                 is_needed_as_value |= self.bind_member_path(reference, root.stands_for);
             }
             if is_needed_as_value {
                 self.look_at_root(root, holders);
             }
         }
+    }
+
+    // `spyOn(ns, "name")` stores a function of the test runner in the variable that the module exports under the name.
+    fn note_replaced_export(&mut self, reference: ExprId, stands_for: StandsFor) {
+        let (StandsFor::ImportedNamespace(_) | StandsFor::RequiredNamespace(_)) = stands_for else {
+            return;
+        };
+        let (hir, bound) = (self.hir, self.bound);
+        let object = find_outermost_type_assertion(hir, bound, reference);
+        let Parent::Expr(user) = bound.parent_of_expr(object) else {
+            return;
+        };
+        let call = match user.is_some().then(|| hir[user].kind) {
+            Some(ExprKind::Call(call)) => hir[call],
+            _ => return,
+        };
+        if call.args.len() < 2 || hir.id_at::<ExprId>(call.args, 0) != object {
+            return;
+        }
+        let callee = hir.skip_type_assertions(call.callee);
+        let builtins = parsed_source(self.context.files, self.file).map(|source| &source.builtins);
+        let callee = builtins.and_then(|builtins| builtins.builtin_of_expression(callee));
+        let is_spy = matches!(
+            callee,
+            Some(BuiltinId::BunTestSpyOn | BuiltinId::BunTestJestSpyOn | BuiltinId::BunTestViSpyOn)
+        );
+        let name = hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, 1));
+        let FoldedValue::Constant(Constant::String(name)) =
+            self.analysis.decisions.constant(hir, name)
+        else {
+            return;
+        };
+        if !is_spy {
+            return;
+        }
+        let Some(NamedMember::Binding(binding)) = self.resolve_member(stands_for, name) else {
+            return;
+        };
+        match binding {
+            PendingBinding::Bound(ImportBinding::Variable(variable)) => {
+                self.imports.replaced_variables.push(variable);
+            }
+            PendingBinding::Synthetic { module, name }
+            | PendingBinding::CapturedBuiltin { module, name, .. } => {
+                self.imports.replaced_names.push((module, name));
+            }
+            PendingBinding::Bound(_) => {}
+        }
+    }
+
+    // A mock is stored under the names of the module, as if through its namespace object.
+    pub(super) fn collect_mocked_modules(&mut self) {
+        let (analysis, scan) = (self.analysis, self.scan);
+        for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
+            let ImportSiteKind::MockModule(call) = site.kind else {
+                continue;
+            };
+            if analysis.decisions.is_dead_expr(call) {
+                continue;
+            }
+            match *answer {
+                ScannedSite::Module(module) => self.mock(module),
+                ScannedSite::AllModules | ScannedSite::Candidates(_) => {
+                    self.imports.mocks_any_module = true;
+                    for &file in &self.context.modules.compiled_files {
+                        self.mock(ModuleRef::File(file));
+                    }
+                }
+                ScannedSite::Unresolved | ScannedSite::Erased => {}
+            }
+        }
+    }
+
+    fn mock(&mut self, module: ModuleRef) {
+        self.imports.mocked_modules.push(module);
+        self.look_at(StandsFor::ImportedNamespace(module));
     }
 
     fn look_at_root(&mut self, root: Root, holders: &mut [Holder]) {

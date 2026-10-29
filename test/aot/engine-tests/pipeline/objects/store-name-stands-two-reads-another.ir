@@ -458,15 +458,14 @@ runtimefunction id=FunctionPrototypeApply function=f9
 # CHECK-NEXT: b38():
 # CHECK-NEXT: v106: int[0, 2147483647] = StringBuilderLength v1
 # CHECK-NEXT: v107: -20 = Integer integer=-20
-# CHECK-NEXT: v108: int[0, 2147483647] = StringBuilderLength v1
-# CHECK-NEXT: v109: undefined = StringRange v108, v107
-# CHECK-NEXT: v110: int[0, 2147483647] = ResultAt v109
-# CHECK-NEXT: v111: int[0, 2147483647] = ResultAt v109 index=1
-# CHECK-NEXT: v112: string = StringBuilderFinish v1
-# CHECK-NEXT: v113: string = Substring v112, v110, v111
-# CHECK-NEXT: v114: undefined = CallBuiltin -, v106, v113 overload=ConsoleLog/0 accessSite=24
-# CHECK-NEXT: v115: undefined = Undefined
-# CHECK-NEXT: Return v115
+# CHECK-NEXT: v108: undefined = StringRange v106, v107
+# CHECK-NEXT: v109: int[0, 2147483647] = ResultAt v108
+# CHECK-NEXT: v110: int[0, 2147483647] = ResultAt v108 index=1
+# CHECK-NEXT: v111: string = StringBuilderFinish v1
+# CHECK-NEXT: v112: string = Substring v111, v109, v110
+# CHECK-NEXT: v113: undefined = CallBuiltin -, v106, v112 overload=ConsoleLog/0 accessSite=24
+# CHECK-NEXT: v114: undefined = Undefined
+# CHECK-NEXT: Return v114
 # CHECK-NEXT: b39() frequency=Unlikely handler=b36():
 # CHECK-NEXT: Jump -> next b41()
 # CHECK-NEXT: b40() frequency=Rare handler=b36():

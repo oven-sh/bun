@@ -4941,7 +4941,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: v893: fractional = Double number=0.25
 # CHECK-NEXT: v894: number = Add v892, v893
 # CHECK-NEXT: Jump -> next b1()
-# CHECK-NEXT: b1() handler=b24(v246, v65, v106, v442, v33, v42, v292, v375, v596, v637, v668, v759, v859):
+# CHECK-NEXT: b1() handler=b20(v246, v65, v106, v442, v33, v42, v292, v375, v596, v637, v668, v759, v859):
 # CHECK-NEXT: v895: int[0, 20478] = Add v659, v159
 # CHECK-NEXT: v896: 0 = Integer
 # CHECK-NEXT: v897: int[0, 32767] = BitOr v895, v896
@@ -4961,7 +4961,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: v908: 0 = Integer
 # CHECK-NEXT: v909: i32 = BitOr v907, v908
 # CHECK-NEXT: Jump -> next b8(v905, v292, v909, v596, v759)
-# CHECK-NEXT: b4() role=CleanupHandler handler=b24(v246, v65, v106, v899, v33, v42, v292, v375, v596, v897, v668, v759, v859):
+# CHECK-NEXT: b4() role=CleanupHandler handler=b20(v246, v65, v106, v899, v33, v42, v292, v375, v596, v897, v668, v759, v859):
 # CHECK-NEXT: v910: anything = CatchValue
 # CHECK-NEXT: v911: 1 = Integer integer=1
 # CHECK-NEXT: Jump -> next b9(v911, v910, v65, v292, v375, v596, v759)
@@ -4992,1130 +4992,1094 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: v940: int[0, 15] = Mod v361, v939
 # CHECK-NEXT: v941: 0 = Integer
 # CHECK-NEXT: v942: int[0, 15] = BitOr v940, v941
-# CHECK-NEXT: Switch v929 cases=[0] -> case b10(), otherwise b23()
+# CHECK-NEXT: Switch v929 cases=[0] -> case b10(), otherwise b19()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v943: 0 = Integer
-# CHECK-NEXT: v944: boolean = Less v255, v943
-# CHECK-NEXT: Branch v944 -> taken b11(), notTaken b12()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v945: 0 = Integer
-# CHECK-NEXT: v946: boolean = Less v717, v945
-# CHECK-NEXT: Branch v946 -> taken b13(), notTaken b14()
+# CHECK-NEXT: v943: int[0, 16382] = Add v477, v320
+# CHECK-NEXT: v944: 0 = Integer
+# CHECK-NEXT: v945: int[0, 16383] = BitOr v943, v944
+# CHECK-NEXT: v946: 5 = Integer integer=5
+# CHECK-NEXT: v947: fact = Specified
+# CHECK-NEXT: v948: int[5, 2052] = Add v74, v946
+# CHECK-NEXT: v949: 0 = Integer
+# CHECK-NEXT: v950: int[0, 4095] = BitOr v948, v949
+# CHECK-NEXT: v951: boolean = Greater v269, v533
+# CHECK-NEXT: Branch v951 -> taken b11(| 0), notTaken b12(v533)
+# CHECK-NEXT: b11(v952: int[1, 4095]):
+# CHECK-NEXT: Jump -> next b12(v952)
+# CHECK-NEXT: b12(v953: int[0, 8191]):
+# CHECK-NEXT: v954: 3 = Integer integer=3
+# CHECK-NEXT: v955: int[0, 255] = URShift v74, v954
+# CHECK-NEXT: v956: 1023 = Integer integer=1023
+# CHECK-NEXT: v957: int[0, 255] = BitAnd v955, v956
+# CHECK-NEXT: v958: 1 = Integer integer=1
+# CHECK-NEXT: v959: int[0, 1] = BitAnd v882, v958
+# CHECK-NEXT: v960: boolean = ToBoolean v959
+# CHECK-NEXT: Branch v960 -> taken b13(), notTaken b14(v343)
 # CHECK-NEXT: b13():
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v947: int[0, 16382] = Add v477, v320
-# CHECK-NEXT: v948: 0 = Integer
-# CHECK-NEXT: v949: int[0, 16383] = BitOr v947, v948
-# CHECK-NEXT: v950: 5 = Integer integer=5
-# CHECK-NEXT: v951: fact = Specified
-# CHECK-NEXT: v952: int[5, 2052] = Add v74, v950
-# CHECK-NEXT: v953: 0 = Integer
-# CHECK-NEXT: v954: int[0, 4095] = BitOr v952, v953
-# CHECK-NEXT: v955: boolean = Greater v269, v533
-# CHECK-NEXT: Branch v955 -> taken b15(| 0), notTaken b16(v533)
-# CHECK-NEXT: b15(v956: int[1, 4095]):
-# CHECK-NEXT: Jump -> next b16(v956)
-# CHECK-NEXT: b16(v957: int[0, 8191]):
-# CHECK-NEXT: v958: 3 = Integer integer=3
-# CHECK-NEXT: v959: int[0, 255] = URShift v74, v958
-# CHECK-NEXT: v960: 1023 = Integer integer=1023
-# CHECK-NEXT: v961: int[0, 255] = BitAnd v959, v960
-# CHECK-NEXT: v962: 1 = Integer integer=1
-# CHECK-NEXT: v963: int[0, 1] = BitAnd v882, v962
-# CHECK-NEXT: v964: boolean = ToBoolean v963
-# CHECK-NEXT: Branch v964 -> taken b17(), notTaken b18(v343)
+# CHECK-NEXT: v961: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b14(v961)
+# CHECK-NEXT: b14(v962: number):
+# CHECK-NEXT: v963: fractional = Double number=0.5
+# CHECK-NEXT: v964: number = Mul v533, v963
+# CHECK-NEXT: v965: number = Add v964, v123
+# CHECK-NEXT: v966: 0 = Integer
+# CHECK-NEXT: v967: i32 = BitOr v965, v966
+# CHECK-NEXT: Jump -> next b15()
+# CHECK-NEXT: b15() handler=b20(v957, v931, v942, v953, v950, v945, v932, v933, v934, v897, v967, v935, v962):
+# CHECK-NEXT: v968: boolean = Less v932, v651
+# CHECK-NEXT: Branch v968 -> taken b16(), notTaken b17()
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v969: 3 = Integer integer=3
+# CHECK-NEXT: v970: int[0, 511] = URShift v182, v969
+# CHECK-NEXT: v971: 1023 = Integer integer=1023
+# CHECK-NEXT: v972: int[0, 511] = BitAnd v970, v971
+# CHECK-NEXT: Jump -> next b18(v972, v659)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v965: whole = Double number=NaN
-# CHECK-NEXT: Jump -> next b18(v965)
-# CHECK-NEXT: b18(v966: number):
-# CHECK-NEXT: v967: fractional = Double number=0.5
-# CHECK-NEXT: v968: number = Mul v533, v967
-# CHECK-NEXT: v969: number = Add v968, v123
-# CHECK-NEXT: v970: 0 = Integer
-# CHECK-NEXT: v971: i32 = BitOr v969, v970
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b19() handler=b24(v961, v931, v942, v957, v954, v949, v932, v933, v934, v897, v971, v935, v966):
-# CHECK-NEXT: v972: boolean = Less v932, v651
-# CHECK-NEXT: Branch v972 -> taken b20(), notTaken b21()
-# CHECK-NEXT: b20():
-# CHECK-NEXT: v973: 3 = Integer integer=3
-# CHECK-NEXT: v974: int[0, 511] = URShift v182, v973
-# CHECK-NEXT: v975: 1023 = Integer integer=1023
-# CHECK-NEXT: v976: int[0, 511] = BitAnd v974, v975
-# CHECK-NEXT: Jump -> next b22(v976, v659)
-# CHECK-NEXT: b21():
-# CHECK-NEXT: v977: int[0, 20478] = Add v659, v287
-# CHECK-NEXT: v978: 0 = Integer
-# CHECK-NEXT: v979: int[0, 32767] = BitOr v977, v978
-# CHECK-NEXT: v980: int[0, 32767] = BitXor v979, v419
-# CHECK-NEXT: Jump -> next b22(v980, v979)
-# CHECK-NEXT: b22(v981: int[0, 32767], v982: int[0, 32767]):
-# CHECK-NEXT: v983: 0 = Integer
-# CHECK-NEXT: v984: undefined = Undefined
-# CHECK-NEXT: Jump -> next b25(v983, v984, v961, v931, v981, v942, v957, v954, v949, v932, v933, v934, v897, v971, v935, v966, v982)
-# CHECK-NEXT: b23() handler=b24(v246, v931, v942, v442, v33, v42, v932, v933, v934, v897, v668, v935, v859):
+# CHECK-NEXT: v973: int[0, 20478] = Add v659, v287
+# CHECK-NEXT: v974: 0 = Integer
+# CHECK-NEXT: v975: int[0, 32767] = BitOr v973, v974
+# CHECK-NEXT: v976: int[0, 32767] = BitXor v975, v419
+# CHECK-NEXT: Jump -> next b18(v976, v975)
+# CHECK-NEXT: b18(v977: int[0, 32767], v978: int[0, 32767]):
+# CHECK-NEXT: v979: 0 = Integer
+# CHECK-NEXT: v980: undefined = Undefined
+# CHECK-NEXT: Jump -> next b21(v979, v980, v957, v931, v977, v942, v953, v950, v945, v932, v933, v934, v897, v967, v935, v962, v978)
+# CHECK-NEXT: b19() handler=b20(v246, v931, v942, v442, v33, v42, v932, v933, v934, v897, v668, v935, v859):
 # CHECK-NEXT: Throw v930
-# CHECK-NEXT: b24(v985: int[0, 4095], v986: int[-2147483647, 2147483648], v987: int[0, 2047], v988: int[0, 8191], v989: int[0, 4095], v990: int[0, 16383], v991: number, v992: i32, v993: int[0, 32767], v994: int[0, 32767], v995: i32, v996: number, v997: number) role=CleanupHandler:
-# CHECK-NEXT: v998: anything = CatchValue
-# CHECK-NEXT: v999: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b25(v999, v998, v985, v986, v361, v987, v988, v989, v990, v991, v992, v993, v994, v995, v996, v997, v659)
-# CHECK-NEXT: b25(v1000: int[0, 1], v1001: anything, v1002: int[0, 4095], v1003: int[-2147483647, 2147483648], v1004: int[0, 32767], v1005: int[0, 2047], v1006: int[0, 8191], v1007: int[0, 4095], v1008: int[0, 16383], v1009: number, v1010: i32, v1011: int[0, 32767], v1012: int[0, 32767], v1013: i32, v1014: number, v1015: number, v1016: int[0, 32767]):
-# CHECK-NEXT: v1017: int[0, 4095] = BitAnd v1002, v1003
-# CHECK-NEXT: v1018: 1 = Integer integer=1
-# CHECK-NEXT: v1019: int[0, 4095] = BitOr v1017, v1018
-# CHECK-NEXT: Switch v1000 cases=[0] -> case b26(), otherwise b266()
-# CHECK-NEXT: b26():
-# CHECK-NEXT: v1020: 0 = Integer
-# CHECK-NEXT: Jump -> next b27(v114, v278, v306, v328, v505, v588, v651, v731, v819, v882, v1020, v1016)
-# CHECK-NEXT: b27(v1021: int[0, 2047], v1022: int[-2147483648, 4294967295], v1023: int[0, 4095], v1024: int[0, 8191], v1025: number, v1026: int[0, 8191], v1027: i32, v1028: int[0, 32767], v1029: int[0, 16383], v1030: int[0, 16383], v1031: int[0, 2], v1032: i32):
+# CHECK-NEXT: b20(v981: int[0, 4095], v982: int[-2147483647, 2147483648], v983: int[0, 2047], v984: int[0, 8191], v985: int[0, 4095], v986: int[0, 16383], v987: number, v988: i32, v989: int[0, 32767], v990: int[0, 32767], v991: i32, v992: number, v993: number) role=CleanupHandler:
+# CHECK-NEXT: v994: anything = CatchValue
+# CHECK-NEXT: v995: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b21(v995, v994, v981, v982, v361, v983, v984, v985, v986, v987, v988, v989, v990, v991, v992, v993, v659)
+# CHECK-NEXT: b21(v996: int[0, 1], v997: anything, v998: int[0, 4095], v999: int[-2147483647, 2147483648], v1000: int[0, 32767], v1001: int[0, 2047], v1002: int[0, 8191], v1003: int[0, 4095], v1004: int[0, 16383], v1005: number, v1006: i32, v1007: int[0, 32767], v1008: int[0, 32767], v1009: i32, v1010: number, v1011: number, v1012: int[0, 32767]):
+# CHECK-NEXT: v1013: int[0, 4095] = BitAnd v998, v999
+# CHECK-NEXT: v1014: 1 = Integer integer=1
+# CHECK-NEXT: v1015: int[0, 4095] = BitOr v1013, v1014
+# CHECK-NEXT: Switch v996 cases=[0] -> case b22(), otherwise b254()
+# CHECK-NEXT: b22():
+# CHECK-NEXT: v1016: 0 = Integer
+# CHECK-NEXT: Jump -> next b23(v114, v278, v306, v328, v505, v588, v651, v731, v819, v882, v1016, v1012)
+# CHECK-NEXT: b23(v1017: int[0, 2047], v1018: int[-2147483648, 4294967295], v1019: int[0, 4095], v1020: int[0, 8191], v1021: number, v1022: int[0, 8191], v1023: i32, v1024: int[0, 32767], v1025: int[0, 16383], v1026: int[0, 16383], v1027: int[0, 2], v1028: i32):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v1034: 2 = Integer integer=2
-# CHECK-NEXT: v1035: boolean = Less v1031, v1034
-# CHECK-NEXT: Branch v1035 -> taken b28(| 0), notTaken b44()
-# CHECK-NEXT: b28(v1036: int[0, 1]):
-# CHECK-NEXT: v1037: fractional = Double number=0.5
-# CHECK-NEXT: v1038: number = Mul v754, v1037
-# CHECK-NEXT: v1039: number = Add v1038, v1004
-# CHECK-NEXT: v1040: int[0, 18430] = Add v854, v1005
-# CHECK-NEXT: v1041: 0 = Integer
-# CHECK-NEXT: v1042: int[0, 32767] = BitOr v1040, v1041
-# CHECK-NEXT: v1043: 0 = Integer
-# CHECK-NEXT: v1044: boolean = Less v1005, v1043
-# CHECK-NEXT: Branch v1044 -> taken b29(), notTaken b30()
-# CHECK-NEXT: b29():
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b30():
-# CHECK-NEXT: v1045: 0 = Integer
-# CHECK-NEXT: v1046: boolean = Less v191, v1045
-# CHECK-NEXT: Branch v1046 -> taken b31(), notTaken b32()
-# CHECK-NEXT: b31():
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b32():
-# CHECK-NEXT: v1047: int[-2147483648, 2147516414] = Add v1032, v1042
-# CHECK-NEXT: v1048: 0 = Integer
-# CHECK-NEXT: v1049: i32 = BitOr v1047, v1048
-# CHECK-NEXT: v1050: i32 = BitXor v1049, v419
-# CHECK-NEXT: v1051: int[0, 8191] = BitXor v389, v1021
+# CHECK-NEXT: v1030: 2 = Integer integer=2
+# CHECK-NEXT: v1031: boolean = Less v1027, v1030
+# CHECK-NEXT: Branch v1031 -> taken b24(| 0), notTaken b36()
+# CHECK-NEXT: b24(v1032: int[0, 1]):
+# CHECK-NEXT: v1033: fractional = Double number=0.5
+# CHECK-NEXT: v1034: number = Mul v754, v1033
+# CHECK-NEXT: v1035: number = Add v1034, v1000
+# CHECK-NEXT: v1036: int[0, 18430] = Add v854, v1001
+# CHECK-NEXT: v1037: 0 = Integer
+# CHECK-NEXT: v1038: int[0, 32767] = BitOr v1036, v1037
+# CHECK-NEXT: v1039: int[-2147483648, 2147516414] = Add v1028, v1038
+# CHECK-NEXT: v1040: 0 = Integer
+# CHECK-NEXT: v1041: i32 = BitOr v1039, v1040
+# CHECK-NEXT: v1042: i32 = BitXor v1041, v419
+# CHECK-NEXT: v1043: int[0, 8191] = BitXor v389, v1017
+# CHECK-NEXT: v1044: 0 = Integer
+# CHECK-NEXT: v1045: boolean = Greater v810, v1044
+# CHECK-NEXT: Branch v1045 -> taken b25(| 0), notTaken b26()
+# CHECK-NEXT: b25(v1046: int[1, 16383]):
+# CHECK-NEXT: Jump -> next b27(v1046)
+# CHECK-NEXT: b26():
+# CHECK-NEXT: Jump -> next b27(v83)
+# CHECK-NEXT: b27(v1047: int[0, 16383]):
+# CHECK-NEXT: v1048: 1 = Integer integer=1
+# CHECK-NEXT: v1049: boolean = Less v205, v1015
+# CHECK-NEXT: Branch v1049 -> taken b28(), notTaken b31()
+# CHECK-NEXT: b28() handler=b29():
+# CHECK-NEXT: Throw v749
+# CHECK-NEXT: b29() role=CatchHandler handler=b30():
+# CHECK-NEXT: v1050: anything = CatchValue
+# CHECK-NEXT: v1051: anything ~ number = Expect v1050 expectedType=number
 # CHECK-NEXT: v1052: 0 = Integer
-# CHECK-NEXT: v1053: boolean = Greater v810, v1052
-# CHECK-NEXT: Branch v1053 -> taken b33(| 0), notTaken b34()
-# CHECK-NEXT: b33(v1054: int[1, 16383]):
-# CHECK-NEXT: Jump -> next b35(v1054)
-# CHECK-NEXT: b34():
-# CHECK-NEXT: Jump -> next b35(v83)
-# CHECK-NEXT: b35(v1055: int[0, 16383]):
-# CHECK-NEXT: v1056: 1 = Integer integer=1
-# CHECK-NEXT: v1057: boolean = Less v205, v1019
-# CHECK-NEXT: Branch v1057 -> taken b36(), notTaken b39()
-# CHECK-NEXT: b36() handler=b37():
-# CHECK-NEXT: Throw v749
-# CHECK-NEXT: b37() role=CatchHandler handler=b38():
-# CHECK-NEXT: v1058: anything = CatchValue
-# CHECK-NEXT: v1059: anything ~ number = Expect v1058 expectedType=number
-# CHECK-NEXT: v1060: 0 = Integer
-# CHECK-NEXT: v1061: i32 = BitOr v1059, v1060
-# CHECK-NEXT: v1062: 1 = Integer integer=1
-# CHECK-NEXT: v1063: int[-2147483647, 2147483648] = Add v1061, v1062
-# CHECK-NEXT: v1064: 3 = Integer integer=3
-# CHECK-NEXT: v1065: int[0, 127] = URShift v51, v1064
-# CHECK-NEXT: v1066: 1023 = Integer integer=1023
-# CHECK-NEXT: v1067: int[0, 127] = BitAnd v1065, v1066
-# CHECK-NEXT: Jump -> next b40(v1063, v1067, v1024)
-# CHECK-NEXT: b38() role=CleanupHandler:
-# CHECK-NEXT: v1068: anything = CatchValue
-# CHECK-NEXT: v1069: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b41(v1069, v1068, v1022, v1023, v1024)
-# CHECK-NEXT: b39():
-# CHECK-NEXT: v1070: 0 = Integer
-# CHECK-NEXT: v1071: int[0, 127] = BitOr v0, v1070
-# CHECK-NEXT: Jump -> next b40(v1022, v1023, v1071)
-# CHECK-NEXT: b40(v1072: int[-2147483648, 4294967295], v1073: int[0, 4095], v1074: int[0, 8191]):
+# CHECK-NEXT: v1053: i32 = BitOr v1051, v1052
+# CHECK-NEXT: v1054: 1 = Integer integer=1
+# CHECK-NEXT: v1055: int[-2147483647, 2147483648] = Add v1053, v1054
+# CHECK-NEXT: v1056: 3 = Integer integer=3
+# CHECK-NEXT: v1057: int[0, 127] = URShift v51, v1056
+# CHECK-NEXT: v1058: 1023 = Integer integer=1023
+# CHECK-NEXT: v1059: int[0, 127] = BitAnd v1057, v1058
+# CHECK-NEXT: Jump -> next b32(v1055, v1059, v1020)
+# CHECK-NEXT: b30() role=CleanupHandler:
+# CHECK-NEXT: v1060: anything = CatchValue
+# CHECK-NEXT: v1061: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b33(v1061, v1060, v1018, v1019, v1020)
+# CHECK-NEXT: b31():
+# CHECK-NEXT: v1062: 0 = Integer
+# CHECK-NEXT: v1063: int[0, 127] = BitOr v0, v1062
+# CHECK-NEXT: Jump -> next b32(v1018, v1019, v1063)
+# CHECK-NEXT: b32(v1064: int[-2147483648, 4294967295], v1065: int[0, 4095], v1066: int[0, 8191]):
+# CHECK-NEXT: v1067: 0 = Integer
+# CHECK-NEXT: v1068: undefined = Undefined
+# CHECK-NEXT: Jump -> next b33(v1067, v1068, v1064, v1065, v1066)
+# CHECK-NEXT: b33(v1069: int[0, 1], v1070: anything, v1071: int[-2147483648, 4294967295], v1072: int[0, 4095], v1073: int[0, 8191]):
+# CHECK-NEXT: v1074: int[0, 5118] = Add v10, v159
 # CHECK-NEXT: v1075: 0 = Integer
-# CHECK-NEXT: v1076: undefined = Undefined
-# CHECK-NEXT: Jump -> next b41(v1075, v1076, v1072, v1073, v1074)
-# CHECK-NEXT: b41(v1077: int[0, 1], v1078: anything, v1079: int[-2147483648, 4294967295], v1080: int[0, 4095], v1081: int[0, 8191]):
-# CHECK-NEXT: v1082: int[0, 5118] = Add v10, v159
-# CHECK-NEXT: v1083: 0 = Integer
-# CHECK-NEXT: v1084: int[0, 8191] = BitOr v1082, v1083
-# CHECK-NEXT: Switch v1077 cases=[0] -> case b42(), otherwise b43()
-# CHECK-NEXT: b42():
-# CHECK-NEXT: v1085: int[1, 2] = Increment v1036
-# CHECK-NEXT: Jump -> next b27(v1056, v1079, v1080, v1081, v1039, v1051, v1050, v1042, v1055, v1084, v1085, v1049)
-# CHECK-NEXT: b43():
-# CHECK-NEXT: Throw v1078
-# CHECK-NEXT: b44():
-# CHECK-NEXT: v1086: 0 = Integer
-# CHECK-NEXT: v1087: boolean = Less v398, v1086
-# CHECK-NEXT: Branch v1087 -> taken b45(), notTaken b46()
-# CHECK-NEXT: b45():
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b46():
-# CHECK-NEXT: v1088: 0 = Integer
-# CHECK-NEXT: v1089: boolean = Less v1006, v1088
-# CHECK-NEXT: Branch v1089 -> taken b47(), notTaken b48()
-# CHECK-NEXT: b47():
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b48():
-# CHECK-NEXT: v1090: 3 = Integer integer=3
-# CHECK-NEXT: v1091: int[0, 536870911] = URShift v1013, v1090
-# CHECK-NEXT: v1092: 1023 = Integer integer=1023
-# CHECK-NEXT: v1093: int[0, 1023] = BitAnd v1091, v1092
-# CHECK-NEXT: v1094: 2 = Integer integer=2
-# CHECK-NEXT: v1095: boolean = Greater v551, v1094
-# CHECK-NEXT: Branch v1095 -> taken b49(), notTaken b54()
-# CHECK-NEXT: b49() handler=b50():
+# CHECK-NEXT: v1076: int[0, 8191] = BitOr v1074, v1075
+# CHECK-NEXT: Switch v1069 cases=[0] -> case b34(), otherwise b35()
+# CHECK-NEXT: b34():
+# CHECK-NEXT: v1077: int[1, 2] = Increment v1032
+# CHECK-NEXT: Jump -> next b23(v1048, v1071, v1072, v1073, v1035, v1043, v1042, v1038, v1047, v1076, v1077, v1041)
+# CHECK-NEXT: b35():
+# CHECK-NEXT: Throw v1070
+# CHECK-NEXT: b36():
+# CHECK-NEXT: v1078: 3 = Integer integer=3
+# CHECK-NEXT: v1079: int[0, 536870911] = URShift v1009, v1078
+# CHECK-NEXT: v1080: 1023 = Integer integer=1023
+# CHECK-NEXT: v1081: int[0, 1023] = BitAnd v1079, v1080
+# CHECK-NEXT: v1082: 2 = Integer integer=2
+# CHECK-NEXT: v1083: boolean = Greater v551, v1082
+# CHECK-NEXT: Branch v1083 -> taken b37(), notTaken b42()
+# CHECK-NEXT: b37() handler=b38():
 # CHECK-NEXT: Throw v749
-# CHECK-NEXT: b50() role=CatchHandler handler=b53():
-# CHECK-NEXT: v1096: anything = CatchValue
-# CHECK-NEXT: v1097: anything ~ number = Expect v1096 expectedType=number
-# CHECK-NEXT: v1098: 0 = Integer
-# CHECK-NEXT: v1099: i32 = BitOr v1097, v1098
+# CHECK-NEXT: b38() role=CatchHandler handler=b41():
+# CHECK-NEXT: v1084: anything = CatchValue
+# CHECK-NEXT: v1085: anything ~ number = Expect v1084 expectedType=number
+# CHECK-NEXT: v1086: 0 = Integer
+# CHECK-NEXT: v1087: i32 = BitOr v1085, v1086
+# CHECK-NEXT: v1088: 1 = Integer integer=1
+# CHECK-NEXT: v1089: int[-2147483647, 2147483648] = Add v1087, v1088
+# CHECK-NEXT: v1090: 3 = Integer integer=3
+# CHECK-NEXT: v1091: int[0, 3] = BitAnd v677, v1090
+# CHECK-NEXT: v1092: boolean = ToBoolean v1091
+# CHECK-NEXT: Branch v1092 -> taken b40(v232), notTaken b39()
+# CHECK-NEXT: b39():
+# CHECK-NEXT: v1093: whole = Double number=-0
+# CHECK-NEXT: Jump -> next b40(v1093)
+# CHECK-NEXT: b40(v1094: number):
+# CHECK-NEXT: Jump -> next b45(v1089, v1005, v1094, v840)
+# CHECK-NEXT: b41() role=CleanupHandler:
+# CHECK-NEXT: v1095: anything = CatchValue
+# CHECK-NEXT: v1096: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b46(v1096, v1095, v1018, v1005, v333, v840)
+# CHECK-NEXT: b42():
+# CHECK-NEXT: v1097: fractional = Double number=0.5
+# CHECK-NEXT: v1098: number = Mul v791, v1097
+# CHECK-NEXT: v1099: number = Add v1098, v614
 # CHECK-NEXT: v1100: 1 = Integer integer=1
-# CHECK-NEXT: v1101: int[-2147483647, 2147483648] = Add v1099, v1100
-# CHECK-NEXT: v1102: 3 = Integer integer=3
-# CHECK-NEXT: v1103: int[0, 3] = BitAnd v677, v1102
-# CHECK-NEXT: v1104: boolean = ToBoolean v1103
-# CHECK-NEXT: Branch v1104 -> taken b52(v232), notTaken b51()
+# CHECK-NEXT: v1101: int[0, 1] = BitAnd v514, v1100
+# CHECK-NEXT: v1102: boolean = ToBoolean v1101
+# CHECK-NEXT: Branch v1102 -> taken b43(), notTaken b44(v88)
+# CHECK-NEXT: b43():
+# CHECK-NEXT: v1103: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b44(v1103)
+# CHECK-NEXT: b44(v1104: number):
+# CHECK-NEXT: Jump -> next b45(v1018, v1099, v333, v1104)
+# CHECK-NEXT: b45(v1105: int[-2147483648, 4294967295], v1106: number, v1107: number, v1108: number):
+# CHECK-NEXT: v1109: 0 = Integer
+# CHECK-NEXT: v1110: undefined = Undefined
+# CHECK-NEXT: Jump -> next b46(v1109, v1110, v1105, v1106, v1107, v1108)
+# CHECK-NEXT: b46(v1111: int[0, 1], v1112: anything, v1113: int[-2147483648, 4294967295], v1114: number, v1115: number, v1116: number):
+# CHECK-NEXT: v1117: int|whole = CallBuiltin -, v579 overload=MathFloor/0 accessSite=35
+# CHECK-NEXT: v1118: fractional = Double number=0.25
+# CHECK-NEXT: v1119: number = Add v1117, v1118
+# CHECK-NEXT: Switch v1111 cases=[0] -> case b47(), otherwise b253()
+# CHECK-NEXT: b47():
+# CHECK-NEXT: v1120: int[0, 1023] = BitXor v10, v19
+# CHECK-NEXT: v1121: whole = Double number=-0
+# CHECK-NEXT: v1122: boolean = CallBuiltin -, v24, v1121 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1122 -> taken b48(), notTaken b49()
+# CHECK-NEXT: b48():
+# CHECK-NEXT: v1123: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b52(v1123)
+# CHECK-NEXT: b49():
+# CHECK-NEXT: v1124: boolean = StrictEq v24, v24
+# CHECK-NEXT: Branch v1124 -> taken b50(), notTaken b51()
+# CHECK-NEXT: b50():
+# CHECK-NEXT: v1125: 1000 = Integer integer=1000
+# CHECK-NEXT: v1126: number = Mul v24, v1125
+# CHECK-NEXT: v1127: 0 = Integer
+# CHECK-NEXT: v1128: i32 = BitOr v1126, v1127
+# CHECK-NEXT: Jump -> next b52(v1128)
 # CHECK-NEXT: b51():
-# CHECK-NEXT: v1105: whole = Double number=-0
-# CHECK-NEXT: Jump -> next b52(v1105)
-# CHECK-NEXT: b52(v1106: number):
-# CHECK-NEXT: Jump -> next b57(v1101, v1009, v1106, v840)
-# CHECK-NEXT: b53() role=CleanupHandler:
-# CHECK-NEXT: v1107: anything = CatchValue
-# CHECK-NEXT: v1108: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b58(v1108, v1107, v1022, v1009, v333, v840)
+# CHECK-NEXT: v1129: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b52(v1129)
+# CHECK-NEXT: b52(v1130: i32):
+# CHECK-NEXT: v1131: i32 = BitXor v1120, v1130
+# CHECK-NEXT: v1132: i32 = BitXor v1131, v1003
+# CHECK-NEXT: v1133: i32 = BitXor v1132, v1004
+# CHECK-NEXT: v1134: i32 = BitXor v1133, v51
+# CHECK-NEXT: v1135: whole = Double number=-0
+# CHECK-NEXT: v1136: boolean = CallBuiltin -, v56, v1135 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1136 -> taken b53(), notTaken b54()
+# CHECK-NEXT: b53():
+# CHECK-NEXT: v1137: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b57(v1137)
 # CHECK-NEXT: b54():
-# CHECK-NEXT: v1109: fractional = Double number=0.5
-# CHECK-NEXT: v1110: number = Mul v791, v1109
-# CHECK-NEXT: v1111: number = Add v1110, v614
-# CHECK-NEXT: v1112: 1 = Integer integer=1
-# CHECK-NEXT: v1113: int[0, 1] = BitAnd v514, v1112
-# CHECK-NEXT: v1114: boolean = ToBoolean v1113
-# CHECK-NEXT: Branch v1114 -> taken b55(), notTaken b56(v88)
+# CHECK-NEXT: v1138: boolean = StrictEq v56, v56
+# CHECK-NEXT: Branch v1138 -> taken b55(), notTaken b56()
 # CHECK-NEXT: b55():
-# CHECK-NEXT: v1115: whole = Double number=NaN
-# CHECK-NEXT: Jump -> next b56(v1115)
-# CHECK-NEXT: b56(v1116: number):
-# CHECK-NEXT: Jump -> next b57(v1022, v1111, v333, v1116)
-# CHECK-NEXT: b57(v1117: int[-2147483648, 4294967295], v1118: number, v1119: number, v1120: number):
-# CHECK-NEXT: v1121: 0 = Integer
-# CHECK-NEXT: v1122: undefined = Undefined
-# CHECK-NEXT: Jump -> next b58(v1121, v1122, v1117, v1118, v1119, v1120)
-# CHECK-NEXT: b58(v1123: int[0, 1], v1124: anything, v1125: int[-2147483648, 4294967295], v1126: number, v1127: number, v1128: number):
-# CHECK-NEXT: v1129: int|whole = CallBuiltin -, v579 overload=MathFloor/0 accessSite=35
-# CHECK-NEXT: v1130: fractional = Double number=0.25
-# CHECK-NEXT: v1131: number = Add v1129, v1130
-# CHECK-NEXT: Switch v1123 cases=[0] -> case b59(), otherwise b265()
+# CHECK-NEXT: v1139: 1000 = Integer integer=1000
+# CHECK-NEXT: v1140: number = Mul v56, v1139
+# CHECK-NEXT: v1141: 0 = Integer
+# CHECK-NEXT: v1142: i32 = BitOr v1140, v1141
+# CHECK-NEXT: Jump -> next b57(v1142)
+# CHECK-NEXT: b56():
+# CHECK-NEXT: v1143: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b57(v1143)
+# CHECK-NEXT: b57(v1144: i32):
+# CHECK-NEXT: v1145: i32 = BitXor v1134, v1144
+# CHECK-NEXT: v1146: i32 = BitXor v1145, v999
+# CHECK-NEXT: v1147: i32 = BitXor v1146, v74
+# CHECK-NEXT: v1148: i32 = BitXor v1147, v83
+# CHECK-NEXT: v1149: whole = Double number=-0
+# CHECK-NEXT: v1150: boolean = CallBuiltin -, v88, v1149 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1150 -> taken b58(), notTaken b59()
+# CHECK-NEXT: b58():
+# CHECK-NEXT: v1151: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b62(v1151)
 # CHECK-NEXT: b59():
-# CHECK-NEXT: v1132: int[0, 1023] = BitXor v10, v19
-# CHECK-NEXT: v1133: whole = Double number=-0
-# CHECK-NEXT: v1134: boolean = CallBuiltin -, v24, v1133 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1134 -> taken b60(), notTaken b61()
+# CHECK-NEXT: v1152: boolean = StrictEq v88, v88
+# CHECK-NEXT: Branch v1152 -> taken b60(), notTaken b61()
 # CHECK-NEXT: b60():
-# CHECK-NEXT: v1135: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b64(v1135)
+# CHECK-NEXT: v1153: 1000 = Integer integer=1000
+# CHECK-NEXT: v1154: number = Mul v88, v1153
+# CHECK-NEXT: v1155: 0 = Integer
+# CHECK-NEXT: v1156: i32 = BitOr v1154, v1155
+# CHECK-NEXT: Jump -> next b62(v1156)
 # CHECK-NEXT: b61():
-# CHECK-NEXT: v1136: boolean = StrictEq v24, v24
-# CHECK-NEXT: Branch v1136 -> taken b62(), notTaken b63()
-# CHECK-NEXT: b62():
-# CHECK-NEXT: v1137: 1000 = Integer integer=1000
-# CHECK-NEXT: v1138: number = Mul v24, v1137
-# CHECK-NEXT: v1139: 0 = Integer
-# CHECK-NEXT: v1140: i32 = BitOr v1138, v1139
-# CHECK-NEXT: Jump -> next b64(v1140)
+# CHECK-NEXT: v1157: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b62(v1157)
+# CHECK-NEXT: b62(v1158: i32):
+# CHECK-NEXT: v1159: i32 = BitXor v1148, v1158
+# CHECK-NEXT: v1160: i32 = BitXor v1159, v97
+# CHECK-NEXT: v1161: i32 = BitXor v1160, v1001
+# CHECK-NEXT: v1162: i32 = BitXor v1161, v1017
+# CHECK-NEXT: v1163: i32 = BitXor v1162, v123
+# CHECK-NEXT: v1164: i32 = BitXor v1163, v132
+# CHECK-NEXT: v1165: i32 = BitXor v1164, v141
+# CHECK-NEXT: v1166: i32 = BitXor v1165, v150
+# CHECK-NEXT: v1167: i32 = BitXor v1166, v159
+# CHECK-NEXT: v1168: whole = Double number=-0
+# CHECK-NEXT: v1169: boolean = CallBuiltin -, v164, v1168 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1169 -> taken b63(), notTaken b64()
 # CHECK-NEXT: b63():
-# CHECK-NEXT: v1141: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b64(v1141)
-# CHECK-NEXT: b64(v1142: i32):
-# CHECK-NEXT: v1143: i32 = BitXor v1132, v1142
-# CHECK-NEXT: v1144: i32 = BitXor v1143, v1007
-# CHECK-NEXT: v1145: i32 = BitXor v1144, v1008
-# CHECK-NEXT: v1146: i32 = BitXor v1145, v51
-# CHECK-NEXT: v1147: whole = Double number=-0
-# CHECK-NEXT: v1148: boolean = CallBuiltin -, v56, v1147 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1148 -> taken b65(), notTaken b66()
+# CHECK-NEXT: v1170: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b67(v1170)
+# CHECK-NEXT: b64():
+# CHECK-NEXT: v1171: boolean = StrictEq v164, v164
+# CHECK-NEXT: Branch v1171 -> taken b65(), notTaken b66()
 # CHECK-NEXT: b65():
-# CHECK-NEXT: v1149: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b69(v1149)
+# CHECK-NEXT: v1172: 1000 = Integer integer=1000
+# CHECK-NEXT: v1173: number = Mul v164, v1172
+# CHECK-NEXT: v1174: 0 = Integer
+# CHECK-NEXT: v1175: i32 = BitOr v1173, v1174
+# CHECK-NEXT: Jump -> next b67(v1175)
 # CHECK-NEXT: b66():
-# CHECK-NEXT: v1150: boolean = StrictEq v56, v56
-# CHECK-NEXT: Branch v1150 -> taken b67(), notTaken b68()
-# CHECK-NEXT: b67():
-# CHECK-NEXT: v1151: 1000 = Integer integer=1000
-# CHECK-NEXT: v1152: number = Mul v56, v1151
-# CHECK-NEXT: v1153: 0 = Integer
-# CHECK-NEXT: v1154: i32 = BitOr v1152, v1153
-# CHECK-NEXT: Jump -> next b69(v1154)
+# CHECK-NEXT: v1176: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b67(v1176)
+# CHECK-NEXT: b67(v1177: i32):
+# CHECK-NEXT: v1178: i32 = BitXor v1167, v1177
+# CHECK-NEXT: v1179: i32 = BitXor v1178, v173
+# CHECK-NEXT: v1180: i32 = BitXor v1179, v182
+# CHECK-NEXT: v1181: i32 = BitXor v1180, v191
+# CHECK-NEXT: v1182: i32 = BitXor v1181, v200
+# CHECK-NEXT: v1183: whole = Double number=-0
+# CHECK-NEXT: v1184: boolean = CallBuiltin -, v205, v1183 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1184 -> taken b68(), notTaken b69()
 # CHECK-NEXT: b68():
-# CHECK-NEXT: v1155: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b69(v1155)
-# CHECK-NEXT: b69(v1156: i32):
-# CHECK-NEXT: v1157: i32 = BitXor v1146, v1156
-# CHECK-NEXT: v1158: i32 = BitXor v1157, v1003
-# CHECK-NEXT: v1159: i32 = BitXor v1158, v74
-# CHECK-NEXT: v1160: i32 = BitXor v1159, v83
-# CHECK-NEXT: v1161: whole = Double number=-0
-# CHECK-NEXT: v1162: boolean = CallBuiltin -, v88, v1161 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1162 -> taken b70(), notTaken b71()
+# CHECK-NEXT: v1185: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b72(v1185)
+# CHECK-NEXT: b69():
+# CHECK-NEXT: v1186: boolean = StrictEq v205, v205
+# CHECK-NEXT: Branch v1186 -> taken b70(), notTaken b71()
 # CHECK-NEXT: b70():
-# CHECK-NEXT: v1163: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b74(v1163)
+# CHECK-NEXT: v1187: 1000 = Integer integer=1000
+# CHECK-NEXT: v1188: number = Mul v205, v1187
+# CHECK-NEXT: v1189: 0 = Integer
+# CHECK-NEXT: v1190: i32 = BitOr v1188, v1189
+# CHECK-NEXT: Jump -> next b72(v1190)
 # CHECK-NEXT: b71():
-# CHECK-NEXT: v1164: boolean = StrictEq v88, v88
-# CHECK-NEXT: Branch v1164 -> taken b72(), notTaken b73()
-# CHECK-NEXT: b72():
-# CHECK-NEXT: v1165: 1000 = Integer integer=1000
-# CHECK-NEXT: v1166: number = Mul v88, v1165
-# CHECK-NEXT: v1167: 0 = Integer
-# CHECK-NEXT: v1168: i32 = BitOr v1166, v1167
-# CHECK-NEXT: Jump -> next b74(v1168)
-# CHECK-NEXT: b73():
-# CHECK-NEXT: v1169: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b74(v1169)
-# CHECK-NEXT: b74(v1170: i32):
-# CHECK-NEXT: v1171: i32 = BitXor v1160, v1170
-# CHECK-NEXT: v1172: i32 = BitXor v1171, v97
-# CHECK-NEXT: v1173: i32 = BitXor v1172, v1005
-# CHECK-NEXT: v1174: i32 = BitXor v1173, v1021
-# CHECK-NEXT: v1175: i32 = BitXor v1174, v123
-# CHECK-NEXT: v1176: i32 = BitXor v1175, v132
-# CHECK-NEXT: v1177: i32 = BitXor v1176, v141
-# CHECK-NEXT: v1178: i32 = BitXor v1177, v150
-# CHECK-NEXT: v1179: i32 = BitXor v1178, v159
-# CHECK-NEXT: v1180: whole = Double number=-0
-# CHECK-NEXT: v1181: boolean = CallBuiltin -, v164, v1180 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1181 -> taken b75(), notTaken b76()
-# CHECK-NEXT: b75():
-# CHECK-NEXT: v1182: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b79(v1182)
-# CHECK-NEXT: b76():
-# CHECK-NEXT: v1183: boolean = StrictEq v164, v164
-# CHECK-NEXT: Branch v1183 -> taken b77(), notTaken b78()
-# CHECK-NEXT: b77():
-# CHECK-NEXT: v1184: 1000 = Integer integer=1000
-# CHECK-NEXT: v1185: number = Mul v164, v1184
-# CHECK-NEXT: v1186: 0 = Integer
-# CHECK-NEXT: v1187: i32 = BitOr v1185, v1186
-# CHECK-NEXT: Jump -> next b79(v1187)
-# CHECK-NEXT: b78():
-# CHECK-NEXT: v1188: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b79(v1188)
-# CHECK-NEXT: b79(v1189: i32):
-# CHECK-NEXT: v1190: i32 = BitXor v1179, v1189
-# CHECK-NEXT: v1191: i32 = BitXor v1190, v173
-# CHECK-NEXT: v1192: i32 = BitXor v1191, v182
-# CHECK-NEXT: v1193: i32 = BitXor v1192, v191
-# CHECK-NEXT: v1194: i32 = BitXor v1193, v200
+# CHECK-NEXT: v1191: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b72(v1191)
+# CHECK-NEXT: b72(v1192: i32):
+# CHECK-NEXT: v1193: i32 = BitXor v1182, v1192
+# CHECK-NEXT: v1194: i32 = BitXor v1193, v213
 # CHECK-NEXT: v1195: whole = Double number=-0
-# CHECK-NEXT: v1196: boolean = CallBuiltin -, v205, v1195 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1196 -> taken b80(), notTaken b81()
-# CHECK-NEXT: b80():
+# CHECK-NEXT: v1196: boolean = CallBuiltin -, v218, v1195 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1196 -> taken b73(), notTaken b74()
+# CHECK-NEXT: b73():
 # CHECK-NEXT: v1197: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b84(v1197)
-# CHECK-NEXT: b81():
-# CHECK-NEXT: v1198: boolean = StrictEq v205, v205
-# CHECK-NEXT: Branch v1198 -> taken b82(), notTaken b83()
-# CHECK-NEXT: b82():
+# CHECK-NEXT: Jump -> next b77(v1197)
+# CHECK-NEXT: b74():
+# CHECK-NEXT: v1198: boolean = StrictEq v218, v218
+# CHECK-NEXT: Branch v1198 -> taken b75(), notTaken b76()
+# CHECK-NEXT: b75():
 # CHECK-NEXT: v1199: 1000 = Integer integer=1000
-# CHECK-NEXT: v1200: number = Mul v205, v1199
+# CHECK-NEXT: v1200: number = Mul v218, v1199
 # CHECK-NEXT: v1201: 0 = Integer
 # CHECK-NEXT: v1202: i32 = BitOr v1200, v1201
-# CHECK-NEXT: Jump -> next b84(v1202)
-# CHECK-NEXT: b83():
+# CHECK-NEXT: Jump -> next b77(v1202)
+# CHECK-NEXT: b76():
 # CHECK-NEXT: v1203: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b84(v1203)
-# CHECK-NEXT: b84(v1204: i32):
+# CHECK-NEXT: Jump -> next b77(v1203)
+# CHECK-NEXT: b77(v1204: i32):
 # CHECK-NEXT: v1205: i32 = BitXor v1194, v1204
-# CHECK-NEXT: v1206: i32 = BitXor v1205, v213
+# CHECK-NEXT: v1206: i32 = BitXor v1205, v227
 # CHECK-NEXT: v1207: whole = Double number=-0
-# CHECK-NEXT: v1208: boolean = CallBuiltin -, v218, v1207 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1208 -> taken b85(), notTaken b86()
-# CHECK-NEXT: b85():
+# CHECK-NEXT: v1208: boolean = CallBuiltin -, v232, v1207 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1208 -> taken b78(), notTaken b79()
+# CHECK-NEXT: b78():
 # CHECK-NEXT: v1209: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b89(v1209)
-# CHECK-NEXT: b86():
-# CHECK-NEXT: v1210: boolean = StrictEq v218, v218
-# CHECK-NEXT: Branch v1210 -> taken b87(), notTaken b88()
-# CHECK-NEXT: b87():
+# CHECK-NEXT: Jump -> next b82(v1209)
+# CHECK-NEXT: b79():
+# CHECK-NEXT: v1210: boolean = StrictEq v232, v232
+# CHECK-NEXT: Branch v1210 -> taken b80(), notTaken b81()
+# CHECK-NEXT: b80():
 # CHECK-NEXT: v1211: 1000 = Integer integer=1000
-# CHECK-NEXT: v1212: number = Mul v218, v1211
+# CHECK-NEXT: v1212: number = Mul v232, v1211
 # CHECK-NEXT: v1213: 0 = Integer
 # CHECK-NEXT: v1214: i32 = BitOr v1212, v1213
-# CHECK-NEXT: Jump -> next b89(v1214)
-# CHECK-NEXT: b88():
+# CHECK-NEXT: Jump -> next b82(v1214)
+# CHECK-NEXT: b81():
 # CHECK-NEXT: v1215: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b89(v1215)
-# CHECK-NEXT: b89(v1216: i32):
+# CHECK-NEXT: Jump -> next b82(v1215)
+# CHECK-NEXT: b82(v1216: i32):
 # CHECK-NEXT: v1217: i32 = BitXor v1206, v1216
-# CHECK-NEXT: v1218: i32 = BitXor v1217, v227
-# CHECK-NEXT: v1219: whole = Double number=-0
-# CHECK-NEXT: v1220: boolean = CallBuiltin -, v232, v1219 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1220 -> taken b90(), notTaken b91()
+# CHECK-NEXT: v1218: whole = Double number=-0
+# CHECK-NEXT: v1219: boolean = CallBuiltin -, v237, v1218 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1219 -> taken b83(), notTaken b84()
+# CHECK-NEXT: b83():
+# CHECK-NEXT: v1220: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b87(v1220)
+# CHECK-NEXT: b84():
+# CHECK-NEXT: v1221: boolean = StrictEq v237, v237
+# CHECK-NEXT: Branch v1221 -> taken b85(), notTaken b86()
+# CHECK-NEXT: b85():
+# CHECK-NEXT: v1222: 1000 = Integer integer=1000
+# CHECK-NEXT: v1223: number = Mul v237, v1222
+# CHECK-NEXT: v1224: 0 = Integer
+# CHECK-NEXT: v1225: i32 = BitOr v1223, v1224
+# CHECK-NEXT: Jump -> next b87(v1225)
+# CHECK-NEXT: b86():
+# CHECK-NEXT: v1226: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b87(v1226)
+# CHECK-NEXT: b87(v1227: i32):
+# CHECK-NEXT: v1228: i32 = BitXor v1217, v1227
+# CHECK-NEXT: v1229: i32 = BitXor v1228, v998
+# CHECK-NEXT: v1230: i32 = BitXor v1229, v255
+# CHECK-NEXT: v1231: whole = Double number=-0
+# CHECK-NEXT: v1232: boolean = CallBuiltin -, v260, v1231 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1232 -> taken b88(), notTaken b89()
+# CHECK-NEXT: b88():
+# CHECK-NEXT: v1233: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b92(v1233)
+# CHECK-NEXT: b89():
+# CHECK-NEXT: v1234: boolean = StrictEq v260, v260
+# CHECK-NEXT: Branch v1234 -> taken b90(), notTaken b91()
 # CHECK-NEXT: b90():
-# CHECK-NEXT: v1221: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b94(v1221)
+# CHECK-NEXT: v1235: 1000 = Integer integer=1000
+# CHECK-NEXT: v1236: number = Mul v260, v1235
+# CHECK-NEXT: v1237: 0 = Integer
+# CHECK-NEXT: v1238: i32 = BitOr v1236, v1237
+# CHECK-NEXT: Jump -> next b92(v1238)
 # CHECK-NEXT: b91():
-# CHECK-NEXT: v1222: boolean = StrictEq v232, v232
-# CHECK-NEXT: Branch v1222 -> taken b92(), notTaken b93()
-# CHECK-NEXT: b92():
-# CHECK-NEXT: v1223: 1000 = Integer integer=1000
-# CHECK-NEXT: v1224: number = Mul v232, v1223
-# CHECK-NEXT: v1225: 0 = Integer
-# CHECK-NEXT: v1226: i32 = BitOr v1224, v1225
-# CHECK-NEXT: Jump -> next b94(v1226)
+# CHECK-NEXT: v1239: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b92(v1239)
+# CHECK-NEXT: b92(v1240: i32):
+# CHECK-NEXT: v1241: i32 = BitXor v1230, v1240
+# CHECK-NEXT: v1242: i32 = BitXor v1241, v269
+# CHECK-NEXT: v1243: i32 = BitXor v1242, v1113
+# CHECK-NEXT: v1244: i32 = BitXor v1243, v287
+# CHECK-NEXT: v1245: whole = Double number=-0
+# CHECK-NEXT: v1246: boolean = CallBuiltin -, v1114, v1245 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1246 -> taken b93(), notTaken b94()
 # CHECK-NEXT: b93():
-# CHECK-NEXT: v1227: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b94(v1227)
-# CHECK-NEXT: b94(v1228: i32):
-# CHECK-NEXT: v1229: i32 = BitXor v1218, v1228
-# CHECK-NEXT: v1230: whole = Double number=-0
-# CHECK-NEXT: v1231: boolean = CallBuiltin -, v237, v1230 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1231 -> taken b95(), notTaken b96()
+# CHECK-NEXT: v1247: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b97(v1247)
+# CHECK-NEXT: b94():
+# CHECK-NEXT: v1248: boolean = StrictEq v1114, v1114
+# CHECK-NEXT: Branch v1248 -> taken b95(), notTaken b96()
 # CHECK-NEXT: b95():
-# CHECK-NEXT: v1232: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b99(v1232)
+# CHECK-NEXT: v1249: 1000 = Integer integer=1000
+# CHECK-NEXT: v1250: number = Mul v1114, v1249
+# CHECK-NEXT: v1251: 0 = Integer
+# CHECK-NEXT: v1252: i32 = BitOr v1250, v1251
+# CHECK-NEXT: Jump -> next b97(v1252)
 # CHECK-NEXT: b96():
-# CHECK-NEXT: v1233: boolean = StrictEq v237, v237
-# CHECK-NEXT: Branch v1233 -> taken b97(), notTaken b98()
-# CHECK-NEXT: b97():
-# CHECK-NEXT: v1234: 1000 = Integer integer=1000
-# CHECK-NEXT: v1235: number = Mul v237, v1234
-# CHECK-NEXT: v1236: 0 = Integer
-# CHECK-NEXT: v1237: i32 = BitOr v1235, v1236
-# CHECK-NEXT: Jump -> next b99(v1237)
+# CHECK-NEXT: v1253: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b97(v1253)
+# CHECK-NEXT: b97(v1254: i32):
+# CHECK-NEXT: v1255: i32 = BitXor v1244, v1254
+# CHECK-NEXT: v1256: whole = Double number=-0
+# CHECK-NEXT: v1257: boolean = CallBuiltin -, v297, v1256 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1257 -> taken b98(), notTaken b99()
 # CHECK-NEXT: b98():
-# CHECK-NEXT: v1238: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b99(v1238)
-# CHECK-NEXT: b99(v1239: i32):
-# CHECK-NEXT: v1240: i32 = BitXor v1229, v1239
-# CHECK-NEXT: v1241: i32 = BitXor v1240, v1002
-# CHECK-NEXT: v1242: i32 = BitXor v1241, v255
-# CHECK-NEXT: v1243: whole = Double number=-0
-# CHECK-NEXT: v1244: boolean = CallBuiltin -, v260, v1243 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1244 -> taken b100(), notTaken b101()
+# CHECK-NEXT: v1258: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b102(v1258)
+# CHECK-NEXT: b99():
+# CHECK-NEXT: v1259: boolean = StrictEq v297, v297
+# CHECK-NEXT: Branch v1259 -> taken b100(), notTaken b101()
 # CHECK-NEXT: b100():
-# CHECK-NEXT: v1245: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b104(v1245)
+# CHECK-NEXT: v1260: 1000 = Integer integer=1000
+# CHECK-NEXT: v1261: number = Mul v297, v1260
+# CHECK-NEXT: v1262: 0 = Integer
+# CHECK-NEXT: v1263: i32 = BitOr v1261, v1262
+# CHECK-NEXT: Jump -> next b102(v1263)
 # CHECK-NEXT: b101():
-# CHECK-NEXT: v1246: boolean = StrictEq v260, v260
-# CHECK-NEXT: Branch v1246 -> taken b102(), notTaken b103()
-# CHECK-NEXT: b102():
-# CHECK-NEXT: v1247: 1000 = Integer integer=1000
-# CHECK-NEXT: v1248: number = Mul v260, v1247
-# CHECK-NEXT: v1249: 0 = Integer
-# CHECK-NEXT: v1250: i32 = BitOr v1248, v1249
-# CHECK-NEXT: Jump -> next b104(v1250)
-# CHECK-NEXT: b103():
-# CHECK-NEXT: v1251: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b104(v1251)
-# CHECK-NEXT: b104(v1252: i32):
-# CHECK-NEXT: v1253: i32 = BitXor v1242, v1252
-# CHECK-NEXT: v1254: i32 = BitXor v1253, v269
-# CHECK-NEXT: v1255: i32 = BitXor v1254, v1125
-# CHECK-NEXT: v1256: i32 = BitXor v1255, v287
-# CHECK-NEXT: v1257: whole = Double number=-0
-# CHECK-NEXT: v1258: boolean = CallBuiltin -, v1126, v1257 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1258 -> taken b105(), notTaken b106()
-# CHECK-NEXT: b105():
-# CHECK-NEXT: v1259: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b109(v1259)
-# CHECK-NEXT: b106():
-# CHECK-NEXT: v1260: boolean = StrictEq v1126, v1126
-# CHECK-NEXT: Branch v1260 -> taken b107(), notTaken b108()
-# CHECK-NEXT: b107():
-# CHECK-NEXT: v1261: 1000 = Integer integer=1000
-# CHECK-NEXT: v1262: number = Mul v1126, v1261
-# CHECK-NEXT: v1263: 0 = Integer
-# CHECK-NEXT: v1264: i32 = BitOr v1262, v1263
-# CHECK-NEXT: Jump -> next b109(v1264)
-# CHECK-NEXT: b108():
-# CHECK-NEXT: v1265: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b109(v1265)
-# CHECK-NEXT: b109(v1266: i32):
-# CHECK-NEXT: v1267: i32 = BitXor v1256, v1266
+# CHECK-NEXT: v1264: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b102(v1264)
+# CHECK-NEXT: b102(v1265: i32):
+# CHECK-NEXT: v1266: i32 = BitXor v1255, v1265
+# CHECK-NEXT: v1267: i32 = BitXor v1266, v1019
 # CHECK-NEXT: v1268: whole = Double number=-0
-# CHECK-NEXT: v1269: boolean = CallBuiltin -, v297, v1268 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1269 -> taken b110(), notTaken b111()
-# CHECK-NEXT: b110():
+# CHECK-NEXT: v1269: boolean = CallBuiltin -, v311, v1268 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1269 -> taken b103(), notTaken b104()
+# CHECK-NEXT: b103():
 # CHECK-NEXT: v1270: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b114(v1270)
-# CHECK-NEXT: b111():
-# CHECK-NEXT: v1271: boolean = StrictEq v297, v297
-# CHECK-NEXT: Branch v1271 -> taken b112(), notTaken b113()
-# CHECK-NEXT: b112():
+# CHECK-NEXT: Jump -> next b107(v1270)
+# CHECK-NEXT: b104():
+# CHECK-NEXT: v1271: boolean = StrictEq v311, v311
+# CHECK-NEXT: Branch v1271 -> taken b105(), notTaken b106()
+# CHECK-NEXT: b105():
 # CHECK-NEXT: v1272: 1000 = Integer integer=1000
-# CHECK-NEXT: v1273: number = Mul v297, v1272
+# CHECK-NEXT: v1273: number = Mul v311, v1272
 # CHECK-NEXT: v1274: 0 = Integer
 # CHECK-NEXT: v1275: i32 = BitOr v1273, v1274
-# CHECK-NEXT: Jump -> next b114(v1275)
-# CHECK-NEXT: b113():
+# CHECK-NEXT: Jump -> next b107(v1275)
+# CHECK-NEXT: b106():
 # CHECK-NEXT: v1276: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b114(v1276)
-# CHECK-NEXT: b114(v1277: i32):
+# CHECK-NEXT: Jump -> next b107(v1276)
+# CHECK-NEXT: b107(v1277: i32):
 # CHECK-NEXT: v1278: i32 = BitXor v1267, v1277
-# CHECK-NEXT: v1279: i32 = BitXor v1278, v1023
-# CHECK-NEXT: v1280: whole = Double number=-0
-# CHECK-NEXT: v1281: boolean = CallBuiltin -, v311, v1280 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1281 -> taken b115(), notTaken b116()
+# CHECK-NEXT: v1279: i32 = BitXor v1278, v1081
+# CHECK-NEXT: v1280: i32 = BitXor v1279, v1020
+# CHECK-NEXT: v1281: whole = Double number=-0
+# CHECK-NEXT: v1282: boolean = CallBuiltin -, v1115, v1281 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1282 -> taken b108(), notTaken b109()
+# CHECK-NEXT: b108():
+# CHECK-NEXT: v1283: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b112(v1283)
+# CHECK-NEXT: b109():
+# CHECK-NEXT: v1284: boolean = StrictEq v1115, v1115
+# CHECK-NEXT: Branch v1284 -> taken b110(), notTaken b111()
+# CHECK-NEXT: b110():
+# CHECK-NEXT: v1285: 1000 = Integer integer=1000
+# CHECK-NEXT: v1286: number = Mul v1115, v1285
+# CHECK-NEXT: v1287: 0 = Integer
+# CHECK-NEXT: v1288: i32 = BitOr v1286, v1287
+# CHECK-NEXT: Jump -> next b112(v1288)
+# CHECK-NEXT: b111():
+# CHECK-NEXT: v1289: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b112(v1289)
+# CHECK-NEXT: b112(v1290: i32):
+# CHECK-NEXT: v1291: i32 = BitXor v1280, v1290
+# CHECK-NEXT: v1292: whole = Double number=-0
+# CHECK-NEXT: v1293: boolean = CallBuiltin -, v338, v1292 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1293 -> taken b113(), notTaken b114()
+# CHECK-NEXT: b113():
+# CHECK-NEXT: v1294: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b117(v1294)
+# CHECK-NEXT: b114():
+# CHECK-NEXT: v1295: boolean = StrictEq v338, v338
+# CHECK-NEXT: Branch v1295 -> taken b115(), notTaken b116()
 # CHECK-NEXT: b115():
-# CHECK-NEXT: v1282: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b119(v1282)
+# CHECK-NEXT: v1296: 1000 = Integer integer=1000
+# CHECK-NEXT: v1297: number = Mul v338, v1296
+# CHECK-NEXT: v1298: 0 = Integer
+# CHECK-NEXT: v1299: i32 = BitOr v1297, v1298
+# CHECK-NEXT: Jump -> next b117(v1299)
 # CHECK-NEXT: b116():
-# CHECK-NEXT: v1283: boolean = StrictEq v311, v311
-# CHECK-NEXT: Branch v1283 -> taken b117(), notTaken b118()
-# CHECK-NEXT: b117():
-# CHECK-NEXT: v1284: 1000 = Integer integer=1000
-# CHECK-NEXT: v1285: number = Mul v311, v1284
-# CHECK-NEXT: v1286: 0 = Integer
-# CHECK-NEXT: v1287: i32 = BitOr v1285, v1286
-# CHECK-NEXT: Jump -> next b119(v1287)
+# CHECK-NEXT: v1300: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b117(v1300)
+# CHECK-NEXT: b117(v1301: i32):
+# CHECK-NEXT: v1302: i32 = BitXor v1291, v1301
+# CHECK-NEXT: v1303: whole = Double number=-0
+# CHECK-NEXT: v1304: boolean = CallBuiltin -, v343, v1303 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1304 -> taken b118(), notTaken b119()
 # CHECK-NEXT: b118():
-# CHECK-NEXT: v1288: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b119(v1288)
-# CHECK-NEXT: b119(v1289: i32):
-# CHECK-NEXT: v1290: i32 = BitXor v1279, v1289
-# CHECK-NEXT: v1291: i32 = BitXor v1290, v1093
-# CHECK-NEXT: v1292: i32 = BitXor v1291, v1024
-# CHECK-NEXT: v1293: whole = Double number=-0
-# CHECK-NEXT: v1294: boolean = CallBuiltin -, v1127, v1293 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1294 -> taken b120(), notTaken b121()
+# CHECK-NEXT: v1305: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b122(v1305)
+# CHECK-NEXT: b119():
+# CHECK-NEXT: v1306: boolean = StrictEq v343, v343
+# CHECK-NEXT: Branch v1306 -> taken b120(), notTaken b121()
 # CHECK-NEXT: b120():
-# CHECK-NEXT: v1295: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b124(v1295)
+# CHECK-NEXT: v1307: 1000 = Integer integer=1000
+# CHECK-NEXT: v1308: number = Mul v343, v1307
+# CHECK-NEXT: v1309: 0 = Integer
+# CHECK-NEXT: v1310: i32 = BitOr v1308, v1309
+# CHECK-NEXT: Jump -> next b122(v1310)
 # CHECK-NEXT: b121():
-# CHECK-NEXT: v1296: boolean = StrictEq v1127, v1127
-# CHECK-NEXT: Branch v1296 -> taken b122(), notTaken b123()
-# CHECK-NEXT: b122():
-# CHECK-NEXT: v1297: 1000 = Integer integer=1000
-# CHECK-NEXT: v1298: number = Mul v1127, v1297
-# CHECK-NEXT: v1299: 0 = Integer
-# CHECK-NEXT: v1300: i32 = BitOr v1298, v1299
-# CHECK-NEXT: Jump -> next b124(v1300)
+# CHECK-NEXT: v1311: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b122(v1311)
+# CHECK-NEXT: b122(v1312: i32):
+# CHECK-NEXT: v1313: i32 = BitXor v1302, v1312
+# CHECK-NEXT: v1314: i32 = BitXor v1313, v352
+# CHECK-NEXT: v1315: i32 = BitXor v1314, v1000
+# CHECK-NEXT: v1316: whole = Double number=-0
+# CHECK-NEXT: v1317: boolean = CallBuiltin -, v366, v1316 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1317 -> taken b123(), notTaken b124()
 # CHECK-NEXT: b123():
-# CHECK-NEXT: v1301: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b124(v1301)
-# CHECK-NEXT: b124(v1302: i32):
-# CHECK-NEXT: v1303: i32 = BitXor v1292, v1302
-# CHECK-NEXT: v1304: whole = Double number=-0
-# CHECK-NEXT: v1305: boolean = CallBuiltin -, v338, v1304 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1305 -> taken b125(), notTaken b126()
+# CHECK-NEXT: v1318: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b127(v1318)
+# CHECK-NEXT: b124():
+# CHECK-NEXT: v1319: boolean = StrictEq v366, v366
+# CHECK-NEXT: Branch v1319 -> taken b125(), notTaken b126()
 # CHECK-NEXT: b125():
-# CHECK-NEXT: v1306: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b129(v1306)
+# CHECK-NEXT: v1320: 1000 = Integer integer=1000
+# CHECK-NEXT: v1321: number = Mul v366, v1320
+# CHECK-NEXT: v1322: 0 = Integer
+# CHECK-NEXT: v1323: i32 = BitOr v1321, v1322
+# CHECK-NEXT: Jump -> next b127(v1323)
 # CHECK-NEXT: b126():
-# CHECK-NEXT: v1307: boolean = StrictEq v338, v338
-# CHECK-NEXT: Branch v1307 -> taken b127(), notTaken b128()
-# CHECK-NEXT: b127():
-# CHECK-NEXT: v1308: 1000 = Integer integer=1000
-# CHECK-NEXT: v1309: number = Mul v338, v1308
-# CHECK-NEXT: v1310: 0 = Integer
-# CHECK-NEXT: v1311: i32 = BitOr v1309, v1310
-# CHECK-NEXT: Jump -> next b129(v1311)
-# CHECK-NEXT: b128():
-# CHECK-NEXT: v1312: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b129(v1312)
-# CHECK-NEXT: b129(v1313: i32):
-# CHECK-NEXT: v1314: i32 = BitXor v1303, v1313
-# CHECK-NEXT: v1315: whole = Double number=-0
-# CHECK-NEXT: v1316: boolean = CallBuiltin -, v343, v1315 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1316 -> taken b130(), notTaken b131()
-# CHECK-NEXT: b130():
-# CHECK-NEXT: v1317: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b134(v1317)
-# CHECK-NEXT: b131():
-# CHECK-NEXT: v1318: boolean = StrictEq v343, v343
-# CHECK-NEXT: Branch v1318 -> taken b132(), notTaken b133()
-# CHECK-NEXT: b132():
-# CHECK-NEXT: v1319: 1000 = Integer integer=1000
-# CHECK-NEXT: v1320: number = Mul v343, v1319
-# CHECK-NEXT: v1321: 0 = Integer
-# CHECK-NEXT: v1322: i32 = BitOr v1320, v1321
-# CHECK-NEXT: Jump -> next b134(v1322)
-# CHECK-NEXT: b133():
-# CHECK-NEXT: v1323: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b134(v1323)
-# CHECK-NEXT: b134(v1324: i32):
-# CHECK-NEXT: v1325: i32 = BitXor v1314, v1324
-# CHECK-NEXT: v1326: i32 = BitXor v1325, v352
-# CHECK-NEXT: v1327: i32 = BitXor v1326, v1004
+# CHECK-NEXT: v1324: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b127(v1324)
+# CHECK-NEXT: b127(v1325: i32):
+# CHECK-NEXT: v1326: i32 = BitXor v1315, v1325
+# CHECK-NEXT: v1327: i32 = BitXor v1326, v1006
 # CHECK-NEXT: v1328: whole = Double number=-0
-# CHECK-NEXT: v1329: boolean = CallBuiltin -, v366, v1328 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1329 -> taken b135(), notTaken b136()
-# CHECK-NEXT: b135():
+# CHECK-NEXT: v1329: boolean = CallBuiltin -, v380, v1328 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1329 -> taken b128(), notTaken b129()
+# CHECK-NEXT: b128():
 # CHECK-NEXT: v1330: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b139(v1330)
-# CHECK-NEXT: b136():
-# CHECK-NEXT: v1331: boolean = StrictEq v366, v366
-# CHECK-NEXT: Branch v1331 -> taken b137(), notTaken b138()
-# CHECK-NEXT: b137():
+# CHECK-NEXT: Jump -> next b132(v1330)
+# CHECK-NEXT: b129():
+# CHECK-NEXT: v1331: boolean = StrictEq v380, v380
+# CHECK-NEXT: Branch v1331 -> taken b130(), notTaken b131()
+# CHECK-NEXT: b130():
 # CHECK-NEXT: v1332: 1000 = Integer integer=1000
-# CHECK-NEXT: v1333: number = Mul v366, v1332
+# CHECK-NEXT: v1333: number = Mul v380, v1332
 # CHECK-NEXT: v1334: 0 = Integer
 # CHECK-NEXT: v1335: i32 = BitOr v1333, v1334
-# CHECK-NEXT: Jump -> next b139(v1335)
-# CHECK-NEXT: b138():
+# CHECK-NEXT: Jump -> next b132(v1335)
+# CHECK-NEXT: b131():
 # CHECK-NEXT: v1336: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b139(v1336)
-# CHECK-NEXT: b139(v1337: i32):
+# CHECK-NEXT: Jump -> next b132(v1336)
+# CHECK-NEXT: b132(v1337: i32):
 # CHECK-NEXT: v1338: i32 = BitXor v1327, v1337
-# CHECK-NEXT: v1339: i32 = BitXor v1338, v1010
-# CHECK-NEXT: v1340: whole = Double number=-0
-# CHECK-NEXT: v1341: boolean = CallBuiltin -, v380, v1340 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1341 -> taken b140(), notTaken b141()
-# CHECK-NEXT: b140():
-# CHECK-NEXT: v1342: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b144(v1342)
-# CHECK-NEXT: b141():
-# CHECK-NEXT: v1343: boolean = StrictEq v380, v380
-# CHECK-NEXT: Branch v1343 -> taken b142(), notTaken b143()
-# CHECK-NEXT: b142():
-# CHECK-NEXT: v1344: 1000 = Integer integer=1000
-# CHECK-NEXT: v1345: number = Mul v380, v1344
-# CHECK-NEXT: v1346: 0 = Integer
-# CHECK-NEXT: v1347: i32 = BitOr v1345, v1346
-# CHECK-NEXT: Jump -> next b144(v1347)
-# CHECK-NEXT: b143():
-# CHECK-NEXT: v1348: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b144(v1348)
-# CHECK-NEXT: b144(v1349: i32):
-# CHECK-NEXT: v1350: i32 = BitXor v1339, v1349
-# CHECK-NEXT: v1351: i32 = BitXor v1350, v389
-# CHECK-NEXT: v1352: i32 = BitXor v1351, v398
-# CHECK-NEXT: v1353: i32 = BitXor v1352, v406
+# CHECK-NEXT: v1339: i32 = BitXor v1338, v389
+# CHECK-NEXT: v1340: i32 = BitXor v1339, v398
+# CHECK-NEXT: v1341: i32 = BitXor v1340, v406
+# CHECK-NEXT: v1342: whole = Double number=-0
+# CHECK-NEXT: v1343: boolean = CallBuiltin -, v411, v1342 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1343 -> taken b133(), notTaken b134()
+# CHECK-NEXT: b133():
+# CHECK-NEXT: v1344: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b137(v1344)
+# CHECK-NEXT: b134():
+# CHECK-NEXT: v1345: boolean = StrictEq v411, v411
+# CHECK-NEXT: Branch v1345 -> taken b135(), notTaken b136()
+# CHECK-NEXT: b135():
+# CHECK-NEXT: v1346: 1000 = Integer integer=1000
+# CHECK-NEXT: v1347: number = Mul v411, v1346
+# CHECK-NEXT: v1348: 0 = Integer
+# CHECK-NEXT: v1349: i32 = BitOr v1347, v1348
+# CHECK-NEXT: Jump -> next b137(v1349)
+# CHECK-NEXT: b136():
+# CHECK-NEXT: v1350: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b137(v1350)
+# CHECK-NEXT: b137(v1351: i32):
+# CHECK-NEXT: v1352: i32 = BitXor v1341, v1351
+# CHECK-NEXT: v1353: i32 = BitXor v1352, v419
 # CHECK-NEXT: v1354: whole = Double number=-0
-# CHECK-NEXT: v1355: boolean = CallBuiltin -, v411, v1354 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1355 -> taken b145(), notTaken b146()
-# CHECK-NEXT: b145():
+# CHECK-NEXT: v1355: boolean = CallBuiltin -, v424, v1354 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1355 -> taken b138(), notTaken b139()
+# CHECK-NEXT: b138():
 # CHECK-NEXT: v1356: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b149(v1356)
-# CHECK-NEXT: b146():
-# CHECK-NEXT: v1357: boolean = StrictEq v411, v411
-# CHECK-NEXT: Branch v1357 -> taken b147(), notTaken b148()
-# CHECK-NEXT: b147():
+# CHECK-NEXT: Jump -> next b142(v1356)
+# CHECK-NEXT: b139():
+# CHECK-NEXT: v1357: boolean = StrictEq v424, v424
+# CHECK-NEXT: Branch v1357 -> taken b140(), notTaken b141()
+# CHECK-NEXT: b140():
 # CHECK-NEXT: v1358: 1000 = Integer integer=1000
-# CHECK-NEXT: v1359: number = Mul v411, v1358
+# CHECK-NEXT: v1359: number = Mul v424, v1358
 # CHECK-NEXT: v1360: 0 = Integer
 # CHECK-NEXT: v1361: i32 = BitOr v1359, v1360
-# CHECK-NEXT: Jump -> next b149(v1361)
-# CHECK-NEXT: b148():
+# CHECK-NEXT: Jump -> next b142(v1361)
+# CHECK-NEXT: b141():
 # CHECK-NEXT: v1362: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b149(v1362)
-# CHECK-NEXT: b149(v1363: i32):
+# CHECK-NEXT: Jump -> next b142(v1362)
+# CHECK-NEXT: b142(v1363: i32):
 # CHECK-NEXT: v1364: i32 = BitXor v1353, v1363
-# CHECK-NEXT: v1365: i32 = BitXor v1364, v419
-# CHECK-NEXT: v1366: whole = Double number=-0
-# CHECK-NEXT: v1367: boolean = CallBuiltin -, v424, v1366 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1367 -> taken b150(), notTaken b151()
-# CHECK-NEXT: b150():
-# CHECK-NEXT: v1368: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b154(v1368)
-# CHECK-NEXT: b151():
-# CHECK-NEXT: v1369: boolean = StrictEq v424, v424
-# CHECK-NEXT: Branch v1369 -> taken b152(), notTaken b153()
-# CHECK-NEXT: b152():
-# CHECK-NEXT: v1370: 1000 = Integer integer=1000
-# CHECK-NEXT: v1371: number = Mul v424, v1370
-# CHECK-NEXT: v1372: 0 = Integer
-# CHECK-NEXT: v1373: i32 = BitOr v1371, v1372
-# CHECK-NEXT: Jump -> next b154(v1373)
-# CHECK-NEXT: b153():
-# CHECK-NEXT: v1374: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b154(v1374)
-# CHECK-NEXT: b154(v1375: i32):
-# CHECK-NEXT: v1376: i32 = BitXor v1365, v1375
-# CHECK-NEXT: v1377: i32 = BitXor v1376, v433
-# CHECK-NEXT: v1378: i32 = BitXor v1377, v1006
-# CHECK-NEXT: v1379: i32 = BitXor v1378, v451
-# CHECK-NEXT: v1380: i32 = BitXor v1379, v460
-# CHECK-NEXT: v1381: i32 = BitXor v1380, v469
-# CHECK-NEXT: v1382: i32 = BitXor v1381, v477
-# CHECK-NEXT: v1383: i32 = BitXor v1382, v486
+# CHECK-NEXT: v1365: i32 = BitXor v1364, v433
+# CHECK-NEXT: v1366: i32 = BitXor v1365, v1002
+# CHECK-NEXT: v1367: i32 = BitXor v1366, v451
+# CHECK-NEXT: v1368: i32 = BitXor v1367, v460
+# CHECK-NEXT: v1369: i32 = BitXor v1368, v469
+# CHECK-NEXT: v1370: i32 = BitXor v1369, v477
+# CHECK-NEXT: v1371: i32 = BitXor v1370, v486
+# CHECK-NEXT: v1372: whole = Double number=-0
+# CHECK-NEXT: v1373: boolean = CallBuiltin -, v894, v1372 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1373 -> taken b143(), notTaken b144()
+# CHECK-NEXT: b143():
+# CHECK-NEXT: v1374: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b147(v1374)
+# CHECK-NEXT: b144():
+# CHECK-NEXT: v1375: boolean = StrictEq v894, v894
+# CHECK-NEXT: Branch v1375 -> taken b145(), notTaken b146()
+# CHECK-NEXT: b145():
+# CHECK-NEXT: v1376: 1000 = Integer integer=1000
+# CHECK-NEXT: v1377: number = Mul v894, v1376
+# CHECK-NEXT: v1378: 0 = Integer
+# CHECK-NEXT: v1379: i32 = BitOr v1377, v1378
+# CHECK-NEXT: Jump -> next b147(v1379)
+# CHECK-NEXT: b146():
+# CHECK-NEXT: v1380: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b147(v1380)
+# CHECK-NEXT: b147(v1381: i32):
+# CHECK-NEXT: v1382: i32 = BitXor v1371, v1381
+# CHECK-NEXT: v1383: i32 = BitXor v1382, v495
 # CHECK-NEXT: v1384: whole = Double number=-0
-# CHECK-NEXT: v1385: boolean = CallBuiltin -, v894, v1384 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1385 -> taken b155(), notTaken b156()
-# CHECK-NEXT: b155():
+# CHECK-NEXT: v1385: boolean = CallBuiltin -, v500, v1384 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1385 -> taken b148(), notTaken b149()
+# CHECK-NEXT: b148():
 # CHECK-NEXT: v1386: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b159(v1386)
-# CHECK-NEXT: b156():
-# CHECK-NEXT: v1387: boolean = StrictEq v894, v894
-# CHECK-NEXT: Branch v1387 -> taken b157(), notTaken b158()
-# CHECK-NEXT: b157():
+# CHECK-NEXT: Jump -> next b152(v1386)
+# CHECK-NEXT: b149():
+# CHECK-NEXT: v1387: boolean = StrictEq v500, v500
+# CHECK-NEXT: Branch v1387 -> taken b150(), notTaken b151()
+# CHECK-NEXT: b150():
 # CHECK-NEXT: v1388: 1000 = Integer integer=1000
-# CHECK-NEXT: v1389: number = Mul v894, v1388
+# CHECK-NEXT: v1389: number = Mul v500, v1388
 # CHECK-NEXT: v1390: 0 = Integer
 # CHECK-NEXT: v1391: i32 = BitOr v1389, v1390
-# CHECK-NEXT: Jump -> next b159(v1391)
-# CHECK-NEXT: b158():
+# CHECK-NEXT: Jump -> next b152(v1391)
+# CHECK-NEXT: b151():
 # CHECK-NEXT: v1392: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b159(v1392)
-# CHECK-NEXT: b159(v1393: i32):
+# CHECK-NEXT: Jump -> next b152(v1392)
+# CHECK-NEXT: b152(v1393: i32):
 # CHECK-NEXT: v1394: i32 = BitXor v1383, v1393
-# CHECK-NEXT: v1395: i32 = BitXor v1394, v495
-# CHECK-NEXT: v1396: whole = Double number=-0
-# CHECK-NEXT: v1397: boolean = CallBuiltin -, v500, v1396 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1397 -> taken b160(), notTaken b161()
-# CHECK-NEXT: b160():
-# CHECK-NEXT: v1398: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b164(v1398)
-# CHECK-NEXT: b161():
-# CHECK-NEXT: v1399: boolean = StrictEq v500, v500
-# CHECK-NEXT: Branch v1399 -> taken b162(), notTaken b163()
-# CHECK-NEXT: b162():
-# CHECK-NEXT: v1400: 1000 = Integer integer=1000
-# CHECK-NEXT: v1401: number = Mul v500, v1400
-# CHECK-NEXT: v1402: 0 = Integer
-# CHECK-NEXT: v1403: i32 = BitOr v1401, v1402
-# CHECK-NEXT: Jump -> next b164(v1403)
-# CHECK-NEXT: b163():
-# CHECK-NEXT: v1404: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b164(v1404)
-# CHECK-NEXT: b164(v1405: i32):
-# CHECK-NEXT: v1406: i32 = BitXor v1395, v1405
+# CHECK-NEXT: v1395: whole = Double number=-0
+# CHECK-NEXT: v1396: boolean = CallBuiltin -, v1021, v1395 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1396 -> taken b153(), notTaken b154()
+# CHECK-NEXT: b153():
+# CHECK-NEXT: v1397: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b157(v1397)
+# CHECK-NEXT: b154():
+# CHECK-NEXT: v1398: boolean = StrictEq v1021, v1021
+# CHECK-NEXT: Branch v1398 -> taken b155(), notTaken b156()
+# CHECK-NEXT: b155():
+# CHECK-NEXT: v1399: 1000 = Integer integer=1000
+# CHECK-NEXT: v1400: number = Mul v1021, v1399
+# CHECK-NEXT: v1401: 0 = Integer
+# CHECK-NEXT: v1402: i32 = BitOr v1400, v1401
+# CHECK-NEXT: Jump -> next b157(v1402)
+# CHECK-NEXT: b156():
+# CHECK-NEXT: v1403: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b157(v1403)
+# CHECK-NEXT: b157(v1404: i32):
+# CHECK-NEXT: v1405: i32 = BitXor v1394, v1404
+# CHECK-NEXT: v1406: i32 = BitXor v1405, v514
 # CHECK-NEXT: v1407: whole = Double number=-0
-# CHECK-NEXT: v1408: boolean = CallBuiltin -, v1025, v1407 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1408 -> taken b165(), notTaken b166()
-# CHECK-NEXT: b165():
+# CHECK-NEXT: v1408: boolean = CallBuiltin -, v519, v1407 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1408 -> taken b158(), notTaken b159()
+# CHECK-NEXT: b158():
 # CHECK-NEXT: v1409: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b169(v1409)
-# CHECK-NEXT: b166():
-# CHECK-NEXT: v1410: boolean = StrictEq v1025, v1025
-# CHECK-NEXT: Branch v1410 -> taken b167(), notTaken b168()
-# CHECK-NEXT: b167():
+# CHECK-NEXT: Jump -> next b162(v1409)
+# CHECK-NEXT: b159():
+# CHECK-NEXT: v1410: boolean = StrictEq v519, v519
+# CHECK-NEXT: Branch v1410 -> taken b160(), notTaken b161()
+# CHECK-NEXT: b160():
 # CHECK-NEXT: v1411: 1000 = Integer integer=1000
-# CHECK-NEXT: v1412: number = Mul v1025, v1411
+# CHECK-NEXT: v1412: number = Mul v519, v1411
 # CHECK-NEXT: v1413: 0 = Integer
 # CHECK-NEXT: v1414: i32 = BitOr v1412, v1413
-# CHECK-NEXT: Jump -> next b169(v1414)
-# CHECK-NEXT: b168():
+# CHECK-NEXT: Jump -> next b162(v1414)
+# CHECK-NEXT: b161():
 # CHECK-NEXT: v1415: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b169(v1415)
-# CHECK-NEXT: b169(v1416: i32):
+# CHECK-NEXT: Jump -> next b162(v1415)
+# CHECK-NEXT: b162(v1416: i32):
 # CHECK-NEXT: v1417: i32 = BitXor v1406, v1416
-# CHECK-NEXT: v1418: i32 = BitXor v1417, v514
-# CHECK-NEXT: v1419: whole = Double number=-0
-# CHECK-NEXT: v1420: boolean = CallBuiltin -, v519, v1419 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1420 -> taken b170(), notTaken b171()
+# CHECK-NEXT: v1418: whole = Double number=-0
+# CHECK-NEXT: v1419: boolean = CallBuiltin -, v524, v1418 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1419 -> taken b163(), notTaken b164()
+# CHECK-NEXT: b163():
+# CHECK-NEXT: v1420: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b167(v1420)
+# CHECK-NEXT: b164():
+# CHECK-NEXT: v1421: boolean = StrictEq v524, v524
+# CHECK-NEXT: Branch v1421 -> taken b165(), notTaken b166()
+# CHECK-NEXT: b165():
+# CHECK-NEXT: v1422: 1000 = Integer integer=1000
+# CHECK-NEXT: v1423: number = Mul v524, v1422
+# CHECK-NEXT: v1424: 0 = Integer
+# CHECK-NEXT: v1425: i32 = BitOr v1423, v1424
+# CHECK-NEXT: Jump -> next b167(v1425)
+# CHECK-NEXT: b166():
+# CHECK-NEXT: v1426: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b167(v1426)
+# CHECK-NEXT: b167(v1427: i32):
+# CHECK-NEXT: v1428: i32 = BitXor v1417, v1427
+# CHECK-NEXT: v1429: i32 = BitXor v1428, v1015
+# CHECK-NEXT: v1430: i32 = BitXor v1429, v533
+# CHECK-NEXT: v1431: i32 = BitXor v1430, v542
+# CHECK-NEXT: v1432: i32 = BitXor v1431, v551
+# CHECK-NEXT: v1433: whole = Double number=-0
+# CHECK-NEXT: v1434: boolean = CallBuiltin -, v556, v1433 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1434 -> taken b168(), notTaken b169()
+# CHECK-NEXT: b168():
+# CHECK-NEXT: v1435: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b172(v1435)
+# CHECK-NEXT: b169():
+# CHECK-NEXT: v1436: boolean = StrictEq v556, v556
+# CHECK-NEXT: Branch v1436 -> taken b170(), notTaken b171()
 # CHECK-NEXT: b170():
-# CHECK-NEXT: v1421: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b174(v1421)
+# CHECK-NEXT: v1437: 1000 = Integer integer=1000
+# CHECK-NEXT: v1438: number = Mul v556, v1437
+# CHECK-NEXT: v1439: 0 = Integer
+# CHECK-NEXT: v1440: i32 = BitOr v1438, v1439
+# CHECK-NEXT: Jump -> next b172(v1440)
 # CHECK-NEXT: b171():
-# CHECK-NEXT: v1422: boolean = StrictEq v519, v519
-# CHECK-NEXT: Branch v1422 -> taken b172(), notTaken b173()
-# CHECK-NEXT: b172():
-# CHECK-NEXT: v1423: 1000 = Integer integer=1000
-# CHECK-NEXT: v1424: number = Mul v519, v1423
-# CHECK-NEXT: v1425: 0 = Integer
-# CHECK-NEXT: v1426: i32 = BitOr v1424, v1425
-# CHECK-NEXT: Jump -> next b174(v1426)
+# CHECK-NEXT: v1441: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b172(v1441)
+# CHECK-NEXT: b172(v1442: i32):
+# CHECK-NEXT: v1443: i32 = BitXor v1432, v1442
+# CHECK-NEXT: v1444: i32 = BitXor v1443, v565
+# CHECK-NEXT: v1445: i32 = BitXor v1444, v574
+# CHECK-NEXT: v1446: whole = Double number=-0
+# CHECK-NEXT: v1447: boolean = CallBuiltin -, v579, v1446 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1447 -> taken b173(), notTaken b174()
 # CHECK-NEXT: b173():
-# CHECK-NEXT: v1427: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b174(v1427)
-# CHECK-NEXT: b174(v1428: i32):
-# CHECK-NEXT: v1429: i32 = BitXor v1418, v1428
-# CHECK-NEXT: v1430: whole = Double number=-0
-# CHECK-NEXT: v1431: boolean = CallBuiltin -, v524, v1430 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1431 -> taken b175(), notTaken b176()
+# CHECK-NEXT: v1448: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b177(v1448)
+# CHECK-NEXT: b174():
+# CHECK-NEXT: v1449: boolean = StrictEq v579, v579
+# CHECK-NEXT: Branch v1449 -> taken b175(), notTaken b176()
 # CHECK-NEXT: b175():
-# CHECK-NEXT: v1432: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b179(v1432)
+# CHECK-NEXT: v1450: 1000 = Integer integer=1000
+# CHECK-NEXT: v1451: number = Mul v579, v1450
+# CHECK-NEXT: v1452: 0 = Integer
+# CHECK-NEXT: v1453: i32 = BitOr v1451, v1452
+# CHECK-NEXT: Jump -> next b177(v1453)
 # CHECK-NEXT: b176():
-# CHECK-NEXT: v1433: boolean = StrictEq v524, v524
-# CHECK-NEXT: Branch v1433 -> taken b177(), notTaken b178()
-# CHECK-NEXT: b177():
-# CHECK-NEXT: v1434: 1000 = Integer integer=1000
-# CHECK-NEXT: v1435: number = Mul v524, v1434
-# CHECK-NEXT: v1436: 0 = Integer
-# CHECK-NEXT: v1437: i32 = BitOr v1435, v1436
-# CHECK-NEXT: Jump -> next b179(v1437)
+# CHECK-NEXT: v1454: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b177(v1454)
+# CHECK-NEXT: b177(v1455: i32):
+# CHECK-NEXT: v1456: i32 = BitXor v1445, v1455
+# CHECK-NEXT: v1457: i32 = BitXor v1456, v1022
+# CHECK-NEXT: v1458: i32 = BitXor v1457, v1007
+# CHECK-NEXT: v1459: i32 = BitXor v1458, v605
+# CHECK-NEXT: v1460: i32 = BitXor v1459, v614
+# CHECK-NEXT: v1461: whole = Double number=-0
+# CHECK-NEXT: v1462: boolean = CallBuiltin -, v619, v1461 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1462 -> taken b178(), notTaken b179()
 # CHECK-NEXT: b178():
-# CHECK-NEXT: v1438: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b179(v1438)
-# CHECK-NEXT: b179(v1439: i32):
-# CHECK-NEXT: v1440: i32 = BitXor v1429, v1439
-# CHECK-NEXT: v1441: i32 = BitXor v1440, v1019
-# CHECK-NEXT: v1442: i32 = BitXor v1441, v533
-# CHECK-NEXT: v1443: i32 = BitXor v1442, v542
-# CHECK-NEXT: v1444: i32 = BitXor v1443, v551
-# CHECK-NEXT: v1445: whole = Double number=-0
-# CHECK-NEXT: v1446: boolean = CallBuiltin -, v556, v1445 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1446 -> taken b180(), notTaken b181()
+# CHECK-NEXT: v1463: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b182(v1463)
+# CHECK-NEXT: b179():
+# CHECK-NEXT: v1464: boolean = StrictEq v619, v619
+# CHECK-NEXT: Branch v1464 -> taken b180(), notTaken b181()
 # CHECK-NEXT: b180():
-# CHECK-NEXT: v1447: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b184(v1447)
+# CHECK-NEXT: v1465: 1000 = Integer integer=1000
+# CHECK-NEXT: v1466: number = Mul v619, v1465
+# CHECK-NEXT: v1467: 0 = Integer
+# CHECK-NEXT: v1468: i32 = BitOr v1466, v1467
+# CHECK-NEXT: Jump -> next b182(v1468)
 # CHECK-NEXT: b181():
-# CHECK-NEXT: v1448: boolean = StrictEq v556, v556
-# CHECK-NEXT: Branch v1448 -> taken b182(), notTaken b183()
-# CHECK-NEXT: b182():
-# CHECK-NEXT: v1449: 1000 = Integer integer=1000
-# CHECK-NEXT: v1450: number = Mul v556, v1449
-# CHECK-NEXT: v1451: 0 = Integer
-# CHECK-NEXT: v1452: i32 = BitOr v1450, v1451
-# CHECK-NEXT: Jump -> next b184(v1452)
+# CHECK-NEXT: v1469: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b182(v1469)
+# CHECK-NEXT: b182(v1470: i32):
+# CHECK-NEXT: v1471: i32 = BitXor v1460, v1470
+# CHECK-NEXT: v1472: i32 = BitXor v1471, v628
+# CHECK-NEXT: v1473: i32 = BitXor v1472, v1008
+# CHECK-NEXT: v1474: whole = Double number=-0
+# CHECK-NEXT: v1475: boolean = CallBuiltin -, v642, v1474 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1475 -> taken b183(), notTaken b184()
 # CHECK-NEXT: b183():
-# CHECK-NEXT: v1453: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b184(v1453)
-# CHECK-NEXT: b184(v1454: i32):
-# CHECK-NEXT: v1455: i32 = BitXor v1444, v1454
-# CHECK-NEXT: v1456: i32 = BitXor v1455, v565
-# CHECK-NEXT: v1457: i32 = BitXor v1456, v574
-# CHECK-NEXT: v1458: whole = Double number=-0
-# CHECK-NEXT: v1459: boolean = CallBuiltin -, v579, v1458 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1459 -> taken b185(), notTaken b186()
+# CHECK-NEXT: v1476: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b187(v1476)
+# CHECK-NEXT: b184():
+# CHECK-NEXT: v1477: boolean = StrictEq v642, v642
+# CHECK-NEXT: Branch v1477 -> taken b185(), notTaken b186()
 # CHECK-NEXT: b185():
-# CHECK-NEXT: v1460: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b189(v1460)
+# CHECK-NEXT: v1478: 1000 = Integer integer=1000
+# CHECK-NEXT: v1479: number = Mul v642, v1478
+# CHECK-NEXT: v1480: 0 = Integer
+# CHECK-NEXT: v1481: i32 = BitOr v1479, v1480
+# CHECK-NEXT: Jump -> next b187(v1481)
 # CHECK-NEXT: b186():
-# CHECK-NEXT: v1461: boolean = StrictEq v579, v579
-# CHECK-NEXT: Branch v1461 -> taken b187(), notTaken b188()
-# CHECK-NEXT: b187():
-# CHECK-NEXT: v1462: 1000 = Integer integer=1000
-# CHECK-NEXT: v1463: number = Mul v579, v1462
-# CHECK-NEXT: v1464: 0 = Integer
-# CHECK-NEXT: v1465: i32 = BitOr v1463, v1464
-# CHECK-NEXT: Jump -> next b189(v1465)
+# CHECK-NEXT: v1482: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b187(v1482)
+# CHECK-NEXT: b187(v1483: i32):
+# CHECK-NEXT: v1484: i32 = BitXor v1473, v1483
+# CHECK-NEXT: v1485: i32 = BitXor v1484, v1023
+# CHECK-NEXT: v1486: i32 = BitXor v1485, v1028
+# CHECK-NEXT: v1487: i32 = BitXor v1486, v1009
+# CHECK-NEXT: v1488: i32 = BitXor v1487, v677
+# CHECK-NEXT: v1489: whole = Double number=-0
+# CHECK-NEXT: v1490: boolean = CallBuiltin -, v682, v1489 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1490 -> taken b188(), notTaken b189()
 # CHECK-NEXT: b188():
-# CHECK-NEXT: v1466: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b189(v1466)
-# CHECK-NEXT: b189(v1467: i32):
-# CHECK-NEXT: v1468: i32 = BitXor v1457, v1467
-# CHECK-NEXT: v1469: i32 = BitXor v1468, v1026
-# CHECK-NEXT: v1470: i32 = BitXor v1469, v1011
-# CHECK-NEXT: v1471: i32 = BitXor v1470, v605
-# CHECK-NEXT: v1472: i32 = BitXor v1471, v614
-# CHECK-NEXT: v1473: whole = Double number=-0
-# CHECK-NEXT: v1474: boolean = CallBuiltin -, v619, v1473 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1474 -> taken b190(), notTaken b191()
+# CHECK-NEXT: v1491: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b192(v1491)
+# CHECK-NEXT: b189():
+# CHECK-NEXT: v1492: boolean = StrictEq v682, v682
+# CHECK-NEXT: Branch v1492 -> taken b190(), notTaken b191()
 # CHECK-NEXT: b190():
-# CHECK-NEXT: v1475: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b194(v1475)
+# CHECK-NEXT: v1493: 1000 = Integer integer=1000
+# CHECK-NEXT: v1494: number = Mul v682, v1493
+# CHECK-NEXT: v1495: 0 = Integer
+# CHECK-NEXT: v1496: i32 = BitOr v1494, v1495
+# CHECK-NEXT: Jump -> next b192(v1496)
 # CHECK-NEXT: b191():
-# CHECK-NEXT: v1476: boolean = StrictEq v619, v619
-# CHECK-NEXT: Branch v1476 -> taken b192(), notTaken b193()
-# CHECK-NEXT: b192():
-# CHECK-NEXT: v1477: 1000 = Integer integer=1000
-# CHECK-NEXT: v1478: number = Mul v619, v1477
-# CHECK-NEXT: v1479: 0 = Integer
-# CHECK-NEXT: v1480: i32 = BitOr v1478, v1479
-# CHECK-NEXT: Jump -> next b194(v1480)
+# CHECK-NEXT: v1497: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b192(v1497)
+# CHECK-NEXT: b192(v1498: i32):
+# CHECK-NEXT: v1499: i32 = BitXor v1488, v1498
+# CHECK-NEXT: v1500: i32 = BitXor v1499, v691
+# CHECK-NEXT: v1501: i32 = BitXor v1500, v700
+# CHECK-NEXT: v1502: i32 = BitXor v1501, v709
+# CHECK-NEXT: v1503: i32 = BitXor v1502, v717
+# CHECK-NEXT: v1504: whole = Double number=-0
+# CHECK-NEXT: v1505: boolean = CallBuiltin -, v722, v1504 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1505 -> taken b193(), notTaken b194()
 # CHECK-NEXT: b193():
-# CHECK-NEXT: v1481: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b194(v1481)
-# CHECK-NEXT: b194(v1482: i32):
-# CHECK-NEXT: v1483: i32 = BitXor v1472, v1482
-# CHECK-NEXT: v1484: i32 = BitXor v1483, v628
-# CHECK-NEXT: v1485: i32 = BitXor v1484, v1012
-# CHECK-NEXT: v1486: whole = Double number=-0
-# CHECK-NEXT: v1487: boolean = CallBuiltin -, v642, v1486 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1487 -> taken b195(), notTaken b196()
+# CHECK-NEXT: v1506: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b197(v1506)
+# CHECK-NEXT: b194():
+# CHECK-NEXT: v1507: boolean = StrictEq v722, v722
+# CHECK-NEXT: Branch v1507 -> taken b195(), notTaken b196()
 # CHECK-NEXT: b195():
-# CHECK-NEXT: v1488: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b199(v1488)
+# CHECK-NEXT: v1508: 1000 = Integer integer=1000
+# CHECK-NEXT: v1509: number = Mul v722, v1508
+# CHECK-NEXT: v1510: 0 = Integer
+# CHECK-NEXT: v1511: i32 = BitOr v1509, v1510
+# CHECK-NEXT: Jump -> next b197(v1511)
 # CHECK-NEXT: b196():
-# CHECK-NEXT: v1489: boolean = StrictEq v642, v642
-# CHECK-NEXT: Branch v1489 -> taken b197(), notTaken b198()
-# CHECK-NEXT: b197():
-# CHECK-NEXT: v1490: 1000 = Integer integer=1000
-# CHECK-NEXT: v1491: number = Mul v642, v1490
-# CHECK-NEXT: v1492: 0 = Integer
-# CHECK-NEXT: v1493: i32 = BitOr v1491, v1492
-# CHECK-NEXT: Jump -> next b199(v1493)
+# CHECK-NEXT: v1512: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b197(v1512)
+# CHECK-NEXT: b197(v1513: i32):
+# CHECK-NEXT: v1514: i32 = BitXor v1503, v1513
+# CHECK-NEXT: v1515: i32 = BitXor v1514, v1024
+# CHECK-NEXT: v1516: i32 = BitXor v1515, v740
+# CHECK-NEXT: v1517: i32 = BitXor v1516, v749
+# CHECK-NEXT: v1518: whole = Double number=-0
+# CHECK-NEXT: v1519: boolean = CallBuiltin -, v754, v1518 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1519 -> taken b198(), notTaken b199()
 # CHECK-NEXT: b198():
-# CHECK-NEXT: v1494: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b199(v1494)
-# CHECK-NEXT: b199(v1495: i32):
-# CHECK-NEXT: v1496: i32 = BitXor v1485, v1495
-# CHECK-NEXT: v1497: i32 = BitXor v1496, v1027
-# CHECK-NEXT: v1498: i32 = BitXor v1497, v1032
-# CHECK-NEXT: v1499: i32 = BitXor v1498, v1013
-# CHECK-NEXT: v1500: i32 = BitXor v1499, v677
-# CHECK-NEXT: v1501: whole = Double number=-0
-# CHECK-NEXT: v1502: boolean = CallBuiltin -, v682, v1501 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1502 -> taken b200(), notTaken b201()
+# CHECK-NEXT: v1520: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b202(v1520)
+# CHECK-NEXT: b199():
+# CHECK-NEXT: v1521: boolean = StrictEq v754, v754
+# CHECK-NEXT: Branch v1521 -> taken b200(), notTaken b201()
 # CHECK-NEXT: b200():
-# CHECK-NEXT: v1503: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b204(v1503)
+# CHECK-NEXT: v1522: 1000 = Integer integer=1000
+# CHECK-NEXT: v1523: number = Mul v754, v1522
+# CHECK-NEXT: v1524: 0 = Integer
+# CHECK-NEXT: v1525: i32 = BitOr v1523, v1524
+# CHECK-NEXT: Jump -> next b202(v1525)
 # CHECK-NEXT: b201():
-# CHECK-NEXT: v1504: boolean = StrictEq v682, v682
-# CHECK-NEXT: Branch v1504 -> taken b202(), notTaken b203()
-# CHECK-NEXT: b202():
-# CHECK-NEXT: v1505: 1000 = Integer integer=1000
-# CHECK-NEXT: v1506: number = Mul v682, v1505
-# CHECK-NEXT: v1507: 0 = Integer
-# CHECK-NEXT: v1508: i32 = BitOr v1506, v1507
-# CHECK-NEXT: Jump -> next b204(v1508)
+# CHECK-NEXT: v1526: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b202(v1526)
+# CHECK-NEXT: b202(v1527: i32):
+# CHECK-NEXT: v1528: i32 = BitXor v1517, v1527
+# CHECK-NEXT: v1529: whole = Double number=-0
+# CHECK-NEXT: v1530: boolean = CallBuiltin -, v1010, v1529 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1530 -> taken b203(), notTaken b204()
 # CHECK-NEXT: b203():
-# CHECK-NEXT: v1509: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b204(v1509)
-# CHECK-NEXT: b204(v1510: i32):
-# CHECK-NEXT: v1511: i32 = BitXor v1500, v1510
-# CHECK-NEXT: v1512: i32 = BitXor v1511, v691
-# CHECK-NEXT: v1513: i32 = BitXor v1512, v700
-# CHECK-NEXT: v1514: i32 = BitXor v1513, v709
-# CHECK-NEXT: v1515: i32 = BitXor v1514, v717
-# CHECK-NEXT: v1516: whole = Double number=-0
-# CHECK-NEXT: v1517: boolean = CallBuiltin -, v722, v1516 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1517 -> taken b205(), notTaken b206()
+# CHECK-NEXT: v1531: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b207(v1531)
+# CHECK-NEXT: b204():
+# CHECK-NEXT: v1532: boolean = StrictEq v1010, v1010
+# CHECK-NEXT: Branch v1532 -> taken b205(), notTaken b206()
 # CHECK-NEXT: b205():
-# CHECK-NEXT: v1518: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b209(v1518)
+# CHECK-NEXT: v1533: 1000 = Integer integer=1000
+# CHECK-NEXT: v1534: number = Mul v1010, v1533
+# CHECK-NEXT: v1535: 0 = Integer
+# CHECK-NEXT: v1536: i32 = BitOr v1534, v1535
+# CHECK-NEXT: Jump -> next b207(v1536)
 # CHECK-NEXT: b206():
-# CHECK-NEXT: v1519: boolean = StrictEq v722, v722
-# CHECK-NEXT: Branch v1519 -> taken b207(), notTaken b208()
-# CHECK-NEXT: b207():
-# CHECK-NEXT: v1520: 1000 = Integer integer=1000
-# CHECK-NEXT: v1521: number = Mul v722, v1520
-# CHECK-NEXT: v1522: 0 = Integer
-# CHECK-NEXT: v1523: i32 = BitOr v1521, v1522
-# CHECK-NEXT: Jump -> next b209(v1523)
-# CHECK-NEXT: b208():
-# CHECK-NEXT: v1524: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b209(v1524)
-# CHECK-NEXT: b209(v1525: i32):
-# CHECK-NEXT: v1526: i32 = BitXor v1515, v1525
-# CHECK-NEXT: v1527: i32 = BitXor v1526, v1028
-# CHECK-NEXT: v1528: i32 = BitXor v1527, v740
-# CHECK-NEXT: v1529: i32 = BitXor v1528, v749
-# CHECK-NEXT: v1530: whole = Double number=-0
-# CHECK-NEXT: v1531: boolean = CallBuiltin -, v754, v1530 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1531 -> taken b210(), notTaken b211()
-# CHECK-NEXT: b210():
-# CHECK-NEXT: v1532: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b214(v1532)
-# CHECK-NEXT: b211():
-# CHECK-NEXT: v1533: boolean = StrictEq v754, v754
-# CHECK-NEXT: Branch v1533 -> taken b212(), notTaken b213()
-# CHECK-NEXT: b212():
-# CHECK-NEXT: v1534: 1000 = Integer integer=1000
-# CHECK-NEXT: v1535: number = Mul v754, v1534
-# CHECK-NEXT: v1536: 0 = Integer
-# CHECK-NEXT: v1537: i32 = BitOr v1535, v1536
-# CHECK-NEXT: Jump -> next b214(v1537)
-# CHECK-NEXT: b213():
-# CHECK-NEXT: v1538: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b214(v1538)
-# CHECK-NEXT: b214(v1539: i32):
-# CHECK-NEXT: v1540: i32 = BitXor v1529, v1539
+# CHECK-NEXT: v1537: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b207(v1537)
+# CHECK-NEXT: b207(v1538: i32):
+# CHECK-NEXT: v1539: i32 = BitXor v1528, v1538
+# CHECK-NEXT: v1540: i32 = BitXor v1539, v768
 # CHECK-NEXT: v1541: whole = Double number=-0
-# CHECK-NEXT: v1542: boolean = CallBuiltin -, v1014, v1541 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1542 -> taken b215(), notTaken b216()
-# CHECK-NEXT: b215():
+# CHECK-NEXT: v1542: boolean = CallBuiltin -, v773, v1541 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1542 -> taken b208(), notTaken b209()
+# CHECK-NEXT: b208():
 # CHECK-NEXT: v1543: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b219(v1543)
-# CHECK-NEXT: b216():
-# CHECK-NEXT: v1544: boolean = StrictEq v1014, v1014
-# CHECK-NEXT: Branch v1544 -> taken b217(), notTaken b218()
-# CHECK-NEXT: b217():
+# CHECK-NEXT: Jump -> next b212(v1543)
+# CHECK-NEXT: b209():
+# CHECK-NEXT: v1544: boolean = StrictEq v773, v773
+# CHECK-NEXT: Branch v1544 -> taken b210(), notTaken b211()
+# CHECK-NEXT: b210():
 # CHECK-NEXT: v1545: 1000 = Integer integer=1000
-# CHECK-NEXT: v1546: number = Mul v1014, v1545
+# CHECK-NEXT: v1546: number = Mul v773, v1545
 # CHECK-NEXT: v1547: 0 = Integer
 # CHECK-NEXT: v1548: i32 = BitOr v1546, v1547
-# CHECK-NEXT: Jump -> next b219(v1548)
-# CHECK-NEXT: b218():
+# CHECK-NEXT: Jump -> next b212(v1548)
+# CHECK-NEXT: b211():
 # CHECK-NEXT: v1549: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b219(v1549)
-# CHECK-NEXT: b219(v1550: i32):
+# CHECK-NEXT: Jump -> next b212(v1549)
+# CHECK-NEXT: b212(v1550: i32):
 # CHECK-NEXT: v1551: i32 = BitXor v1540, v1550
-# CHECK-NEXT: v1552: i32 = BitXor v1551, v768
+# CHECK-NEXT: v1552: i32 = BitXor v1551, v781
 # CHECK-NEXT: v1553: whole = Double number=-0
-# CHECK-NEXT: v1554: boolean = CallBuiltin -, v773, v1553 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1554 -> taken b220(), notTaken b221()
-# CHECK-NEXT: b220():
+# CHECK-NEXT: v1554: boolean = CallBuiltin -, v786, v1553 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1554 -> taken b213(), notTaken b214()
+# CHECK-NEXT: b213():
 # CHECK-NEXT: v1555: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b224(v1555)
-# CHECK-NEXT: b221():
-# CHECK-NEXT: v1556: boolean = StrictEq v773, v773
-# CHECK-NEXT: Branch v1556 -> taken b222(), notTaken b223()
-# CHECK-NEXT: b222():
+# CHECK-NEXT: Jump -> next b217(v1555)
+# CHECK-NEXT: b214():
+# CHECK-NEXT: v1556: boolean = StrictEq v786, v786
+# CHECK-NEXT: Branch v1556 -> taken b215(), notTaken b216()
+# CHECK-NEXT: b215():
 # CHECK-NEXT: v1557: 1000 = Integer integer=1000
-# CHECK-NEXT: v1558: number = Mul v773, v1557
+# CHECK-NEXT: v1558: number = Mul v786, v1557
 # CHECK-NEXT: v1559: 0 = Integer
 # CHECK-NEXT: v1560: i32 = BitOr v1558, v1559
-# CHECK-NEXT: Jump -> next b224(v1560)
-# CHECK-NEXT: b223():
+# CHECK-NEXT: Jump -> next b217(v1560)
+# CHECK-NEXT: b216():
 # CHECK-NEXT: v1561: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b224(v1561)
-# CHECK-NEXT: b224(v1562: i32):
+# CHECK-NEXT: Jump -> next b217(v1561)
+# CHECK-NEXT: b217(v1562: i32):
 # CHECK-NEXT: v1563: i32 = BitXor v1552, v1562
-# CHECK-NEXT: v1564: i32 = BitXor v1563, v781
-# CHECK-NEXT: v1565: whole = Double number=-0
-# CHECK-NEXT: v1566: boolean = CallBuiltin -, v786, v1565 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1566 -> taken b225(), notTaken b226()
+# CHECK-NEXT: v1564: whole = Double number=-0
+# CHECK-NEXT: v1565: boolean = CallBuiltin -, v1119, v1564 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1565 -> taken b218(), notTaken b219()
+# CHECK-NEXT: b218():
+# CHECK-NEXT: v1566: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b222(v1566)
+# CHECK-NEXT: b219():
+# CHECK-NEXT: v1567: boolean = StrictEq v1119, v1119
+# CHECK-NEXT: Branch v1567 -> taken b220(), notTaken b221()
+# CHECK-NEXT: b220():
+# CHECK-NEXT: v1568: 1000 = Integer integer=1000
+# CHECK-NEXT: v1569: number = Mul v1119, v1568
+# CHECK-NEXT: v1570: 0 = Integer
+# CHECK-NEXT: v1571: i32 = BitOr v1569, v1570
+# CHECK-NEXT: Jump -> next b222(v1571)
+# CHECK-NEXT: b221():
+# CHECK-NEXT: v1572: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b222(v1572)
+# CHECK-NEXT: b222(v1573: i32):
+# CHECK-NEXT: v1574: i32 = BitXor v1563, v1573
+# CHECK-NEXT: v1575: whole = Double number=-0
+# CHECK-NEXT: v1576: boolean = CallBuiltin -, v796, v1575 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1576 -> taken b223(), notTaken b224()
+# CHECK-NEXT: b223():
+# CHECK-NEXT: v1577: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b227(v1577)
+# CHECK-NEXT: b224():
+# CHECK-NEXT: v1578: boolean = StrictEq v796, v796
+# CHECK-NEXT: Branch v1578 -> taken b225(), notTaken b226()
 # CHECK-NEXT: b225():
-# CHECK-NEXT: v1567: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b229(v1567)
+# CHECK-NEXT: v1579: 1000 = Integer integer=1000
+# CHECK-NEXT: v1580: number = Mul v796, v1579
+# CHECK-NEXT: v1581: 0 = Integer
+# CHECK-NEXT: v1582: i32 = BitOr v1580, v1581
+# CHECK-NEXT: Jump -> next b227(v1582)
 # CHECK-NEXT: b226():
-# CHECK-NEXT: v1568: boolean = StrictEq v786, v786
-# CHECK-NEXT: Branch v1568 -> taken b227(), notTaken b228()
-# CHECK-NEXT: b227():
-# CHECK-NEXT: v1569: 1000 = Integer integer=1000
-# CHECK-NEXT: v1570: number = Mul v786, v1569
-# CHECK-NEXT: v1571: 0 = Integer
-# CHECK-NEXT: v1572: i32 = BitOr v1570, v1571
-# CHECK-NEXT: Jump -> next b229(v1572)
+# CHECK-NEXT: v1583: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b227(v1583)
+# CHECK-NEXT: b227(v1584: i32):
+# CHECK-NEXT: v1585: i32 = BitXor v1574, v1584
+# CHECK-NEXT: v1586: whole = Double number=-0
+# CHECK-NEXT: v1587: boolean = CallBuiltin -, v801, v1586 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1587 -> taken b228(), notTaken b229()
 # CHECK-NEXT: b228():
-# CHECK-NEXT: v1573: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b229(v1573)
-# CHECK-NEXT: b229(v1574: i32):
-# CHECK-NEXT: v1575: i32 = BitXor v1564, v1574
-# CHECK-NEXT: v1576: whole = Double number=-0
-# CHECK-NEXT: v1577: boolean = CallBuiltin -, v1131, v1576 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1577 -> taken b230(), notTaken b231()
+# CHECK-NEXT: v1588: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b232(v1588)
+# CHECK-NEXT: b229():
+# CHECK-NEXT: v1589: boolean = StrictEq v801, v801
+# CHECK-NEXT: Branch v1589 -> taken b230(), notTaken b231()
 # CHECK-NEXT: b230():
-# CHECK-NEXT: v1578: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b234(v1578)
+# CHECK-NEXT: v1590: 1000 = Integer integer=1000
+# CHECK-NEXT: v1591: number = Mul v801, v1590
+# CHECK-NEXT: v1592: 0 = Integer
+# CHECK-NEXT: v1593: i32 = BitOr v1591, v1592
+# CHECK-NEXT: Jump -> next b232(v1593)
 # CHECK-NEXT: b231():
-# CHECK-NEXT: v1579: boolean = StrictEq v1131, v1131
-# CHECK-NEXT: Branch v1579 -> taken b232(), notTaken b233()
-# CHECK-NEXT: b232():
-# CHECK-NEXT: v1580: 1000 = Integer integer=1000
-# CHECK-NEXT: v1581: number = Mul v1131, v1580
-# CHECK-NEXT: v1582: 0 = Integer
-# CHECK-NEXT: v1583: i32 = BitOr v1581, v1582
-# CHECK-NEXT: Jump -> next b234(v1583)
+# CHECK-NEXT: v1594: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b232(v1594)
+# CHECK-NEXT: b232(v1595: i32):
+# CHECK-NEXT: v1596: i32 = BitXor v1585, v1595
+# CHECK-NEXT: v1597: i32 = BitXor v1596, v810
+# CHECK-NEXT: v1598: i32 = BitXor v1597, v1025
+# CHECK-NEXT: v1599: i32 = BitXor v1598, v827
+# CHECK-NEXT: v1600: i32 = BitXor v1599, v835
+# CHECK-NEXT: v1601: whole = Double number=-0
+# CHECK-NEXT: v1602: boolean = CallBuiltin -, v1116, v1601 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1602 -> taken b233(), notTaken b234()
 # CHECK-NEXT: b233():
-# CHECK-NEXT: v1584: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b234(v1584)
-# CHECK-NEXT: b234(v1585: i32):
-# CHECK-NEXT: v1586: i32 = BitXor v1575, v1585
-# CHECK-NEXT: v1587: whole = Double number=-0
-# CHECK-NEXT: v1588: boolean = CallBuiltin -, v796, v1587 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1588 -> taken b235(), notTaken b236()
+# CHECK-NEXT: v1603: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b237(v1603)
+# CHECK-NEXT: b234():
+# CHECK-NEXT: v1604: boolean = StrictEq v1116, v1116
+# CHECK-NEXT: Branch v1604 -> taken b235(), notTaken b236()
 # CHECK-NEXT: b235():
-# CHECK-NEXT: v1589: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b239(v1589)
+# CHECK-NEXT: v1605: 1000 = Integer integer=1000
+# CHECK-NEXT: v1606: number = Mul v1116, v1605
+# CHECK-NEXT: v1607: 0 = Integer
+# CHECK-NEXT: v1608: i32 = BitOr v1606, v1607
+# CHECK-NEXT: Jump -> next b237(v1608)
 # CHECK-NEXT: b236():
-# CHECK-NEXT: v1590: boolean = StrictEq v796, v796
-# CHECK-NEXT: Branch v1590 -> taken b237(), notTaken b238()
-# CHECK-NEXT: b237():
-# CHECK-NEXT: v1591: 1000 = Integer integer=1000
-# CHECK-NEXT: v1592: number = Mul v796, v1591
-# CHECK-NEXT: v1593: 0 = Integer
-# CHECK-NEXT: v1594: i32 = BitOr v1592, v1593
-# CHECK-NEXT: Jump -> next b239(v1594)
+# CHECK-NEXT: v1609: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b237(v1609)
+# CHECK-NEXT: b237(v1610: i32):
+# CHECK-NEXT: v1611: i32 = BitXor v1600, v1610
+# CHECK-NEXT: v1612: whole = Double number=-0
+# CHECK-NEXT: v1613: boolean = CallBuiltin -, v845, v1612 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1613 -> taken b238(), notTaken b239()
 # CHECK-NEXT: b238():
-# CHECK-NEXT: v1595: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b239(v1595)
-# CHECK-NEXT: b239(v1596: i32):
-# CHECK-NEXT: v1597: i32 = BitXor v1586, v1596
-# CHECK-NEXT: v1598: whole = Double number=-0
-# CHECK-NEXT: v1599: boolean = CallBuiltin -, v801, v1598 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1599 -> taken b240(), notTaken b241()
+# CHECK-NEXT: v1614: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b242(v1614)
+# CHECK-NEXT: b239():
+# CHECK-NEXT: v1615: boolean = StrictEq v845, v845
+# CHECK-NEXT: Branch v1615 -> taken b240(), notTaken b241()
 # CHECK-NEXT: b240():
-# CHECK-NEXT: v1600: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b244(v1600)
+# CHECK-NEXT: v1616: 1000 = Integer integer=1000
+# CHECK-NEXT: v1617: number = Mul v845, v1616
+# CHECK-NEXT: v1618: 0 = Integer
+# CHECK-NEXT: v1619: i32 = BitOr v1617, v1618
+# CHECK-NEXT: Jump -> next b242(v1619)
 # CHECK-NEXT: b241():
-# CHECK-NEXT: v1601: boolean = StrictEq v801, v801
-# CHECK-NEXT: Branch v1601 -> taken b242(), notTaken b243()
-# CHECK-NEXT: b242():
-# CHECK-NEXT: v1602: 1000 = Integer integer=1000
-# CHECK-NEXT: v1603: number = Mul v801, v1602
-# CHECK-NEXT: v1604: 0 = Integer
-# CHECK-NEXT: v1605: i32 = BitOr v1603, v1604
-# CHECK-NEXT: Jump -> next b244(v1605)
-# CHECK-NEXT: b243():
-# CHECK-NEXT: v1606: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b244(v1606)
-# CHECK-NEXT: b244(v1607: i32):
-# CHECK-NEXT: v1608: i32 = BitXor v1597, v1607
-# CHECK-NEXT: v1609: i32 = BitXor v1608, v810
-# CHECK-NEXT: v1610: i32 = BitXor v1609, v1029
-# CHECK-NEXT: v1611: i32 = BitXor v1610, v827
-# CHECK-NEXT: v1612: i32 = BitXor v1611, v835
-# CHECK-NEXT: v1613: whole = Double number=-0
-# CHECK-NEXT: v1614: boolean = CallBuiltin -, v1128, v1613 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1614 -> taken b245(), notTaken b246()
-# CHECK-NEXT: b245():
-# CHECK-NEXT: v1615: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b249(v1615)
-# CHECK-NEXT: b246():
-# CHECK-NEXT: v1616: boolean = StrictEq v1128, v1128
-# CHECK-NEXT: Branch v1616 -> taken b247(), notTaken b248()
-# CHECK-NEXT: b247():
-# CHECK-NEXT: v1617: 1000 = Integer integer=1000
-# CHECK-NEXT: v1618: number = Mul v1128, v1617
-# CHECK-NEXT: v1619: 0 = Integer
-# CHECK-NEXT: v1620: i32 = BitOr v1618, v1619
-# CHECK-NEXT: Jump -> next b249(v1620)
-# CHECK-NEXT: b248():
-# CHECK-NEXT: v1621: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b249(v1621)
-# CHECK-NEXT: b249(v1622: i32):
-# CHECK-NEXT: v1623: i32 = BitXor v1612, v1622
+# CHECK-NEXT: v1620: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b242(v1620)
+# CHECK-NEXT: b242(v1621: i32):
+# CHECK-NEXT: v1622: i32 = BitXor v1611, v1621
+# CHECK-NEXT: v1623: i32 = BitXor v1622, v854
 # CHECK-NEXT: v1624: whole = Double number=-0
-# CHECK-NEXT: v1625: boolean = CallBuiltin -, v845, v1624 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1625 -> taken b250(), notTaken b251()
-# CHECK-NEXT: b250():
+# CHECK-NEXT: v1625: boolean = CallBuiltin -, v1011, v1624 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1625 -> taken b243(), notTaken b244()
+# CHECK-NEXT: b243():
 # CHECK-NEXT: v1626: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b254(v1626)
-# CHECK-NEXT: b251():
-# CHECK-NEXT: v1627: boolean = StrictEq v845, v845
-# CHECK-NEXT: Branch v1627 -> taken b252(), notTaken b253()
-# CHECK-NEXT: b252():
+# CHECK-NEXT: Jump -> next b247(v1626)
+# CHECK-NEXT: b244():
+# CHECK-NEXT: v1627: boolean = StrictEq v1011, v1011
+# CHECK-NEXT: Branch v1627 -> taken b245(), notTaken b246()
+# CHECK-NEXT: b245():
 # CHECK-NEXT: v1628: 1000 = Integer integer=1000
-# CHECK-NEXT: v1629: number = Mul v845, v1628
+# CHECK-NEXT: v1629: number = Mul v1011, v1628
 # CHECK-NEXT: v1630: 0 = Integer
 # CHECK-NEXT: v1631: i32 = BitOr v1629, v1630
-# CHECK-NEXT: Jump -> next b254(v1631)
-# CHECK-NEXT: b253():
+# CHECK-NEXT: Jump -> next b247(v1631)
+# CHECK-NEXT: b246():
 # CHECK-NEXT: v1632: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b254(v1632)
-# CHECK-NEXT: b254(v1633: i32):
+# CHECK-NEXT: Jump -> next b247(v1632)
+# CHECK-NEXT: b247(v1633: i32):
 # CHECK-NEXT: v1634: i32 = BitXor v1623, v1633
-# CHECK-NEXT: v1635: i32 = BitXor v1634, v854
-# CHECK-NEXT: v1636: whole = Double number=-0
-# CHECK-NEXT: v1637: boolean = CallBuiltin -, v1015, v1636 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1637 -> taken b255(), notTaken b256()
-# CHECK-NEXT: b255():
-# CHECK-NEXT: v1638: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b259(v1638)
-# CHECK-NEXT: b256():
-# CHECK-NEXT: v1639: boolean = StrictEq v1015, v1015
-# CHECK-NEXT: Branch v1639 -> taken b257(), notTaken b258()
-# CHECK-NEXT: b257():
-# CHECK-NEXT: v1640: 1000 = Integer integer=1000
-# CHECK-NEXT: v1641: number = Mul v1015, v1640
-# CHECK-NEXT: v1642: 0 = Integer
-# CHECK-NEXT: v1643: i32 = BitOr v1641, v1642
-# CHECK-NEXT: Jump -> next b259(v1643)
-# CHECK-NEXT: b258():
-# CHECK-NEXT: v1644: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b259(v1644)
-# CHECK-NEXT: b259(v1645: i32):
-# CHECK-NEXT: v1646: i32 = BitXor v1635, v1645
-# CHECK-NEXT: v1647: whole = Double number=-0
-# CHECK-NEXT: v1648: boolean = CallBuiltin -, v864, v1647 overload=ObjectIs/0 accessSite=23
-# CHECK-NEXT: Branch v1648 -> taken b260(), notTaken b261()
-# CHECK-NEXT: b260():
-# CHECK-NEXT: v1649: 13 = Integer integer=13
-# CHECK-NEXT: Jump -> next b264(v1649)
-# CHECK-NEXT: b261():
-# CHECK-NEXT: v1650: boolean = StrictEq v864, v864
-# CHECK-NEXT: Branch v1650 -> taken b262(), notTaken b263()
-# CHECK-NEXT: b262():
-# CHECK-NEXT: v1651: 1000 = Integer integer=1000
-# CHECK-NEXT: v1652: number = Mul v864, v1651
-# CHECK-NEXT: v1653: 0 = Integer
-# CHECK-NEXT: v1654: i32 = BitOr v1652, v1653
-# CHECK-NEXT: Jump -> next b264(v1654)
-# CHECK-NEXT: b263():
-# CHECK-NEXT: v1655: 17 = Integer integer=17
-# CHECK-NEXT: Jump -> next b264(v1655)
-# CHECK-NEXT: b264(v1656: i32):
-# CHECK-NEXT: v1657: i32 = BitXor v1646, v1656
-# CHECK-NEXT: v1658: i32 = BitXor v1657, v873
-# CHECK-NEXT: v1659: i32 = BitXor v1658, v1030
-# CHECK-NEXT: v1660: i32 = BitXor v1659, v891
-# CHECK-NEXT: v1661: 0 = Integer
-# CHECK-NEXT: v1662: i32 = BitOr v1660, v1661
-# CHECK-NEXT: Return v1662
-# CHECK-NEXT: b265():
-# CHECK-NEXT: Throw v1124
-# CHECK-NEXT: b266():
-# CHECK-NEXT: Throw v1001
+# CHECK-NEXT: v1635: whole = Double number=-0
+# CHECK-NEXT: v1636: boolean = CallBuiltin -, v864, v1635 overload=ObjectIs/0 accessSite=23
+# CHECK-NEXT: Branch v1636 -> taken b248(), notTaken b249()
+# CHECK-NEXT: b248():
+# CHECK-NEXT: v1637: 13 = Integer integer=13
+# CHECK-NEXT: Jump -> next b252(v1637)
+# CHECK-NEXT: b249():
+# CHECK-NEXT: v1638: boolean = StrictEq v864, v864
+# CHECK-NEXT: Branch v1638 -> taken b250(), notTaken b251()
+# CHECK-NEXT: b250():
+# CHECK-NEXT: v1639: 1000 = Integer integer=1000
+# CHECK-NEXT: v1640: number = Mul v864, v1639
+# CHECK-NEXT: v1641: 0 = Integer
+# CHECK-NEXT: v1642: i32 = BitOr v1640, v1641
+# CHECK-NEXT: Jump -> next b252(v1642)
+# CHECK-NEXT: b251():
+# CHECK-NEXT: v1643: 17 = Integer integer=17
+# CHECK-NEXT: Jump -> next b252(v1643)
+# CHECK-NEXT: b252(v1644: i32):
+# CHECK-NEXT: v1645: i32 = BitXor v1634, v1644
+# CHECK-NEXT: v1646: i32 = BitXor v1645, v873
+# CHECK-NEXT: v1647: i32 = BitXor v1646, v1026
+# CHECK-NEXT: v1648: i32 = BitXor v1647, v891
+# CHECK-NEXT: v1649: 0 = Integer
+# CHECK-NEXT: v1650: i32 = BitOr v1648, v1649
+# CHECK-NEXT: Return v1650
+# CHECK-NEXT: b253():
+# CHECK-NEXT: Throw v1112
+# CHECK-NEXT: b254():
+# CHECK-NEXT: Throw v997
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Blown"
 # CHECK: module=m0 position=405 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|"blown", proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {

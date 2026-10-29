@@ -131,23 +131,22 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "honest" = String string="honest"
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: v2: Array<"honest"|f3, Contiguous> = NewArray v0 contents="honest"|f3 capacity=v1 allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v1: f3 = NewClosure function=f3 allocationSite=2
+# CHECK-NEXT: v2: Array<"honest"|f3, Contiguous> = NewArray v0, v1 contents="honest"|f3 allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v3: Array<"honest"|f3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<"honest"|f3, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: f3 = NewClosure function=f3 allocationSite=2
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=1
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: undefined|"honest"|f3 = GetArrayElement v3, v6 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral]
-# CHECK-NEXT: v8: undefined|"honest"|f3 ~ undefined|"honest" = Expect v7 expectedType=undefined|null|string
-# CHECK-NEXT: v9: boolean = CallDirect v8 function=f2 accessSite=5
-# CHECK-NEXT: v10: undefined = CallBuiltin -, v9 overload=ConsoleLog/0 accessSite=6
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: undefined|"honest"|f3 = GetArrayElement v3, v11 arrayStorage=Contiguous level=Proven accessSite=9 [keyIsIntegral]
-# CHECK-NEXT: v13: undefined|"honest"|f3 ~ undefined|"honest" = Expect v12 expectedType=undefined|null|string
-# CHECK-NEXT: v14: boolean = CallDirect v13 function=f2 accessSite=10
-# CHECK-NEXT: v15: undefined = CallBuiltin -, v14 overload=ConsoleLog/0 accessSite=11
-# CHECK-NEXT: v16: undefined = Undefined
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v4: 2 = Integer integer=2
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: undefined|"honest"|f3 = GetArrayElement v3, v5 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v7: undefined|"honest"|f3 ~ undefined|"honest" = Expect v6 expectedType=undefined|null|string
+# CHECK-NEXT: v8: boolean = CallDirect v7 function=f2 accessSite=5
+# CHECK-NEXT: v9: undefined = CallBuiltin -, v8 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: undefined|"honest"|f3 = GetArrayElement v3, v10 arrayStorage=Contiguous level=Proven accessSite=9 [keyIsIntegral]
+# CHECK-NEXT: v12: undefined|"honest"|f3 ~ undefined|"honest" = Expect v11 expectedType=undefined|null|string
+# CHECK-NEXT: v13: boolean = CallDirect v12 function=f2 accessSite=10
+# CHECK-NEXT: v14: undefined = CallBuiltin -, v13 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ask"
 # CHECK: module=m0 position=84 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f4 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=137 isTailCall=true module=m0}, {callee=f16 callPosition=201 parent=1 isTailCall=true module=m0}] {

@@ -48,6 +48,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
   describe.each([
     ["impure-call-after-statement-in-catch", "impure"],
     ["parser-rewrites-before-the-compiler", "impure"],
+    ["commonjs-component", "impure"],
     ["pure-components", "pure"],
   ])("same-as-bundle/%s", (name, purity) => {
     test.concurrent.each(["none", "syntax", "all"])(

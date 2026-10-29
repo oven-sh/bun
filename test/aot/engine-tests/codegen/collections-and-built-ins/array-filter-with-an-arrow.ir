@@ -1311,7 +1311,7 @@ function f12 name="traverseArray" module=m2 position=2337 kind=Method role=Libra
 # LOOP-NEXT: Branch(b@[[isNumber]], Terminal, {{*}}:TryPutByValDirect)
 # LOOP-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # Each time the kind of storage of the new list is loaded and compared, its storage and length are loaded, and the place is compared with the length. Then the element is stored unboxed.
-# LOOP: Int32 b@[[kind]] = Load8Z(b@[[kept]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, {{*}}:TryPutByValDirect)
+# LOOP: Int32 b@[[kind]] = Load8Z(b@[[kept]], offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, {{*}}:TryPutByValDirect)
 # LOOP: Int32 b@{{*}} = Equal(b@[[kind]], $7(b@{{*}}), {{*}}:TryPutByValDirect)
 # LOOP: Int64 b@[[storage]] = Load(b@[[kept]], offset = 8, ControlDependent|Reads:JSArray_butterfly, {{*}}:TryPutByValDirect)
 # LOOP-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:TryPutByValDirect)

@@ -84,7 +84,7 @@ says what its programs are about.
 - **Tables.** A few files count their programs and export `programOf(index)`, for example every kind of loop crossed with every kind of typed array. The seed picks the row.
 - **Lists**, in `sources/`. Where some programs need a flag, an environment variable or extra entry points, a file in `sources/` lists them with the helpers in `family.ts`.
 - **Scripts.** `case-scripts/*.py` each write a folder of small cases (source `scripted-cases`); `generators/python/*.py` each write one random program per seed (source `by-python`).
-- **Stored programs.** `mutation` mutates the programs in `../parallel`; `stored-programs` runs them unchanged.
+- **Stored programs.** `mutation` mutates the programs in `../parallel`; `stored-programs` runs them unchanged; `stored-programs-in-hot-loop` makes their top-level code hot at default flags.
 
 Every second program is also generated as `<source>-multi-file`: its top-level declarations move into up to four more files, some of them JavaScript, some with incomplete or invalid
 declaration files, some published as packages. `--single-file` turns that off.

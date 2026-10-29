@@ -394,6 +394,10 @@ public:
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, implValue);
                 RETURN_IF_EXCEPTION(scope, );
             }
+#if ENABLE(AOT)
+            else if (JSC::AOT::isModuleNamespace(target))
+                JSC::AOT::tryReplaceExport(target, identifier.impl(), implValue);
+#endif
         } else if (auto index = parseIndex(identifier)) {
             // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
             target->putDirectIndex(globalObject, *index, implValue, attributes, PutDirectIndexLikePutDirect);
@@ -1575,11 +1579,23 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         return {};
     }
 
-    if (JSC::AOT::isModuleNamespace(object)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because module exports can't be replaced in a compiled executable"_s));
-        return {};
-    }
 #endif
+
+    // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
+    auto replaceExport = [&](JSValue replacement) {
+        if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
+            moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+            return true;
+        }
+#if ENABLE(AOT)
+        if (JSC::AOT::isModuleNamespace(object)) {
+            if (hasValue && !JSC::AOT::tryReplaceExport(object, propertyKey.uid(), replacement))
+                throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because module exports can't be replaced in a compiled executable"_s));
+            return true;
+        }
+#endif
+        return false;
+    };
 
     // easymode: regular property or missing property
     if (!hasValue || slot.isValue()) {
@@ -1613,8 +1629,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             RETURN_IF_EXCEPTION(scope, {});
 
             JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
-            if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+            if (replaceExport(mock)) {
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else if (auto index = parseIndex(propertyKey)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
@@ -1644,8 +1659,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             attributes |= PropertyAttribute::Accessor;
 
             JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
-            if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
+            if (replaceExport(mock)) {
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else {
                 object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);

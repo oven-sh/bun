@@ -518,7 +518,7 @@ runtimefunction id=WrittenListsArrayFromLength function=f34
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="downBehindToZero"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 51, patchpoints: 0, rare instructions: 120
+# CHECK-NEXT: instructions: 51, patchpoints: 0, rare instructions: 118
 # CHECK-NEXT: end of function f10
 # CHECK-LABEL: function {{*}}name="shiftUp"
 # CHECK: role=Source

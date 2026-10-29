@@ -124,4 +124,3 @@
 [ ASAN ] test/aot/parallel/untyped-speed/words-kept-split-counted-not-twice.js [ SKIP ] # a clock
 [ ASAN ] test/aot/parallel/workers/worker-that-parsed-a-text-ends/main.cjs [ SKIP ] # which of its two lines comes first goes by how long a worker takes to start, and there plain Bun needs over half a second
 [ WINDOWS ] test/aot/parallel/native-callbacks/exports-signal-listeners-get-name-number.ts [ FAIL ] # there is no SIGUSR2: process.kill throws, and the text printed for the uncaught error is another one in an executable
-[ WINDOWS-X64 ] test/aot/parallel/gc/workers-allocate-beside-each-other.ts [ FAIL ] # Not every time: with the collector running continuously a run does not end within 90 seconds on Windows x64: so far never with a Worker, now and then without one

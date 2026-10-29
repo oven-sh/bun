@@ -43,7 +43,7 @@ fn every_compiled_file_has_a_record() {
         assert_eq!(modules.record_files, loaded_files);
         for &file in &loaded_files {
             let interop = file_interop(program.input.files, program.input.sources, file);
-            assert_eq!(modules.interop(ModuleRef::File(file)), interop);
+            assert_eq!(modules.interop(ModuleRef::File(file)).kind, interop.kind);
         }
         assert!(modules.other_modules.is_empty());
         assert!(modules.external_kinds.is_empty());

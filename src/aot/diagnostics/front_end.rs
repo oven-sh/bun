@@ -73,6 +73,9 @@ impl Diagnostics {
                 (Kind::Err, DiagnosticClass::EarlyError) => {
                     self.add_early_error(diagnostic.code, message);
                 }
+                (Kind::Err, _) if !diagnostic.path.is_empty() => {
+                    self.add_type_error(diagnostic.code, message);
+                }
                 _ => self.add_message(diagnostic.code, message),
             }
         }

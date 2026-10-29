@@ -144,7 +144,7 @@ pub(crate) enum CompileFailure {
     },
     /// `files_checked`: 0 where the build ended before it had counted them.
     Build {
-        refused_entry_points: Option<Vec<u32>>,
+        refused_entry_points: Option<bun_aot::RefusedEntryPoints>,
         files_checked: u32,
     },
     Assets(AssetError),

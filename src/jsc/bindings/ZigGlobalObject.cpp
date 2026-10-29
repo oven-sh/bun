@@ -2659,7 +2659,10 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSS3FileStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(S3Client, Abort, void)
-             init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
+             auto* structure = Bun::createJSS3FileStructure(init.vm, init.owner);
+             init.set(structure);
+             if (init.vm.hasCompiledCode()) [[unlikely]]
+                 JSC::AOT::hostDidCreateStructure(init.owner, structure);
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_S3ErrorStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {

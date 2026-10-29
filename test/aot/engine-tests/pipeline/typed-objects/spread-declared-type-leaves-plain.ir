@@ -464,14 +464,14 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private
 # CHECK-NEXT: v96: L0 = GetArrayElement v45, v90, v95 arrayStorage=Contiguous level=Expected accessSite=10 [keyIsIntegral, isPresent]
 # CHECK-NEXT: v97: int[-2147483643, 2147483647] = GetSlot v96 key="count" receivers=[L0] level=Proven accessSite=31
 # CHECK-NEXT: v98: "a"|"ab"|"abc"|"abcd" = GetSlot v96 key="label" receivers=[L0] level=Proven accessSite=32
-# CHECK-NEXT: v99: int[0, 2147483647] = GetStringLength v98
-# CHECK-NEXT: v100: int[-2147483643, 4294967294] = Add v97, v99
+# CHECK-NEXT: v99: int[1, 4] = GetStringLength v98
+# CHECK-NEXT: v100: int[-2147483642, 2147483651] = Add v97, v99
 # CHECK-NEXT: v101: int|whole = Add v85, v100
 # CHECK-NEXT: v102: int[1, 300] = Increment v90
 # CHECK-NEXT: Jump -> next b30(v101, v102)
 # CHECK-NEXT: b34(v103: int|whole, v104: int[0, 299], v105: int[0, 19]) frequency=Rare:
 # CHECK-NEXT: v106: undefined|L0 = ElemGet v45, v104 accessSite=10 [keyIsIntegral]
-# CHECK-NEXT: v107: int[-2147483643, 4294967294] = CallDirect v106 function=f8 accessSite=11
+# CHECK-NEXT: v107: int[-2147483642, 2147483651] = CallDirect v106 function=f8 accessSite=11
 # CHECK-NEXT: v108: int|whole = Add v103, v107
 # CHECK-NEXT: v109: int[1, 300] = Increment v104
 # CHECK-NEXT: Jump -> next b35(v109, v105)
@@ -498,8 +498,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private
 # CHECK-NEXT: v128: L0 = GetArrayElement v45, v122, v127 arrayStorage=Contiguous level=Expected accessSite=10 [keyIsIntegral, isPresent]
 # CHECK-NEXT: v129: int[-2147483643, 2147483647] = GetSlot v128 key="count" receivers=[L0] level=Proven accessSite=31
 # CHECK-NEXT: v130: "a"|"ab"|"abc"|"abcd" = GetSlot v128 key="label" receivers=[L0] level=Proven accessSite=32
-# CHECK-NEXT: v131: int[0, 2147483647] = GetStringLength v130
-# CHECK-NEXT: v132: int[-2147483643, 4294967294] = Add v129, v131
+# CHECK-NEXT: v131: int[1, 4] = GetStringLength v130
+# CHECK-NEXT: v132: int[-2147483642, 2147483651] = Add v129, v131
 # CHECK-NEXT: v133: int|whole = Add v117, v132
 # CHECK-NEXT: v134: int[1, 300] = Increment v122
 # CHECK-NEXT: Jump -> next b38(v133, v134)
@@ -587,20 +587,20 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|L0):
-# CHECK-NEXT: v3: int[-2147483643, 4294967294] = CallDirect v2 function=f8 @541 tail
+# CHECK-NEXT: v3: int[-2147483642, 2147483651] = CallDirect v2 function=f8 @541 tail
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v4: anything ~ number = CallDirect v0 function=f9
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readState"
-# CHECK: module=m0 position=541 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w8}] results=[{type=int[-2147483643, 4294967294] site=w9}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} {
+# CHECK: module=m0 position=541 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w8}] results=[{type=int[-2147483642, 2147483651] site=w9}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} {
 # CHECK-NEXT: b0(v0: undefined|null|L0):
 # CHECK-NEXT: v1: L0 = RequireObjectCoercible v0 name="count"
 # CHECK-NEXT: v2: int[-2147483643, 2147483647] = GetSlot v1 key="count" receivers=[L0] level=Proven accessSite=31
 # CHECK-NEXT: v3: "a"|"ab"|"abc"|"abcd" = GetSlot v1 key="label" receivers=[L0] level=Proven accessSite=32
-# CHECK-NEXT: v4: int[0, 2147483647] = GetStringLength v3
-# CHECK-NEXT: v5: int[-2147483643, 4294967294] = Add v2, v4
+# CHECK-NEXT: v4: int[1, 4] = GetStringLength v3
+# CHECK-NEXT: v5: int[-2147483642, 2147483651] = Add v2, v4
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readState"

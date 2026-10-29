@@ -1,5 +1,5 @@
 // Patterns whose text the build cannot know: names, globs turned into patterns, words looked for in a command. Eight go back over the same places again and again.
-// Three start an unbounded run at every bracket of one long line and never match. The last two have a hundred capture groups and a subject of astral characters.
+// Three start an unbounded run at every bracket of one long line and never match, one at every bracket of ten lines. Two have a hundred capture groups and a subject of astral characters. The last four have a run in front of a back reference.
 //// globstar-that-matches
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("^(?:.*/)?src/.*\\.tsx?$" + nothing);
@@ -256,6 +256,13 @@ const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(30
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
+//// an-emulated-atomic-group-on-ten-lines-of-thirty-links
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\[(?=(.+?\\]\\(#))\\1" + nothing);
+const subjects: string[] = [("[a](".repeat(30) + "\n").repeat(10) + nothing, ("[b](".repeat(30) + "\n").repeat(10) + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
 //// a-lazy-run-from-every-bracket-without-a-match
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("\\[.+?\\]\\(#" + nothing);
@@ -281,6 +288,34 @@ function turn(i: number): number {
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("[\\u{e0000}-\\u{e0fff}][<>]" + "(a)".repeat(100) + nothing, "u");
 const subjects: string[] = ["\u{e0041}".repeat(200) + nothing, "\u{e0042}".repeat(200) + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-quoted-word
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("([\"'])(.*?)\\1" + nothing);
+const subjects: string[] = ['say "hello world" now' + nothing, "name = 'a longer text in quotes';" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-quote-that-is-never-closed
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("([\"'])(.*?)\\1" + nothing);
+const subjects: string[] = ['say "hello world, and nothing closes it on this line of eighty units or so, you see' + nothing, "it's the same with the other kind of quote, which is also an apostrophe, is it not" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-reference-behind-a-lazy-run-without-a-match
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\[(.+?)\\]\\(\\1#" + nothing);
+const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-reference-behind-a-greedy-run-without-a-match
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\[(.+)\\]\\(\\1#" + nothing);
+const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }

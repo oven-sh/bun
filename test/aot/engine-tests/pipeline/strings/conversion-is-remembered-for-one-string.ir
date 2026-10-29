@@ -755,160 +755,158 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f17 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v7: int[0, 2147483647] = GetStringLength v0
 # CHECK-NEXT: v8: boolean = Less v5, v7
-# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b82()
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b81()
 # CHECK-NEXT: b3(v9: int[0, 2147483646]):
 # CHECK-NEXT: v10: int[0, 65535] = GetStringCodeUnit v0, v9
 # CHECK-NEXT: v11: 55296 = Integer integer=55296
 # CHECK-NEXT: v12: boolean = Less v10, v11
-# CHECK-NEXT: Branch v12 -> taken b4(), notTaken b28(v9, v10)
+# CHECK-NEXT: Branch v12 -> taken b4(), notTaken b27(v9, v10)
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v13: 65535 = Integer integer=65535
-# CHECK-NEXT: v14: boolean = Greater v10, v13
-# CHECK-NEXT: Branch v14 -> taken b81(v9), notTaken b5()
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: int[1, 2147483647] = Add v9, v13
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: int[0, 2147483646] = Add v9, v15
+# CHECK-NEXT: v17: int[0, 65535] = GetStringCodeUnit v0, v16
+# CHECK-NEXT: Branch v1 -> taken b5(), notTaken b10()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v15: 1 = Integer integer=1
-# CHECK-NEXT: v16: int[1, 2147483647] = Add v9, v15
-# CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: v18: int[0, 2147483646] = Add v9, v17
-# CHECK-NEXT: v19: int[0, 65535] = GetStringCodeUnit v0, v18
-# CHECK-NEXT: Branch v1 -> taken b6(), notTaken b11()
+# CHECK-NEXT: v18: 65 = Integer integer=65
+# CHECK-NEXT: v19: boolean = GreaterEq v17, v18
+# CHECK-NEXT: Branch v19 -> taken b6(), notTaken b9()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v20: 65 = Integer integer=65
-# CHECK-NEXT: v21: boolean = GreaterEq v19, v20
-# CHECK-NEXT: Branch v21 -> taken b7(), notTaken b10()
+# CHECK-NEXT: v20: 90 = Integer integer=90
+# CHECK-NEXT: v21: boolean = LessEq v17, v20
+# CHECK-NEXT: Branch v21 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v22: 90 = Integer integer=90
-# CHECK-NEXT: v23: boolean = LessEq v19, v22
-# CHECK-NEXT: Branch v23 -> taken b8(), notTaken b9()
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v24: 32 = Integer integer=32
-# CHECK-NEXT: v25: int[32, 65567] = Add v19, v24
-# CHECK-NEXT: v26: string = CallBuiltin -, v25 overload=StringFromCharCode/0 accessSite=71
-# CHECK-NEXT: StringBuilderAppend v3, v26
-# CHECK-NEXT: Jump -> next b27()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: Branch v1 -> taken b13(), notTaken b14()
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v28: 97 = Integer integer=97
-# CHECK-NEXT: v29: boolean = GreaterEq v19, v28
-# CHECK-NEXT: Branch v29 -> taken b15(), notTaken b18()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v30: 122 = Integer integer=122
-# CHECK-NEXT: v31: boolean = LessEq v19, v30
-# CHECK-NEXT: Branch v31 -> taken b16(), notTaken b17()
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v32: 32 = Integer integer=32
-# CHECK-NEXT: v33: int[-32, 65503] = Sub v19, v32
-# CHECK-NEXT: v34: string = CallBuiltin -, v33 overload=StringFromCharCode/0 accessSite=72
-# CHECK-NEXT: StringBuilderAppend v3, v34
+# CHECK-NEXT: v22: 32 = Integer integer=32
+# CHECK-NEXT: v23: int[32, 65567] = Add v17, v22
+# CHECK-NEXT: v24: string = CallBuiltin -, v23 overload=StringFromCharCode/0 accessSite=71
+# CHECK-NEXT: StringBuilderAppend v3, v24
 # CHECK-NEXT: Jump -> next b26()
-# CHECK-NEXT: b17():
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b18():
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v36: 220 = Integer integer=220
-# CHECK-NEXT: v37: boolean = StrictEq v19, v36
-# CHECK-NEXT: Branch v37 -> taken b20(), notTaken b23()
-# CHECK-NEXT: b20():
-# CHECK-NEXT: Branch v1 -> taken b21(), notTaken b22()
-# CHECK-NEXT: b21():
-# CHECK-NEXT: v38: "\u{fc}" = String string="\u{fc}"
-# CHECK-NEXT: StringBuilderAppend v3, v38
+# CHECK-NEXT: b8():
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: Branch v1 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v26: 97 = Integer integer=97
+# CHECK-NEXT: v27: boolean = GreaterEq v17, v26
+# CHECK-NEXT: Branch v27 -> taken b14(), notTaken b17()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v28: 122 = Integer integer=122
+# CHECK-NEXT: v29: boolean = LessEq v17, v28
+# CHECK-NEXT: Branch v29 -> taken b15(), notTaken b16()
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v30: 32 = Integer integer=32
+# CHECK-NEXT: v31: int[-32, 65503] = Sub v17, v30
+# CHECK-NEXT: v32: string = CallBuiltin -, v31 overload=StringFromCharCode/0 accessSite=72
+# CHECK-NEXT: StringBuilderAppend v3, v32
 # CHECK-NEXT: Jump -> next b25()
-# CHECK-NEXT: b22():
+# CHECK-NEXT: b16():
+# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: b17():
+# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: b18():
+# CHECK-NEXT: v34: 220 = Integer integer=220
+# CHECK-NEXT: v35: boolean = StrictEq v17, v34
+# CHECK-NEXT: Branch v35 -> taken b19(), notTaken b22()
+# CHECK-NEXT: b19():
+# CHECK-NEXT: Branch v1 -> taken b20(), notTaken b21()
+# CHECK-NEXT: b20():
+# CHECK-NEXT: v36: "\u{fc}" = String string="\u{fc}"
+# CHECK-NEXT: StringBuilderAppend v3, v36
 # CHECK-NEXT: Jump -> next b24()
+# CHECK-NEXT: b21():
+# CHECK-NEXT: Jump -> next b23()
+# CHECK-NEXT: b22():
+# CHECK-NEXT: Jump -> next b23()
 # CHECK-NEXT: b23():
+# CHECK-NEXT: v38: string = Substring v0, v9, v14
+# CHECK-NEXT: StringBuilderAppend v3, v38
 # CHECK-NEXT: Jump -> next b24()
 # CHECK-NEXT: b24():
-# CHECK-NEXT: v40: string = Substring v0, v9, v16
-# CHECK-NEXT: StringBuilderAppend v3, v40
 # CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b25():
 # CHECK-NEXT: Jump -> next b26()
 # CHECK-NEXT: b26():
-# CHECK-NEXT: Jump -> next b27()
-# CHECK-NEXT: b27():
-# CHECK-NEXT: Jump -> next b2(v16)
-# CHECK-NEXT: b28(v42: int[0, 2147483646], v43: int[0, 65535]) frequency=Rare:
-# CHECK-NEXT: v44: 64512 = Integer integer=64512
-# CHECK-NEXT: v45: int[0, 64512] = BitAnd v43, v44
-# CHECK-NEXT: v46: 55296 = Integer integer=55296
-# CHECK-NEXT: v47: boolean = StrictEq v45, v46
-# CHECK-NEXT: Branch v47 -> taken b29(), notTaken b30()
+# CHECK-NEXT: Jump -> next b2(v14)
+# CHECK-NEXT: b27(v40: int[0, 2147483646], v41: int[0, 65535]) frequency=Rare:
+# CHECK-NEXT: v42: 64512 = Integer integer=64512
+# CHECK-NEXT: v43: int[0, 64512] = BitAnd v41, v42
+# CHECK-NEXT: v44: 55296 = Integer integer=55296
+# CHECK-NEXT: v45: boolean = StrictEq v43, v44
+# CHECK-NEXT: Branch v45 -> taken b28(), notTaken b30()
+# CHECK-NEXT: b28() frequency=Rare:
+# CHECK-NEXT: v46: undefined|int[0, 1114111] = CallBuiltin v0, v40 overload=StringPrototypeCodePointAt/0
+# CHECK-NEXT: v47: 65535 = Integer integer=65535
+# CHECK-NEXT: v48: boolean = Greater v46, v47
+# CHECK-NEXT: Branch v48 -> taken b29(), notTaken b31(v40)
 # CHECK-NEXT: b29() frequency=Rare:
-# CHECK-NEXT: v48: undefined|int[0, 1114111] = CallBuiltin v0, v42 overload=StringPrototypeCodePointAt/0
-# CHECK-NEXT: v49: 65535 = Integer integer=65535
-# CHECK-NEXT: v50: boolean = Greater v48, v49
-# CHECK-NEXT: Branch v50 -> taken b81(v42), notTaken b31(v42)
+# CHECK-NEXT: v49: 2 = Integer integer=2
+# CHECK-NEXT: v50: int[2, 2147483648] = Add v40, v49
+# CHECK-NEXT: Jump -> next b32(v50, v40)
 # CHECK-NEXT: b30() frequency=Rare:
-# CHECK-NEXT: v51: 65535 = Integer integer=65535
-# CHECK-NEXT: v52: boolean = Greater v43, v51
-# CHECK-NEXT: Branch v52 -> taken b81(v42), notTaken b31(v42)
-# CHECK-NEXT: b31(v53: int[0, 2147483646]) frequency=Unlikely:
-# CHECK-NEXT: v54: 1 = Integer integer=1
-# CHECK-NEXT: v55: int[1, 2147483647] = Add v53, v54
-# CHECK-NEXT: Jump -> next b32(v55, v53)
-# CHECK-NEXT: b32(v56: int[1, 2147483648], v57: int[0, 2147483646]) frequency=Unlikely:
-# CHECK-NEXT: v58: 0 = Integer
-# CHECK-NEXT: v59: int[-2147483645, 2147483648] = Sub v56, v57
-# CHECK-NEXT: v60: i32 = ToInt32 v59
-# CHECK-NEXT: v61: 2147483647 = Integer integer=2147483647
-# CHECK-NEXT: v62: int[0, 2147483647] = BitAnd v60, v61
-# CHECK-NEXT: v63: boolean = Less v58, v62
-# CHECK-NEXT: Branch v63 -> taken b33(), notTaken b34(v56, v57)
+# CHECK-NEXT: Jump -> next b31(v40)
+# CHECK-NEXT: b31(v51: int[0, 2147483646]) frequency=Unlikely:
+# CHECK-NEXT: v52: 1 = Integer integer=1
+# CHECK-NEXT: v53: int[1, 2147483647] = Add v51, v52
+# CHECK-NEXT: Jump -> next b32(v53, v51)
+# CHECK-NEXT: b32(v54: int[1, 2147483648], v55: int[0, 2147483646]) frequency=Unlikely:
+# CHECK-NEXT: v56: 0 = Integer
+# CHECK-NEXT: v57: int[-2147483645, 2147483648] = Sub v54, v55
+# CHECK-NEXT: v58: i32 = ToInt32 v57
+# CHECK-NEXT: v59: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: v60: int[0, 2147483647] = BitAnd v58, v59
+# CHECK-NEXT: v61: boolean = Less v56, v60
+# CHECK-NEXT: Branch v61 -> taken b33(), notTaken b34(v54, v55)
 # CHECK-NEXT: b33() frequency=Unlikely:
-# CHECK-NEXT: v64: int[0, 2147483646] = Add v57, v58
-# CHECK-NEXT: v65: int[0, 65535] = GetStringCodeUnit v0, v64
-# CHECK-NEXT: Jump -> next b35(v65, v56, v57)
-# CHECK-NEXT: b34(v66: int[1, 2147483648] ~ int[1, 2147483647], v67: int[0, 2147483646]) frequency=Rare:
-# CHECK-NEXT: v68: whole = Double number=NaN
-# CHECK-NEXT: Jump -> next b35(v68, v66, v67)
-# CHECK-NEXT: b35(v69: int[0, 65535]|whole ~ int[0, 65535], v70: int[1, 2147483648], v71: int[0, 2147483646]) frequency=Unlikely:
+# CHECK-NEXT: v62: int[0, 2147483646] = Add v55, v56
+# CHECK-NEXT: v63: int[0, 65535] = GetStringCodeUnit v0, v62
+# CHECK-NEXT: Jump -> next b35(v63, v54, v55)
+# CHECK-NEXT: b34(v64: int[1, 2147483648] ~ int[1, 2147483647], v65: int[0, 2147483646]) frequency=Rare:
+# CHECK-NEXT: v66: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b35(v66, v64, v65)
+# CHECK-NEXT: b35(v67: int[0, 65535]|whole ~ int[0, 65535], v68: int[1, 2147483648], v69: int[0, 2147483646]) frequency=Unlikely:
 # CHECK-NEXT: Branch v1 -> taken b36(), notTaken b49()
 # CHECK-NEXT: b36() frequency=Unlikely:
-# CHECK-NEXT: v72: boolean ~ true = TypeTest v69 testedType=i32
-# CHECK-NEXT: Branch v72 -> taken b37(| 0), notTaken b42(| 0)
-# CHECK-NEXT: b37(v73: int[0, 65535]) frequency=Unlikely:
-# CHECK-NEXT: v74: 65 = Integer integer=65
-# CHECK-NEXT: v75: boolean = GreaterEq v73, v74
-# CHECK-NEXT: Branch v75 -> taken b38(), notTaken b41()
+# CHECK-NEXT: v70: boolean ~ true = TypeTest v67 testedType=i32
+# CHECK-NEXT: Branch v70 -> taken b37(| 0), notTaken b42(| 0)
+# CHECK-NEXT: b37(v71: int[0, 65535]) frequency=Unlikely:
+# CHECK-NEXT: v72: 65 = Integer integer=65
+# CHECK-NEXT: v73: boolean = GreaterEq v71, v72
+# CHECK-NEXT: Branch v73 -> taken b38(), notTaken b41()
 # CHECK-NEXT: b38() frequency=Unlikely:
-# CHECK-NEXT: v76: 90 = Integer integer=90
-# CHECK-NEXT: v77: boolean = LessEq v73, v76
-# CHECK-NEXT: Branch v77 -> taken b39(), notTaken b40()
+# CHECK-NEXT: v74: 90 = Integer integer=90
+# CHECK-NEXT: v75: boolean = LessEq v71, v74
+# CHECK-NEXT: Branch v75 -> taken b39(), notTaken b40()
 # CHECK-NEXT: b39() frequency=Unlikely:
-# CHECK-NEXT: v78: 32 = Integer integer=32
-# CHECK-NEXT: v79: int[32, 65567] = Add v73, v78
-# CHECK-NEXT: v80: string = CallBuiltin -, v79 overload=StringFromCharCode/0 accessSite=71
-# CHECK-NEXT: Jump -> next b45(v80)
+# CHECK-NEXT: v76: 32 = Integer integer=32
+# CHECK-NEXT: v77: int[32, 65567] = Add v71, v76
+# CHECK-NEXT: v78: string = CallBuiltin -, v77 overload=StringFromCharCode/0 accessSite=71
+# CHECK-NEXT: Jump -> next b45(v78)
 # CHECK-NEXT: b40() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b50()
 # CHECK-NEXT: b41() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b50()
-# CHECK-NEXT: b42(v81: whole) frequency=Rare:
-# CHECK-NEXT: v82: 65 = Integer integer=65
-# CHECK-NEXT: v83: boolean = GreaterEq v81, v82
-# CHECK-NEXT: Branch v83 -> taken b43(), notTaken b47()
+# CHECK-NEXT: b42(v79: whole) frequency=Rare:
+# CHECK-NEXT: v80: 65 = Integer integer=65
+# CHECK-NEXT: v81: boolean = GreaterEq v79, v80
+# CHECK-NEXT: Branch v81 -> taken b43(), notTaken b47()
 # CHECK-NEXT: b43() frequency=Rare:
-# CHECK-NEXT: v84: 90 = Integer integer=90
-# CHECK-NEXT: v85: boolean = LessEq v81, v84
-# CHECK-NEXT: Branch v85 -> taken b44(), notTaken b46()
+# CHECK-NEXT: v82: 90 = Integer integer=90
+# CHECK-NEXT: v83: boolean = LessEq v79, v82
+# CHECK-NEXT: Branch v83 -> taken b44(), notTaken b46()
 # CHECK-NEXT: b44() frequency=Rare:
-# CHECK-NEXT: v86: 32 = Integer integer=32
-# CHECK-NEXT: v87: int|whole = Add v81, v86
-# CHECK-NEXT: v88: string = CallBuiltin -, v87 overload=StringFromCharCode/0 accessSite=71
-# CHECK-NEXT: Jump -> next b45(v88)
-# CHECK-NEXT: b45(v89: string) frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v3, v89
+# CHECK-NEXT: v84: 32 = Integer integer=32
+# CHECK-NEXT: v85: int|whole = Add v79, v84
+# CHECK-NEXT: v86: string = CallBuiltin -, v85 overload=StringFromCharCode/0 accessSite=71
+# CHECK-NEXT: Jump -> next b45(v86)
+# CHECK-NEXT: b45(v87: string) frequency=Unlikely:
+# CHECK-NEXT: StringBuilderAppend v3, v87
 # CHECK-NEXT: Jump -> next b76()
 # CHECK-NEXT: b46() frequency=Rare:
 # CHECK-NEXT: Jump -> next b48()
@@ -923,50 +921,50 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f17 visibility=Private
 # CHECK-NEXT: b51() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b58()
 # CHECK-NEXT: b52() frequency=Unlikely:
-# CHECK-NEXT: v91: boolean ~ true = TypeTest v69 testedType=i32
-# CHECK-NEXT: Branch v91 -> taken b53(| 0), notTaken b61(| 0)
-# CHECK-NEXT: b53(v92: int[0, 65535]) frequency=Unlikely:
-# CHECK-NEXT: v93: 97 = Integer integer=97
-# CHECK-NEXT: v94: boolean = GreaterEq v92, v93
-# CHECK-NEXT: Branch v94 -> taken b54(), notTaken b57()
+# CHECK-NEXT: v89: boolean ~ true = TypeTest v67 testedType=i32
+# CHECK-NEXT: Branch v89 -> taken b53(| 0), notTaken b61(| 0)
+# CHECK-NEXT: b53(v90: int[0, 65535]) frequency=Unlikely:
+# CHECK-NEXT: v91: 97 = Integer integer=97
+# CHECK-NEXT: v92: boolean = GreaterEq v90, v91
+# CHECK-NEXT: Branch v92 -> taken b54(), notTaken b57()
 # CHECK-NEXT: b54() frequency=Unlikely:
-# CHECK-NEXT: v95: 122 = Integer integer=122
-# CHECK-NEXT: v96: boolean = LessEq v92, v95
-# CHECK-NEXT: Branch v96 -> taken b55(), notTaken b56()
+# CHECK-NEXT: v93: 122 = Integer integer=122
+# CHECK-NEXT: v94: boolean = LessEq v90, v93
+# CHECK-NEXT: Branch v94 -> taken b55(), notTaken b56()
 # CHECK-NEXT: b55() frequency=Unlikely:
-# CHECK-NEXT: v97: 32 = Integer integer=32
-# CHECK-NEXT: v98: int[-32, 65503] = Sub v92, v97
-# CHECK-NEXT: v99: string = CallBuiltin -, v98 overload=StringFromCharCode/0 accessSite=72
-# CHECK-NEXT: Jump -> next b64(v99)
+# CHECK-NEXT: v95: 32 = Integer integer=32
+# CHECK-NEXT: v96: int[-32, 65503] = Sub v90, v95
+# CHECK-NEXT: v97: string = CallBuiltin -, v96 overload=StringFromCharCode/0 accessSite=72
+# CHECK-NEXT: Jump -> next b64(v97)
 # CHECK-NEXT: b56() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b58()
 # CHECK-NEXT: b57() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b58()
 # CHECK-NEXT: b58() frequency=Unlikely:
-# CHECK-NEXT: v100: boolean ~ true = TypeTest v69 testedType=i32
-# CHECK-NEXT: Branch v100 -> taken b59(| 0), notTaken b60()
-# CHECK-NEXT: b59(v101: int[0, 65535]) frequency=Unlikely:
-# CHECK-NEXT: v102: 220 = Integer integer=220
-# CHECK-NEXT: v103: boolean = StrictEq v101, v102
-# CHECK-NEXT: Branch v103 -> taken b69(), notTaken b72()
+# CHECK-NEXT: v98: boolean ~ true = TypeTest v67 testedType=i32
+# CHECK-NEXT: Branch v98 -> taken b59(| 0), notTaken b60()
+# CHECK-NEXT: b59(v99: int[0, 65535]) frequency=Unlikely:
+# CHECK-NEXT: v100: 220 = Integer integer=220
+# CHECK-NEXT: v101: boolean = StrictEq v99, v100
+# CHECK-NEXT: Branch v101 -> taken b69(), notTaken b72()
 # CHECK-NEXT: b60() frequency=Rare:
 # CHECK-NEXT: Jump -> next b68()
-# CHECK-NEXT: b61(v104: whole) frequency=Rare:
-# CHECK-NEXT: v105: whole = Upcast v104 castType=int[0, 65535]|whole
-# CHECK-NEXT: v106: 97 = Integer integer=97
-# CHECK-NEXT: v107: boolean = GreaterEq v105, v106
-# CHECK-NEXT: Branch v107 -> taken b62(| 0), notTaken b66()
-# CHECK-NEXT: b62(v108: whole) frequency=Rare:
-# CHECK-NEXT: v109: 122 = Integer integer=122
-# CHECK-NEXT: v110: boolean = LessEq v108, v109
-# CHECK-NEXT: Branch v110 -> taken b63(| 0), notTaken b65()
-# CHECK-NEXT: b63(v111: whole) frequency=Rare:
-# CHECK-NEXT: v112: 32 = Integer integer=32
-# CHECK-NEXT: v113: int|whole = Sub v111, v112
-# CHECK-NEXT: v114: string = CallBuiltin -, v113 overload=StringFromCharCode/0 accessSite=72
-# CHECK-NEXT: Jump -> next b64(v114)
-# CHECK-NEXT: b64(v115: string) frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v3, v115
+# CHECK-NEXT: b61(v102: whole) frequency=Rare:
+# CHECK-NEXT: v103: whole = Upcast v102 castType=int[0, 65535]|whole
+# CHECK-NEXT: v104: 97 = Integer integer=97
+# CHECK-NEXT: v105: boolean = GreaterEq v103, v104
+# CHECK-NEXT: Branch v105 -> taken b62(| 0), notTaken b66()
+# CHECK-NEXT: b62(v106: whole) frequency=Rare:
+# CHECK-NEXT: v107: 122 = Integer integer=122
+# CHECK-NEXT: v108: boolean = LessEq v106, v107
+# CHECK-NEXT: Branch v108 -> taken b63(| 0), notTaken b65()
+# CHECK-NEXT: b63(v109: whole) frequency=Rare:
+# CHECK-NEXT: v110: 32 = Integer integer=32
+# CHECK-NEXT: v111: int|whole = Sub v109, v110
+# CHECK-NEXT: v112: string = CallBuiltin -, v111 overload=StringFromCharCode/0 accessSite=72
+# CHECK-NEXT: Jump -> next b64(v112)
+# CHECK-NEXT: b64(v113: string) frequency=Unlikely:
+# CHECK-NEXT: StringBuilderAppend v3, v113
 # CHECK-NEXT: Jump -> next b75()
 # CHECK-NEXT: b65() frequency=Rare:
 # CHECK-NEXT: Jump -> next b67()
@@ -975,53 +973,46 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f17 visibility=Private
 # CHECK-NEXT: b67() frequency=Rare:
 # CHECK-NEXT: Jump -> next b68()
 # CHECK-NEXT: b68() frequency=Rare:
-# CHECK-NEXT: v117: 220 = Integer integer=220
-# CHECK-NEXT: v118: boolean = StrictEq v69, v117
-# CHECK-NEXT: Branch v118 -> taken b69(), notTaken b72()
+# CHECK-NEXT: v115: 220 = Integer integer=220
+# CHECK-NEXT: v116: boolean = StrictEq v67, v115
+# CHECK-NEXT: Branch v116 -> taken b69(), notTaken b72()
 # CHECK-NEXT: b69() frequency=Unlikely:
 # CHECK-NEXT: Branch v1 -> taken b70(), notTaken b71()
 # CHECK-NEXT: b70() frequency=Unlikely:
-# CHECK-NEXT: v119: "\u{fc}" = String string="\u{fc}"
-# CHECK-NEXT: StringBuilderAppend v3, v119
+# CHECK-NEXT: v117: "\u{fc}" = String string="\u{fc}"
+# CHECK-NEXT: StringBuilderAppend v3, v117
 # CHECK-NEXT: Jump -> next b74()
 # CHECK-NEXT: b71() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b73()
 # CHECK-NEXT: b72() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b73()
 # CHECK-NEXT: b73() frequency=Unlikely:
-# CHECK-NEXT: v121: string = Substring v0, v71, v70
-# CHECK-NEXT: StringBuilderAppend v3, v121
+# CHECK-NEXT: v119: string = Substring v0, v69, v68
+# CHECK-NEXT: StringBuilderAppend v3, v119
 # CHECK-NEXT: Jump -> next b74()
 # CHECK-NEXT: b74() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b75()
 # CHECK-NEXT: b75() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b76()
 # CHECK-NEXT: b76() frequency=Unlikely:
-# CHECK-NEXT: v123: boolean = TypeTest v70 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v123 -> taken b77(| 0), notTaken b78()
-# CHECK-NEXT: b77(v124: int[1, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v124)
+# CHECK-NEXT: v121: boolean = TypeTest v68 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v121 -> taken b77(| 0), notTaken b78()
+# CHECK-NEXT: b77(v122: int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v122)
 # CHECK-NEXT: b78() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v126: int[0, 2147483647] = GetStringLength v0
-# CHECK-NEXT: v127: boolean = Less v70, v126
-# CHECK-NEXT: Branch v127 -> taken b79(| 0), notTaken b82()
-# CHECK-NEXT: b79(v128: int[1, 2147483646]) frequency=Unlikely:
-# CHECK-NEXT: v129: int[0, 65535] = GetStringCodeUnit v0, v128
-# CHECK-NEXT: v130: 55296 = Integer integer=55296
-# CHECK-NEXT: v131: boolean = Less v129, v130
-# CHECK-NEXT: Branch v131 -> taken b80(), notTaken b28(v128, v129)
+# CHECK-NEXT: v124: boolean = Less v68, v7
+# CHECK-NEXT: Branch v124 -> taken b79(| 0), notTaken b81()
+# CHECK-NEXT: b79(v125: int[1, 2147483646]) frequency=Unlikely:
+# CHECK-NEXT: v126: int[0, 65535] = GetStringCodeUnit v0, v125
+# CHECK-NEXT: v127: 55296 = Integer integer=55296
+# CHECK-NEXT: v128: boolean = Less v126, v127
+# CHECK-NEXT: Branch v128 -> taken b80(), notTaken b27(v125, v126)
 # CHECK-NEXT: b80() frequency=Unlikely:
-# CHECK-NEXT: v132: 65535 = Integer integer=65535
-# CHECK-NEXT: v133: boolean = Greater v129, v132
-# CHECK-NEXT: Branch v133 -> taken b81(v128), notTaken b31(v128)
-# CHECK-NEXT: b81(v134: int[0, 2147483646]) frequency=Rare:
-# CHECK-NEXT: v135: 2 = Integer integer=2
-# CHECK-NEXT: v136: int[2, 2147483648] = Add v134, v135
-# CHECK-NEXT: Jump -> next b32(v136, v134)
-# CHECK-NEXT: b82():
-# CHECK-NEXT: v137: string = StringBuilderFinish v3
-# CHECK-NEXT: Return v137
+# CHECK-NEXT: Jump -> next b31(v125)
+# CHECK-NEXT: b81():
+# CHECK-NEXT: v129: string = StringBuilderFinish v3
+# CHECK-NEXT: Return v129
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="say"
 # CHECK: module=m1 position=241 kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array<undefined|number|string, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=number}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

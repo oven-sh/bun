@@ -230,5 +230,5 @@ runtimefunction id=JSBufferConstructorFrom function=f2
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 117, patchpoints: 31, rare instructions: 68, polls: 2
+# CHECK-NEXT: instructions: 68, patchpoints: 28, rare instructions: 244, polls: 1
 # CHECK-NEXT: end of function f0

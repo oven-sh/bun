@@ -36,6 +36,8 @@ pub(super) enum UsageState {
 pub(super) enum TypeState {
     InProgress(usize),
     Known(TypeId),
+    /// It was computed, and the result depended on who asked.
+    NotKept,
 }
 
 #[derive(Default)]
@@ -84,7 +86,28 @@ impl SubjectStack {
 pub(super) struct TypesInProgress {
     subjects: SubjectStack,
     remaining_types: u64,
+    /// The first subject that the allowance did not reach and that has never been computed.
+    first_out_of_reach: Option<Subject>,
+    extra: ExtraQuestion,
+    /// How many subjects the question `Ahead` may still compute that were computed before.
+    remaining_repeats_ahead: u32,
+    /// How many subjects were computed for the first time, less how many were computed again by extra questions.
+    credit: i64,
 }
+
+/// A question that `inferred_type` asks by itself.
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+enum ExtraQuestion {
+    #[default]
+    None,
+    /// For the subject that was out of reach. It is meant to find subjects that are new. In a cycle it finds the ones
+    /// that the question before it found, and is cut short.
+    Ahead,
+    /// For the subject that was asked for, once more.
+    Again,
+}
+
+const MAX_REPEATS_AHEAD: u32 = 64;
 
 #[derive(Copy, Clone)]
 pub(super) struct ReferenceIndex<'c> {
@@ -748,7 +771,11 @@ fn find_argument_of_call(
     if first_spread as usize <= index {
         return None;
     }
-    Some(hir.ids(node.args).nth(index).unwrap_or(ExprId::NONE))
+    // `nth` would visit every argument in front of this one.
+    match index < node.args.len() {
+        true => Some(hir.id_at(node.args, index)),
+        false => Some(ExprId::NONE),
+    }
 }
 
 fn find_parameter(parameters: &[SigParam], index: usize) -> Option<SigParam> {
@@ -976,28 +1003,104 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// A question may compute `max_inference_nodes` subjects. Where that is not enough, nothing on the way to the
+    /// subject out of reach is kept, so a chain of n calls would cost each of n questions the whole allowance. So that
+    /// subject is computed first, with an allowance of its own, and then the question is asked again and finds it.
+    /// In a cycle that gains nothing. What is computed again this way is paid for by what was computed for the first
+    /// time, so all of it together takes at most one more visit of each subject.
     fn inferred_type(&mut self, subject: Subject) -> TypeId {
+        let inferred = self.inferred_type_within_allowance(subject);
+        let in_progress = &self.memo.types_in_progress;
+        if in_progress.subjects.depth != 0 || in_progress.first_out_of_reach.is_none() {
+            return inferred;
+        }
+        self.inferred_type_behind_what_was_out_of_reach(subject, inferred)
+    }
+
+    #[cold]
+    fn inferred_type_behind_what_was_out_of_reach(
+        &mut self,
+        subject: Subject,
+        first_answer: TypeId,
+    ) -> TypeId {
+        let mut asked: SmallVec<[(Subject, TypeId); 4]> = SmallVec::new();
+        let (mut current, mut inferred) = (subject, first_answer);
+        loop {
+            let in_progress = &mut self.memo.types_in_progress;
+            let out_of_reach = in_progress.first_out_of_reach.take();
+            if let Some(next) = out_of_reach
+                && in_progress.credit >= self.inputs.max_inference_nodes as i64
+            {
+                in_progress.extra = ExtraQuestion::Ahead;
+                in_progress.remaining_repeats_ahead = MAX_REPEATS_AHEAD;
+                // It no longer counts as never computed, so it is asked ahead once. With an allowance of 0 it is the
+                // very subject that was asked for.
+                self.memo.inferred_types.insert(next, TypeState::NotKept);
+                asked.push((current, inferred));
+                current = next;
+            } else {
+                let mut is_known = self.is_inferred_type_known(current);
+                loop {
+                    let Some((earlier, earlier_answer)) = asked.pop() else {
+                        self.memo.types_in_progress.extra = ExtraQuestion::None;
+                        return inferred;
+                    };
+                    if is_known {
+                        self.memo.types_in_progress.extra = ExtraQuestion::Again;
+                        current = earlier;
+                        break;
+                    }
+                    (inferred, is_known) = (earlier_answer, false);
+                }
+            }
+            inferred = self.inferred_type_within_allowance(current);
+        }
+    }
+
+    fn is_inferred_type_known(&self, subject: Subject) -> bool {
+        matches!(
+            self.memo.inferred_types.get(&subject),
+            Some(TypeState::Known(_))
+        )
+    }
+
+    fn inferred_type_within_allowance(&mut self, subject: Subject) -> TypeId {
         if self.infers_nothing_from_use {
             return TypeId::ANY;
         }
-        match self.memo.inferred_types.get(&subject) {
+        let is_first_time = match self.memo.inferred_types.get(&subject) {
             Some(&TypeState::Known(known)) => return known,
             Some(&TypeState::InProgress(depth)) => {
                 self.memo.types_in_progress.subjects.revisit(depth);
                 return TypeId::ANY;
             }
-            None => {}
-        }
+            Some(&TypeState::NotKept) => false,
+            None => true,
+        };
         let max_types = self.inputs.max_inference_nodes;
         let in_progress = &mut self.memo.types_in_progress;
         if in_progress.subjects.depth == 0 {
             in_progress.remaining_types = max_types;
         }
+        if !is_first_time && in_progress.extra == ExtraQuestion::Ahead {
+            match in_progress.remaining_repeats_ahead {
+                0 => in_progress.remaining_types = 0,
+                _ => in_progress.remaining_repeats_ahead -= 1,
+            }
+        }
         if in_progress.remaining_types == 0 {
             in_progress.subjects.revisit(0);
+            if is_first_time && in_progress.first_out_of_reach.is_none() {
+                in_progress.first_out_of_reach = Some(subject);
+            }
             return TypeId::ANY;
         }
         in_progress.remaining_types -= 1;
+        if is_first_time {
+            in_progress.credit += 1;
+        } else if in_progress.extra != ExtraQuestion::None {
+            in_progress.credit -= 1;
+        }
         let entered = in_progress.subjects.enter();
         let state = TypeState::InProgress(entered.depth);
         self.memo.inferred_types.insert(subject, state);
@@ -1013,12 +1116,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         });
         let inferred = inferred.unwrap_or(TypeId::ANY);
         let ran_into_outer_subject = self.memo.types_in_progress.subjects.leave(entered);
-        if !ran_into_outer_subject && self.count_unstable_answers() == unstable_answers {
-            let known = TypeState::Known(inferred);
-            self.memo.inferred_types.insert(subject, known);
-        } else {
-            self.memo.inferred_types.remove(&subject);
-        }
+        let is_kept = !ran_into_outer_subject && self.count_unstable_answers() == unstable_answers;
+        let state = match is_kept {
+            true => TypeState::Known(inferred),
+            false => TypeState::NotKept,
+        };
+        self.memo.inferred_types.insert(subject, state);
         inferred
     }
 

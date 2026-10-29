@@ -591,7 +591,7 @@ function f75 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v25: never = Call v24, -, v2 calleeName="handler" accessSite=6 callees=[]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: v26: anything ~ undefined|null|function = PropGet v22 key="x" accessSite=5 receivers=[L6]
+# CHECK-NEXT: v26: anything ~ undefined|null|function|f8 = PropGet v22 key="x" accessSite=5 receivers=[L6]
 # CHECK-NEXT: v27: anything = Call v26, -, v2 calleeName="handler" accessSite=6 callees=[]
 # CHECK-NEXT: v28: true = Boolean boolean=true
 # CHECK-NEXT: Return v28

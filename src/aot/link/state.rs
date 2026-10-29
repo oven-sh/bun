@@ -40,6 +40,7 @@ pub(super) enum VariableDefinition {
         module: u32,
         name: Atom,
         is_known_member: bool,
+        is_replaceable: bool,
         writer: ExportWriter,
     },
 }

@@ -9,7 +9,7 @@ use bun_options_types::aot_options::{
 };
 use bun_options_types::bundle_enums::Format;
 use bun_options_types::compile_target::CompileTarget;
-use bun_options_types::context::{Debugger, HotReload};
+use bun_options_types::context::{Debugger, HotReload, TestOptions};
 use bun_options_types::trim::{Feature, TrimFeature, TrimRequest};
 use bun_trim::{TrimError, TrimRequestError};
 
@@ -920,12 +920,19 @@ pub(crate) fn parse_build_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Co
     options.trim = settings.trim;
 }
 
+/// `bun test --aot` runs compiled code. `bun run --aot` checks the program and runs it from its source.
+fn compiles_before_run(cmd: Tag, args: &clap::Args<clap::Help>) -> bool {
+    args.flag(b"--debug-aot")
+        || args.flag(b"--aot-log-type-mismatches")
+        || (cmd == Tag::TestCommand && args.flag(b"--aot"))
+}
+
 pub(crate) fn checks_before_each_run(cmd: Tag, args: &clap::Args<clap::Help>) -> bool {
     if cmd == Tag::RunAsNodeCommand {
         return false;
     }
-    let compiles = args.flag(b"--debug-aot") || args.flag(b"--aot-log-type-mismatches");
-    args.option(b"--aot-checked").is_some() || (args.flag(b"--aot") && !compiles)
+    args.option(b"--aot-checked").is_some()
+        || (args.flag(b"--aot") && !compiles_before_run(cmd, args))
 }
 
 #[inline]
@@ -958,6 +965,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     if let Some(descriptor) = args.option(b"--aot-graph-fd") {
         run_compiled::use_graph_descriptor(descriptor);
         ctx.test_options.coverage.enabled = false;
+        isolate_reruns(&mut ctx.test_options);
         return;
     }
     if let Some(check_result) = args.option(b"--aot-checked") {
@@ -966,7 +974,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     }
     let reports_type_mismatches = args.flag(b"--aot-log-type-mismatches");
     let has_huge_heap = args.flag(b"--aot-huge-heap");
-    let compiles = args.flag(b"--debug-aot") || reports_type_mismatches;
+    let compiles = compiles_before_run(cmd, args);
     if has_huge_heap && !compiles {
         exit_with_message(
             b"--aot-huge-heap is only valid with bun build --compile --aot and bun compile",
@@ -1015,19 +1023,14 @@ fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
     }
 }
 
+/// A compiled module runs once per global object, so each run of --rerun-each gets a new one.
+fn isolate_reruns(options: &mut TestOptions) {
+    options.isolate |= options.repeat_count > 1;
+}
+
 fn check_test_conflicts(ctx: Context<'_>) {
     let options = &mut ctx.test_options;
-    if options.repeat_count > 1 {
-        exit_with_message(b"--aot does not support --rerun-each (or \"rerunEach\" in bunfig.toml): a compiled module only runs once per process");
-    }
-    if options.parallel > 0 {
-        exit_with_message(
-            b"--aot does not support --parallel: a compiled program runs in one process",
-        );
-    }
-    if options.isolate {
-        exit_with_message(b"--aot does not support --isolate: a compiled module can't be loaded into a second global object");
-    }
+    isolate_reruns(options);
     if options.coverage.enabled {
         bun_core::warn!("--coverage is ignored with --aot");
         options.coverage.enabled = false;

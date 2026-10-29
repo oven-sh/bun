@@ -146,6 +146,8 @@ pub struct SyntheticExport {
     pub module: ModuleRef,
     pub name: Atom,
     pub is_known_member: bool,
+    /// The test runner may store another value under the name.
+    pub is_replaceable: bool,
 }
 
 /// `export { name as export_name } from "specifier"`, or the same in two statements: an import and an export of what it declares.

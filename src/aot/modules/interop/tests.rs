@@ -18,6 +18,21 @@ const DATA_WITH_DEFAULT: Interop = Interop::new(
     SyntheticExportRule::None,
     RequireResult::DefaultExport,
 );
+const IMPORTED_DATA: Interop = Interop::new(
+    ModuleKind::Data,
+    SyntheticExportRule::None,
+    RequireResult::Namespace,
+);
+
+/// Of a data file that the entry point imports: the file alone says one thing, and the graph knows that the loader of ES modules holds it.
+fn check_interop_of_imported_data(files: &[(&str, &str)], name: &str) {
+    with_graph(files, |graph, input| {
+        let file = file_named(input, name);
+        let alone = file_interop(input.files, input.sources, file);
+        assert_eq!(alone, DATA_WITH_DEFAULT);
+        assert_eq!(graph.interop(ModuleRef::File(file)), IMPORTED_DATA);
+    });
+}
 
 fn check_interop(files: &[(&str, &str)], name: &str, expected: Interop) {
     with_graph(files, |graph, input| {
@@ -181,7 +196,7 @@ fn json_file_exports_keys() {
         ),
         ("data.json", r#"{ "x": 1, "a": 2 }"#),
     ];
-    check_interop(&files, "data.json", DATA_WITH_DEFAULT);
+    check_interop_of_imported_data(&files, "data.json");
     with_graph(&files, |graph, input| {
         let data = file_named(input, "data.json");
         assert_eq!(
@@ -246,9 +261,34 @@ fn json_file_whose_namespace_can_be_reached_exports_every_key() {
 #[test]
 fn text_file_exports_default_only() {
     let files = [("main.js", "import './notes.txt';"), ("notes.txt", "text")];
-    check_interop(&files, "notes.txt", DATA_WITH_DEFAULT);
+    check_interop_of_imported_data(&files, "notes.txt");
     with_graph(&files, |graph, input| {
         assert_eq!(export_names(graph, input, "notes.txt"), [b"default"]);
+    });
+}
+
+#[test]
+fn data_file_that_is_only_required_answers_its_value() {
+    let files = [
+        ("main.cjs", "console.log(require('./data.json'));"),
+        ("data.json", r#"{ "x": 1 }"#),
+    ];
+    check_interop(&files, "data.json", DATA_WITH_DEFAULT);
+}
+
+#[test]
+fn loader_answers_require_of_a_data_file_that_import_call_names() {
+    let files = [
+        (
+            "main.cjs",
+            "import('./data.json'); console.log(require('./data.json'));",
+        ),
+        ("data.json", r#"{ "x": 1 }"#),
+    ];
+    with_graph(&files, |graph, input| {
+        let file = file_named(input, "data.json");
+        let result = graph.interop(ModuleRef::File(file)).require_result;
+        assert_eq!(result, RequireResult::NamespaceIfImported);
     });
 }
 

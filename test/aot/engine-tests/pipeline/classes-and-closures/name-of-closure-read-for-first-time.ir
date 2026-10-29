@@ -1751,19 +1751,20 @@ runtimefunction id=ArrayTraversalTraverseArray function=f39 visibility=Private
 # CHECK-NEXT: v95: builtin(Console) = Builtin builtin=Console
 # CHECK-NEXT: v96: null = Null
 # CHECK-NEXT: v97: function = CallBuiltin v0, v96 overload=FunctionPrototypeBind/0 accessSite=21
-# CHECK-NEXT: v98: anything = PropGet v97 key="name" accessSite=22
-# CHECK-NEXT: v99: undefined = CallBuiltin v95, v98 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=23
-# CHECK-NEXT: v100: f14 = NewClosure function=f14 allocationSite=15 storage=Frame
-# CHECK-NEXT: v101: undefined = Undefined
-# CHECK-NEXT: v102: Array<undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15, Contiguous> = NewArray v0, v6, v7, v8, v1, v2, v9, v10, v5, v18, v19, v3, v22, v25 contents=undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15 allocationSite=14 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v103: Array<undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v102 provenType=Array<undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v104: anything = CallDirect v103, v100, v101 function=f60 accessSite=27
-# CHECK-NEXT: v105: Array<undefined|string, proven, pristine[Storage, Names, Dense]> = AssumeType v104 provenType=Array<undefined|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v106: "," = String string=","
-# CHECK-NEXT: v107: string = CallBuiltin v105, v106 overload=ArrayPrototypeJoin/0 accessSite=29
-# CHECK-NEXT: v108: undefined = CallBuiltin -, v107 overload=ConsoleLog/0 accessSite=30
-# CHECK-NEXT: v109: undefined = Undefined
-# CHECK-NEXT: Return v109
+# CHECK-NEXT: v98: function|f1|f6|f8|f9|f10|f11|f12|f15 = Upcast v97 castType=function|f1|f6|f8|f9|f10|f11|f12|f15
+# CHECK-NEXT: v99: anything = PropGet v98 key="name" accessSite=22
+# CHECK-NEXT: v100: undefined = CallBuiltin v95, v99 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=23
+# CHECK-NEXT: v101: f14 = NewClosure function=f14 allocationSite=15 storage=Frame
+# CHECK-NEXT: v102: undefined = Undefined
+# CHECK-NEXT: v103: Array<undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15, Contiguous> = NewArray v0, v6, v7, v8, v1, v2, v9, v10, v5, v18, v19, v3, v22, v25 contents=undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15 allocationSite=14 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v104: Array<undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v103 provenType=Array<undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f15, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v105: anything = CallDirect v104, v101, v102 function=f60 accessSite=27
+# CHECK-NEXT: v106: Array<undefined|string, proven, pristine[Storage, Names, Dense]> = AssumeType v105 provenType=Array<undefined|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v107: "," = String string=","
+# CHECK-NEXT: v108: string = CallBuiltin v106, v107 overload=ArrayPrototypeJoin/0 accessSite=29
+# CHECK-NEXT: v109: undefined = CallBuiltin -, v108 overload=ConsoleLog/0 accessSite=30
+# CHECK-NEXT: v110: undefined = Undefined
+# CHECK-NEXT: Return v110
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeCounter"
 # CHECK: module=m0 position=637 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 2] site=w8}] results=[{type=f15 site=w9 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f27] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f41}

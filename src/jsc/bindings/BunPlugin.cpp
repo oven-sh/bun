@@ -536,6 +536,8 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 
 struct LoadedModule {
     JSC::JSModuleNamespaceObject* esmNamespace { nullptr };
+    // The file was compiled ahead of time. Its exports are variables of the program, whether or not it has run.
+    std::optional<JSC::AOT::ModuleID> compiledModule;
     Bun::JSCommonJSModule* commonJSModule { nullptr };
     // In the registry / require.cache with nothing to patch: removed so the next import loads the mock.
     bool staleESMEntry { false };
@@ -565,8 +567,10 @@ static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* s
         bool linked = true;
         if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mod))
             linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
-        if (JSC::AOT::isCompiledModuleRecord(mod))
-            linked = false;
+        if (JSC::AOT::isCompiledModuleRecord(mod)) {
+            loaded.staleESMEntry = false;
+            return;
+        }
         if (linked) {
             loaded.esmNamespace = mod->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, );
@@ -600,6 +604,11 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
     RETURN_IF_EXCEPTION(scope, {});
     findLoadedCommonJSModule(globalObject, specifierString, loaded);
     RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+    auto specifier = specifierString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    loaded.compiledModule = Bun::compiledModuleForPath(specifier);
+#endif
     return loaded;
 }
 
@@ -608,7 +617,7 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* moduleNamespaceObject = loaded.esmNamespace) {
+    if (loaded.esmNamespace || loaded.compiledModule) {
         JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         // Via the method table so a module namespace object (`() => import("./mocked")`) lists its exports.
         exports->methodTable()->getOwnPropertyNames(exports, globalObject, names, DontEnumPropertiesMode::Exclude);
@@ -627,8 +636,17 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
+#if ENABLE(AOT)
+        if (loaded.compiledModule)
+            JSC::AOT::willMockModule(globalObject, *loaded.compiledModule, exports);
+#endif
         for (size_t i = 0; i < names.size(); ++i) {
-            moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+            if (auto* moduleNamespaceObject = loaded.esmNamespace)
+                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+#if ENABLE(AOT)
+            else
+                JSC::AOT::mockExport(globalObject, *loaded.compiledModule, names[i].impl(), values.at(i));
+#endif
             RETURN_IF_EXCEPTION(scope, );
         }
     }
@@ -731,10 +749,12 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     resolveSpecifier();
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (Bun::isCompiledModule(specifier)) {
+#if ENABLE(AOT)
+    if (auto compiledModule = Bun::compiledModuleForPath(specifier); compiledModule && !JSC::AOT::mayBeMocked(globalObject, *compiledModule)) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
         return {};
     }
+#endif
 
     JSC::JSObject* callback = callbackValue.getObject();
 
@@ -744,7 +764,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSPromise* pendingFactory = nullptr;
-    if (loaded.esmNamespace || loaded.commonJSModule) {
+    if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
         JSValue exportsValue = mock->executeOnce(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 

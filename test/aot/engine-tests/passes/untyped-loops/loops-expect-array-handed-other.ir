@@ -961,7 +961,7 @@ runtimefunction id=GeneratorPrototypeNext function=f64 visibility=Private
 runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # -- generated: Countdown f6 weigh f10 f11 f12 f13 f14 f15 f16 f17 f19 f20 f23 f24 f27 f28 f29 f33 f36 count
 # CHECK-LABEL: function {{*}}name="count"
-# CHECK: module=m0 position=754 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} results=[{type=Generator<int[1, 3], pristine[Storage]>}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f1 body=f79 promiseParameter=2}
+# CHECK: module=m0 position=754 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} results=[{type=Generator<int[1, 3], pristine[Storage]>}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f1 body=f80 promiseParameter=2}
 # CHECK-LABEL: function {{*}}name="Countdown"
 # CHECK: module=m0 position=916 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=3}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
 # CHECK-NEXT: b0(v0: anything, v1: 3):
@@ -1051,14 +1051,14 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: v0: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: Generator = NewGenerator v0 function=f1
-# CHECK-NEXT: v3: anything = CallDirect v1, v0, v2 function=f79
+# CHECK-NEXT: v3: anything = CallDirect v1, v0, v2 function=f80
 # CHECK-NEXT: v4: Generator<int[1, 3], pristine[Storage]> = AssumeType v2 provenType=Generator<int[1, 3], pristine[Storage]>
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=1451 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=L0}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f118 layout=L0} {
+# CHECK: m0 position=1451 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=L0}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f119 layout=L0} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = CallDirect function=f118
+# CHECK-NEXT: v0: undefined = CallDirect function=f119
 # CHECK-NEXT: v1: 3 = ResultAt v0
 # CHECK-NEXT: v2: 0 = ResultAt v0 index=1
 # CHECK-NEXT: v3: 0 = ResultAt v0 index=2
@@ -1077,11 +1077,11 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f17 module=
-# CHECK: m0 position=1509 kind=Arrow thisType={type=anything} results=[{type=ArrayIterator<pristine[Storage]>}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=1509 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=ArrayIterator<pristine[Storage]>}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f76} inlineFrames=[{}, {callee=f76 callPosition=1509 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Array<int[7, 8], Int32> = Data data=d16 allocationSite=53 arrayStorage=Int32
 # CHECK-NEXT: v1: Array<int[7, 8], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<int[7, 8], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v2: ArrayIterator = CallBuiltin v1 overload=ArrayPrototypeEntries/0 accessSite=100 @0 tail
+# CHECK-NEXT: v2: ArrayIterator = CallBuiltin v1 overload=ArrayPrototypeEntries/0 accessSite=100 @1509 tail
 # CHECK-NEXT: v3: ArrayIterator<pristine[Storage]> = AssumeType v2 provenType=ArrayIterator<pristine[Storage]>
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
@@ -1139,7 +1139,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f36 module=
-# CHECK: m0 position=3232 kind=Arrow role=ResultWrapper captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=L5}] functionTypes=[f58] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f78 layout=L5} inlineFrames=[{}, {callee=f78 callPosition=3232 module=m0}] {
+# CHECK: m0 position=3232 kind=Arrow role=ResultWrapper captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=L5}] functionTypes=[f58] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f79 layout=L5} inlineFrames=[{}, {callee=f79 callPosition=3232 module=m0}] {
 # CHECK-NEXT: b0(v0: env L1):
 # CHECK-NEXT: v1: int|whole = GetEnvironmentField v0 layout=L1 [leansOnEntryOfBody]
 # CHECK-NEXT: v2: int|whole = ToNumeric v1
@@ -1151,7 +1151,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="count"
-# CHECK: module=m0 position=754 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f1 body=f79 promiseParameter=2} {
+# CHECK: module=m0 position=754 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f1 body=f80 promiseParameter=2} {
 # CHECK-NEXT: b0(v0: undefined, v1: function, v2: Generator):
 # CHECK-NEXT: v3: boolean = IsGeneratorRunning v2
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b10()

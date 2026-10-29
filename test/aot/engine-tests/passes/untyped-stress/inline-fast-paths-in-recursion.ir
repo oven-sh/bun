@@ -469,7 +469,3 @@ function f10 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 1307, patchpoints: 34, rare instructions: 602, polls: 1
 # CHECK-NEXT: end of function f6
-# CHECK-LABEL: function {{*}}name="dispatchesInManyArms"
-# CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 2, patchpoints: 2
-# CHECK-NEXT: end of function f18

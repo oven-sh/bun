@@ -40,6 +40,7 @@ pub use state::UnitIds;
 pub use unit::LinkUnit;
 
 use crate::builtins::RuntimeFunction;
+use crate::ir::generated::{ModuleFlags, VariableFlags};
 use crate::ir::{InParallel, Program, drop_each, for_each_mut};
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind, Sources};
 use crate::modules::{ModuleGraph, Shape};
@@ -344,6 +345,14 @@ pub fn link_while(
     );
     times.end_step(StatisticId::LinkMoveDefinitionsNanoseconds);
 
+    // A mock stores its object as what a CommonJS file exports.
+    for module in &records.modules {
+        if let Some(exports) = module.exports_variable
+            && module.flags.contains(ModuleFlags::MAY_BE_MOCKED)
+        {
+            tables.variables[exports.to_word() as usize].flags |= VariableFlags::IS_REPLACEABLE;
+        }
+    }
     let functions_by_unit = core::mem::take(&mut tables.functions_by_unit);
     let body_remap = BodyRemap::new(core::mem::take(&mut numbering.units), functions_by_unit);
     let program = Program {

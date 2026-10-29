@@ -28,7 +28,22 @@ worker.on("error", error => console.log("eval: true of node:worker_threads", "er
 `,
 };
 
-const { folder, build } = sharedBuilds("worker-of-text", files);
+// The build cannot know these texts, so it compiles none of them.
+const made = `Buffer.from(${JSON.stringify(text)}).toString()`;
+const filesWithTextMadeAtRunTime = {
+  "made-at-run-time.js": `import "./made-blob-url.js";\nimport "./made-evaluated.js";\n`,
+  "made-blob-url.js": `const worker = new Worker(URL.createObjectURL(new Blob([${made}], { type: "application/javascript" })));${listen("a blob: URL")}`,
+  "made-evaluated.js": `import { Worker } from "node:worker_threads";
+const worker = new Worker(Buffer.from("require('node:worker_threads').parentPort.postMessage('ran')").toString(), { eval: true });
+worker.on("message", message => {
+  console.log("eval: true of node:worker_threads", "message", message);
+  worker.terminate();
+});
+worker.on("error", error => console.log("eval: true of node:worker_threads", "error", error.message.replace(/blob:[-0-9a-f]+/, "blob:")));
+`,
+};
+
+const { folder, build } = sharedBuilds("worker-of-text", { ...files, ...filesWithTextMadeAtRunTime });
 
 if (!canTrim)
   console.error("SKIPPED: worker-of-text-in-a-trimmed-executable.test.ts: this build of Bun doesn't support --trim");
@@ -44,5 +59,32 @@ test.skipIf(!canTrim || !!unsupported)(
     const byWhole = await reported(whole.executable);
     expect(byWhole.lines.length).toBe(4);
     expect(await reported(trimmed.executable)).toEqual(byWhole);
+  },
+);
+
+test.skipIf(!canTrim || !!unsupported)(
+  "a trimmed executable names --trim where it refuses a Worker made from text that the build has not seen",
+  async () => {
+    const [whole, trimmed] = await Promise.all([
+      build("made-at-run-time.js", "--aot"),
+      build("made-at-run-time.js", "--aot", "--trim"),
+    ]);
+    // The event of the global Worker holds the error as it is printed: "error: " in front, its code on a line of its own.
+    const linesOf = async (executable: string) =>
+      (await run([executable], folder)).stdout
+        .split("\n")
+        .filter(line => / (message|error) /.test(line))
+        .map(line => line.replace(" error error: ", " error "))
+        .sort();
+    expect(await linesOf(whole.executable)).toEqual([
+      "a blob: URL message ran",
+      "eval: true of node:worker_threads message ran",
+    ]);
+    const refusal =
+      "Cannot load 'blob:': it isn't in this executable, and --trim removed what a Worker needs to run code that wasn't compiled into it. Build without --trim.";
+    expect(await linesOf(trimmed.executable)).toEqual([
+      `a blob: URL error ${refusal}`,
+      `eval: true of node:worker_threads error ${refusal}`,
+    ]);
   },
 );

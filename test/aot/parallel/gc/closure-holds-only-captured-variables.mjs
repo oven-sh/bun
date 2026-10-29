@@ -19,6 +19,8 @@ for (let i = 0; i < 5; i++) {
   Bun.gc(true);
   await new Promise(resolve => setTimeout(resolve, 5));
 }
+// A registry that is read no more may be collected, and then it calls nothing.
+registry.unregister(kept);
 let sum = 0;
 for (const read of kept) sum += read();
 // The stack may still hold a few.

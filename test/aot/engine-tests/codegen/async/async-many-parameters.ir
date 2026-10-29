@@ -1105,46 +1105,46 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f27
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=2159 kind=Arrow flags=[IsAsync, IsChecked] length=6 syntax=[HasWrittenAwait] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=1 site=w37}, {type="q" site=w38 flags=[OmitsNull, OmitsUndefined]}, {type=L2 site=w39 flags=[OmitsNull, OmitsUndefined]}, {type=4 site=w40}] thisType={type=anything} parameters=[{type=1 site=w97}, {type=2 site=w98}, {type="c" site=w99 flags=[OmitsNull, OmitsUndefined]}, {type=4 site=w100}, {type="e" site=w101 flags=[OmitsNull, OmitsUndefined]}, {type=6 site=w102}] results=[{type=Promise<never, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
 # CHECK-NEXT: b0(v0: env L1, v1: 1, v2: "q", v3: L2, v4: 4, v5: 1, v6: 2, v7: "c", v8: 4, v9: "e", v10: 6):
-# CHECK-NEXT: v11: 1 = AssumeType v1 provenType=number
-# CHECK-NEXT: v12: 1 = AssumeType v11 provenType=int
-# CHECK-NEXT: v13: "q" = AssumeType v2 provenType=undefined|null|string
-# CHECK-NEXT: v14: "q" = AssumeType v13 provenType="q"
-# CHECK-NEXT: v15: L2 = AssumeType v3 provenType=undefined|null|L2
-# CHECK-NEXT: v16: L2 = AssumeType v15 provenType=L2
-# CHECK-NEXT: v17: 4 = AssumeType v4 provenType=number
-# CHECK-NEXT: v18: 4 = AssumeType v17 provenType=int
-# CHECK-NEXT: v19: 1 = AssumeType v5 provenType=number
-# CHECK-NEXT: v20: 1 = AssumeType v19 provenType=int
-# CHECK-NEXT: v21: 2 = AssumeType v6 provenType=number
-# CHECK-NEXT: v22: 2 = AssumeType v21 provenType=int
-# CHECK-NEXT: v23: "c" = AssumeType v7 provenType=undefined|null|string
-# CHECK-NEXT: v24: "c" = AssumeType v23 provenType="c"
-# CHECK-NEXT: v25: 4 = AssumeType v8 provenType=number
-# CHECK-NEXT: v26: 4 = AssumeType v25 provenType=int
-# CHECK-NEXT: v27: "e" = AssumeType v9 provenType=undefined|null|string
-# CHECK-NEXT: v28: "e" = AssumeType v27 provenType="e"
-# CHECK-NEXT: v29: 6 = AssumeType v10 provenType=number
-# CHECK-NEXT: v30: 6 = AssumeType v29 provenType=int
-# CHECK-NEXT: v31: string = Add v12, v14
-# CHECK-NEXT: v32: string = AssumeType v31 provenType=string
-# CHECK-NEXT: v33: int[-2147483643, 2147483647] = PropGet v16 key="x" accessSite=39 receivers=[L2]
-# CHECK-NEXT: v34: int[-2147483643, 2147483647] = AssumeType v33 provenType=int
-# CHECK-NEXT: v35: string = Add v32, v34
-# CHECK-NEXT: v36: string = AssumeType v35 provenType=string
-# CHECK-NEXT: v37: string = Add v36, v18
-# CHECK-NEXT: v38: string = AssumeType v37 provenType=string
-# CHECK-NEXT: v39: string = AssumeType v38 provenType=undefined|null|string
-# CHECK-NEXT: v40: "/" = String string="/"
-# CHECK-NEXT: v41: string = Add v39, v40
-# CHECK-NEXT: v42: string = Add v41, v20
-# CHECK-NEXT: v43: string = Add v42, v22
-# CHECK-NEXT: v44: string = Add v43, v24
-# CHECK-NEXT: v45: string = Add v44, v26
-# CHECK-NEXT: v46: string = Add v45, v28
-# CHECK-NEXT: v47: string = Add v46, v30
-# CHECK-NEXT: v48: "/" = String string="/"
-# CHECK-NEXT: v49: string = Add v47, v48
-# CHECK-NEXT: v50: absent = GetEnvironmentField v0 layout=L1
-# CHECK-NEXT: v51: never = CheckInitialized v50 name="count"
-# CHECK-NEXT: Unreachable
+# CHECK-NEXT: v37: 1 = AssumeType v1 provenType=number
+# CHECK-NEXT: v48: 1 = AssumeType v37 provenType=int
+# CHECK-NEXT: v38: "q" = AssumeType v2 provenType=undefined|null|string
+# CHECK-NEXT: v49: "q" = AssumeType v38 provenType="q"
+# CHECK-NEXT: v39: L2 = AssumeType v3 provenType=undefined|null|L2
+# CHECK-NEXT: v50: L2 = AssumeType v39 provenType=L2
+# CHECK-NEXT: v40: 4 = AssumeType v4 provenType=number
+# CHECK-NEXT: v51: 4 = AssumeType v40 provenType=int
+# CHECK-NEXT: v11: 1 = Check v5 expectedType=i32 site=w97
+# CHECK-NEXT: v12: 2 = Check v6 expectedType=i32 site=w98
+# CHECK-NEXT: v13: "c" = AssumeType v7 provenType=undefined|null|string
+# CHECK-NEXT: v41: "c" = AssumeType v13 provenType="c"
+# CHECK-NEXT: v14: 4 = Check v8 expectedType=i32 site=w100
+# CHECK-NEXT: v15: "e" = AssumeType v9 provenType=undefined|null|string
+# CHECK-NEXT: v42: "e" = AssumeType v15 provenType="e"
+# CHECK-NEXT: v16: 6 = Check v10 expectedType=i32 site=w102
+# CHECK-NEXT: v17: string = Add v48, v49
+# CHECK-NEXT: v43: string = AssumeType v17 provenType=string
+# CHECK-NEXT: v18: int[-2147483643, 2147483647] = PropGet v50 key="x" accessSite=39 receivers=[L2]
+# CHECK-NEXT: v44: int[-2147483643, 2147483647] = AssumeType v18 provenType=int
+# CHECK-NEXT: v19: string = Add v43, v44
+# CHECK-NEXT: v45: string = AssumeType v19 provenType=string
+# CHECK-NEXT: v20: string = Add v45, v51
+# CHECK-NEXT: v46: string = AssumeType v20 provenType=string
+# CHECK-NEXT: v21: string = AssumeType v46 provenType=undefined|null|string
+# CHECK-NEXT: v22: "/" = String string="/"
+# CHECK-NEXT: v23: string = Add v21, v22
+# CHECK-NEXT: v24: string = Add v23, v11
+# CHECK-NEXT: v25: string = Add v24, v12
+# CHECK-NEXT: v26: string = Add v25, v41
+# CHECK-NEXT: v27: string = Add v26, v14
+# CHECK-NEXT: v28: string = Add v27, v42
+# CHECK-NEXT: v29: string = Add v28, v16
+# CHECK-NEXT: v30: "/" = String string="/"
+# CHECK-NEXT: v31: string = Add v29, v30
+# CHECK-NEXT: v32: absent = GetEnvironmentField v0 layout=L1
+# CHECK-NEXT: v33: never = CheckInitialized v32 name="count"
+# CHECK-NEXT: v34: never = Add v31, v33
+# CHECK-NEXT: v35: int[-2147483643, 2147483647] = PropGet v50 key="y" accessSite=40 receivers=[L2]
+# CHECK-NEXT: v47: int[-2147483643, 2147483647] = AssumeType v35 provenType=int
+# CHECK-NEXT: v36: never = Add v34, v47
+# CHECK-NEXT: Return v36
 # CHECK-NEXT: }

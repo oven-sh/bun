@@ -229,6 +229,32 @@ impl Statistics {
 pub struct StageClock {
     times: [Duration; Stage::COUNT],
     running: Option<(Stage, Instant)>,
+    /// Processor time of the process when the running stage began, if stages are logged.
+    cpu_at_start: Duration,
+}
+
+/// Processor time of the process so far, and the memory it has resident now and had at the most, in bytes.
+fn process_info() -> (Duration, usize, usize) {
+    let (mut user, mut system, mut resident, mut peak) = (0, 0, 0, 0);
+    let unused = core::ptr::null_mut();
+    // SAFETY: it writes a number through each pointer that is not null.
+    unsafe {
+        bun_alloc::mimalloc::mi_process_info(
+            unused,
+            &raw mut user,
+            &raw mut system,
+            &raw mut resident,
+            &raw mut peak,
+            unused,
+            unused,
+            unused,
+        );
+    }
+    (Duration::from_millis((user + system) as u64), resident, peak)
+}
+
+fn logs_stages() -> bool {
+    bun_alloc::USE_MIMALLOC && bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
 }
 
 impl StageClock {
@@ -236,12 +262,16 @@ impl StageClock {
         StageClock {
             times: [Duration::ZERO; Stage::COUNT],
             running: None,
+            cpu_at_start: Duration::ZERO,
         }
     }
 
     pub fn start(&mut self, stage: Stage) {
         self.stop();
         self.running = Some((stage, Instant::now()));
+        if logs_stages() {
+            self.cpu_at_start = process_info().0;
+        }
         set_step_of_build(match stage {
             Stage::Load => Some(current_work::Step::Load),
             Stage::BindModules => Some(current_work::Step::BindModules),
@@ -254,8 +284,21 @@ impl StageClock {
 
     pub fn stop(&mut self) {
         if let Some((stage, started)) = self.running.take() {
-            self.times[stage as usize] += started.elapsed();
+            let wall = started.elapsed();
+            self.times[stage as usize] += wall;
             set_step_of_build(None);
+            if logs_stages() {
+                // In the form of the engine's lines.
+                let (cpu, resident, peak) = process_info();
+                eprintln!(
+                    "AOT phase times: front end | {} | wall {:.6} ms | cpu {:.6} ms | resident {} MB | peak {} MB",
+                    stage.name(),
+                    wall.as_secs_f64() * 1000.0,
+                    cpu.saturating_sub(self.cpu_at_start).as_secs_f64() * 1000.0,
+                    resident >> 20,
+                    peak >> 20,
+                );
+            }
         }
     }
 

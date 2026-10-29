@@ -3885,11 +3885,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f63 visibility=Private
 # CHECK-LABEL: function {{*}}name="Kind"
 # CHECK: module=m0 position=922 flags=[HasThis, IsChecked] length=1 thisType={type=L1 site=w41} parameters=[{type=i32 site=w39 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L1
 # CHECK-LABEL: function f17 module=
-# CHECK: m0 position=2891 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=int[0, 399] site=w43}] thisType={type=anything} parameters=[{type=number site=w49 flags=[IsExpected]}] results=[{type=number site=w50}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] creator=EntryChecks{body=f66 fallback=f73} {
-# CHECK-NEXT: b0(v0: int[0, 399], v1: anything ~ number):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
+# CHECK: m0 position=2891 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=int[0, 399] site=w43}] thisType={type=anything} parameters=[{type=i32 site=w49 flags=[IsExpected]}] results=[{type=number site=w50}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] creator=EntryChecks{body=f66 fallback=f73} {
+# CHECK-NEXT: b0(v0: int[0, 399], v1: anything ~ i32):
+# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=i32
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: number):
+# CHECK-NEXT: b1(v3: i32):
 # CHECK-NEXT: v4: number = CallDirect v0, v3 function=f66
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
@@ -3940,12 +3940,12 @@ runtimefunction id=ArrayTraversalTraverseArray function=f63 visibility=Private
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f21 module=
-# CHECK: m0 position=5696 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=w118 flags=[IsExpected]}] results=[{type=number site=w119 flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f68 fallback=f75} {
-# CHECK-NEXT: b0(v0: anything ~ number):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=number
+# CHECK: m0 position=5696 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=i32 site=w118 flags=[IsExpected]}] results=[{type=number site=w119 flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f68 fallback=f75} {
+# CHECK-NEXT: b0(v0: anything ~ i32):
+# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=i32
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: number):
-# CHECK-NEXT: v3: number = CallDirect v2 function=f68
+# CHECK-NEXT: b1(v2: i32):
+# CHECK-NEXT: v3: int[-2147483647, 2147483648] = CallDirect v2 function=f68
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v4: anything ~ number = CallDirect v0 function=f75

@@ -220,7 +220,7 @@ function f23 name="Tick" module=m4 position=1114 kind=BaseConstructor role=Libra
 # CHECK-NEXT: v9: L1 = NewObject layout=L1 allocationSite=5 allocationClass=1
 # CHECK-NEXT: v10: object = CallBuiltin -, v8, v9 overload=ProxyRevocable/0 accessSite=0
 # CHECK-NEXT: v11: anything = PropGet v10 key="proxy" accessSite=1
-# CHECK-NEXT: v12: anything ~ undefined|null|function = Upcast v11 castType=anything
+# CHECK-NEXT: v12: anything ~ undefined|null|function|f6 = Upcast v11 castType=anything
 # CHECK-NEXT: v13: undefined = Undefined
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b4():
@@ -236,7 +236,7 @@ function f23 name="Tick" module=m4 position=1114 kind=BaseConstructor role=Libra
 # CHECK-NEXT: v20: L1 = NewObject layout=L1 allocationSite=5 allocationClass=1
 # CHECK-NEXT: v21: object = CallBuiltin -, v19, v20 overload=ProxyRevocable/0 accessSite=0
 # CHECK-NEXT: v22: anything = PropGet v21 key="proxy" accessSite=1
-# CHECK-NEXT: v23: anything ~ undefined|null|function = Upcast v22 castType=anything
+# CHECK-NEXT: v23: anything ~ undefined|null|function|f6 = Upcast v22 castType=anything
 # CHECK-NEXT: v24: undefined = Undefined
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6() handler=b7():
@@ -252,7 +252,7 @@ function f23 name="Tick" module=m4 position=1114 kind=BaseConstructor role=Libra
 # CHECK-NEXT: v31: L1 = NewObject layout=L1 allocationSite=5 allocationClass=1
 # CHECK-NEXT: v32: object = CallBuiltin -, v30, v31 overload=ProxyRevocable/0 accessSite=0
 # CHECK-NEXT: v33: anything = PropGet v32 key="proxy" accessSite=1
-# CHECK-NEXT: v34: anything ~ undefined|null|function = Upcast v33 castType=anything
+# CHECK-NEXT: v34: anything ~ undefined|null|function|f6 = Upcast v33 castType=anything
 # CHECK-NEXT: v35: undefined = Undefined
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b9() handler=b10():

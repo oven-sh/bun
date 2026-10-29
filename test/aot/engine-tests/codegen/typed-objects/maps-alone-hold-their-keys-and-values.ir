@@ -413,7 +413,7 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v13: Array<L1, Contiguous> = NewArray v12 contents=L1 allocationSite=27 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v14: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v15: f23 = NewClosure v6 function=f23 allocationSite=28
-# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v1, v8, v11, v14, v15 overload=ArrayPrototypePush/0 accessSite=12
+# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v1, v8, v11, v14, v15 overload=ArrayPrototypePush/0 accessSite=13
 # CHECK-NEXT: v17: int[2, 6] = Increment v6
 # CHECK-NEXT: Jump -> next b1(v17)
 # CHECK-NEXT: b3():
@@ -440,16 +440,16 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v9: boolean = HasSpareArrayCapacity v1
 # CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v1, v8 overload=ArrayPrototypePush/0 accessSite=27
+# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v1, v8 overload=ArrayPrototypePush/0 accessSite=28
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() frequency=Rare:
 # CHECK-NEXT: v11: 70 = Integer integer=70
 # CHECK-NEXT: v12: int[0, 70] = Sub v11, v4
 # CHECK-NEXT: ReserveArrayCapacity v1, v12
-# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v1, v8 overload=ArrayPrototypePush/0 accessSite=27
+# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v1, v8 overload=ArrayPrototypePush/0 accessSite=28
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v15: undefined = CallDirect function=f5 accessSite=14
+# CHECK-NEXT: v15: undefined = CallDirect function=f5 accessSite=15
 # CHECK-NEXT: v16: int[1, 70] = Increment v7
 # CHECK-NEXT: Jump -> next b1(v16)
 # CHECK-NEXT: b6():

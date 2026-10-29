@@ -350,6 +350,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if crate::cli::run_compiled::is_checked() {
         argv.push(lit(b"--aot-checked=-\0"));
     }
+    if let Some(flag) = crate::cli::run_compiled::graph_flag_of_test_worker() {
+        argv.push(dupe_z(&flag));
+    }
     if ctx.runtime_options.smol {
         argv.push(lit(b"--smol\0"));
     }

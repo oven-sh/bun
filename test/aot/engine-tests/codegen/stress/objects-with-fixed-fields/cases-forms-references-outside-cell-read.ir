@@ -1059,11 +1059,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f33 visibility=Private
 # -- generated: f0 crowded
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 286, patchpoints: 60, rare instructions: 93, polls: 5
+# CHECK-NEXT: instructions: 287, patchpoints: 60, rare instructions: 93, polls: 5
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="crowded"
 # CHECK: role=ResultWrapper
-# CHECK-NEXT: instructions: 245, patchpoints: 7
+# CHECK-NEXT: instructions: 247, patchpoints: 7
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="crowded"
 # CHECK: role=ResultWorker

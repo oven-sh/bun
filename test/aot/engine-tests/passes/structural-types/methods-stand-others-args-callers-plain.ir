@@ -347,7 +347,7 @@ function f36 module=m3 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v33: anything = PropGet v22 key="prototype" accessSite=3
 # CHECK-NEXT: v34: object = AssumeType v33 provenType=object
 # CHECK-NEXT: v35: anything = PropGet v34 key="count" accessSite=4
-# CHECK-NEXT: v36: undefined|null|function = AssumeType v35 provenType=undefined|null|function
+# CHECK-NEXT: v36: undefined|null|function|f5|f6 = AssumeType v35 provenType=undefined|null|function|f5|f6
 # CHECK-NEXT: PropSet v32, v36 key="measure" accessSite=5
 # CHECK-NEXT: v38: anything = PropGet v22 key="prototype" accessSite=6
 # CHECK-NEXT: v39: object = AssumeType v38 provenType=object

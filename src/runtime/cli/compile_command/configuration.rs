@@ -112,7 +112,11 @@ fn add_target_defines(ctx: &mut ContextData) {
 }
 
 pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error> {
-    add_target_defines(ctx);
+    // A test may redefine `process.platform` to take the path of another platform.
+    let aot = ctx.bundler_options.aot.as_ref();
+    if !aot.is_some_and(|aot| aot.runs_tests) {
+        add_target_defines(ctx);
+    }
 
     let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
     // In the arena: the build takes `&'a mut Transpiler<'a>`, which no stack local satisfies.

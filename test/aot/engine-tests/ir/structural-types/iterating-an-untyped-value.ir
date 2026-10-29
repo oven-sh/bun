@@ -976,11 +976,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: v2: " -> " = String string=" -> "
 # CHECK-NEXT: v3: string = Add v0, v2
 # CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v5: anything ~ undefined|null|function = GetCapture v1 function=f20
+# CHECK-NEXT: v5: anything ~ undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 = GetCapture v1 function=f20
 # CHECK-NEXT: v6: undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" = GetCapture v1 function=f20 index=1
-# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=undefined|null|function
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19
 # CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v8: undefined|null|function) handler=b4():
+# CHECK-NEXT: b1(v8: undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19) handler=b4():
 # CHECK-NEXT: v9: number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v8, v6 function=f86 @4265:1 tail
 # CHECK-NEXT: Jump -> next b3(v9)
 # CHECK-NEXT: b2() frequency=Unlikely handler=b4():
@@ -1116,7 +1116,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: v1: f25 = NewClosure v0 function=f25 allocationSite=53
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: undefined = Undefined
-# CHECK-NEXT: v4: Generator = NewGenerator v1 function=f25
+# CHECK-NEXT: v4: Generator = NewGenerator function=f25
 # CHECK-NEXT: v5: anything = CallDirect v0, v3, v1, v4 function=f97
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
@@ -1131,18 +1131,18 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: Jump -> next b1(v5)
 # CHECK-NEXT: b1(v6: int[0, 8589934591]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: undefined = ForInStep v4, v3 position=v6
+# CHECK-NEXT: v8: undefined = ForInStep v4, v3 position=v6 [keysChangeOnlyInSteps]
 # CHECK-NEXT: v9: int[0, 8589934590] = ResultAt v8 index=2
 # CHECK-NEXT: v10: 1 = Integer integer=1
 # CHECK-NEXT: v11: int[1, 8589934591] = Add v9, v10
 # CHECK-NEXT: Jump -> next b1(v11)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=
-# CHECK: m0 position=4265 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function site=w40 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w44 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f44] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f86 fallback=f87} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function, v1: undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done"):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=undefined|null|function
+# CHECK: m0 position=4265 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 site=w40 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w44 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f44] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f86 fallback=f87} {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19, v1: undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done"):
+# CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: undefined|null|function):
+# CHECK-NEXT: b1(v3: undefined|null|function|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
 # CHECK-NEXT: v4: number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v3, v1 function=f86
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: b2() frequency=Unlikely:

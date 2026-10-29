@@ -252,7 +252,8 @@ impl FileScanner<'_, '_> {
             (Ok(ScannedSite::Erased) | Err(_), SiteForm::Resolve) => {
                 return ScannedSite::AllModules;
             }
-            (Err(_), SiteForm::GetBuiltinModule) => return ScannedSite::Erased,
+            // A test may mock a module that no file stands for.
+            (Err(_), SiteForm::GetBuiltinModule | SiteForm::Mock) => return ScannedSite::Erased,
             // It answers with the modules of the registry, and none of those is an ES module.
             (Ok(ScannedSite::Module(ModuleRef::Runtime(module))), SiteForm::GetBuiltinModule)
                 if table::is_es_module(module) =>
@@ -264,7 +265,8 @@ impl FileScanner<'_, '_> {
                 SiteForm::Declaration
                 | SiteForm::Load
                 | SiteForm::Resolve
-                | SiteForm::GetBuiltinModule,
+                | SiteForm::GetBuiltinModule
+                | SiteForm::Mock,
             ) => return answer,
             (Err(reason), SiteForm::Declaration | SiteForm::Load) => reason,
         };
@@ -352,6 +354,7 @@ pub(super) enum SiteForm {
     Load,
     Resolve,
     GetBuiltinModule,
+    Mock,
 }
 
 pub(super) fn site_form(site: ImportSiteKind) -> SiteForm {
@@ -363,6 +366,7 @@ pub(super) fn site_form(site: ImportSiteKind) -> SiteForm {
         | ImportSiteKind::ExportStar(_) => SiteForm::Declaration,
         ImportSiteKind::ImportMetaResolve(_) => SiteForm::Resolve,
         ImportSiteKind::GetBuiltinModule(_) => SiteForm::GetBuiltinModule,
+        ImportSiteKind::MockModule(_) => SiteForm::Mock,
         _ => SiteForm::Load,
     }
 }
@@ -389,7 +393,8 @@ fn diagnostic_node(hir: &hir::File<'_>, site: &ImportSite) -> NodeData {
         | ImportSiteKind::RequireResolve(call)
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
-        | ImportSiteKind::GetBuiltinModule(call) => NodeData::Expr(call),
+        | ImportSiteKind::GetBuiltinModule(call)
+        | ImportSiteKind::MockModule(call) => NodeData::Expr(call),
     }
 }
 
@@ -438,7 +443,8 @@ impl RequestList {
     fn push(&mut self, draft: RequestDraft) {
         self.drafts.push(draft);
         if self.drafts.len() > MAX_SCANNED_REQUESTS {
-            let unindexed_drafts = self.drafts.iter().zip(0..).skip(self.positions.len());
+            let first = self.positions.len();
+            let unindexed_drafts = self.drafts[first..].iter().zip(first as u32..);
             let entries =
                 unindexed_drafts.map(|(draft, position)| ((draft.target, draft.phase), position));
             self.positions.extend(entries);

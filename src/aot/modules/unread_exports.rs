@@ -40,7 +40,8 @@ fn links_names_alone(site: ImportSiteKind) -> bool {
         | ImportSiteKind::RequireResolve(_)
         | ImportSiteKind::ImportMetaRequire(_)
         | ImportSiteKind::ImportMetaResolve(_)
-        | ImportSiteKind::GetBuiltinModule(_) => false,
+        | ImportSiteKind::GetBuiltinModule(_)
+        | ImportSiteKind::MockModule(_) => false,
     }
 }
 
@@ -78,7 +79,7 @@ impl ExportReads {
         for parts in files {
             if parts.interop.kind == ModuleKind::Data && !parts.exports.is_empty() {
                 let is_required_as_namespace =
-                    parts.interop.require_result == RequireResult::Namespace;
+                    parts.interop.require_result != RequireResult::DefaultExport;
                 let data_module = DataModule {
                     is_required_as_namespace,
                     is_namespace_reached: parts.is_library,

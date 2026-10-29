@@ -107,26 +107,28 @@ describe.concurrent("compile/aot/entry points begin programs of their own", () =
     "starter.ts": starter,
     "starter-of-workers.ts": starterOfWorkers,
   };
+  /** What each build wrote to stderr, by the path that `build` returns. */
+  const stderrOf = new Map<string, string>();
   const build = async (folder: string, entryPoints: string[], name: string, flags: string[] = []) => {
-    built(
-      await spawned(
-        [
-          bunExe(),
-          ...compileCommand,
-          ...carrier,
-          "--root",
-          ".",
-          withProgramOutput(join(folder, name + ".ir")),
-          `--aot-report=${join(folder, name + ".json")}`,
-          ...flags,
-          ...entryPoints,
-          "--outfile",
-          join(folder, name),
-        ],
-        folder,
-        bunEnv,
-      ),
+    const ended = await spawned(
+      [
+        bunExe(),
+        ...compileCommand,
+        ...carrier,
+        "--root",
+        ".",
+        withProgramOutput(join(folder, name + ".ir")),
+        `--aot-report=${join(folder, name + ".json")}`,
+        ...flags,
+        ...entryPoints,
+        "--outfile",
+        join(folder, name),
+      ],
+      folder,
+      bunEnv,
     );
+    built(ended);
+    stderrOf.set(join(folder, name), ended.stderr);
     return join(folder, name);
   };
   /** For what the front end hands over and for the report: nothing runs the executable, so none is written. */
@@ -381,19 +383,68 @@ worker.onmessage = async event => {
     });
   }, 600_000);
 
-  test("more entry points than MaxProgramsPerBuild are one program, and the report says so", async () => {
+  const warningsAboutTheCount = (path: string) => stderrOf.get(path)!.match(/TS100074: [^.]*\./g) ?? [];
+
+  test("more entry points than MaxProgramsPerBuild are one program, and the build says so", async () => {
     const folder = write(join(root, "many"), {
       "main.ts": `${startsWorkers("./a.ts", "./b.ts")}console.log("main");\n`,
       "a.ts": `postMessage("a");\n`,
       "b.ts": `postMessage("b");\n`,
     });
     const entryPoints = ["./main.ts", "./a.ts", "./b.ts"];
-    await compile(folder, entryPoints, "apart");
+    const apart = await compile(folder, entryPoints, "apart");
     expect(existsSync(join(folder, "apart.ir.2"))).toBe(true);
     expect(limitsHit(folder, "apart")).not.toContain("MaxProgramsPerBuild");
-    await compile(folder, entryPoints, "together", ["--aot-limit=MaxProgramsPerBuild:2"]);
+    expect(warningsAboutTheCount(apart)).toEqual([]);
+    const together = await compile(folder, entryPoints, "together", ["--aot-limit=MaxProgramsPerBuild:2"]);
     expect(existsSync(join(folder, "together.ir.1"))).toBe(false);
     expect(limitsHit(folder, "together")).toContain("MaxProgramsPerBuild");
+    expect(warningsAboutTheCount(together)).toEqual([
+      "TS100074: 3 entry points are compiled as one program: at most 2 can be compiled separately.",
+    ]);
+  }, 600_000);
+
+  test("129 entry points are one program, and the build says so", async () => {
+    const workers = Array.from({ length: 128 }, (_, i) => `./worker${i}.ts`);
+    const folder = write(join(root, "over-the-limit"), {
+      "main.ts": `${startsWorkers(...workers)}console.log("main");\n`,
+      ...Object.fromEntries(workers.map((name, i) => [name, `postMessage(${i});\n`])),
+    });
+    const together = await compile(folder, ["./main.ts", ...workers], "together");
+    expect(existsSync(join(folder, "together.ir.1"))).toBe(false);
+    expect(limitsHit(folder, "together")).toContain("MaxProgramsPerBuild");
+    expect(warningsAboutTheCount(together)).toEqual([
+      "TS100074: 129 entry points are compiled as one program: at most 128 can be compiled separately.",
+    ]);
+  }, 600_000);
+
+  test("129 programs, of which the build finds 128 itself, are compiled as one without compiling each first", async () => {
+    const workers = Array.from({ length: 128 }, (_, i) => `./worker${i}.ts`);
+    const folder = write(join(root, "found-over-the-limit"), {
+      "main.ts": `${startsWorkers(...workers)}console.log("main");\n`,
+      ...Object.fromEntries(workers.map((name, i) => [name, `postMessage(${i});\n`])),
+    });
+    const together = await compile(folder, ["./main.ts"], "together");
+    expect(warningsAboutTheCount(together)).toEqual([
+      "TS100074: 129 entry points are compiled as one program: at most 128 can be compiled separately.",
+    ]);
+    // The main program, where the build finds the files, and then all of them.
+    const report = JSON.parse(readFileSync(join(folder, "together.json"), "utf8")) as BuildReport;
+    expect(report.statistics.EngineRuns).toBe(2);
+  }, 600_000);
+
+  test("the build does not name the count where the entry points are one program anyway", async () => {
+    const folder = write(join(root, "pages"), {
+      "main.ts": `console.log("main");\n`,
+      "a.ts": `console.log("a");\n`,
+      "b.ts": `console.log("b");\n`,
+    });
+    const pages = await compile(folder, ["./main.ts", "./a.ts", "./b.ts"], "pages", [
+      "--aot-limit=MaxProgramsPerBuild:2",
+    ]);
+    expect(existsSync(join(folder, "pages.ir.1"))).toBe(false);
+    expect(limitsHit(folder, "pages")).not.toContain("MaxProgramsPerBuild");
+    expect(warningsAboutTheCount(pages)).toEqual([]);
   }, 600_000);
 
   // Pages and plugins are further entry points by the hundred, and all of them are loaded into the one global.

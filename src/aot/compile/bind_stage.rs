@@ -7,6 +7,7 @@ use crate::load::{PerProject, ProjectId};
 use crate::modules::{
     self, BindInput, BoundModules, DeferredData, DeferredExports, ModuleGraph, Shape,
 };
+use crate::options::ReplacedExport;
 use crate::statistics::{Stage, StatisticId};
 use bun_sema::check::aot::BuiltinTypeSymbols;
 
@@ -25,6 +26,9 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     }
     for &module in &reached.naming_ways {
         graph.set_names_way_to_module_objects(module);
+    }
+    for &module in &reached.found_by_name {
+        graph.set_is_found_by_name(module);
     }
     graph.set_ways_not_followed_out_of_sight(reached.ways_not_followed_out_of_sight);
     graph.set_ways_followed_for_their_names(reached.ways_followed_for_their_names);
@@ -89,6 +93,10 @@ impl Build<'_> {
             ProjectId::Application => loaded.application,
             ProjectId::Runtime => None,
         };
+        let replaced_exports: &[ReplacedExport] = match project {
+            ProjectId::Application => &self.options.load.replaced_exports,
+            ProjectId::Runtime => &[],
+        };
         let BoundModules {
             mut graph,
             counters,
@@ -99,6 +107,7 @@ impl Build<'_> {
             deferred_exports,
             platform: self.platform,
             external_packages,
+            replaced_exports,
             application: application.map(|application| &application.graph),
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,
@@ -131,6 +140,8 @@ impl Build<'_> {
                     reads_main_module_without_its_name: (self.options.load)
                         .reads_main_module_without_its_name,
                     ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
+                    any_file_is_named_at_run_time: self.options.aot.loads_code_from_disk
+                        || self.options.load.runs_tests,
                 };
                 let nobody_reads = self.options.load.ways_named_that_nobody_reads;
                 let (left_out, reached) = find_left_out_code(&input, nobody_reads, &in_parallel);

@@ -130,15 +130,15 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v7: function = CallBuiltin v3, v1 overload=FunctionPrototypeBind/0 builtinCallForm=AnyReceiver accessSite=17
 # CHECK-NEXT: Jump -> next b3(v7)
 # CHECK-NEXT: b3(v8: function|f12 ~ f12):
-# CHECK-NEXT: PutSlotOrAdd v1, -, v8 key="m" receivers=[L0] level=Proven accessSite=18
-# CHECK-NEXT: v10: boolean = IsSlotFilled v1 key="m" receivers=[L0] level=Expected
-# CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v11: guard):
-# CHECK-NEXT: v12: function = GetSlot v1, v11 key="m" receivers=[L0] level=Expected accessSite=1
-# CHECK-NEXT: Jump -> next b6(v12)
+# CHECK-NEXT: v9: function|f2 ~ f12 = Upcast v8 castType=function|f2
+# CHECK-NEXT: PutSlotOrAdd v1, -, v9 key="m" receivers=[L0] level=Proven accessSite=18
+# CHECK-NEXT: v11: boolean = IsSlotFilled v1 key="m" receivers=[L0] level=Expected
+# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v12: guard):
+# CHECK-NEXT: v13: function = GetSlot v1, v12 key="m" receivers=[L0] level=Expected accessSite=1
+# CHECK-NEXT: Jump -> next b6(v13)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v13: anything = SuperGet v1, v1 key="m"
-# CHECK-NEXT: v14: anything ~ function = Expect v13 expectedType=undefined|null|function
+# CHECK-NEXT: v14: anything = SuperGet v1, v1 key="m"
 # CHECK-NEXT: Jump -> next b6(v14)
 # CHECK-NEXT: b6(v15: anything ~ function|f2):
 # CHECK-NEXT: v16: 1 = Integer integer=1
@@ -205,7 +205,8 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b3(v10)
 # CHECK-NEXT: b3(v11: function|f12 ~ f12):
 # CHECK-NEXT: v12: function ~ f12 = AssumeType v11 provenType=function
-# CHECK-NEXT: PutSlotOrAdd v4, -, v12 key="m" receivers=[L0] level=Proven accessSite=18
+# CHECK-NEXT: v13: function|f2 ~ f12 = Upcast v12 castType=function|f2
+# CHECK-NEXT: PutSlotOrAdd v4, -, v13 key="m" receivers=[L0] level=Proven accessSite=18
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="m"

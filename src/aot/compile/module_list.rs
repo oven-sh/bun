@@ -294,6 +294,6 @@ fn import_kind(site: ImportSiteKind) -> Option<ModuleImportKind> {
         ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_) => {
             ModuleImportKind::RequireResolve
         }
-        ImportSiteKind::GetBuiltinModule(_) => return None,
+        ImportSiteKind::GetBuiltinModule(_) | ImportSiteKind::MockModule(_) => return None,
     })
 }

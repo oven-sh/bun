@@ -6,7 +6,7 @@ use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::loop_updates::is_stored_only_by_own_loop_update;
-use super::tables::encloses;
+use super::tables::ScopesAround;
 use super::{BindingSharing, Context, NormalizedUses};
 use crate::ir::{ClassSlot, VariableKey};
 use crate::lower::captures::{CapturedBinding, is_initialized_before};
@@ -205,7 +205,11 @@ fn drop_users_behind_initialization(
 
 pub(super) fn is_immutable(context: &Context<'_, '_>, binding: BindingRef) -> bool {
     let (scope, slot) = match binding {
-        BindingRef::Symbol(symbol) => return context.is_stable_ignoring(symbol, |_| false),
+        BindingRef::Symbol(id) => {
+            let file = context.input.file;
+            return context.is_stable_ignoring(id, |_| false)
+                && !context.input.modules.is_replaceable(Sym { file, id });
+        }
         BindingRef::Slot(scope, slot) => (scope, slot),
     };
     match slot {
@@ -380,10 +384,11 @@ fn collect_fields_for_handlers(context: &Context<'_, '_>, sharing: &mut BindingS
     let mut fields = Vec::new();
     let mut functions = Vec::new();
     for walked in &context.walk.tries {
+        let mut scopes_around = ScopesAround::new(context, walked.boundary);
         let is_seen_by_handler = |binding: &BindingRef| {
             matches!(binding, BindingRef::Symbol(_))
                 && context.owner_of(*binding) == Some(walked.function)
-                && encloses(context, context.scope_of(*binding), walked.boundary)
+                && scopes_around.contain(context.scope_of(*binding))
         };
         let stored = walked.stored.iter().copied().filter(is_seen_by_handler);
         let mut stored: Vec<BindingRef> = stored.collect();

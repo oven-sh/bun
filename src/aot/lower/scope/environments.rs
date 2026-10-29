@@ -55,6 +55,9 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.inputs.modules.holder(self.file, symbol).is_some() {
             return DeclaredType::untyped();
         }
+        if self.is_replaceable(symbol) {
+            return DeclaredType::untyped();
+        }
         let position = self.binding_position(symbol);
         let path = self.builtins.of_symbol(symbol);
         self.expect_builtin_path(position, path)

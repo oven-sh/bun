@@ -913,80 +913,116 @@ function f22 name="next" module=m4 position=25 kind=Method role=Library flags=[H
   b1():
     v1 = HasJSType v0 first=6 last=6 @78
     v2 = ToBoolean v1 @78
-    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+    Branch v2 -> taken b2(| 0), notTaken b8(| 0) @78
   b2(v3):
     Jump -> next b3() @78
   b3():
-    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @196
-    v5 = GetInternalField v4 @196
-    v6 = Undefined @283
-    v7 = ResumeGenerator v5, v6 @179
-    Return v7 @179
-  b4(v8):
-    Jump -> next b5() @78
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @190
+    v5 = GetInternalField v4 @190
+    v6 = Undefined @320
+    v7 = StepGenerator v5, v6 check=IsGenerator @277
+    v8 = ResultAt v7 @383
+    v9 = ResultAt v7 index=1 @446
+    v10 = Integer integer=2 @510
+    v11 = StrictEq v9, v10 @499
+    Branch v11 -> taken b4(| 0), notTaken b6(| 0) @499
+  b4(v12):
+    Jump -> next b5() @499
   b5():
-    v9 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @111
+    v13 = Undefined @602
+    v14 = ResumeGenerator v5, v13 @557
+    Return v14 @557
+  b6(v15):
+    Jump -> next b7() @499
+  b7():
+    v16 = Integer integer=1 @664
+    v17 = StrictEq v15, v16 @653
+    v18 = Convert v17 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @625
+    v19 = CreateIteratorResult v8, v18 @625
+    Return v19 @625
+  b8(v20):
+    Jump -> next b9() @78
+  b9():
+    v21 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @111
     Unreachable @111
 }
-function f23 name="return" module=m4 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f23 name="return" module=m4 position=727 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
-    Jump -> next b1() @326
+    Jump -> next b1() @727
   b1():
-    v1 = Undefined @326
-    v2 = HasJSType v0 first=6 last=6 @382
-    v3 = ToBoolean v2 @382
-    Branch v3 -> taken b2(| 0), notTaken b15(| 0) @382
+    v1 = Undefined @727
+    v2 = HasJSType v0 first=6 last=6 @783
+    v3 = ToBoolean v2 @783
+    Branch v3 -> taken b2(| 0), notTaken b19(| 0) @783
   b2(v4):
-    Jump -> next b3() @382
+    Jump -> next b3() @783
   b3():
-    v5 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @492
-    v6 = GetInternalField v5 @492
-    v7 = IsGeneratorSuspendedAtStart v6 @571
-    v8 = ToBoolean v7 @571
-    Branch v8 -> taken b4(| 0), notTaken b13(| 0) @571
+    v5 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @893
+    v6 = GetInternalField v5 @893
+    v7 = IsGeneratorSuspendedAtStart v6 @972
+    v8 = ToBoolean v7 @972
+    Branch v8 -> taken b4(| 0), notTaken b13(| 0) @972
   b4(v9):
-    Jump -> next b5() @571
+    Jump -> next b5() @972
   b5():
-    v10 = Undefined @738
-    v11 = ResumeGenerator v6, v10 resumeMode=Return @691
-    v12 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @779
-    v13 = GetInternalField v12 index=1 @779
-    v14 = TypeTest v13 testedType=null @866
-    Branch v14 -> taken b6(| 0), notTaken b7(| 0) @866
+    v10 = Undefined @1537
+    v11 = ResumeGenerator v6, v10 resumeMode=Return @1490
+    v12 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1578
+    v13 = GetInternalField v12 index=1 @1578
+    v14 = TypeTest v13 testedType=null @1665
+    Branch v14 -> taken b6(| 0), notTaken b7(| 0) @1665
   b6(v15):
-    Jump -> next b12() @866
+    Jump -> next b12() @1665
   b7(v16):
-    Jump -> next b8() @866
+    Jump -> next b8() @1665
   b8():
-    v17 = PropGet v16 key="return" @903
-    v18 = TypeTest v17 testedType=undefined|null @903
-    Branch v18 -> taken b9(| 0), notTaken b10(| 0) @903
+    v17 = PropGet v16 key="return" @1702
+    v18 = TypeTest v17 testedType=undefined|null @1702
+    Branch v18 -> taken b9(| 0), notTaken b10(| 0) @1702
   b9(v19):
-    Jump -> next b11() @903
+    Jump -> next b11() @1702
   b10(v20):
-    v21 = Call v20, v16 @903
-    v22 = RequireObject v21 runtimeError=IteratorResultNotObject @903
-    Jump -> next b11() @903
+    v21 = Call v20, v16 @1702
+    v22 = RequireObject v21 runtimeError=IteratorResultNotObject @1702
+    Jump -> next b11() @1702
   b11():
-    v23 = Undefined @903
-    Jump -> next b12() @903
+    v23 = Undefined @1702
+    Jump -> next b12() @1702
   b12():
-    v24 = Undefined @977
-    v25 = Boolean boolean=true @988
-    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @957
-    v27 = CreateIteratorResult v24, v26 @957
-    Return v27 @957
+    v24 = Undefined @1776
+    v25 = Boolean boolean=true @1787
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1756
+    v27 = CreateIteratorResult v24, v26 @1756
+    Return v27 @1756
   b13(v28):
-    Jump -> next b14() @571
+    Jump -> next b14() @972
   b14():
-    v29 = Undefined @674
-    v30 = ResumeGenerator v6, v29 resumeMode=Return @627
-    Return v30 @627
-  b15(v31):
-    Jump -> next b16() @382
+    v29 = Undefined @1081
+    v30 = StepGenerator v6, v29 resumeMode=Return check=IsGenerator @1036
+    v31 = ResultAt v30 @1148
+    v32 = ResultAt v30 index=1 @1215
+    v33 = Integer integer=2 @1283
+    v34 = StrictEq v32, v33 @1272
+    Branch v34 -> taken b15(| 0), notTaken b17(| 0) @1272
+  b15(v35):
+    Jump -> next b16() @1272
   b16():
-    v32 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @415
-    Unreachable @415
+    v36 = Undefined @1381
+    v37 = ResumeGenerator v6, v36 resumeMode=Return @1334
+    Return v37 @1334
+  b17(v38):
+    Jump -> next b18() @1272
+  b18():
+    v39 = Integer integer=1 @1447
+    v40 = StrictEq v38, v39 @1436
+    v41 = Convert v40 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @1408
+    v42 = CreateIteratorResult v31, v41 @1408
+    Return v42 @1408
+  b19(v43):
+    Jump -> next b20() @783
+  b20():
+    v44 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @816
+    Unreachable @816
 }
 function f24 name="next" module=m5 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
@@ -2427,51 +2463,45 @@ runtimefunction id=ArrayTraversalTraverseArray function=f32 visibility=Private
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v5: 0 = Integer
 # CHECK-NEXT: Jump -> next b3(v5)
-# CHECK-NEXT: b3(v6: int[0, 1]) handler=b9(v1, v2):
+# CHECK-NEXT: b3(v6: int[0, 1]) handler=b7(v1, v2):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: 2 = Integer integer=2
-# CHECK-NEXT: v9: boolean = Less v6, v8
-# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b8()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: boolean = StrictEq v6, v10
-# CHECK-NEXT: Branch v11 -> taken b5(), notTaken b7()
-# CHECK-NEXT: b5() handler=b9(v1, v2):
-# CHECK-NEXT: v12: f12 = NewClosure function=f12 allocationSite=16
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6() handler=b9(v3, v12):
-# CHECK-NEXT: Throw v12
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v13: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b3(v13)
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: v9: boolean = StrictEq v6, v8
+# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b6()
+# CHECK-NEXT: b4() handler=b7(v1, v2):
+# CHECK-NEXT: v10: f12 = NewClosure function=f12 allocationSite=16
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5() handler=b7(v3, v10):
+# CHECK-NEXT: Throw v10
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b7(v12: int[1, 2], v13: unspecified|f12) role=CatchHandler:
+# CHECK-NEXT: v14: anything = CatchValue
+# CHECK-NEXT: Switch v12 cases=[1] -> case b9(v13), otherwise b8()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b9(v14: int[1, 2], v15: unspecified|f12) role=CatchHandler:
-# CHECK-NEXT: v16: anything = CatchValue
-# CHECK-NEXT: Switch v14 cases=[1] -> case b11(v15), otherwise b10()
+# CHECK-NEXT: v15: f12 = NewClosure function=f12 allocationSite=16 storage=Frame
+# CHECK-NEXT: Jump -> next b9(v15)
+# CHECK-NEXT: b9(v16: unspecified|f12):
+# CHECK-NEXT: v17: fact = Specified
+# CHECK-NEXT: v18: f12 = AssumeType v16, v17 provenType=f12
+# CHECK-NEXT: v19: boolean = StrictEq v14, v18
+# CHECK-NEXT: v20: string = CallBuiltin -, v19 overload=String/0 accessSite=65
+# CHECK-NEXT: v21: " " = String string=" "
+# CHECK-NEXT: v22: string = Add v20, v21
+# CHECK-NEXT: v23: boolean = IsClosureOf v14 function=f12
+# CHECK-NEXT: Branch v23 -> taken b10(), notTaken b11()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v17: f12 = NewClosure function=f12 allocationSite=16 storage=Frame
-# CHECK-NEXT: Jump -> next b11(v17)
-# CHECK-NEXT: b11(v18: unspecified|f12):
-# CHECK-NEXT: v19: fact = Specified
-# CHECK-NEXT: v20: f12 = AssumeType v18, v19 provenType=f12
-# CHECK-NEXT: v21: boolean = StrictEq v16, v20
-# CHECK-NEXT: v22: string = CallBuiltin -, v21 overload=String/0 accessSite=65
-# CHECK-NEXT: v23: " " = String string=" "
-# CHECK-NEXT: v24: string = Add v22, v23
-# CHECK-NEXT: v25: boolean = IsClosureOf v16 function=f12
-# CHECK-NEXT: Branch v25 -> taken b12(), notTaken b13()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v26: "caught" = String string="caught"
-# CHECK-NEXT: v27: string = Add v24, v26
-# CHECK-NEXT: Jump -> next b14(v27)
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v28: anything = Call v16 calleeName="error" accessSite=66 callees=[f12, ..]
-# CHECK-NEXT: v29: anything ~ undefined|null|string = Expect v28 expectedType=undefined|null|string
-# CHECK-NEXT: v30: string = Add v24, v29
-# CHECK-NEXT: Jump -> next b14(v30)
-# CHECK-NEXT: b14(v31: string):
-# CHECK-NEXT: Return v31
+# CHECK-NEXT: v24: "caught" = String string="caught"
+# CHECK-NEXT: v25: string = Add v22, v24
+# CHECK-NEXT: Jump -> next b12(v25)
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: v26: anything = Call v14 calleeName="error" accessSite=66 callees=[f12, ..]
+# CHECK-NEXT: v27: anything ~ undefined|null|string = Expect v26 expectedType=undefined|null|string
+# CHECK-NEXT: v28: string = Add v22, v27
+# CHECK-NEXT: Jump -> next b12(v28)
+# CHECK-NEXT: b12(v29: string):
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="helper"
 # CHECK: module=m0 position=551 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w50}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

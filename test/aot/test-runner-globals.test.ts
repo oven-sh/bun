@@ -77,9 +77,9 @@ test("a global of the program's own that is named like the runner's keeps its ty
   using dir = tempDir("aot-test-runner-globals", {
     "tsconfig.json": tsconfig([]),
     "globals.d.ts": `declare var vi: { answer: number };`,
-    "a.test.ts": `/// <reference path="./globals.d.ts" />\nexport {}; test("never run", () => { const n: string = vi.answer; });`,
+    "a.test.ts": `/// <reference path="./globals.d.ts" />\nexport {}; test("typed", () => { const n: string = globalThis.vi?.answer; });`,
   });
   const { said, exitCode } = await run(String(dir));
-  expect(said).toMatch(/error: TS2322: .*\n\s+at .*a\.test\.ts:2:\d+/);
-  expect(exitCode).toBe(1);
+  expect(said).toMatch(/warn: TS2322: .*\n\s+at .*a\.test\.ts:2:\d+/);
+  expect(exitCode).toBe(0);
 });

@@ -44,26 +44,22 @@
     }
   },
   "baseline/nothing": {
-    "typed": 4,
+    "typed": 0,
     "untyped": 0,
-    "jit": 3,
-    "best": {
-      "typed": 3,
-      "untyped": 0
-    }
+    "jit": 3
   },
   "baseline/nothing-in-function": {
-    "typed": 4,
+    "typed": 0,
     "untyped": 0,
     "jit": 3
   },
   "baseline/counter": {
-    "typed": 5,
+    "typed": 3.1,
     "untyped": 7,
     "jit": 6.6
   },
   "baseline/counter-in-function": {
-    "typed": 5,
+    "typed": 3.1,
     "untyped": 7,
     "jit": 6.5
   },
@@ -86,8 +82,8 @@
     }
   },
   "class/default-on-the-prototype-read-in-function": {
-    "typed": 142.3,
-    "untyped": 142.2,
+    "typed": 45.8,
+    "untyped": 46.1,
     "jit": 28.2
   },
   "class/instanceof-a-function-that-stands-under-another": {
@@ -279,18 +275,18 @@
     "jit": 543.1
   },
   "for-of/Map": {
-    "typed": 286,
-    "untyped": 288.1,
+    "typed": 125,
+    "untyped": 131,
     "jit": 355.4
   },
   "for-of/map-values-in-function": {
-    "typed": 174,
-    "untyped": 189,
+    "typed": 125,
+    "untyped": 127,
     "jit": 190.9
   },
   "for-of/set-in-function": {
-    "typed": 154,
-    "untyped": 150,
+    "typed": 80,
+    "untyped": 80,
     "jit": 181.6
   },
   "for-of/generator-in-function": {
@@ -300,12 +296,12 @@
   },
   "for-of/custom-iterator": {
     "typed": 5,
-    "untyped": 336.7,
+    "untyped": 9,
     "jit": 246.2
   },
   "for-of/array-entries": {
-    "typed": 87.2,
-    "untyped": 93.1,
+    "typed": 72,
+    "untyped": 76,
     "jit": 731.6
   },
   "for-of/records-destructured-in-function": {
@@ -349,8 +345,8 @@
     "jit": 116
   },
   "generator/spread-in-function": {
-    "typed": 135.1,
-    "untyped": 135.6,
+    "typed": 129.8,
+    "untyped": 131.1,
     "jit": 800.3
   },
   "host-classes/request-headers-read-again": {
@@ -1220,8 +1216,8 @@
     "jit": 109.4
   },
   "generator/a-generator-function-made-for-each-call": {
-    "typed": 3236.7,
-    "untyped": 3226.9,
+    "typed": 785,
+    "untyped": 754.6,
     "jit": 3682.4
   },
   "class/instanceof-a-class-of-another-commonjs-module": {
@@ -1350,8 +1346,8 @@
     "jit": 375
   },
   "bytes/the-three-lengths-of-a-buffer": {
-    "typed": 25,
-    "untyped": 280,
+    "typed": 22,
+    "untyped": 48,
     "jit": 25
   },
   "bytes/write-words-into-a-buffer": {
@@ -1422,8 +1418,8 @@
     "jit": 75
   },
   "closure/accessors-a-helper-defines-under-its-parameter": {
-    "typed": 1119.6,
-    "untyped": 1119.2,
+    "typed": 86,
+    "untyped": 85.4,
     "jit": 182
   },
   "closure/methods-a-loop-over-written-names-defines": {
@@ -1486,7 +1482,7 @@
     "jit": 2007.9
   },
   "spread/an-object-filled-by-name-once-then-one-in-function": {
-    "typed": 1005.1,
+    "typed": 235,
     "untyped": 196.7,
     "jit": 258.8
   }

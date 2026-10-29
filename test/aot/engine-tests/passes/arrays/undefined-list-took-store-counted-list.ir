@@ -189,5 +189,5 @@ runtimefunction id=ArrayPrototypeReduce function=f12
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 77, patchpoints: 6, rare instructions: 108, polls: 1
+# CHECK-NEXT: instructions: 63, patchpoints: 5, rare instructions: 108, polls: 1
 # CHECK-NEXT: end of function f0

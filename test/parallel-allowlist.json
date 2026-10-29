@@ -707,6 +707,7 @@
     "aot/commands-that-hold-too-much-memory-together-are-ended.test.ts",
     "aot/compile-exec-argv.test.ts",
     "aot/compiled-code-mapping.test.ts",
+    "aot/counts-pinned-by-programs.test.ts",
     "aot/embedded-assets.test.ts",
     "aot/entry-point-names.test.ts",
     "aot/entry-points-begin-programs-of-their-own.test.ts",

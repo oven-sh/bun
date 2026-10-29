@@ -152,6 +152,15 @@ fn create_jsc_ffi_function(
     })
 }
 
+/// Throws in a Bun built with `--ffi=off`. Loading a library runs its constructors.
+fn throw_if_disabled(global: &JSGlobalObject) -> JsResult<()> {
+    unsafe extern "C" {
+        /// Defined in `JSCFFIBridge.cpp`.
+        safe fn Bun__FFI__throwIfDisabled(global: &JSGlobalObject);
+    }
+    jsc::call_check_slow(global, || Bun__FFI__throwIfDisabled(global))
+}
+
 /// Raw extern fn pointers fed to the TCC-JIT'd C trampolines via `add_symbol`.
 mod exposed_to_ffi {
     use super::{JSGlobalObject, JSValue};
@@ -1075,6 +1084,9 @@ impl FFI {
             object.get_own(global_this, &bun_core::StringView::borrow_utf8(b"library"))?
         {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
+            if !compile_c.libraries.items.is_empty() {
+                throw_if_disabled(global_this)?;
+            }
         }
 
         if let Some(flags_value) = object.get_truthy(global_this, "flags")? {
@@ -1584,6 +1596,7 @@ impl FFI {
             return Ok(global.to_invalid_arguments(format_args!("Expected at least one symbol")));
         }
 
+        throw_if_disabled(global)?;
         let dylib: bun_sys::DynLib = 'brk: {
             // First try using the name directly
             match bun_sys::DynLib::open(name) {

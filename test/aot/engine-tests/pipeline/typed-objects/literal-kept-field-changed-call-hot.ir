@@ -2150,83 +2150,61 @@ runtimefunction id=ArrayTraversalTraverseArray function=f31 visibility=Private
 # CHECK-NEXT: v1: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutModuleVariable v1 variable=g5
 # CHECK-NEXT: v3: "[\"y\",\"x\"]" = String string="[\"y\",\"x\"]"
-# CHECK-NEXT: v4: boolean = JSONSourceOpen v3
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b5()
-# CHECK-NEXT: b1(v5: guard):
-# CHECK-NEXT: v6: cursor = JSONSourceStart v5
-# CHECK-NEXT: v7: cursor = JSONSkipWhitespace v6
-# CHECK-NEXT: v8: undefined = CallDirect v7 function=f43
-# CHECK-NEXT: v9: int[0, 2] = ResultAt v8
-# CHECK-NEXT: v10: undefined|null|Array<undefined|null|string> = ResultAt v8 index=1
-# CHECK-NEXT: v11: cursor = ResultAt v8 index=2
-# CHECK-NEXT: Switch v9 cases=[1] -> case b2(), otherwise b4()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v12: boolean = JSONSourceClose v5, v11
-# CHECK-NEXT: Branch v12 -> taken b3(), notTaken b5()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v13: fact = Specified
-# CHECK-NEXT: v14: null|Array<undefined|null|string> = AssumeType v10, v13 provenType=null|boolean|number|string|object
-# CHECK-NEXT: Jump -> next b6(v14)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v5
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v16: undefined = Undefined
-# CHECK-NEXT: v17: null|boolean|number|string|object = CallBuiltin -, v3, v16 overload=JSONParse/0 accessSite=1
-# CHECK-NEXT: Jump -> next b6(v17)
-# CHECK-NEXT: b6(v18: null|boolean|number|string|object ~ null|Array<undefined|null|string>):
-# CHECK-NEXT: PutModuleVariable v18 variable=g6
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v5: null|boolean|number|string|object = CallBuiltin -, v3, v4 overload=JSONParse/0 accessSite=1
+# CHECK-NEXT: v6: null|boolean|number|string|object ~ null|Array<undefined|null|string> = Upcast v5 castType=anything
+# CHECK-NEXT: PutModuleVariable v6 variable=g6
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: v10: string = CallDirect v8, v9 function=f4 accessSite=4
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v10 overload=ConsoleLog/0 accessSite=5
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: 0 = Integer
+# CHECK-NEXT: v14: string = CallDirect v12, v13 function=f4 accessSite=4
+# CHECK-NEXT: v15: undefined = CallBuiltin -, v14 overload=ConsoleLog/0 accessSite=5
+# CHECK-NEXT: v16: 2 = Integer integer=2
+# CHECK-NEXT: v17: 0 = Integer
+# CHECK-NEXT: v18: string = CallDirect v16, v17 function=f4 accessSite=4
+# CHECK-NEXT: v19: undefined = CallBuiltin -, v18 overload=ConsoleLog/0 accessSite=5
 # CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: v22: string = CallDirect v20, v21 function=f4 accessSite=4
-# CHECK-NEXT: v23: undefined = CallBuiltin -, v22 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: 0 = Integer
-# CHECK-NEXT: v26: string = CallDirect v24, v25 function=f4 accessSite=4
-# CHECK-NEXT: v27: undefined = CallBuiltin -, v26 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: v28: 2 = Integer integer=2
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: v30: string = CallDirect v28, v29 function=f4 accessSite=4
-# CHECK-NEXT: v31: undefined = CallBuiltin -, v30 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: Jump -> next b7(v32)
-# CHECK-NEXT: b7(v33: int[0, 12]):
+# CHECK-NEXT: Jump -> next b1(v20)
+# CHECK-NEXT: b1(v21: int[0, 12]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v35: 12 = Integer integer=12
-# CHECK-NEXT: v36: boolean = Less v33, v35
-# CHECK-NEXT: Branch v36 -> taken b8(| 0), notTaken b13()
-# CHECK-NEXT: b8(v37: int[0, 11]) handler=b9():
-# CHECK-NEXT: v38: string = CallDirect v37, v37 function=f4 accessSite=6
-# CHECK-NEXT: Jump -> next b12(v38)
-# CHECK-NEXT: b9() role=CatchHandler:
-# CHECK-NEXT: v39: anything = CatchValue
-# CHECK-NEXT: v40: "threw " = String string="threw "
-# CHECK-NEXT: v41: anything ~ undefined|null|Error = Upcast v39 castType=anything
-# CHECK-NEXT: v42: anything = PropGet v41 key="constructor" accessSite=7
-# CHECK-NEXT: v43: anything ~ undefined|null|function = Expect v42 expectedType=undefined|null|function
-# CHECK-NEXT: v44: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v43 name="name"
-# CHECK-NEXT: v45: anything = PropGet v44 key="name" accessSite=8
-# CHECK-NEXT: v46: anything ~ undefined|null|string = Expect v45 expectedType=undefined|null|string
-# CHECK-NEXT: v47: boolean = TypeTest v46 testedType=string
-# CHECK-NEXT: Branch v47 -> taken b10(| 0), notTaken b11(| 0)
-# CHECK-NEXT: b10(v48: string):
-# CHECK-NEXT: v49: string = Add v40, v48
-# CHECK-NEXT: Jump -> next b12(v49)
-# CHECK-NEXT: b11(v50: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Rare:
-# CHECK-NEXT: v51: string = Add v40, v50
-# CHECK-NEXT: Jump -> next b12(v51)
-# CHECK-NEXT: b12(v52: string):
-# CHECK-NEXT: v53: ": " = String string=": "
-# CHECK-NEXT: v54: " | " = String string=" | "
-# CHECK-NEXT: v55: string = Strcat v37, v53, v52, v54
-# CHECK-NEXT: v56: string = CallBuiltin v1 overload=ArrayPrototypeJoin/0 accessSite=12
-# CHECK-NEXT: v57: string = Add v55, v56
-# CHECK-NEXT: v58: undefined = CallBuiltin -, v57 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v59: int[1, 12] = Increment v37
-# CHECK-NEXT: Jump -> next b7(v59)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: v60: undefined = Undefined
-# CHECK-NEXT: Return v60
+# CHECK-NEXT: v23: 12 = Integer integer=12
+# CHECK-NEXT: v24: boolean = Less v21, v23
+# CHECK-NEXT: Branch v24 -> taken b2(| 0), notTaken b7()
+# CHECK-NEXT: b2(v25: int[0, 11]) handler=b3():
+# CHECK-NEXT: v26: string = CallDirect v25, v25 function=f4 accessSite=6
+# CHECK-NEXT: Jump -> next b6(v26)
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: v27: anything = CatchValue
+# CHECK-NEXT: v28: "threw " = String string="threw "
+# CHECK-NEXT: v29: anything ~ undefined|null|Error = Upcast v27 castType=anything
+# CHECK-NEXT: v30: anything = PropGet v29 key="constructor" accessSite=7
+# CHECK-NEXT: v31: anything ~ undefined|null|function = Expect v30 expectedType=undefined|null|function
+# CHECK-NEXT: v32: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v31 name="name"
+# CHECK-NEXT: v33: anything = PropGet v32 key="name" accessSite=8
+# CHECK-NEXT: v34: anything ~ undefined|null|string = Expect v33 expectedType=undefined|null|string
+# CHECK-NEXT: v35: boolean = TypeTest v34 testedType=string
+# CHECK-NEXT: Branch v35 -> taken b4(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b4(v36: string):
+# CHECK-NEXT: v37: string = Add v28, v36
+# CHECK-NEXT: Jump -> next b6(v37)
+# CHECK-NEXT: b5(v38: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Rare:
+# CHECK-NEXT: v39: string = Add v28, v38
+# CHECK-NEXT: Jump -> next b6(v39)
+# CHECK-NEXT: b6(v40: string):
+# CHECK-NEXT: v41: ": " = String string=": "
+# CHECK-NEXT: v42: " | " = String string=" | "
+# CHECK-NEXT: v43: string = Strcat v25, v41, v40, v42
+# CHECK-NEXT: v44: string = CallBuiltin v1 overload=ArrayPrototypeJoin/0 accessSite=12
+# CHECK-NEXT: v45: string = Add v43, v44
+# CHECK-NEXT: v46: undefined = CallBuiltin -, v45 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v47: int[1, 12] = Increment v25
+# CHECK-NEXT: Jump -> next b1(v47)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v48: undefined = Undefined
+# CHECK-NEXT: Return v48
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=230 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=string site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -2328,7 +2306,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f31 visibility=Private
 # CHECK-NEXT: Return v67
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="three"
-# CHECK: module=m0 position=2131 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 11] site=w2}] results=[{type=Array<L0|L2|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f37} inlineFrames=[{}, {callee=f37 callPosition=2131 module=m0}, {callee=f50 callPosition=2235 parent=1 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f45 callPosition=2210 parent=1 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f13 callPosition=639 parent=3 module=m0}, {callee=f15 callPosition=797 parent=2 module=m0}, {callee=f45 callPosition=797 parent=2 isConstruction=true module=m0}, {callee=f13 callPosition=639 parent=6 module=m0}] {
+# CHECK: module=m0 position=2131 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 11] site=w2}] results=[{type=Array<L0|L2|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f37} inlineFrames=[{}, {callee=f37 callPosition=2131 module=m0}, {callee=f48 callPosition=2235 parent=1 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f43 callPosition=2210 parent=1 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f13 callPosition=639 parent=3 module=m0}, {callee=f15 callPosition=797 parent=2 module=m0}, {callee=f43 callPosition=797 parent=2 isConstruction=true module=m0}, {callee=f13 callPosition=639 parent=6 module=m0}] {
 # CHECK-NEXT: b0(v0: int[0, 11]):
 # CHECK-NEXT: v1: 1 = Integer integer=1
 # CHECK-NEXT: v2: int[1, 12] = Add v0, v1
@@ -2345,7 +2323,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f31 visibility=Private
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="run"
-# CHECK: module=m0 position=2495 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 11] site=w6}, {type=int[0, 11] site=w7}] results=[{type=string site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=2658 module=m0}, {callee=f47 callPosition=2602 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f3 callPosition=2555 module=m0}, {callee=f37 callPosition=2131 parent=3 module=m0}, {callee=f14 callPosition=2311 parent=2 module=m0}, {callee=f50 callPosition=2235 parent=4 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f45 callPosition=2210 parent=4 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f13 callPosition=639 parent=7 module=m0}, {callee=f15 callPosition=797 parent=6 module=m0}, {callee=f45 callPosition=797 parent=6 isConstruction=true module=m0}, {callee=f13 callPosition=639 parent=10 module=m0}] {
+# CHECK: module=m0 position=2495 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 11] site=w6}, {type=int[0, 11] site=w7}] results=[{type=string site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=2658 module=m0}, {callee=f45 callPosition=2602 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f3 callPosition=2555 module=m0}, {callee=f37 callPosition=2131 parent=3 module=m0}, {callee=f14 callPosition=2311 parent=2 module=m0}, {callee=f48 callPosition=2235 parent=4 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f43 callPosition=2210 parent=4 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f13 callPosition=639 parent=7 module=m0}, {callee=f15 callPosition=797 parent=6 module=m0}, {callee=f43 callPosition=797 parent=6 isConstruction=true module=m0}, {callee=f13 callPosition=639 parent=10 module=m0}] {
 # CHECK-NEXT: b0(v0: int[0, 11], v1: int[0, 11]):
 # CHECK-NEXT: v2: 1 = Integer integer=1
 # CHECK-NEXT: v3: int[1, 12] = Add v0, v2

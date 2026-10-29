@@ -360,24 +360,25 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f62
 # CHECK-NEXT: v14: f8 = GetModuleVariable variable=g7
 # CHECK-NEXT: v15: null = Null
 # CHECK-NEXT: v16: function = CallBuiltin v14, v15 overload=FunctionPrototypeBind/0 accessSite=3
-# CHECK-NEXT: v17: undefined = CallDirect v16 function=f79 accessSite=4
-# CHECK-NEXT: v18: f19 = NewClosure function=f19 allocationSite=6
-# CHECK-NEXT: v19: undefined = CallDirect v18 function=f79 accessSite=6
-# CHECK-NEXT: v20: undefined|null|L1 = Call v0 calleeName="honest" accessSite=7 callees=[f10]
-# CHECK-NEXT: v21: undefined = CallDirect v5 function=f79 accessSite=8
-# CHECK-NEXT: v22: 1 = Integer integer=1
-# CHECK-NEXT: v23: 2 = Integer integer=2
-# CHECK-NEXT: v24: 3 = Integer integer=3
+# CHECK-NEXT: v17: function|f8 = Upcast v16 castType=function|f8
+# CHECK-NEXT: v18: undefined = CallDirect v17 function=f79 accessSite=4
+# CHECK-NEXT: v19: f19 = NewClosure function=f19 allocationSite=6
+# CHECK-NEXT: v20: undefined = CallDirect v19 function=f79 accessSite=6
+# CHECK-NEXT: v21: undefined|null|L1 = Call v0 calleeName="honest" accessSite=7 callees=[f10]
+# CHECK-NEXT: v22: undefined = CallDirect v5 function=f79 accessSite=8
+# CHECK-NEXT: v23: 1 = Integer integer=1
+# CHECK-NEXT: v24: 2 = Integer integer=2
 # CHECK-NEXT: v25: 3 = Integer integer=3
-# CHECK-NEXT: v26: Array<undefined|int> = NewArray v22, v23, v24 contents=undefined|int
-# CHECK-NEXT: v27: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v28: Arguments = CreateUnmappedArguments v25, v27 allocationSite=21
-# CHECK-NEXT: v29: undefined = CallDirect v28 function=f79 accessSite=10
-# CHECK-NEXT: v30: undefined|null|L1 = Call v0 calleeName="honest" accessSite=11 callees=[f10]
-# CHECK-NEXT: v31: f22 = NewClosure function=f22 allocationSite=10 storage=Frame
-# CHECK-NEXT: v32: string = CallDirect v31 function=f66 accessSite=12
-# CHECK-NEXT: v33: undefined = Undefined
-# CHECK-NEXT: Return v33
+# CHECK-NEXT: v26: 3 = Integer integer=3
+# CHECK-NEXT: v27: Array<undefined|int> = NewArray v23, v24, v25 contents=undefined|int
+# CHECK-NEXT: v28: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v29: Arguments = CreateUnmappedArguments v26, v28 allocationSite=21
+# CHECK-NEXT: v30: undefined = CallDirect v29 function=f79 accessSite=10
+# CHECK-NEXT: v31: undefined|null|L1 = Call v0 calleeName="honest" accessSite=11 callees=[f10]
+# CHECK-NEXT: v32: f22 = NewClosure function=f22 allocationSite=10 storage=Frame
+# CHECK-NEXT: v33: string = CallDirect v32 function=f66 accessSite=12
+# CHECK-NEXT: v34: undefined = Undefined
+# CHECK-NEXT: Return v34
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="setLength"
 # CHECK: module=m0 position=906 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=int[-1, 1] site=w5}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

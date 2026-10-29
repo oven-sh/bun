@@ -44,20 +44,21 @@ pub use referents::{Library, LinkedProject};
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 pub(crate) use written_descriptor::{DescribedPart, WrittenDescriptor};
 
-use crate::builtins::{BuiltinNames, Platforms};
+use crate::builtins::{BuiltinNames, Platforms, RuntimeModule};
 use crate::ir::InParallel;
 use crate::ir::parallel::map_each;
 use crate::known_helpers::KnownHelpers;
 use crate::link::{Beside, run_beside};
 use crate::load::{EntryPointKind, SourceKind, Sources};
+use crate::options::{ReplacedExport, ReplacedModule};
 use crate::statistics::{Counters, LimitId, StatisticId};
-use bun_sema::atom::Interner;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::StmtId;
-use bun_sema::program::{FileId, Files};
+use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::{FxHashSet, SharedSort};
 use commonjs_exports::{CommonJsInput, InnerCommonJs, scan_commonjs_modules};
 use core::cmp::Ordering;
-use exports::{ExportTables, collect_export_entries, finish_exports, resolve_exports};
+use exports::{ExportTables, Resolution, collect_export_entries, finish_exports, resolve_exports};
 use failures::{PendingFailure, number_failures};
 use graph::{FileRow, find};
 use imports::{FileImports, bind_imports, finish_bindings, finish_named_members};
@@ -66,7 +67,7 @@ use order::{SiteKey, SitePosition, compute_order};
 use plan::{Plan, StoredSite};
 use requests::{Scans, finish_requests, finish_site_answers, scan_files};
 use side_effects::is_declared_free_of_side_effects;
-use synthetic_exports::number_synthetic_exports;
+use synthetic_exports::{ReplacedNames, number_synthetic_exports};
 use unloadable::{drop_errors_of_unloadable_modules, find_unloadable_modules};
 
 pub struct BindInput<'a, 's> {
@@ -78,6 +79,8 @@ pub struct BindInput<'a, 's> {
     pub platform: Platforms,
     /// Packages that an option of the build names as external. A computed specifier can name one that no import site names.
     pub external_packages: &'a [Vec<u8>],
+    /// What the engine found in an earlier compile of the program: a spy of the test runner may replace them.
+    pub replaced_exports: &'a [ReplacedExport],
     pub application: Option<&'a ApplicationGraph<'a>>,
     pub in_parallel: InParallel<'a>,
     pub beside: Beside<'a>,
@@ -167,7 +170,44 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     };
     let imported_namespaces = imports.iter().flat_map(|file| &file.imported_namespaces);
     let imported_namespaces: Vec<ModuleRef> = imported_namespaces.copied().collect();
-    let synthetic = number_synthetic_exports(input, &modules, &tables, &imports, &texts);
+    let replaced_variables = imports.iter().flat_map(|file| &file.replaced_variables);
+    let mut replaced_variables: Vec<Sym> = replaced_variables.copied().collect();
+    let replaced_names = imports.iter().flat_map(|file| &file.replaced_names);
+    let mut replaced_names: Vec<(ModuleRef, Atom)> = replaced_names.copied().collect();
+    let mut replace = |resolution: Resolution| match resolution {
+        Resolution::Variable(variable) => replaced_variables.push(variable),
+        Resolution::Synthetic { module, name } => replaced_names.push((module, name)),
+        Resolution::RuntimeMember { module, name } => {
+            replaced_names.push((ModuleRef::Runtime(module), name));
+        }
+        Resolution::Namespace { .. }
+        | Resolution::LiveName { .. }
+        | Resolution::DynamicStar { .. }
+        | Resolution::Unloadable { .. }
+        | Resolution::NotFound
+        | Resolution::Ambiguous => {}
+    };
+    for export in input.replaced_exports {
+        if let Some(module) = find_replaced_module(input, &modules, &export.module) {
+            let name = input.files.atoms.intern(&export.name);
+            replace(tables.resolve_in(&modules, module, name).resolution);
+        }
+    }
+    let mocked_modules = imports.iter().flat_map(|file| &file.mocked_modules);
+    let mocked_modules: FxHashSet<ModuleRef> = mocked_modules.copied().collect();
+    let mocked_files = mocked_modules.iter();
+    for file in mocked_files.filter_map(|&module| modules.table_file(module)) {
+        for &(_, resolved) in tables.names(file) {
+            replace(resolved.resolution);
+        }
+    }
+    let mocks_any_module = imports.iter().any(|file| file.mocks_any_module);
+    let replaced = ReplacedNames {
+        names: &replaced_names,
+        modules: &mocked_modules,
+        is_every_module: mocks_any_module,
+    };
+    let synthetic = number_synthetic_exports(input, &modules, &tables, &imports, &texts, replaced);
     let ((mut pending, requests, is_library), mut commonjs_exports) = run_beside(
         input.beside,
         || {
@@ -315,6 +355,13 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     for &module in &imported_namespaces {
         plan.set_is_imported_as_namespace(module);
     }
+    plan.set_replaced_variables(replaced_variables);
+    for &module in &mocked_modules {
+        plan.set_may_be_mocked(module);
+    }
+    if mocks_any_module {
+        plan.set_every_module_may_be_mocked();
+    }
     let inner_requests = requests.inner_modules.into_iter();
     plan.inner_requests = inner_requests.map(|(_, requests)| requests).collect();
     let graph = ModuleGraph {
@@ -336,6 +383,21 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     };
     let graph = graph.finish(input.in_parallel);
     BoundModules { graph, counters }
+}
+
+fn find_replaced_module(
+    input: &BindInput<'_, '_>,
+    modules: &ModuleSet,
+    module: &ReplacedModule,
+) -> Option<ModuleRef> {
+    match module {
+        ReplacedModule::File(path) => {
+            let mut files = modules.record_files.iter();
+            let file = files.find(|&&file| input.files.module(file).file_name() == &path[..])?;
+            Some(ModuleRef::File(*file))
+        }
+        ReplacedModule::Runtime(id) => RuntimeModule::from_registry_id(*id).map(ModuleRef::Runtime),
+    }
 }
 
 fn find_markers_stored_in_application(

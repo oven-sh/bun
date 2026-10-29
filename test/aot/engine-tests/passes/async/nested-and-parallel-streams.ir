@@ -861,7 +861,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f139 visibility=Private
 # CHECK: module=m0 position=1219 role=CoroutineBody flags=[IsAsync, IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=AsyncGenerator<undefined|null|string, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}, {type=AsyncGenerator<undefined|null|string, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f7 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {}]} creator=Coroutine{kind=AsyncGenerator ramp=f7 body=f142 promiseType=Promise promiseParameter=4} {
 # CHECK-NEXT: b0(v0: undefined, v1: function, v2: AsyncGenerator<undefined|null|string, pristine[Storage, Names]>, v3: AsyncGenerator<undefined|null|string, pristine[Storage, Names]>, v4: AsyncGenerator):
 # CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: undefined = YieldBySavingFrame v4, v5, v1, v2, v3
+# CHECK-NEXT: v6: undefined = YieldBySavingFrame v4, v5, v1
 # CHECK-NEXT: v7: anything = ResultAt v6
 # CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
 # CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
@@ -873,7 +873,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f139 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v10: undefined = Undefined
 # CHECK-NEXT: v11: absent = Absent
-# CHECK-NEXT: v12: undefined = StepAsyncGenerator v2, v10, v11, v1, v2, v3 calledBuiltin=AsyncGeneratorPrototypeNext
+# CHECK-NEXT: v12: undefined = StepAsyncGenerator v2, v10, v11 calledBuiltin=AsyncGeneratorPrototypeNext
 # CHECK-NEXT: v13: anything = ResultAt v12
 # CHECK-NEXT: v14: int[0, 2] = ResultAt v12 index=1
 # CHECK-NEXT: v15: 0 = Integer
@@ -891,7 +891,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f139 visibility=Private
 # CHECK-NEXT: b6(v22: object ~ L(IteratorResult)):
 # CHECK-NEXT: v23: undefined = Undefined
 # CHECK-NEXT: v24: absent = Absent
-# CHECK-NEXT: v25: undefined = StepAsyncGenerator v3, v23, v24, v1, v2, v3, v22 calledBuiltin=AsyncGeneratorPrototypeNext
+# CHECK-NEXT: v25: undefined = StepAsyncGenerator v3, v23, v24, v1, v22 calledBuiltin=AsyncGeneratorPrototypeNext
 # CHECK-NEXT: v26: anything = ResultAt v25
 # CHECK-NEXT: v27: int[0, 2] = ResultAt v25 index=1
 # CHECK-NEXT: v28: 0 = Integer

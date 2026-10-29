@@ -172,6 +172,8 @@ pub(super) struct FlowMemo {
     /// For each `Flow::Reduce`: the label at the start of the `finally` block, and the node itself.
     /// The nodes of the block have the numbers in between.
     finally_blocks: Vec<(u32, u32)>,
+    /// The last node of each `finally` block, in ascending order. See `flow_type_after_finally_block`.
+    finally_block_ends: Vec<u32>,
     /// Indexed by symbol: the flow node at which its declaration initializes it.
     declaration_node: Vec<u32>,
     /// Indexed by flow node. See `highest_unsettled_call` and `first_unsettled_call`. `u32::MAX`
@@ -373,8 +375,9 @@ struct ElementsSoFar {
     count: u32,
 }
 
-/// `FlowLoopKey`, without the reference.
-type FlowLoopKey = (FileId, FlowId, TypeId, TypeId);
+/// `FlowLoopKey`, with the `root_key` of the reference in its place. Without that, n names in n nested loops take n * n * n
+/// comparisons.
+type FlowLoopKey = (FileId, FlowId, TypeId, TypeId, u32);
 
 /// `SwitchStatementLinks`. tsgo assigns both unconditionally, so they keep the first computation's
 /// result even if it saw a loop's incomplete types.
@@ -577,6 +580,9 @@ enum Start {
     Unassigned,
 }
 
+/// The last node of a `finally` block, and those of `Walk::reduced` that a walk can reach from it.
+type AfterFinallyBlock = (FlowId, SmallVec<[(FlowId, FlowId); 2]>);
+
 struct Walk {
     reference: Reference,
     /// `refKey != nonDottedNameCacheKey`. `None` until a loop label needs it.
@@ -594,6 +600,11 @@ struct Walk {
     /// `reduceLabels`: the start of each `finally` block being traversed backwards, and the label
     /// whose antecedents are used instead.
     reduced: Vec<(FlowId, FlowId)>,
+    /// How many entries of `reduced` have a label that isn't lower than the one below them. Without
+    /// a loop there are none: the walk goes back through an outer block first.
+    reduced_out_of_order: u32,
+    /// See `flow_type_after_finally_block`.
+    after_finally_blocks: FxHashMap<AfterFinallyBlock, (FlowType, u32)>,
     /// How many back edges of loops are being followed.
     back_edges: u32,
     steps: u32,
@@ -630,6 +641,8 @@ struct Walk {
 }
 
 const MAX_STEPS: u32 = 2_000_000;
+/// See `flow_type_after_finally_block`.
+const LONG_EXACT_WALK: u32 = 10_000;
 /// A walk that has taken this many steps starts to skip. See `skip_unrelated_nodes`.
 const LONG_WALK: u32 = 32;
 /// A try to skip costs about as much as this many steps.
@@ -976,6 +989,8 @@ impl Walk {
             crossed: 0,
             shared_flows: SharedFlows::default(),
             reduced: Vec::new(),
+            reduced_out_of_order: 0,
+            after_finally_blocks: FxHashMap::default(),
             back_edges: 0,
             steps: 0,
             next_skip: LONG_WALK,
@@ -5303,6 +5318,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut lowest = vec![0u32; bound.flow.len()];
         let mut computed_key_nodes = Vec::new();
         let mut finally_blocks = Vec::new();
+        let mut finally_block_ends = Vec::new();
         let mut union_nodes = Vec::new();
         let mut noted_switches: FxHashMap<StmtId, (ResolvesKey, bool)> = FxHashMap::default();
         let mut longest = 0;
@@ -5422,7 +5438,10 @@ impl<'p, 's> Checker<'p, 's> {
                         (resolves_in_call, builds_union) = (about.3, about.4);
                     }
                 }
-                Flow::Reduce { label, .. } => finally_blocks.push((label.0, i as u32)),
+                Flow::Reduce { before, label, .. } => {
+                    finally_blocks.push((label.0, i as u32));
+                    finally_block_ends.push(before.0);
+                }
                 _ => {}
             }
             let resolves = about.2.max(resolves_in_call);
@@ -5451,6 +5470,9 @@ impl<'p, 's> Checker<'p, 's> {
         (memo.min_antecedent, memo.computed_key_nodes) = (lowest, computed_key_nodes);
         memo.union_nodes = union_nodes;
         memo.finally_blocks = finally_blocks;
+        finally_block_ends.sort_unstable();
+        finally_block_ends.dedup();
+        memo.finally_block_ends = finally_block_ends;
         for calls in [
             &mut memo.unsettled_call_before,
             &mut memo.unsettled_call_on_first_path,
@@ -6728,6 +6750,61 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
+    /// FOR SPEED. `flow_type`, for a node that may be the last one of a `finally` block. Three nodes
+    /// follow that one: the block is left in the normal way, by an exception, or in the middle. It
+    /// isn't shared, so in tsgo each of them walks through the block, and through the three ends of
+    /// each block nested in its `try` block: 3 to the power of n walks for n blocks. What a walk
+    /// finds there only depends on the labels that stand for others at the time, so it's kept for
+    /// each set of those that it can reach.
+    fn flow_type_after_finally_block(&mut self, walk: &mut Walk, flow: FlowId) -> FlowType {
+        let file = walk.reference.file;
+        if walk.too_deep || self.task.file != Some(file) {
+            return self.flow_type(walk, flow);
+        }
+        if self.flow_memo.narrowing_index_file != Some(file) {
+            cold_path();
+            self.index_narrowing_subjects(file);
+        }
+        let memo = &self.flow_memo;
+        if memo.finally_block_ends.binary_search(&flow.0).is_err() {
+            return self.flow_type(walk, flow);
+        }
+        let highest = memo.max_antecedent[flow.idx()];
+        let mut reduced: SmallVec<[(FlowId, FlowId); 2]> = SmallVec::new();
+        for &(label, instead) in walk.reduced.iter().rev() {
+            if label.0 > highest {
+                if walk.reduced_out_of_order == 0 {
+                    break;
+                }
+            } else if !reduced.iter().any(|known| known.0 == label) {
+                reduced.push((label, instead));
+            }
+        }
+        let key = (flow, reduced);
+        // An invocation in tsgo may get less deep the second time, because it finds more in
+        // `sharedFlows`. An exact walk only relies on the first time once tsgo would take too long.
+        if (!walk.is_exact || walk.steps >= LONG_EXACT_WALK)
+            && let Some(&(known, invocations)) = walk.after_finally_blocks.get(&key)
+        {
+            walk.may_be_too_deep = true;
+            walk.deepest = walk.deepest.max(walk.depth + invocations);
+            if walk.depth + invocations > MAX_FLOW_DEPTH {
+                cold_path();
+                walk.too_deep = true;
+                return FlowType::new(TypeId::ERROR, false);
+            }
+            return known;
+        }
+        let deepest_before = std::mem::take(&mut walk.deepest);
+        let found = self.flow_type(walk, flow);
+        let invocations = walk.deepest.saturating_sub(walk.depth);
+        walk.deepest = walk.deepest.max(deepest_before);
+        if !walk.too_deep && walk.steps < MAX_STEPS && !found.incomplete && walk.unmade.is_none() {
+            walk.after_finally_blocks.insert(key, (found, invocations));
+        }
+        found
+    }
+
     /// `getTypeAtFlowNode`
     fn flow_type(&mut self, walk: &mut Walk, start: FlowId) -> FlowType {
         if walk.too_deep {
@@ -6951,9 +7028,12 @@ impl<'p, 's> Checker<'p, 's> {
                 } => {
                     above_shared_node = pending.len() + 1;
                     walk.has_left_finally_block = true;
+                    let is_out_of_order = walk.reduced.last().is_some_and(|top| top.0 <= label);
+                    walk.reduced_out_of_order += u32::from(is_out_of_order);
                     walk.reduced.push((label, instead));
-                    let t = self.flow_type(walk, before);
+                    let t = self.flow_type_after_finally_block(walk, before);
                     walk.reduced.pop();
+                    walk.reduced_out_of_order -= u32::from(is_out_of_order);
                     incomplete = t.incomplete;
                     break t.ty;
                 }
@@ -6987,7 +7067,7 @@ impl<'p, 's> Checker<'p, 's> {
                             bypass = Some((edge, stmt));
                             continue;
                         }
-                        let t = self.flow_type(walk, edge);
+                        let t = self.flow_type_after_finally_block(walk, edge);
                         if t.ty == walk.declared && self.starts_as_declared(walk) {
                             types.clear();
                             types.push(t.ty);
@@ -7049,7 +7129,13 @@ impl<'p, 's> Checker<'p, 's> {
                     let deepest_at_label = walk.deepest;
                     above_shared_node = pending.len() + 1;
                     let initial = self.initial_of(walk);
-                    let key = (file, flow, walk.declared, initial);
+                    let key = (
+                        file,
+                        flow,
+                        walk.declared,
+                        initial,
+                        root_key(walk.reference.root),
+                    );
                     if let Some(cached) =
                         self.flow_memo.cached_flow_loop_type(&key, &walk.reference)
                     {

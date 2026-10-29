@@ -1080,6 +1080,9 @@
     "windows": 1700,
     "windows-aarch64": 1700
   },
+  "aot/counts-pinned-by-programs.test.ts": {
+    "default": 25000
+  },
   "aot/cpu-profile-urls.test.ts": {
     "default": 900,
     "asan": 3200,

@@ -491,11 +491,11 @@ describe("bun test", () => {
   const price = {
     "price.ts": `export function price(id: string): number { return id.length; }\nexport const rate = { of(id: string): number { return id.length * 2; } };`,
   };
-  test("mock.module throws for a module that was compiled", async () => {
+  test("mock.module replaces the exports of a compiled module", async () => {
     const { stderr, exitCode } = await ranWithBunTypes(
       {
         ...price,
-        "one.test.ts": `import { expect, mock, test } from "bun:test";\nimport { price } from "./price.ts";\ntest("not replaced", () => { expect(() => mock.module("./price.ts", () => ({ price: () => 42 }))).toThrow("cannot replace a module that was compiled ahead of time"); expect(price("abc")).toBe(3); });`,
+        "one.test.ts": `import { expect, mock, test } from "bun:test";\nimport { price } from "./price.ts";\ntest("replaced", () => { expect(price("abc")).toBe(3); mock.module("./price.ts", () => ({ price: () => 42 })); expect(price("abc")).toBe(42); });`,
       },
       ["test", ...flags, "one.test.ts"],
     );
@@ -533,13 +533,13 @@ describe("bun test", () => {
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });
-  test("a type error in a test file ends the run", async () => {
+  test("a type error in a test file is a warning", async () => {
     const { stderr, exitCode } = await ranWithBunTypes(
-      { "four.test.ts": `import { test } from "bun:test";\nconst n: number = "x";\ntest("never", () => {});` },
+      { "four.test.ts": `import { test } from "bun:test";\nconst n: number = "x";\ntest("runs", () => {});` },
       ["test", ...flags, "four.test.ts"],
     );
-    expect(stderr).toContain("TS2322");
-    expect(stderr).not.toContain("1 pass");
-    expect(exitCode).toBe(1);
+    expect(stderr).toContain("warn: TS2322");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
   });
 });

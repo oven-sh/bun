@@ -1185,6 +1185,18 @@ impl<'a> Resolver<'a> {
         Some(entry_point.module_path)
     }
 
+    /// The module of `CompiledProgram::entry_point_from_working_directory`.
+    pub fn resolve_embedded_entry_point_from_working_directory(
+        &self,
+        specifier: &[u8],
+    ) -> Option<&'static [u8]> {
+        let graph = self.standalone_module_graph?;
+        let public_root = graph.base_public_path_with_default_suffix();
+        let program = graph.compiled_program()?;
+        let entry_point = program.entry_point_from_working_directory(public_root, specifier)?;
+        Some(entry_point.module_path)
+    }
+
     /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module, then a file that `--asset` gave it.
     fn resolve_at_source_path(
         &self,
@@ -1519,8 +1531,12 @@ impl<'a> Resolver<'a> {
                         return ResultUnion::NotFound;
                     }
                     let top_level_dir = Fs::FileSystem::get().top_level_dir();
+                    let root_on_disk = graph.root_on_disk();
                     let mut directories = graph
-                        .directories_of_importer(source_dir, top_level_dir)
+                        .directories_of_importer(
+                            source_dir,
+                            root_on_disk.as_deref().unwrap_or(top_level_dir),
+                        )
                         .into_iter();
                     if let Some(directory) = directories
                         .find(|directory| self.read_dir_info_ignore_error(directory).is_some())
@@ -1636,6 +1652,18 @@ impl<'a> Resolver<'a> {
                     if let Err(err) = self.finalize_result(&mut result, kind) {
                         self.extension_order = original_order;
                         return ResultUnion::Failure(err);
+                    }
+                    // The name of a package leads to a file on disk. Where that file was compiled, the module of the executable answers.
+                    let found = result.path().map(|path| path.text());
+                    let found =
+                        found.and_then(|path| self.resolve_embedded_module(b"", path, kind));
+                    if let Some(module) = found {
+                        result.path_pair = PathPair {
+                            primary: Path::init(module),
+                            secondary: None,
+                        };
+                        result.module_type = options::ModuleType::Esm;
+                        result.flags |= ResultFlags::IS_STANDALONE_MODULE;
                     }
                 }
 

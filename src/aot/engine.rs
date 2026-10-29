@@ -37,8 +37,8 @@ pub use crate::ir::generated::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, DeclineRecord,
     FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LackedFunctionRecord,
     LocaleUseRecord, ObfuscatedSiteRecord, OperationCountRecord, OtherOriginsRecord,
-    PassTimeRecord, RemainingCheckRecord, SourceLocation, TextRange, TypeTestRecord,
-    UnseenCodeRecord, UserDiagnosticRecord, WorkerEntryRecord,
+    PassTimeRecord, RemainingCheckRecord, ReplacedExportRecord, SourceLocation, TextRange,
+    TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord, WorkerEntryRecord, WorkerStartRecord,
 };
 use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, LimitId, MismatchPolicy,
@@ -261,6 +261,7 @@ pub struct FlowFindings<'a> {
     pub unseen_code: &'a [UnseenCodeRecord],
     pub builtins_used: &'a [BuiltinUseRecord],
     pub library_functions_lacked: &'a [LackedFunctionRecord],
+    pub exports_that_spies_replace: &'a [ReplacedExportRecord],
 }
 
 /// Asked on a thread of the engine's.
@@ -316,6 +317,8 @@ struct FlowFindingsOfEngine {
     builtins_used_count: usize,
     library_functions_lacked: *const LackedFunctionRecord,
     library_functions_lacked_count: usize,
+    exports_that_spies_replace: *const ReplacedExportRecord,
+    exports_that_spies_replace_count: usize,
 }
 
 /// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until the engine returns, and the lists of
@@ -342,6 +345,10 @@ unsafe extern "C" fn goes_on_behind_flow_analysis(
             library_functions_lacked: list(
                 findings.library_functions_lacked,
                 findings.library_functions_lacked_count,
+            ),
+            exports_that_spies_replace: list(
+                findings.exports_that_spies_replace,
+                findings.exports_that_spies_replace_count,
             ),
         })
     }
@@ -432,6 +439,7 @@ impl EngineResult {
             unseen_code: self.unseen_code(),
             builtins_used: self.builtins_used(),
             library_functions_lacked: self.library_functions_lacked(),
+            exports_that_spies_replace: self.exports_that_spies_replace(),
         }
     }
 
@@ -487,11 +495,19 @@ struct BunAOTResult {
 #[repr(C)]
 struct HostThreadPool {
     schedule: unsafe extern "C" fn(run: unsafe extern "C" fn(*mut c_void), argument: *mut c_void),
+    give_free_memory_of_current_thread_back: extern "C" fn(),
+}
+
+extern "C" fn give_free_memory_of_current_thread_back() {
+    if bun_alloc::USE_MIMALLOC {
+        bun_alloc::mimalloc::mi_collect(true);
+    }
 }
 
 /// The engine's loops run on the threads that the front end's did.
 static REGION_THREADS: HostThreadPool = HostThreadPool {
     schedule: bun_sema_driver::run_on_region_thread,
+    give_free_memory_of_current_thread_back,
 };
 
 unsafe extern "C" {
@@ -545,9 +561,11 @@ result_records! {
     unseen_code: UnseenCodeRecord = UnseenCode,
     builtins_used: BuiltinUseRecord = BuiltinsUsed,
     library_functions_lacked: LackedFunctionRecord = LibraryFunctionsLacked,
+    exports_that_spies_replace: ReplacedExportRecord = ExportsThatSpiesReplace,
     features_used: FeatureUseRecord = FeaturesUsed,
     locales_used: LocaleUseRecord = LocalesUsed,
     worker_entries: WorkerEntryRecord = WorkerEntries,
+    worker_starts_without_name: WorkerStartRecord = WorkerStartsWithoutName,
     access_counts: AccessCountRecord = AccessCounts,
     accesses: AccessRecord = Accesses,
     other_origins: OtherOriginsRecord = OtherOrigins,

@@ -419,11 +419,13 @@ function f19 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L8 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: L8 = Upcast v0 castType=anything
-# CHECK-NEXT: v6: L8 = AssumeType v1 provenType=undefined|L8
-# CHECK-NEXT: v2: f7 = PropGet v6 key="makesLarge" accessSite=24 receivers=[L8]
-# CHECK-NEXT: v7: f7 = AssumeType v2 provenType=f7
-# CHECK-NEXT: v3: 100000 = Integer integer=100000
-# CHECK-NEXT: v4: anything ~ number = Call v7, v6, v3 calleeKey="makesLarge" calleeName="m.makesLarge" accessSite=25 callees=[f7]
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v7: L8 = AssumeType v1 provenType=undefined|L8
+# CHECK-NEXT: v2: f7 = PropGet v7 key="makesLarge" accessSite=24 receivers=[L8]
+# CHECK-NEXT: v8: f7 = AssumeType v2 provenType=f7
+# CHECK-NEXT: v3: f7 = Upcast v8 castType=anything
+# CHECK-NEXT: v9: f7 = AssumeType v3 provenType=f7
+# CHECK-NEXT: v4: 100000 = Integer integer=100000
+# CHECK-NEXT: v5: anything ~ number = Call v9, v7, v4 calleeKey="makesLarge" calleeName="m.makesLarge" accessSite=25 callees=[f7]
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }

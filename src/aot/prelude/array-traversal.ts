@@ -2,10 +2,19 @@
 declare var $visibility: "Public" | "Private" | "PrivateRecursive";
 declare function $call<R>(f: unknown, thisArg: unknown, ...args: unknown[]): R;
 declare function $isArray(value: unknown): value is unknown[];
+declare function $isJSArray(value: unknown): boolean;
 declare function $toLength(value: unknown): number;
 declare function $newArrayLike<T>(n: number, a: unknown[] | undefined): T[];
 declare function $newArrayWithCapacity<T>(n: number, a: unknown[]): T[];
 declare function $tryPutByValDirect(out: unknown[], k: number, value: unknown): boolean;
+declare function $tryPutIndex(a: unknown[], k: number, value: unknown): boolean;
+declare function $arrayStorageKind(a: unknown[]): number;
+declare const $arrayStorageInt32: number;
+declare const $arrayStorageDouble: number;
+declare const $arrayStorageContiguous: number;
+declare function $getDoubleIndex(a: unknown[], k: number): number;
+declare function $hasContiguousIndex(a: unknown[], k: number): boolean;
+declare function $getContiguousIndex<T>(a: unknown[], k: number): T;
 declare function $growNewArray(out: unknown[], n: number): void;
 declare function $truncateNewArray<T>(out: T[], n: number): T[];
 
@@ -22,19 +31,38 @@ function storeInNewArray(out: unknown[], position: number, value: unknown): void
   if (!isStored) out[position] = value;
 }
 
+// The array may be of any kind here: what made it is out of sight. A store above its length makes it longer.
+function storeInArrayOfAnyKind(out: unknown[], position: number, value: unknown): void {
+  const isStored: boolean = $tryPutIndex(out, position, value);
+  if (!isStored) out[position] = value;
+}
+
 // An array never holds 2 ** 32 elements, so the position fits an unsigned 32-bit integer.
-function appendParts(out: unknown[], start: number, parts: unknown): number {
+function appendList(out: unknown[], start: number, list: unknown[], count: number): number {
   let position = start >>> 0;
-  if (!$isArray(parts)) {
-    if (position >= out.length) $growNewArray(out, position);
-    storeInNewArray(out, position, parts);
-    return (position + 1) >>> 0;
+  // A Proxy of an array is an array to flatMap, and has no storage to read.
+  const kind = $isJSArray(list) ? $arrayStorageKind(list) : -1;
+  let index = 0;
+  // The elements of a plain vector are read without a look at the kind of each. A hole ends the run: what stands for it is looked up below.
+  if (kind === $arrayStorageContiguous || kind === $arrayStorageInt32) {
+    if (position + count > out.length) $growNewArray(out, position + count);
+    for (; index < count && $hasContiguousIndex(list, index); index++) {
+      storeInArrayOfAnyKind(out, position, $getContiguousIndex<unknown>(list, index));
+      position = (position + 1) >>> 0;
+    }
+  } else if (kind === $arrayStorageDouble) {
+    if (position + count > out.length) $growNewArray(out, position + count);
+    for (; index < count; index++) {
+      const value = $getDoubleIndex(list, index);
+      if (value !== value) break;
+      storeInArrayOfAnyKind(out, position, value);
+      position = (position + 1) >>> 0;
+    }
   }
-  const count = $toLength(parts.length);
-  for (let index = 0; index < count; index++) {
-    if (!(index in parts)) continue;
+  for (; index < count; index++) {
+    if (!(index in list)) continue;
     if (position >= out.length) $growNewArray(out, position);
-    storeInNewArray(out, position, parts[index]);
+    storeInArrayOfAnyKind(out, position, list[index]);
     position = (position + 1) >>> 0;
   }
   return position;
@@ -81,7 +109,9 @@ export function traverseArray(
   const secondLinkShift = 6;
   const thirdLinkShift = 8;
   const hasInitialValueShift = 10;
+  const flattensShortListsShift = 11;
   const endCallbackIndex = 6;
+  const shortListLength = 3;
 
   const endKind = shape & endMask;
   const firstLink = (shape >> firstLinkShift) & linkMask;
@@ -89,6 +119,7 @@ export function traverseArray(
   const thirdLink = (shape >> thirdLinkShift) & linkMask;
   const isDense = firstLink === linkFilter || secondLink === linkFilter || thirdLink === linkFilter;
   const visitsHoles = !isDense && (endKind === endFind || endKind === endFindIndex);
+  const flattensShortLists = ((shape >> flattensShortListsShift) & 1) === 1;
   const endCallback = operands[endCallbackIndex];
   const endThis = operands[endCallbackIndex + 1];
 
@@ -164,7 +195,35 @@ export function traverseArray(
       } else if (endKind === endJoin) {
         for (; reached < index; reached++) text += operand as string;
         text += joinedText(value);
-      } else reached = appendParts(out!, reached, $call<unknown>(endCallback, endThis, value, index, array));
+      } else {
+        const parts: unknown = $call<unknown>(endCallback, endThis, value, index, array);
+        if (!$isArray(parts)) {
+          if (reached >= out!.length) $growNewArray(out!, reached);
+          storeInNewArray(out!, reached, parts);
+          reached = (reached + 1) >>> 0;
+          continue;
+        }
+        const count = $toLength(parts.length);
+        if (count === 0) continue;
+        if (!flattensShortLists || count > shortListLength) {
+          reached = appendList(out!, reached, parts, count);
+          continue;
+        }
+        // A short list is read at constant positions: a list literal that the callback returns is then never made.
+        if (reached + count > out!.length) $growNewArray(out!, reached + count);
+        if (count > 0 && 0 in parts) {
+          storeInNewArray(out!, reached, parts[0]);
+          reached = (reached + 1) >>> 0;
+        }
+        if (count > 1 && 1 in parts) {
+          storeInNewArray(out!, reached, parts[1]);
+          reached = (reached + 1) >>> 0;
+        }
+        if (count > 2 && 2 in parts) {
+          storeInNewArray(out!, reached, parts[2]);
+          reached = (reached + 1) >>> 0;
+        }
+      }
     }
     break;
   }

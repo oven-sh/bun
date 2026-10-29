@@ -148,7 +148,19 @@ pub trait StandaloneModuleGraph: Send + Sync {
         module.or_else(|| {
             let program = self.compiled_program()?;
             let public_root = self.base_public_path_with_default_suffix();
-            program.resolve_module(public_root, source_dir, specifier, is_require, search)
+            let module =
+                program.resolve_module(public_root, source_dir, specifier, is_require, search);
+            module.or_else(|| {
+                let root_on_disk = self.root_on_disk()?;
+                program.resolve_module_on_disk(
+                    public_root,
+                    &root_on_disk,
+                    source_dir,
+                    specifier,
+                    is_require,
+                    search,
+                )
+            })
         })
     }
     /// `CompiledProgram::resolve_package`.
@@ -164,6 +176,14 @@ pub trait StandaloneModuleGraph: Send + Sync {
         };
         let public_root = self.base_public_path_with_default_suffix();
         program.resolve_package(public_root, source_dir, specifier, is_require, search)
+    }
+    /// `CompiledProgram::root_on_disk`, below the working directory of the process.
+    fn root_on_disk(&self) -> Option<Vec<u8>> {
+        let program = self.compiled_program()?;
+        if !program.knows_root_on_disk() {
+            return None;
+        }
+        program.root_on_disk(crate::fs::FileSystem::get().top_level_dir())
     }
     /// `compiled_program::directories_of_importer`.
     fn directories_of_importer(&self, source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {

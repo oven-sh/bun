@@ -19,6 +19,7 @@ const machineCodeLoaders = [
 const moduleLoaders = [
   "%ModuleRequire%",
   "%ModuleRequire%.extensions",
+  "%ModuleRequirePrototype%.extensions",
   "%PrivateGlobals%.createInternalModuleById",
   "%PrivateGlobals%.esmLoadSync",
   "%PrivateGlobals%.requireCommonJS",

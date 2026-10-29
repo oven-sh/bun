@@ -158,35 +158,51 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b9(v18: undefined|null|true|number|bigint|"2"):
 # CHECK-NEXT: v19: undefined|null|true|number|bigint|"2" ~ undefined|number = Upcast v18 castType=anything
 # CHECK-NEXT: v20: boolean = TypeTest v19 testedType=number
-# CHECK-NEXT: Branch v20 -> taken b10(| 0), notTaken b15(| 0)
+# CHECK-NEXT: Branch v20 -> taken b10(| 0), notTaken b20(| 0)
 # CHECK-NEXT: b10(v21: number):
-# CHECK-NEXT: Jump -> next b11(v3)
-# CHECK-NEXT: b11(v22: int|whole):
+# CHECK-NEXT: v22: boolean = TypeTest v21 testedType=i32
+# CHECK-NEXT: Branch v22 -> taken b11(| 0), notTaken b16(v3)
+# CHECK-NEXT: b11(v23: i32):
+# CHECK-NEXT: Jump -> next b12(v3)
+# CHECK-NEXT: b12(v24: int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v24: boolean = Less v22, v21
-# CHECK-NEXT: Branch v24 -> taken b12(), notTaken b14()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v25: boolean = Less v22, v1
-# CHECK-NEXT: Branch v25 -> taken b13(), notTaken b14()
-# CHECK-NEXT: b13():
-# CHECK-NEXT: v26: int|whole = Increment v22
-# CHECK-NEXT: Jump -> next b11(v26)
+# CHECK-NEXT: v26: boolean = Less v24, v23
+# CHECK-NEXT: Branch v26 -> taken b13(| 0), notTaken b15()
+# CHECK-NEXT: b13(v27: int[0, 2147483646]):
+# CHECK-NEXT: v28: boolean = Less v27, v1
+# CHECK-NEXT: Branch v28 -> taken b14(), notTaken b15()
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v27: boolean = Eq v22, v21
-# CHECK-NEXT: Return v27
-# CHECK-NEXT: b15(v28: undefined|null|true|bigint|"2" ~ undefined) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b16(v3)
-# CHECK-NEXT: b16(v29: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v29: int[1, 2147483647] = Increment v27
+# CHECK-NEXT: Jump -> next b12(v29)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v30: boolean = Eq v24, v23
+# CHECK-NEXT: Return v30
+# CHECK-NEXT: b16(v31: int|whole ~ 0) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v31: boolean = Less v29, v28
-# CHECK-NEXT: Branch v31 -> taken b17(), notTaken b19()
+# CHECK-NEXT: v33: boolean = Less v31, v21
+# CHECK-NEXT: Branch v33 -> taken b17(), notTaken b19()
 # CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: v32: boolean = Less v29, v1
-# CHECK-NEXT: Branch v32 -> taken b18(), notTaken b19()
+# CHECK-NEXT: v34: boolean = Less v31, v1
+# CHECK-NEXT: Branch v34 -> taken b18(), notTaken b19()
 # CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v33: int|whole = Increment v29
-# CHECK-NEXT: Jump -> next b16(v33)
+# CHECK-NEXT: v35: int|whole ~ 1 = Increment v31
+# CHECK-NEXT: Jump -> next b16(v35)
 # CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: v34: boolean = Eq v29, v28
-# CHECK-NEXT: Return v34
+# CHECK-NEXT: v36: boolean = Eq v31, v21
+# CHECK-NEXT: Return v36
+# CHECK-NEXT: b20(v37: undefined|null|true|bigint|"2" ~ undefined) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b21(v3)
+# CHECK-NEXT: b21(v38: int|whole) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v40: boolean = Less v38, v37
+# CHECK-NEXT: Branch v40 -> taken b22(), notTaken b24()
+# CHECK-NEXT: b22() frequency=Unlikely:
+# CHECK-NEXT: v41: boolean = Less v38, v1
+# CHECK-NEXT: Branch v41 -> taken b23(), notTaken b24()
+# CHECK-NEXT: b23() frequency=Unlikely:
+# CHECK-NEXT: v42: int|whole = Increment v38
+# CHECK-NEXT: Jump -> next b21(v42)
+# CHECK-NEXT: b24() frequency=Unlikely:
+# CHECK-NEXT: v43: boolean = Eq v38, v37
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: }

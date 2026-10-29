@@ -95,7 +95,7 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
 
 [`bun check --aot`](/runtime/check) reports the same errors and builds nothing. Bun checks each file with the nearest `tsconfig.json`. If you can't fix an error yet, you can [suppress it](/compiler/troubleshooting#the-build-stops-at-a-type-error).
 
-During development, [`bun run --aot` and `bun test --aot`](/compiler/debugging#run-under-the-compilers-rules) run the same checks and then run your program from its source.
+During development, [`bun run --aot`](/compiler/debugging#run-under-the-compilers-rules) runs the same checks and then runs your program from its source. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) compiles your tests and runs the compiled code.
 
 ## Read next
 

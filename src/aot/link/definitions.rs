@@ -349,16 +349,19 @@ fn add_synthetic_exports(
         let merged = merged.expect("link declares every synthetic export and every copy");
         let definition = &mut variables[merged as usize];
         // A name that either project requires is tested when the module is linked.
-        let is_known_elsewhere = match *definition {
+        let (is_known_elsewhere, is_replaceable_elsewhere) = match *definition {
             Some(VariableDefinition::SyntheticExport {
-                is_known_member, ..
-            }) => is_known_member,
-            Some(VariableDefinition::Unit(_)) | None => true,
+                is_known_member,
+                is_replaceable,
+                ..
+            }) => (is_known_member, is_replaceable),
+            Some(VariableDefinition::Unit(_)) | None => (true, false),
         };
         *definition = Some(VariableDefinition::SyntheticExport {
             module,
             name: export.name,
             is_known_member: export.is_known_member && is_known_elsewhere,
+            is_replaceable: export.is_replaceable || is_replaceable_elsewhere,
             writer,
         });
     };

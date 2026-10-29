@@ -859,7 +859,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f69
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="steps"
-# CHECK: module=m0 position=3551 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Generator<undefined|null|function, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+# CHECK: module=m0 position=3551 flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Generator<undefined|null|function|f25|f26|f27|f29, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
 # CHECK-NEXT: b0(v0: undefined, v1: function, v2: L2):
 # CHECK-NEXT: InitialYield v2
 # CHECK-NEXT: v4: 0 = Integer
@@ -916,8 +916,8 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f69
 # CHECK-NEXT: v38: f29 = NewClosure function=f29 allocationSite=11
 # CHECK-NEXT: v39: anything ~ object = Construct v37, -, v38 accessSite=9 callees=[f28]
 # CHECK-NEXT: v40: undefined|null|L1 ~ L1 = Check v39 expectedType=undefined|null|L1 site=w117
-# CHECK-NEXT: v41: anything ~ undefined|null|function = PropGet v40 key="step" accessSite=10 receivers=[]
-# CHECK-NEXT: v42: undefined|null|function = Check v41 expectedType=undefined|null|function site=w2
+# CHECK-NEXT: v41: anything ~ undefined|null|function|f29 = PropGet v40 key="step" accessSite=10 receivers=[]
+# CHECK-NEXT: v42: undefined|null|function|f25|f26|f27|f29 = Check v41 expectedType=undefined|null|function|f25|f26|f27|f29 site=w2
 # CHECK-NEXT: v43: undefined = Yield v42, v2, v30, v57
 # CHECK-NEXT: v44: anything = ResultAt v43
 # CHECK-NEXT: v45: int[0, 2] = ResultAt v43 index=1
@@ -942,8 +942,8 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f69
 # CHECK-NEXT: v1: f2 = GetModuleVariable variable=g1
 # CHECK-NEXT: v2: anything = Call v1, -, v0 calleeName="steps" accessSite=13 callees=[f2]
 # CHECK-NEXT: v10: Generator<anything, pristine[Storage, Names]> = AssumeType v2 provenType=Generator<anything, pristine[Storage, Names]>
-# CHECK-NEXT: v3: Generator<anything, pristine[Storage, Names]> ~ Generator<undefined|null|function, pristine[Storage, Names]> = Upcast v10 castType=anything
-# CHECK-NEXT: v11: Generator<anything, pristine[Storage, Names]> ~ Generator<undefined|null|function, pristine[Storage, Names]> = AssumeType v3 provenType=Generator<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v3: Generator<anything, pristine[Storage, Names]> ~ Generator<undefined|null|function|f25|f26|f27|f29, pristine[Storage, Names]> = Upcast v10 castType=anything
+# CHECK-NEXT: v11: Generator<anything, pristine[Storage, Names]> ~ Generator<undefined|null|function|f25|f26|f27|f29, pristine[Storage, Names]> = AssumeType v3 provenType=Generator<anything, pristine[Storage, Names]>
 # CHECK-NEXT: v4: anything = PropGet v11 key="next" accessSite=14
 # CHECK-NEXT: v12: undefined|builtin(GeneratorPrototypeNext) = AssumeType v4 provenType=undefined|builtin(GeneratorPrototypeNext)
 # CHECK-NEXT: v5: anything = Call v12, v11 calleeKey="next" calleeName="iterator.next" accessSite=15 callees=[builtin(GeneratorPrototypeNext)]

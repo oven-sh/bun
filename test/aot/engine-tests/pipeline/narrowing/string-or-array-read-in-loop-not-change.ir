@@ -235,8 +235,8 @@ function f1 name="lengths" module=m0 position=67 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: v52: boolean = Less v50, v1
 # CHECK-NEXT: Branch v52 -> taken b14(| 0), notTaken b19(v49)
 # CHECK-NEXT: b14(v53: int[0, 5]):
-# CHECK-NEXT: v54: int[0, 2147483647] = GetStringLength v44
-# CHECK-NEXT: v55: int[-2147483648, 4294967294] = Add v49, v54
+# CHECK-NEXT: v54: int[0, 4] = GetStringLength v44
+# CHECK-NEXT: v55: int[-2147483648, 2147483651] = Add v49, v54
 # CHECK-NEXT: v56: 0 = Integer
 # CHECK-NEXT: v57: i32 = BitOr v55, v56
 # CHECK-NEXT: v58: 3 = Integer integer=3
@@ -254,34 +254,31 @@ function f1 name="lengths" module=m0 position=67 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: v67: int[-2147483648, 2147549182] = Add v57, v66
 # CHECK-NEXT: v68: 0 = Integer
 # CHECK-NEXT: v69: i32 = BitOr v67, v68
-# CHECK-NEXT: v70: int[0, 2147483647] = GetStringLength v44
-# CHECK-NEXT: v71: 3 = Integer integer=3
-# CHECK-NEXT: v72: i32 = LShift v70, v71
-# CHECK-NEXT: v73: i32 = BitXor v69, v72
-# CHECK-NEXT: v74: int[1, 6] = Increment v53
-# CHECK-NEXT: Jump -> next b13(v73, v74)
+# CHECK-NEXT: v70: 3 = Integer integer=3
+# CHECK-NEXT: v71: i32 = LShift v54, v70
+# CHECK-NEXT: v72: i32 = BitXor v69, v71
+# CHECK-NEXT: v73: int[1, 6] = Increment v53
+# CHECK-NEXT: Jump -> next b13(v72, v73)
 # CHECK-NEXT: b17() frequency=Rare:
-# CHECK-NEXT: v75: whole = Double number=NaN
-# CHECK-NEXT: v76: int|whole = Add v57, v75
-# CHECK-NEXT: v77: 0 = Integer
-# CHECK-NEXT: v78: i32 = BitOr v76, v77
-# CHECK-NEXT: v79: int[0, 2147483647] = GetStringLength v44
-# CHECK-NEXT: v80: 3 = Integer integer=3
-# CHECK-NEXT: v81: i32 = LShift v79, v80
-# CHECK-NEXT: v82: i32 = BitXor v78, v81
-# CHECK-NEXT: v83: int[1, 6] = Increment v53
-# CHECK-NEXT: Jump -> next b11(v82, v83)
+# CHECK-NEXT: v74: whole = Double number=NaN
+# CHECK-NEXT: v75: int|whole = Add v57, v74
+# CHECK-NEXT: v76: 0 = Integer
+# CHECK-NEXT: v77: i32 = BitOr v75, v76
+# CHECK-NEXT: v78: 3 = Integer integer=3
+# CHECK-NEXT: v79: i32 = LShift v54, v78
+# CHECK-NEXT: v80: i32 = BitXor v77, v79
+# CHECK-NEXT: v81: int[1, 6] = Increment v53
+# CHECK-NEXT: Jump -> next b11(v80, v81)
 # CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v84: -1 = Integer integer=-1
-# CHECK-NEXT: v85: int[-2147483649, 2147483646] = Add v57, v84
-# CHECK-NEXT: v86: 0 = Integer
-# CHECK-NEXT: v87: i32 = BitOr v85, v86
-# CHECK-NEXT: v88: int[0, 2147483647] = GetStringLength v44
-# CHECK-NEXT: v89: 3 = Integer integer=3
-# CHECK-NEXT: v90: i32 = LShift v88, v89
-# CHECK-NEXT: v91: i32 = BitXor v87, v90
-# CHECK-NEXT: v92: int[1, 6] = Increment v53
-# CHECK-NEXT: Jump -> next b12(v91, v92)
-# CHECK-NEXT: b19(v93: i32):
-# CHECK-NEXT: Return v93
+# CHECK-NEXT: v82: -1 = Integer integer=-1
+# CHECK-NEXT: v83: int[-2147483649, 2147483646] = Add v57, v82
+# CHECK-NEXT: v84: 0 = Integer
+# CHECK-NEXT: v85: i32 = BitOr v83, v84
+# CHECK-NEXT: v86: 3 = Integer integer=3
+# CHECK-NEXT: v87: i32 = LShift v54, v86
+# CHECK-NEXT: v88: i32 = BitXor v85, v87
+# CHECK-NEXT: v89: int[1, 6] = Increment v53
+# CHECK-NEXT: Jump -> next b12(v88, v89)
+# CHECK-NEXT: b19(v90: i32):
+# CHECK-NEXT: Return v90
 # CHECK-NEXT: }

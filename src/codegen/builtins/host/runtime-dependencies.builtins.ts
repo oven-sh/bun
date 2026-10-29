@@ -258,6 +258,10 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "%ModuleRequire%.cache": requireCacheFunctions,
   "%ModuleRequire%.main": [...functionsIn("builtins/CommonJS", "main"), ...moduleChildrenFunctions],
   "%ModuleRequire%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
+  "%ModuleRequirePrototype%.cache": requireCacheFunctions,
+  // In an executable the getter is native code.
+  "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
+  "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "Array.prototype.filter": fusedTraversalFunctions,
   "Array.prototype.flatMap": fusedTraversalFunctions,
   "Array.prototype.map": fusedTraversalFunctions,

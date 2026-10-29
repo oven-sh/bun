@@ -7,6 +7,7 @@ use bun_sema::hir::{
     ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnId, Keyword, ListAt, TypeNodeId,
     TypeNodeKind,
 };
+use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::JsxSettings;
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
@@ -164,8 +165,8 @@ impl<'a, 's> TreeWriter<'a, 's> {
         }
     }
 
-    pub(super) fn into_file(mut self, arena: &'s Arena) -> File<'s> {
-        self.items.write(&mut self.file, self.atoms);
+    pub(super) fn into_file(mut self, arena: &'s Arena, format: ModuleFormat) -> File<'s> {
+        self.items.write(&mut self.file, self.atoms, format);
         finish_file(self.file, arena, self.atoms)
     }
 

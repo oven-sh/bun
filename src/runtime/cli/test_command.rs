@@ -2297,8 +2297,11 @@ impl TestCommand {
             let mut entry_points: Vec<Box<[u8]>> =
                 test_files.iter().map(|path| Box::from(&**path)).collect();
             entry_points.extend(ctx.preloads.iter().cloned());
+            // The workers of --parallel learn which files are refused from the compiled program alone.
+            let aot = ctx.bundler_options.aot.as_ref();
             let independent_count = match ctx.test_options.parallel {
                 0 => test_files.len(),
+                _ if aot.is_some_and(|aot| !aot.checks_only) => test_files.len(),
                 _ => 0,
             };
             run_compiled::start(ctx, entry_points, independent_count);
@@ -2859,10 +2862,19 @@ impl TestCommand {
 
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
-            if repeat_index > 0 {
+            if repeat_index > 0 && run_compiled::runs_compiled_code() {
+                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+                vm.swap_global_for_test_isolation();
+                reporter
+                    .jest
+                    .bun_test_root
+                    .reset_hook_scope_for_test_isolation();
+            } else if repeat_index > 0 {
                 vm.clear_entry_point()?;
                 let entry = EncodedSlice::from_bytes(file_path);
                 vm.global().delete_module_registry_entry(&entry)?;
+            }
+            if repeat_index > 0 {
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.
                 reporter.jest.snapshots.reset_counts();
@@ -2927,7 +2939,7 @@ impl TestCommand {
                     } else {
                         reporter.jest.current_file.print_if_needed();
                         pretty_error!(
-                            "<r><red>error<r>: bun test --aot does not run this file: it has a type error, or it imports a file that has one (see above)\n"
+                            "<r><red>error<r>: bun test --aot does not run this file: it can't be compiled, or it imports a file that can't be (see above)\n"
                         );
                         Output::flush();
                     }

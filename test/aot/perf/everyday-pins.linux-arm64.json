@@ -1476,8 +1476,8 @@
     "untyped": 19
   },
   "everyday-data-and-control/two-values-are-compared-again-and-again": {
-    "typed": 476.4,
-    "untyped": 536.4
+    "typed": 120.5,
+    "untyped": 122.5
   },
   "everyday-data-and-control/typed-array-from-an-array": {
     "typed": 479.6,
@@ -2952,8 +2952,8 @@
     "untyped": 41.4
   },
   "everyday-objects/define-property": {
-    "typed": 2043.4,
-    "untyped": 1241.4
+    "typed": 959,
+    "untyped": 906.7
   },
   "everyday-objects/delete-a-fixed-name": {
     "typed": 8,
@@ -3460,8 +3460,8 @@
     "untyped": 525
   },
   "everyday-small-programs/longest-common-subsequence": {
-    "typed": 9964.9,
-    "untyped": 10359.8
+    "typed": 7451.5,
+    "untyped": 7685.2
   },
   "everyday-small-programs/nested-update-by-spread": {
     "typed": 142.1,
@@ -3504,8 +3504,8 @@
     "untyped": 57
   },
   "everyday-small-programs/run-length-encoding": {
-    "typed": 830.5,
-    "untyped": 859.6
+    "typed": 235,
+    "untyped": 265
   },
   "everyday-small-programs/sha256-of-a-short-text": {
     "typed": 3098.7,

@@ -73,15 +73,14 @@
 module m0 path="fields-that-makers-outside-the-class-fill.js" displayPath="fields-that-makers-outside-the-class-fill.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 module m2 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
-module m3 path="/$bun/js/engine/IteratorOperations.ts" displayPath="/$bun/js/engine/IteratorOperations.ts" flags=[IsLibrary] namespaceLayout=L(m3)
-module m4 path="/$bun/js/engine/JSIteratorConstructor.ts" displayPath="/$bun/js/engine/JSIteratorConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m4)
-module m5 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m5)
-module m6 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m6)
+module m3 path="/$bun/js/engine/JSIteratorConstructor.ts" displayPath="/$bun/js/engine/JSIteratorConstructor.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m4)
+module m5 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m5)
 entry module=m0
 layout L0 kind=Instance name="Node" module=m0 position=89 constructor=f1 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="flags" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
 layout L1 kind=Instance name="NodeObject" module=m0 position=6 constructor=f8 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="flags" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
 layout L2 module=m0 position=169 fields=[{key="getNodeConstructor" declared={type=undefined|null|function|f9|f10 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
-layout L3 module=m4 position=6451 fields=[{key="done" declared={type=undefined|boolean flags=[IsExpected]}}, {key="value" declared={type=anything}}] ownFieldCount=2
+layout L3 module=m3 position=6451 fields=[{key="done" declared={type=undefined|boolean flags=[IsExpected]}}, {key="value" declared={type=anything}}] ownFieldCount=2
 data d0 root=Array{contents=anything} module=m0
 variable g0 name="Node" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="createBaseNode" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
@@ -589,40 +588,7 @@ function f19 name="throw" module=m2 position=1077 kind=Method role=Library flags
     v13 = CreateIteratorResult v3, v12 @1489
     Return v13 @1489
 }
-function f20 name="iteratorGenericClose" module=m3 position=314 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorOperationsIteratorGenericClose thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    Jump -> next b1() @314
-  b1():
-    v1 = Undefined @351
-    v2 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]} @405
-    v3 = PropGet v2 key="return" @405
-    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @405
-    v5 = TypeTest v4 testedType=undefined|null @430
-    Branch v5 -> taken b2(| 0), notTaken b4(| 0) @430
-  b2(v6):
-    Jump -> next b3() @430
-  b3():
-    v7 = Undefined @472
-    Return v7 @472
-  b4(v8):
-    Jump -> next b5() @430
-  b5():
-    v9 = Convert v8 declared={type=undefined|null|function flags=[IsExpected]} @499
-    v10 = Call v9, v2 @499
-    v11 = TypeTest v10 testedType=object @489
-    Branch v11 -> taken b6(| 0), notTaken b8(| 0) @489
-  b6(v12):
-    Jump -> next b7() @489
-  b7():
-    v13 = Undefined @538
-    Return v13 @538
-  b8(v14):
-    Jump -> next b9() @489
-  b9():
-    v15 = ThrowNewError errorKind=TypeError message="Iterator result interface is not an object." @538
-    Unreachable @538
-}
-function f21 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f20 name="next" module=m4 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @25
   b1():
@@ -643,14 +609,14 @@ function f21 name="next" module=m5 position=25 kind=Method role=Library flags=[H
     v9 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @111
     Unreachable @111
 }
-function f22 name="return" module=m5 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f21 name="return" module=m4 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @326
   b1():
     v1 = Undefined @326
     v2 = HasJSType v0 first=6 last=6 @382
     v3 = ToBoolean v2 @382
-    Branch v3 -> taken b2(| 0), notTaken b12(| 0) @382
+    Branch v3 -> taken b2(| 0), notTaken b15(| 0) @382
   b2(v4):
     Jump -> next b3() @382
   b3():
@@ -658,7 +624,7 @@ function f22 name="return" module=m5 position=326 kind=Method role=Library flags
     v6 = GetInternalField v5 @492
     v7 = IsGeneratorSuspendedAtStart v6 @571
     v8 = ToBoolean v7 @571
-    Branch v8 -> taken b4(| 0), notTaken b10(| 0) @571
+    Branch v8 -> taken b4(| 0), notTaken b13(| 0) @571
   b4(v9):
     Jump -> next b5() @571
   b5():
@@ -669,32 +635,41 @@ function f22 name="return" module=m5 position=326 kind=Method role=Library flags
     v14 = TypeTest v13 testedType=null @866
     Branch v14 -> taken b6(| 0), notTaken b7(| 0) @866
   b6(v15):
-    Jump -> next b9() @866
+    Jump -> next b12() @866
   b7(v16):
     Jump -> next b8() @866
   b8():
-    v17 = NewClosure function=f20 @903
-    v18 = Call v17, -, v16 @903
-    Jump -> next b9() @903
-  b9():
-    v19 = Undefined @977
-    v20 = Boolean boolean=true @988
-    v21 = Convert v20 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @957
-    v22 = CreateIteratorResult v19, v21 @957
-    Return v22 @957
-  b10(v23):
-    Jump -> next b11() @571
+    v17 = PropGet v16 key="return" @903
+    v18 = TypeTest v17 testedType=undefined|null @903
+    Branch v18 -> taken b9(| 0), notTaken b10(| 0) @903
+  b9(v19):
+    Jump -> next b11() @903
+  b10(v20):
+    v21 = Call v20, v16 @903
+    v22 = RequireObject v21 runtimeError=IteratorResultNotObject @903
+    Jump -> next b11() @903
   b11():
-    v24 = Undefined @674
-    v25 = ResumeGenerator v6, v24 resumeMode=Return @627
-    Return v25 @627
-  b12(v26):
-    Jump -> next b13() @382
-  b13():
-    v27 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @415
+    v23 = Undefined @903
+    Jump -> next b12() @903
+  b12():
+    v24 = Undefined @977
+    v25 = Boolean boolean=true @988
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @957
+    v27 = CreateIteratorResult v24, v26 @957
+    Return v27 @957
+  b13(v28):
+    Jump -> next b14() @571
+  b14():
+    v29 = Undefined @674
+    v30 = ResumeGenerator v6, v29 resumeMode=Return @627
+    Return v30 @627
+  b15(v31):
+    Jump -> next b16() @382
+  b16():
+    v32 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @415
     Unreachable @415
 }
-function f23 name="next" module=m6 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f22 name="next" module=m5 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @1421
   b1():
@@ -716,7 +691,7 @@ function f23 name="next" module=m6 position=1421 kind=Method role=Library flags=
     v10 = ThrowNewError errorKind=TypeError message="%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object" @1650
     Unreachable @1650
 }
-function f24 name="return" module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f23 name="return" module=m5 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @2171
   b1():
@@ -755,41 +730,95 @@ function f24 name="return" module=m6 position=2171 kind=Method role=Library flag
 }
 runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private
 runtimefunction id=GeneratorPrototypeNext function=f17 visibility=Private
-runtimefunction id=JSIteratorHelperPrototypeNext function=f21 visibility=Private
-runtimefunction id=WrapForValidIteratorPrototypeNext function=f23
+runtimefunction id=JSIteratorHelperPrototypeNext function=f20 visibility=Private
+runtimefunction id=WrapForValidIteratorPrototypeNext function=f22
 runtimefunction id=GeneratorPrototypeReturn function=f18 visibility=Private
-runtimefunction id=JSIteratorHelperPrototypeReturn function=f22
-runtimefunction id=WrapForValidIteratorPrototypeReturn function=f24
+runtimefunction id=JSIteratorHelperPrototypeReturn function=f21
+runtimefunction id=WrapForValidIteratorPrototypeReturn function=f23
 runtimefunction id=GeneratorPrototypeThrow function=f19 visibility=Private
-runtimefunction id=IteratorOperationsIteratorGenericClose function=f20 visibility=Private
 # -- generated: createBaseNode createBinary createLeaf sum describe
 # CHECK-LABEL: function {{*}}name="createBaseNode"
-# CHECK: module=m0 position=439 role=ResultWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2]}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f43} {
+# CHECK: module=m0 position=439 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f39 callPosition=552 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f37 callPosition=552 isConstruction=true callIsPartOfConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: int[1, 2]):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f43
-# CHECK-NEXT: v2: i32 = ResultAt v1
-# CHECK-NEXT: v3: anything|unspecified = ResultAt v1 index=1
-# CHECK-NEXT: v4: anything|unspecified = ResultAt v1 index=2
-# CHECK-NEXT: v5: int[-2147483643, 2147483647]|unspecified = ResultAt v1 index=3
-# CHECK-NEXT: Switch v2 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v6: fact = Specified
-# CHECK-NEXT: v7: anything = AssumeType v3, v6 provenType=anything
-# CHECK-NEXT: Jump -> next b4(v7)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v8: fact = Specified
-# CHECK-NEXT: v9: anything = AssumeType v4, v8 provenType=anything
-# CHECK-NEXT: v10: int[-2147483643, 2147483647] = AssumeType v5, v8 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v11: L0 = NewObject -, v9, v10 layout=L0 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b4(v11)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v12: fact = Specified
-# CHECK-NEXT: v13: anything = AssumeType v4, v12 provenType=anything
-# CHECK-NEXT: v14: int[-2147483643, 2147483647] = AssumeType v5, v12 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v15: L1 = NewObject -, v13, v14 layout=L1 fields=[0, 1] allocationClass=1
-# CHECK-NEXT: Jump -> next b4(v15)
-# CHECK-NEXT: b4(v16: anything):
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v1: anything ~ undefined|null|function = GetModuleVariable variable=g5
+# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=undefined|null|object
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b1(v3: undefined|null|object ~ undefined|null|function):
+# CHECK-NEXT: v4: boolean = ToBoolean v3
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b5()
+# CHECK-NEXT: b2(v5: object ~ function):
+# CHECK-NEXT: Jump -> next b9(v5)
+# CHECK-NEXT: b3(v6: boolean|number|string|symbol|bigint) frequency=Unlikely:
+# CHECK-NEXT: v7: boolean = ToBoolean v6
+# CHECK-NEXT: Branch v7 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v8: anything ~ object = Construct v6, -, v0 accessSite=40 callees=[f1, f8, ..]
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v9: L2 = GetModuleVariable variable=g4
+# CHECK-NEXT: v10: boolean = IsSlotFilled v9 key="getNodeConstructor" receivers=[L2] level=Expected
+# CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v11: guard):
+# CHECK-NEXT: v12: anything ~ undefined|null|function|f9|f10 = GetSlot v9, v11 key="getNodeConstructor" receivers=[L2] level=Expected accessSite=38
+# CHECK-NEXT: v13: anything = Call v12, v9 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
+# CHECK-NEXT: Jump -> next b8(v13)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v14: anything ~ undefined|null|function|f9|f10 = PropGet v9 key="getNodeConstructor" accessSite=38 receivers=[L2]
+# CHECK-NEXT: v15: anything = Call v14, v9 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
+# CHECK-NEXT: Jump -> next b8(v15)
+# CHECK-NEXT: b8(v16: anything):
+# CHECK-NEXT: v17: anything ~ undefined|null|function|f1 = Upcast v16 castType=anything
+# CHECK-NEXT: PutModuleVariable v17 variable=g5
+# CHECK-NEXT: Jump -> next b9(v17)
+# CHECK-NEXT: b9(v19: anything ~ undefined|null|function|f1):
+# CHECK-NEXT: v20: boolean = TypeTest v19 testedType=f1
+# CHECK-NEXT: Branch v20 -> taken b10(| 0), notTaken b13(| 0)
+# CHECK-NEXT: b10(v21: f1):
+# CHECK-NEXT: v22: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L0}, {kind=MemberPassedByStores layout=L0 key="kind"}, {kind=MemberPassedByStores layout=L0 key="flags"}]
+# CHECK-NEXT: Branch v22 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v23: 0 = Integer
+# CHECK-NEXT: v24: L0 = NewObject -, v0, v23 layout=L0 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b20(v24)
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: v25: object = GetConstructPrototype v21 layout=L0
+# CHECK-NEXT: v26: L0 = NewObject v25 layout=L0 allocationClass=0
+# CHECK-NEXT: PropSet v26, v0 key="kind" accessSite=36 receivers=[L0, ..]
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: PropSet v26, v28 key="flags" accessSite=37 receivers=[L0, ..]
+# CHECK-NEXT: TryFinishBirth v26
+# CHECK-NEXT: Jump -> next b18(v26)
+# CHECK-NEXT: b13(v30: anything ~ undefined|null|function):
+# CHECK-NEXT: v31: boolean = TypeTest v30 testedType=f8
+# CHECK-NEXT: Branch v31 -> taken b14(), notTaken b19()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v32: L1 = NewObject layout=L1 allocationClass=1
+# CHECK-NEXT: v33: boolean = HasLayoutPrototype v32
+# CHECK-NEXT: Branch v33 -> taken b15(| 0), notTaken b17()
+# CHECK-NEXT: b15(v34: guard):
+# CHECK-NEXT: v35: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberPassedByStores layout=L1 key="kind"}, {kind=MemberPassedByStores layout=L1 key="flags"}]
+# CHECK-NEXT: Branch v35 -> taken b16(| 0), notTaken b17()
+# CHECK-NEXT: b16(v36: guard):
+# CHECK-NEXT: v37: guard = AllGuards v34, v32, v36
+# CHECK-NEXT: PutSlotOrAdd v32, v37, v0 key="kind" receivers=[L1] level=Expected accessSite=98
+# CHECK-NEXT: v39: 0 = Integer
+# CHECK-NEXT: v40: guard = AllGuards v34, v32, v36
+# CHECK-NEXT: PutSlotOrAdd v32, v40, v39 key="flags" receivers=[L1] level=Expected accessSite=99
+# CHECK-NEXT: FinishBirth v32
+# CHECK-NEXT: Jump -> next b20(v32)
+# CHECK-NEXT: b17() frequency=Unlikely:
+# CHECK-NEXT: PropSet v32, v0 key="kind" accessSite=98 receivers=[L1]
+# CHECK-NEXT: v43: 0 = Integer
+# CHECK-NEXT: PropSet v32, v43 key="flags" accessSite=99 receivers=[L1]
+# CHECK-NEXT: TryFinishBirth v32
+# CHECK-NEXT: Jump -> next b18(v32)
+# CHECK-NEXT: b18(v45: L0|L1) frequency=Unlikely:
+# CHECK-NEXT: Return v45
+# CHECK-NEXT: b19() frequency=Unlikely:
+# CHECK-NEXT: v46: anything ~ object = Construct v30, -, v0 accessSite=40 callees=[f1, f8, ..]
+# CHECK-NEXT: Jump -> next b20(v46)
+# CHECK-NEXT: b20(v47: anything ~ L0|L1):
+# CHECK-NEXT: Return v47
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: module=m0 position=794 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1277,109 +1306,6 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f20 visibilit
 # CHECK-NEXT: v4: anything = CallDirect v2, v3 function=f7
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="createBaseNode"
-# CHECK: module=m0 position=439 role=ResultWorker flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2]}] results=[{type=i32}, {type=anything|unspecified}, {type=anything|unspecified}, {type=int[-2147483643, 2147483647]|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} creator=ResultWorker{origin=f2} inlineFrames=[{}, {callee=f40 callPosition=552 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f38 callPosition=552 isConstruction=true callIsPartOfConstruction=true module=m0}] {
-# CHECK-NEXT: b0(v0: int[1, 2]):
-# CHECK-NEXT: v1: anything ~ undefined|null|function = GetModuleVariable variable=g5
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=undefined|null|object
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3(| 0)
-# CHECK-NEXT: b1(v3: undefined|null|object ~ undefined|null|function):
-# CHECK-NEXT: v4: boolean = ToBoolean v3
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b5()
-# CHECK-NEXT: b2(v5: object ~ function):
-# CHECK-NEXT: Jump -> next b9(v5)
-# CHECK-NEXT: b3(v6: boolean|number|string|symbol|bigint) frequency=Unlikely:
-# CHECK-NEXT: v7: boolean = ToBoolean v6
-# CHECK-NEXT: Branch v7 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v8: anything ~ object = Construct v6, -, v0 accessSite=40 callees=[f1, f8, ..]
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: anything|unspecified = Unspecified valueType=anything
-# CHECK-NEXT: v11: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v12: undefined = Results v9, v8, v10, v11
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v13: L2 = GetModuleVariable variable=g4
-# CHECK-NEXT: v14: boolean = IsSlotFilled v13 key="getNodeConstructor" receivers=[L2] level=Expected
-# CHECK-NEXT: Branch v14 -> taken b6(| 0), notTaken b7()
-# CHECK-NEXT: b6(v15: guard):
-# CHECK-NEXT: v16: anything ~ undefined|null|function = GetSlot v13, v15 key="getNodeConstructor" receivers=[L2] level=Expected accessSite=38
-# CHECK-NEXT: v17: anything = Call v16, v13 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
-# CHECK-NEXT: Jump -> next b8(v17)
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v18: anything ~ undefined|null|function = PropGet v13 key="getNodeConstructor" accessSite=38 receivers=[L2]
-# CHECK-NEXT: v19: anything = Call v18, v13 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
-# CHECK-NEXT: Jump -> next b8(v19)
-# CHECK-NEXT: b8(v20: anything):
-# CHECK-NEXT: v21: anything ~ undefined|null|function = Upcast v20 castType=anything
-# CHECK-NEXT: PutModuleVariable v21 variable=g5
-# CHECK-NEXT: Jump -> next b9(v21)
-# CHECK-NEXT: b9(v23: anything ~ undefined|null|function):
-# CHECK-NEXT: v24: boolean = TypeTest v23 testedType=f1
-# CHECK-NEXT: Branch v24 -> taken b10(| 0), notTaken b13()
-# CHECK-NEXT: b10(v25: f1):
-# CHECK-NEXT: v26: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L0}, {kind=MemberPassedByStores layout=L0 key="kind"}, {kind=MemberPassedByStores layout=L0 key="flags"}]
-# CHECK-NEXT: Branch v26 -> taken b11(), notTaken b12()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: int[1, 2] = Upcast v0 castType=anything|unspecified
-# CHECK-NEXT: v29: 0 = Upcast v27 castType=int[-2147483643, 2147483647]|unspecified
-# CHECK-NEXT: v30: 2 = Integer integer=2
-# CHECK-NEXT: v31: anything|unspecified = Unspecified valueType=anything
-# CHECK-NEXT: v32: fact = Specified
-# CHECK-NEXT: v33: int[1, 2] = AssumeType v28, v32 provenType=anything
-# CHECK-NEXT: v34: 0 = AssumeType v29, v32 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v35: undefined = Results v30, v31, v33, v34
-# CHECK-NEXT: Return v35
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v36: object = GetConstructPrototype v25 layout=L0
-# CHECK-NEXT: v37: L0 = NewObject v36 layout=L0 allocationClass=0
-# CHECK-NEXT: PropSet v37, v0 key="kind" accessSite=36 receivers=[L0, ..]
-# CHECK-NEXT: v39: 0 = Integer
-# CHECK-NEXT: PropSet v37, v39 key="flags" accessSite=37 receivers=[L0, ..]
-# CHECK-NEXT: TryFinishBirth v37
-# CHECK-NEXT: Jump -> next b17(v37)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: v41: boolean = TypeTest v23 testedType=f8
-# CHECK-NEXT: Branch v41 -> taken b14(), notTaken b18()
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v42: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberPassedByStores layout=L1 key="kind"}, {kind=MemberPassedByStores layout=L1 key="flags"}]
-# CHECK-NEXT: Branch v42 -> taken b15(), notTaken b16()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v43: 0 = Integer
-# CHECK-NEXT: v44: int[1, 2] = Upcast v0 castType=anything|unspecified
-# CHECK-NEXT: v45: 0 = Upcast v43 castType=int[-2147483643, 2147483647]|unspecified
-# CHECK-NEXT: v46: 4 = Integer integer=4
-# CHECK-NEXT: v47: anything|unspecified = Unspecified valueType=anything
-# CHECK-NEXT: v48: fact = Specified
-# CHECK-NEXT: v49: int[1, 2] = AssumeType v44, v48 provenType=anything
-# CHECK-NEXT: v50: 0 = AssumeType v45, v48 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v51: undefined = Results v46, v47, v49, v50
-# CHECK-NEXT: Return v51
-# CHECK-NEXT: b16() frequency=Unlikely:
-# CHECK-NEXT: v52: L1 = NewObject layout=L1 allocationClass=1
-# CHECK-NEXT: PropSet v52, v0 key="kind" accessSite=98 receivers=[L1]
-# CHECK-NEXT: v54: 0 = Integer
-# CHECK-NEXT: PropSet v52, v54 key="flags" accessSite=99 receivers=[L1]
-# CHECK-NEXT: TryFinishBirth v52
-# CHECK-NEXT: Jump -> next b17(v52)
-# CHECK-NEXT: b17(v56: L0|L1) frequency=Unlikely:
-# CHECK-NEXT: v57: 1 = Integer integer=1
-# CHECK-NEXT: v58: anything|unspecified = Unspecified valueType=anything
-# CHECK-NEXT: v59: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v60: undefined = Results v57, v56, v58, v59
-# CHECK-NEXT: Return v60
-# CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v61: anything ~ object = Construct v23, -, v0 accessSite=40 callees=[f1, f8, ..]
-# CHECK-NEXT: v62: anything ~ object = Upcast v61 castType=anything|unspecified
-# CHECK-NEXT: v63: 1 = Integer integer=1
-# CHECK-NEXT: v64: anything|unspecified = Unspecified valueType=anything
-# CHECK-NEXT: v65: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v66: fact = Specified
-# CHECK-NEXT: v67: anything ~ object = AssumeType v62, v66 provenType=anything
-# CHECK-NEXT: v68: undefined = Results v63, v67, v64, v65
-# CHECK-NEXT: Return v68
-# CHECK-NEXT: }
 # FLOW-LABEL: function {{*}}name="createBaseNode"
 # FLOW: module=m0 position=439 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # FLOW-NEXT: b0(v0: int[1, 2]):
@@ -1398,17 +1324,19 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f20 visibilit
 # FLOW-NEXT: v7: anything ~ undefined|null|function = CheckInitialized v6 name="NodeConstructor"
 # FLOW-NEXT: v8: L2 = GetModuleVariable variable=g4
 # FLOW-NEXT: v9: L2 = CheckInitialized v8 name="allocator"
-# FLOW-NEXT: v17: L2 = AssumeType v9 provenType=L2
-# FLOW-NEXT: v10: anything ~ undefined|null|function = PropGet v17 key="getNodeConstructor" accessSite=38 receivers=[L2]
-# FLOW-NEXT: v11: anything = Call v10, v17 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
-# FLOW-NEXT: v12: anything ~ undefined|null|function = Upcast v11 castType=anything
-# FLOW-NEXT: PutModuleVariable v12 variable=g5
-# FLOW-NEXT: Jump -> next b5(v12)
-# FLOW-NEXT: b5(v14: anything ~ undefined|null|function):
-# FLOW-NEXT: v15: int[1, 2] = Upcast v0 castType=anything
-# FLOW-NEXT: v18: int[1, 2] = AssumeType v15 provenType=int
-# FLOW-NEXT: v16: anything ~ object = Construct v14, -, v18 accessSite=40 callees=[f1, f8, ..]
-# FLOW-NEXT: Return v16
+# FLOW-NEXT: v19: L2 = AssumeType v9 provenType=L2
+# FLOW-NEXT: v10: anything ~ undefined|null|function|f9|f10 = PropGet v19 key="getNodeConstructor" accessSite=38 receivers=[L2]
+# FLOW-NEXT: v11: anything ~ undefined|null|function|f9|f10 = Upcast v10 castType=anything
+# FLOW-NEXT: v12: anything = Call v11, v19 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
+# FLOW-NEXT: v13: anything ~ undefined|null|function|f1 = Upcast v12 castType=anything
+# FLOW-NEXT: v14: anything ~ undefined|null|function|f1 = Upcast v13 castType=anything
+# FLOW-NEXT: PutModuleVariable v14 variable=g5
+# FLOW-NEXT: Jump -> next b5(v13)
+# FLOW-NEXT: b5(v16: anything ~ undefined|null|function|f1):
+# FLOW-NEXT: v17: int[1, 2] = Upcast v0 castType=anything
+# FLOW-NEXT: v20: int[1, 2] = AssumeType v17 provenType=int
+# FLOW-NEXT: v18: anything ~ object = Construct v16, -, v20 accessSite=40 callees=[f1, f8, ..]
+# FLOW-NEXT: Return v18
 # FLOW-NEXT: }
 # FLOW-LABEL: function {{*}}name="sum"
 # FLOW: module=m0 position=794 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

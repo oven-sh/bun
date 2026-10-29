@@ -1984,13 +1984,13 @@ runtimefunction id=ArrayTraversalTraverseArray function=f41 visibility=Private
 # CHECK-NEXT: b0(v0: "made-of-two"|"\u{65e5}\u{672c}"|"\u{8a9e}x"):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 1 = Integer integer=1
-# CHECK-NEXT: v3: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: v3: int[2, 11] = GetStringLength v0
 # CHECK-NEXT: v4: undefined = StringRange v3, v1, v2
 # CHECK-NEXT: v5: int[0, 2147483647] = ResultAt v4
 # CHECK-NEXT: v6: int[0, 2147483647] = ResultAt v4 index=1
 # CHECK-NEXT: v7: string = Substring v0, v5, v6
 # CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: v9: int[2, 11] = GetStringLength v0
 # CHECK-NEXT: v10: undefined = StringRange v9, v8
 # CHECK-NEXT: v11: int[0, 2147483647] = ResultAt v10
 # CHECK-NEXT: v12: int[0, 2147483647] = ResultAt v10 index=1

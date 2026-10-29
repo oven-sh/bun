@@ -1,4 +1,5 @@
 use super::module_list::collect_module_list;
+use super::replaced_exports::{ExportedVariables, collect_files_of_modules};
 use super::summary::{collect_entry_point_paths, collect_folder_paths, collect_source_texts};
 use super::{BoundBuild, BoundProject, Build, FrontEndOutput, LoadedBuild, ProgramPlace};
 use crate::ir::Id;
@@ -127,6 +128,7 @@ impl Build<'_> {
         let mut texts = None;
         let mut modules = None;
         let mut paths = None;
+        let mut files_of_modules = Vec::new();
         let place = self.place;
         let (lists_modules, runs_tests) = (self.options.lists_modules, self.options.aot.runs_tests);
         let input = LinkInput {
@@ -147,6 +149,9 @@ impl Build<'_> {
                 _ => collect_folder_paths(application),
             };
             paths = Some((entry_points, folders));
+            if runs_tests {
+                files_of_modules = collect_files_of_modules(&loaded, &keys.modules);
+            }
             if lists_modules {
                 modules = Some(collect_module_list(
                     &loaded,
@@ -194,6 +199,7 @@ impl Build<'_> {
             ways_followed_for_their_names: application_graph.ways_followed_for_their_names(),
             lets_process_out_of_sight: application_graph.lets_process_out_of_sight(),
             holds_whole_library_as_guess: self.holds_whole_library_as_guess,
+            exported_variables: ExportedVariables::collect(&program, &files_of_modules),
             writes_preload,
             held_library_code: core::mem::take(&mut self.held_library_code),
             program,

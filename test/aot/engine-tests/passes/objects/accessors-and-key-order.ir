@@ -4643,9 +4643,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="namesOfAccessor"
-# CHECK: module=m0 position=6261 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function|L11|L19|L20 flags=[IsExpected]}, {type=undefined|string|symbol}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function|L11|L19|L20, v1: undefined|string|symbol):
-# CHECK-NEXT: v2: object ~ function|L11|L19|L20 = AssumeType v0 provenType=object
+# CHECK: module=m0 position=6261 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function|L11|L19|L20|f90 flags=[IsExpected]}, {type=undefined|string|symbol}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|function|L11|L19|L20|f90, v1: undefined|string|symbol):
+# CHECK-NEXT: v2: object ~ function|L11|L19|L20|f90 = AssumeType v0 provenType=object
 # CHECK-NEXT: v3: string|symbol = ToPropertyKey v1 calledBuiltin=ReflectGetOwnPropertyDescriptor
 # CHECK-NEXT: v4: undefined = CallBuiltin -, v2, v3 overload=ReflectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=295
 # CHECK-NEXT: v5: boolean = ResultAt v4
@@ -4691,7 +4691,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="methodUnder"
-# CHECK: module=m0 position=9361 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function flags=[IsExpected]}] functionTypes=[f140] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=9361 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function|f118 flags=[IsExpected]}] functionTypes=[f140] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: string|symbol("description")@m0:88):
 # CHECK-NEXT: v1: object = NewDictionary
 # CHECK-NEXT: v2: Object = AssumeType v1 provenType=Object
@@ -4729,7 +4729,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="arrowUnder"
-# CHECK: module=m0 position=9540 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function flags=[IsExpected]}] functionTypes=[f143] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=9540 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function|f120 flags=[IsExpected]}] functionTypes=[f143] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: string|symbol("description")@m0:88):
 # CHECK-NEXT: v1: object = NewDictionary
 # CHECK-NEXT: v2: Object = AssumeType v1 provenType=Object
@@ -4741,7 +4741,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="classUnder"
-# CHECK: module=m0 position=9607 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function flags=[IsExpected]}] functionTypes=[f144] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=9607 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string|symbol("description")@m0:88}] results=[{type=undefined|null|function|f121 flags=[IsExpected]}] functionTypes=[f144] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: string|symbol("description")@m0:88):
 # CHECK-NEXT: v1: object = NewDictionary
 # CHECK-NEXT: v2: Object = AssumeType v1 provenType=Object

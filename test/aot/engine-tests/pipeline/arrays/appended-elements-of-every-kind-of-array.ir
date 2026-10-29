@@ -2269,25 +2269,20 @@ runtimefunction id=ArraySearchIndexOf function=f17
 # CHECK: module=m0 position=838 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<undefined|null|boolean|number|string|object, proven> site=w22 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array site=w23}] results=[{type=number site=w24}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameterMap=[{original=0}, {original=1}]} {
 # CHECK-NEXT: b0(v0: Array<undefined|null|boolean|number|string|object, proven>, v1: undefined|null|Array):
 # CHECK-NEXT: v2: boolean = IsPristine v0 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b5()
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b4()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v3: boolean = TypeTest v1 testedType=Array
 # CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b4()
 # CHECK-NEXT: b2(v4: Array):
 # CHECK-NEXT: v5: boolean = IsPristine v4 builtinClass=Array aspects=[Storage, Names]
-# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b5()
+# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v6: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
 # CHECK-NEXT: v7: anything = CallList v6, v0, v4 calleeKey="push" calleeName="target.push" accessSite=247 callees=[builtin(ArrayPrototypePush)]
 # CHECK-NEXT: ReturnCall v7 casts=[{declared={type=number site=w178 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w24 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v8: fact = Specified
-# CHECK-NEXT: v9: undefined|null = AssumeType v1, v8 provenType=undefined|null
-# CHECK-NEXT: v10: never = RequireObjectCoercible v9 nullishAccess=Spread
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v11: number = CallDirect v0, v1 function=f32 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v11
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v8: number = CallDirect v0, v1 function=f32 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pushNumbers"
 # CHECK: module=m0 position=926 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<undefined|null|boolean|number|string|object, proven, pristine[Storage, Names, Dense]> site=w25 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w26}] results=[{type=number site=w27}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}, {original=1}]} {
@@ -2478,24 +2473,32 @@ runtimefunction id=ArraySearchIndexOf function=f17
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v7: Array<undefined|null|boolean|number|string|object, Contiguous> = NewArray contents=undefined|null|boolean|number|string|object allocationSite=44 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v8: boolean = TypeTest v1 testedType=undefined|null
-# CHECK-NEXT: TestAndBranch v8 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: TestAndBranch v8 -> taken b7(| 0), notTaken b8(| 0)
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: v9: anything = CallList v3, v0, v5 calleeKey="push" calleeName="target.push" accessSite=247 callees=[builtin(ArrayPrototypePush)]
 # CHECK-NEXT: ReturnCall v9 casts=[{declared={type=number site=w178 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w24 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
 # CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v10: Array<undefined|null|boolean|number|string|object, Contiguous> = NewArray contents=undefined|null|boolean|number|string|object allocationSite=44 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v11: fact = Specified
-# CHECK-NEXT: v12: boolean|number|string|symbol|bigint|object = AssumeType v1, v11 provenType=boolean|number|string|symbol|bigint|object
-# CHECK-NEXT: v13: undefined = CallDirect v10, v12 function=f40 [isNeverInlined]
-# CHECK-NEXT: v14: anything = CallList v3, v0, v10 calleeKey="push" calleeName="target.push" accessSite=247 callees=[builtin(ArrayPrototypePush)]
-# CHECK-NEXT: ReturnCall v14 casts=[{declared={type=number site=w178 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w24 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
-# CHECK-NEXT: b5(v15: undefined|null) frequency=Rare:
-# CHECK-NEXT: v16: never = RequireObjectCoercible v15 nullishAccess=Spread
+# CHECK-NEXT: v10: fact = Specified
+# CHECK-NEXT: v11: Array = AssumeType v1, v10 provenType=Array
+# CHECK-NEXT: v12: boolean = IsPristine v11 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: TestAndBranch v12 -> taken b6(), notTaken b5()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v13: Array<undefined|null|boolean|number|string|object, Contiguous> = NewArray contents=undefined|null|boolean|number|string|object allocationSite=44 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v14: fact = Specified
+# CHECK-NEXT: v15: boolean|number|string|symbol|bigint|object = AssumeType v1, v14 provenType=boolean|number|string|symbol|bigint|object
+# CHECK-NEXT: v16: undefined = CallDirect v13, v15 function=f40 [isNeverInlined]
+# CHECK-NEXT: v17: anything = CallList v3, v0, v13 calleeKey="push" calleeName="target.push" accessSite=247 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: ReturnCall v17 casts=[{declared={type=number site=w178 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w24 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v18: anything = CallList v3, v0, v11 calleeKey="push" calleeName="target.push" accessSite=247 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: ReturnCall v18 casts=[{declared={type=number site=w178 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w24 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b7(v19: undefined|null) frequency=Rare:
+# CHECK-NEXT: v20: never = RequireObjectCoercible v19 nullishAccess=Spread
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b6(v17: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v18: undefined = CallDirect v7, v17 function=f40 [isNeverInlined]
-# CHECK-NEXT: v19: anything = CallList v3, v0, v7 calleeKey="push" calleeName="target.push" accessSite=247 callees=[builtin(ArrayPrototypePush)]
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=number site=w178 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w24 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b8(v21: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: v22: undefined = CallDirect v7, v21 function=f40 [isNeverInlined]
+# CHECK-NEXT: v23: anything = CallList v3, v0, v7 calleeKey="push" calleeName="target.push" accessSite=247 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: ReturnCall v23 casts=[{declared={type=number site=w178 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w24 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pushNumbers"
 # CHECK: module=m0 position=926 role=GenericVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<undefined|null|boolean|number|string|object, proven, pristine[Storage, Names, Dense]> site=w25 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w26 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=w27}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f26} {
@@ -2509,22 +2512,30 @@ runtimefunction id=ArraySearchIndexOf function=f17
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v6: Array<undefined|null|boolean|number|string|object, Contiguous> = NewArray contents=undefined|null|boolean|number|string|object allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v7: boolean = TypeTest v1 testedType=undefined|null
-# CHECK-NEXT: TestAndBranch v7 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: TestAndBranch v7 -> taken b7(| 0), notTaken b8(| 0)
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: v8: anything = CallList v2, v0, v4 calleeKey="push" calleeName="target.push" accessSite=249 callees=[builtin(ArrayPrototypePush)]
 # CHECK-NEXT: ReturnCall v8 casts=[{declared={type=number site=w179 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w27 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
 # CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v9: Array<undefined|null|boolean|number|string|object, Contiguous> = NewArray contents=undefined|null|boolean|number|string|object allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v10: fact = Specified
-# CHECK-NEXT: v11: boolean|number|string|symbol|bigint|object = AssumeType v1, v10 provenType=boolean|number|string|symbol|bigint|object
-# CHECK-NEXT: v12: undefined = CallDirect v9, v11 function=f40 [isNeverInlined]
-# CHECK-NEXT: v13: anything = CallList v2, v0, v9 calleeKey="push" calleeName="target.push" accessSite=249 callees=[builtin(ArrayPrototypePush)]
-# CHECK-NEXT: ReturnCall v13 casts=[{declared={type=number site=w179 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w27 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
-# CHECK-NEXT: b5(v14: undefined|null) frequency=Rare:
-# CHECK-NEXT: v15: never = RequireObjectCoercible v14 nullishAccess=Spread
+# CHECK-NEXT: v9: fact = Specified
+# CHECK-NEXT: v10: Array = AssumeType v1, v9 provenType=Array
+# CHECK-NEXT: v11: boolean = IsPristine v10 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: TestAndBranch v11 -> taken b6(), notTaken b5()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v12: Array<undefined|null|boolean|number|string|object, Contiguous> = NewArray contents=undefined|null|boolean|number|string|object allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v13: fact = Specified
+# CHECK-NEXT: v14: boolean|number|string|symbol|bigint|object = AssumeType v1, v13 provenType=boolean|number|string|symbol|bigint|object
+# CHECK-NEXT: v15: undefined = CallDirect v12, v14 function=f40 [isNeverInlined]
+# CHECK-NEXT: v16: anything = CallList v2, v0, v12 calleeKey="push" calleeName="target.push" accessSite=249 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: ReturnCall v16 casts=[{declared={type=number site=w179 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w27 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v17: anything = CallList v2, v0, v10 calleeKey="push" calleeName="target.push" accessSite=249 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: ReturnCall v17 casts=[{declared={type=number site=w179 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w27 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b7(v18: undefined|null) frequency=Rare:
+# CHECK-NEXT: v19: never = RequireObjectCoercible v18 nullishAccess=Spread
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b6(v16: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v17: undefined = CallDirect v6, v16 function=f40 [isNeverInlined]
-# CHECK-NEXT: v18: anything = CallList v2, v0, v6 calleeKey="push" calleeName="target.push" accessSite=249 callees=[builtin(ArrayPrototypePush)]
-# CHECK-NEXT: ReturnCall v18 casts=[{declared={type=number site=w179 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w27 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
+# CHECK-NEXT: b8(v20: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: v21: undefined = CallDirect v6, v20 function=f40 [isNeverInlined]
+# CHECK-NEXT: v22: anything = CallList v2, v0, v6 calleeKey="push" calleeName="target.push" accessSite=249 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: ReturnCall v22 casts=[{declared={type=number site=w179 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w27 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Assume}]
 # CHECK-NEXT: }

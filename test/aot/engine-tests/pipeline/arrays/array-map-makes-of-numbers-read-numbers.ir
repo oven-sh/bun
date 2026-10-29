@@ -687,84 +687,68 @@ runtimefunction id=ArrayTraversalTraverseArray function=f30 visibility=Private
 # CHECK-NEXT: v6: 3 = Integer integer=3
 # CHECK-NEXT: v7: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v7
-# CHECK-NEXT: v9: 3 = Integer integer=3
-# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v7 size=128
-# CHECK-NEXT: v11: buildercursor = JSONAppendToken v7, v10 jsonToken=OpenArray
-# CHECK-NEXT: v12: 0 = Integer
-# CHECK-NEXT: Jump -> next b2(v12, v11)
-# CHECK-NEXT: b2(v13: int[0, 2], v14: buildercursor):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Switch v13 cases=[0, 1] -> case b3(v4), case b3(v5), otherwise b3(v6)
-# CHECK-NEXT: b3(v16: int|whole):
-# CHECK-NEXT: StringBuilderCommit v7, v14
-# CHECK-NEXT: v18: buildercursor = StringBuilderReserve v7 size=128
-# CHECK-NEXT: v19: buildercursor = JSONAppendNumber v7, v18, v16
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: int[1, 3] = Add v13, v20
-# CHECK-NEXT: v22: boolean = Less v21, v9
-# CHECK-NEXT: Branch v22 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v23: int[1, 2]):
-# CHECK-NEXT: v24: buildercursor = JSONAppendToken v7, v19 jsonToken=Comma
-# CHECK-NEXT: Jump -> next b2(v23, v24)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v25: buildercursor = JSONAppendToken v7, v19 jsonToken=CloseArray
-# CHECK-NEXT: StringBuilderCommit v7, v25
-# CHECK-NEXT: v27: i32 = StringBuilderCheckpoint v7
-# CHECK-NEXT: v28: boolean = StrictEq v8, v27
-# CHECK-NEXT: Branch v28 -> taken b6(), notTaken b8()
-# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v9: buildercursor = StringBuilderReserve v7 size=128
+# CHECK-NEXT: v10: Array<int|whole> = NewArray v4, v5, v6 contents=int|whole allocationSite=2 [contentsAreProven]
+# CHECK-NEXT: v11: Array<int|whole, proven, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<int|whole, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: undefined = JSONAppendValue v7, v9, v11 jsonPosition=Element
+# CHECK-NEXT: v13: buildercursor = ResultAt v12 index=1
+# CHECK-NEXT: v14: fact = Specified
+# CHECK-NEXT: v15: Array<int|whole, proven, pristine[Storage, Names, Dense]> = AssumeType v10, v14 provenType=Array<int|whole, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: StringBuilderCommit v7, v13
+# CHECK-NEXT: v17: i32 = StringBuilderCheckpoint v7
+# CHECK-NEXT: v18: boolean = StrictEq v8, v17
+# CHECK-NEXT: Branch v18 -> taken b2(), notTaken b4()
+# CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: StringBuilderDiscard v7
-# CHECK-NEXT: v30: Array<int|whole> = NewArray v4, v5, v6 contents=int|whole allocationSite=2 [contentsAreProven]
-# CHECK-NEXT: v31: Array<int|whole, proven, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<int|whole, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v32: undefined = Undefined
-# CHECK-NEXT: v33: undefined|string = CallBuiltin -, v31, v32 overload=JSONStringify/0 accessSite=13
-# CHECK-NEXT: v34: undefined|string ~ string = Upcast v33 castType=undefined|string
-# CHECK-NEXT: v35: boolean ~ true = TypeTest v34 testedType=string @0:2 tail
-# CHECK-NEXT: Branch v35 -> taken b9(| 0), notTaken b7() @0:2 tail
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v36: "undefined" = String string="undefined" @0:2 tail
-# CHECK-NEXT: Jump -> next b10(v36) @0:2 tail
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v37: string = StringBuilderFinish v7
-# CHECK-NEXT: Jump -> next b9(v37)
-# CHECK-NEXT: b9(v38: string):
-# CHECK-NEXT: Jump -> next b10(v38) @0:2 tail
-# CHECK-NEXT: b10(v39: string):
-# CHECK-NEXT: v40: undefined = Undefined @0:2 tail
-# CHECK-NEXT: v41: null|boolean|number|string|object = CallBuiltin -, v39, v40 overload=JSONParse/0 accessSite=14 @0:2 tail
-# CHECK-NEXT: v42: null|boolean|number|string|object ~ null|Array<number> = Upcast v41 castType=anything
-# CHECK-NEXT: v43: 10 = Integer integer=10
-# CHECK-NEXT: v44: boolean ~ true = TypeTest v42 testedType=undefined|null|Array<number>
-# CHECK-NEXT: Branch v44 -> taken b11(| 0), notTaken b12()
-# CHECK-NEXT: b11(v45: null|Array<number>):
-# CHECK-NEXT: v46: anything ~ undefined|null|Array<number> = CallDirect v45, v43 function=f32 @499:1 tail
-# CHECK-NEXT: Jump -> next b13(v46)
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v47: anything ~ undefined|null|Array<number> = CallDirect v42, v43 function=f34 @499:1 tail
-# CHECK-NEXT: Jump -> next b13(v47)
-# CHECK-NEXT: b13(v48: anything ~ undefined|null|Array<number>):
-# CHECK-NEXT: v49: object ~ Array<number> = AssumeType v48 provenType=object
-# CHECK-NEXT: v50: 1 = Integer integer=1
-# CHECK-NEXT: v51: L0 = NewObject layout=L0 allocationSite=3 allocationClass=0
-# CHECK-NEXT: v52: L0 = FinishObject v51
-# CHECK-NEXT: v53: boolean ~ true = TypeTest v49 testedType=Array<number>
-# CHECK-NEXT: Branch v53 -> taken b14(| 0), notTaken b17()
-# CHECK-NEXT: b14(v54: Array<number>):
-# CHECK-NEXT: v55: boolean = IsPristine v54 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: Branch v55 -> taken b15(| 0), notTaken b17()
-# CHECK-NEXT: b15(v56: guard):
-# CHECK-NEXT: v57: boolean = HasArrayStorage v54 arrayStorage=Double [isWritable]
-# CHECK-NEXT: Branch v57 -> taken b16(| 0), notTaken b17()
-# CHECK-NEXT: b16(v58: guard):
-# CHECK-NEXT: v59: guard = AllGuards v56, v58
-# CHECK-NEXT: PutArrayElement v54, v50, v52, v59 arrayStorage=Double level=Expected accessSite=2 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b18()
-# CHECK-NEXT: b17() frequency=Rare:
-# CHECK-NEXT: ElemSet v49, v50, v52 accessSite=2 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b18()
-# CHECK-NEXT: b18():
-# CHECK-NEXT: v62: int|whole = Increment v1
-# CHECK-NEXT: Jump -> next b1(v62)
+# CHECK-NEXT: v20: undefined = Undefined
+# CHECK-NEXT: v21: undefined|string = CallBuiltin -, v15, v20 overload=JSONStringify/0 accessSite=13
+# CHECK-NEXT: v22: undefined|string ~ string = Upcast v21 castType=undefined|string
+# CHECK-NEXT: v23: boolean ~ true = TypeTest v22 testedType=string @0:2 tail
+# CHECK-NEXT: Branch v23 -> taken b5(| 0), notTaken b3() @0:2 tail
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v24: "undefined" = String string="undefined" @0:2 tail
+# CHECK-NEXT: Jump -> next b6(v24) @0:2 tail
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v25: string = StringBuilderFinish v7
+# CHECK-NEXT: Jump -> next b5(v25)
+# CHECK-NEXT: b5(v26: string):
+# CHECK-NEXT: Jump -> next b6(v26) @0:2 tail
+# CHECK-NEXT: b6(v27: string):
+# CHECK-NEXT: v28: undefined = Undefined @0:2 tail
+# CHECK-NEXT: v29: null|boolean|number|string|object = CallBuiltin -, v27, v28 overload=JSONParse/0 accessSite=14 @0:2 tail
+# CHECK-NEXT: v30: null|boolean|number|string|object ~ null|Array<number> = Upcast v29 castType=anything
+# CHECK-NEXT: v31: 10 = Integer integer=10
+# CHECK-NEXT: v32: boolean ~ true = TypeTest v30 testedType=undefined|null|Array<number>
+# CHECK-NEXT: Branch v32 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v33: null|Array<number>):
+# CHECK-NEXT: v34: anything ~ undefined|null|Array<number> = CallDirect v33, v31 function=f32 @499:1 tail
+# CHECK-NEXT: Jump -> next b9(v34)
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v35: anything ~ undefined|null|Array<number> = CallDirect v30, v31 function=f34 @499:1 tail
+# CHECK-NEXT: Jump -> next b9(v35)
+# CHECK-NEXT: b9(v36: anything ~ undefined|null|Array<number>):
+# CHECK-NEXT: v37: object ~ Array<number> = AssumeType v36 provenType=object
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: L0 = NewObject layout=L0 allocationSite=3 allocationClass=0
+# CHECK-NEXT: v40: L0 = FinishObject v39
+# CHECK-NEXT: v41: boolean ~ true = TypeTest v37 testedType=Array<number>
+# CHECK-NEXT: Branch v41 -> taken b10(| 0), notTaken b13()
+# CHECK-NEXT: b10(v42: Array<number>):
+# CHECK-NEXT: v43: boolean = IsPristine v42 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v43 -> taken b11(| 0), notTaken b13()
+# CHECK-NEXT: b11(v44: guard):
+# CHECK-NEXT: v45: boolean = HasArrayStorage v42 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v45 -> taken b12(| 0), notTaken b13()
+# CHECK-NEXT: b12(v46: guard):
+# CHECK-NEXT: v47: guard = AllGuards v44, v46
+# CHECK-NEXT: PutArrayElement v42, v38, v40, v47 arrayStorage=Double level=Expected accessSite=2 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: ElemSet v37, v38, v40 accessSite=2 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v50: int|whole = Increment v1
+# CHECK-NEXT: Jump -> next b1(v50)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="mapped"
 # CHECK: module=m0 position=499 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=10 site=w6}] results=[{type=undefined|null|Array<number> site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f32 fallback=f34}

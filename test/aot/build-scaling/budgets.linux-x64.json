@@ -23,12 +23,9 @@
     "megabytes": 219
   },
   "functions that call what nobody knows": {
-    "millionInstructions": 17481,
+    "millionInstructions": 7530,
     "millionInstructionsWithMusl": 16401,
-    "megabytes": 221,
-    "growth": {
-      "instructions": 4.56
-    }
+    "megabytes": 221
   },
   "functions of the host that are held in variables, beside calls of what nobody knows": {
     "millionInstructions": 47331,
@@ -36,11 +33,11 @@
     "megabytes": 324
   },
   "classes whose methods of one name are called at one place": {
-    "millionInstructions": 9963,
+    "millionInstructions": 7717,
     "millionInstructionsWithMusl": 11700,
     "megabytes": 220,
     "growth": {
-      "instructions": 2.56
+      "instructions": 2.21
     }
   },
   "literals of different layouts that are read at one place": {
@@ -58,7 +55,7 @@
     "megabytes": 221
   },
   "arrays and objects that one function makes, between calls of what nobody knows": {
-    "millionInstructions": 30583,
+    "millionInstructions": 26250,
     "millionInstructionsWithMusl": 37648,
     "megabytes": 416,
     "growth": {
@@ -76,12 +73,13 @@
     "megabytes": 140
   },
   "one async function of many awaits": {
-    "millionInstructions": 2963,
+    "millionInstructions": 2926,
     "millionInstructionsWithMusl": 3505,
-    "megabytes": 221,
-    "growth": {
-      "instructions": 2.56
-    }
+    "megabytes": 121
+  },
+  "awaits in a row, each of a function that is declared before the first": {
+    "millionInstructions": 6650,
+    "megabytes": 141
   },
   "a row of branches that hand one new object on": {
     "millionInstructions": 13394,
@@ -138,11 +136,11 @@
     "millionInstructionsWithMusl": 3951,
     "megabytes": 217,
     "growth": {
-      "instructions": 2.99
+      "instructions": 2.45
     }
   },
   "a string that grows by one statement after another": {
-    "millionInstructions": 1197,
+    "millionInstructions": 617,
     "millionInstructionsWithMusl": 1419,
     "megabytes": 217,
     "growth": {
@@ -167,7 +165,7 @@
     "millionInstructionsWithMusl": 3337,
     "megabytes": 144,
     "growth": {
-      "instructions": 2.99
+      "instructions": 2.75
     }
   },
   "classes that extend one another in a row, each constructed": {
@@ -183,16 +181,16 @@
     "millionInstructionsWithMusl": 15777,
     "megabytes": 367,
     "growth": {
-      "instructions": 3.52,
+      "instructions": 3.45,
       "peakBytes": 5
     }
   },
   "functions that each make a class below the one that the function before has made": {
-    "millionInstructions": 16947,
+    "millionInstructions": 15143,
     "millionInstructionsWithMusl": 21557,
     "megabytes": 396,
     "growth": {
-      "instructions": 3.4,
+      "instructions": 3.12,
       "peakBytes": 5.3
     }
   },
@@ -215,19 +213,19 @@
     "megabytes": 140
   },
   "functions that are stored one after another under one name of one object and called there": {
-    "millionInstructions": 6848,
+    "millionInstructions": 3668,
     "millionInstructionsWithMusl": 9505,
     "megabytes": 132,
     "growth": {
-      "instructions": 3.23
+      "instructions": 2.76
     }
   },
   "functions that are stored one after another under one name and called there, more than a type lists": {
-    "millionInstructions": 6540,
+    "millionInstructions": 3479,
     "millionInstructionsWithMusl": 9133,
     "megabytes": 134,
     "growth": {
-      "instructions": 3.22
+      "instructions": 2.75
     }
   },
   "functions on one line after non-ASCII text": {
@@ -263,7 +261,7 @@
     "millionInstructionsWithMusl": 4412,
     "megabytes": 230,
     "growth": {
-      "instructions": 3.6
+      "instructions": 2.67
     }
   },
   "names that one function reads from an object nobody knows": {
@@ -284,7 +282,7 @@
     "millionInstructionsWithMusl": 12451,
     "megabytes": 530,
     "growth": {
-      "instructions": 3.23,
+      "instructions": 3.15,
       "peakBytes": 6.5
     }
   },
@@ -317,7 +315,7 @@
     "megabytes": 171
   },
   "classes below a function that makes their base, kept in a list and constructed for the classes of another list": {
-    "millionInstructions": 7331,
+    "millionInstructions": 6081,
     "millionInstructionsWithMusl": 9251,
     "megabytes": 129
   },
@@ -375,15 +373,12 @@
     "megabytes": 595
   },
   "parameters of one function, all read at the end": {
-    "millionInstructions": 7146,
+    "millionInstructions": 4149,
     "millionInstructionsWithMusl": 10580,
-    "megabytes": 197,
-    "growth": {
-      "instructions": 2.56
-    }
+    "megabytes": 197
   },
   "arguments of one call, each a sum": {
-    "millionInstructions": 18027,
+    "millionInstructions": 12433,
     "millionInstructionsWithMusl": 23863,
     "megabytes": 504
   },
@@ -393,36 +388,28 @@
     "megabytes": 374
   },
   "functions in one array that each call whichever the array answers with, with their own arguments": {
-    "millionInstructions": 17206,
+    "millionInstructions": 4416,
     "millionInstructionsWithMusl": 23678,
-    "megabytes": 164,
-    "growth": {
-      "instructions": 3.28,
-      "counts": {
-        "HandedOnReferencesRead": 4,
-        "FunctionsBelowEntrancesInCyclesVisited": 4
-      }
-    }
+    "megabytes": 164
   },
   "classes with a method of one name that each call it on an instance of any of them": {
-    "millionInstructions": 29767,
+    "millionInstructions": 8760,
     "millionInstructionsWithMusl": 44206,
     "megabytes": 171,
     "growth": {
-      "instructions": 3.51,
+      "instructions": 2.3,
       "peakBytes": 2.98,
       "counts": {
-        "HandedOnReferencesRead": 3.98,
-        "FunctionsBelowEntrancesInCyclesVisited": 3.81
+        "HandedOnReferencesRead": 3.98
       }
     }
   },
   "instances of classes of their own that statements assign to one variable, a method called on it after each": {
-    "millionInstructions": 12572,
+    "millionInstructions": 9346,
     "millionInstructionsWithMusl": 15588,
     "megabytes": 132,
     "growth": {
-      "instructions": 4.01,
+      "instructions": 3.54,
       "counts": {
         "UnionMembersCompared": 3.99
       }
@@ -492,7 +479,64 @@
     "millionInstructions": 10837,
     "megabytes": 171
   },
+  "classes with the same fields, an object of each pushed into one array": {
+    "millionInstructions": 7025,
+    "megabytes": 137
+  },
+  "entry points that a pattern finds": {
+    "millionInstructions": 10238,
+    "megabytes": 155
+  },
+  "a chain of conditional types": {
+    "millionInstructions": 910,
+    "megabytes": 145
+  },
+  "operands of one && that are parameters, numbers and conversions to int32": {
+    "millionInstructions": 9512,
+    "megabytes": 168
+  },
+  "parts that two loops join to the key of a table": {
+    "millionInstructions": 11481,
+    "megabytes": 259
+  },
+  "literals that each spread the one before": {
+    "millionInstructions": 7682,
+    "megabytes": 89
+  },
   "all shapes as the entry points of one build, on four threads": {
     "megabytes": 654
+  },
+  "loops nested in one another": {
+    "millionInstructions": 3203,
+    "megabytes": 93,
+    "growth": {
+      "instructions": 3.69
+    }
+  },
+  "loops that test at their end, nested in one another": {
+    "millionInstructions": 4577,
+    "megabytes": 80,
+    "growth": {
+      "instructions": 3.07
+    }
+  },
+  "try statements with a finally block, nested in one another": {
+    "millionInstructions": 1901,
+    "megabytes": 85,
+    "growth": {
+      "instructions": 3.67
+    }
+  },
+  "fields of one class that methods read and store, in a build without the results of the analysis": {
+    "millionInstructions": 8386,
+    "megabytes": 101
+  },
+  "objects that a generator is sent, in one array literal": {
+    "millionInstructions": 2154,
+    "megabytes": 117
+  },
+  "awaited calls in one array literal": {
+    "millionInstructions": 2294,
+    "megabytes": 116
   }
 }

@@ -79,12 +79,21 @@ pub(crate) struct WorkerSearch<'a> {
     pub resolve_entry_point: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
     /// The file that a name without `./` in front leads to from the root directory: that of a package, else one in the directory.
     pub resolve_bare_name: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
-    /// The files under names that are known in part, `resolve_names_known_in_part`, as they are looked for from the folder of a file, or from the root directory.
+    /// The files under names that are known in part, `resolve_names_known_in_part`.
     pub find_files_named_in_part: &'a FindFilesNamedInPart<'a>,
+    /// Where the build runs, in the format of the checker. `bun run` looks there for what a relative path names, and `resolve_entry_point` does too.
+    pub working_directory: &'a [u8],
+}
+
+#[derive(Copy, Clone)]
+pub(crate) enum SearchedFrom<'a> {
+    FolderOf(&'a [u8]),
+    RootDirectory,
+    WorkingDirectory,
 }
 
 type FindFilesNamedInPart<'a> =
-    dyn Fn(Option<&[u8]>, &[(&[u8], Option<&[u8]>)]) -> Option<Vec<Vec<u8>>> + 'a;
+    dyn Fn(SearchedFrom<'_>, &[(&[u8], Option<&[u8]>)]) -> Option<Vec<Vec<u8>>> + 'a;
 
 fn is_absolute(path: &[u8]) -> bool {
     path.starts_with(b"/") || matches!(path, [drive, b':', b'/', ..] if drive.is_ascii_alphabetic())
@@ -212,6 +221,11 @@ fn join_below_root(root: &[u8], relative: &[u8]) -> Vec<u8> {
     [root, &kept.join(&b"/"[..])].concat()
 }
 
+// The name that an executable looks under first for a relative path. No module has such a path, so it hides none.
+fn name_from_working_directory(relative: &[u8]) -> Vec<u8> {
+    join_below_root(b"./", relative)
+}
+
 /// The file on disk that an executable holds under `named`, a path below its `root`.
 fn find_path_on_disk(root_directory: &[u8], root: &[u8], named: &[u8]) -> Option<Vec<u8>> {
     let segments = strings::split(named.strip_prefix(root)?, b"/");
@@ -282,8 +296,12 @@ struct Walk<'a, 's> {
     has_options: bool,
     /// What is followed is the code itself: `{ eval: true }`.
     is_evaluated: bool,
+    /// `find_own_path` answers where the source lies, not where the executable holds the module.
+    reads_source_paths: bool,
     /// The `new Worker()` whose argument is followed.
     start: (FileId, ExprId),
+    /// Of the file of the last `start` that was shown. A file that starts many Workers has its lines counted once.
+    locator: Option<Locator<'a, 's>>,
     /// Each file with its `WorkerFile::has_options`.
     copies: Vec<(FileId, bool)>,
     texts: Vec<WorkerFile>,
@@ -336,7 +354,9 @@ pub(crate) fn find_code_that_starts_workers(
         pending: Vec::new(),
         has_options: false,
         is_evaluated: false,
+        reads_source_paths: false,
         start: (FileId(0), ExprId(0)),
+        locator: None,
         copies: Vec::new(),
         texts: Vec::new(),
         names: Vec::new(),
@@ -368,6 +388,10 @@ pub(crate) fn find_code_that_starts_workers(
     found.dedup();
     walk.names.shared_sort_unstable();
     walk.names.dedup();
+    // `..` stops at `/`, so files at two heights can get one name. The run cannot tell them apart.
+    let same_name = |a: &EntryPointPaths, b: &EntryPointPaths| a.public_path == b.public_path;
+    let told_apart = walk.names.chunk_by(same_name).filter(|it| it.len() == 1);
+    walk.names = told_apart.flatten().cloned().collect();
     CodeThatStartsWorkers {
         files: found,
         names: walk.names,
@@ -510,10 +534,11 @@ impl Walk<'_, '_> {
                 }
             }
         }
+        callees.shared_sort_unstable();
         self.has_unseen_start |= !self.names_constructors_only_as(file, &callees);
     }
 
-    /// Whether nothing but `callees` gets hold of a constructor of Workers in the file.
+    /// Whether nothing but `callees`, which are sorted, gets hold of a constructor of Workers in the file.
     fn names_constructors_only_as(&self, file: FileId, callees: &[ExprId]) -> bool {
         let files = self.files;
         let Some(source) = parsed_source(files, file) else {
@@ -548,7 +573,7 @@ impl Walk<'_, '_> {
         (0..hir.exprs.len() as u32).map(ExprId).all(|expression| {
             let is_evaluated = bound.parent_of_expr(expression) != Parent::None
                 && !analysis.decisions.is_dead_expr(expression);
-            if !is_evaluated || callees.contains(&expression) {
+            if !is_evaluated || callees.binary_search(&expression).is_ok() {
                 return true;
             }
             !is_global(expression)
@@ -697,13 +722,26 @@ impl Walk<'_, '_> {
                 continue;
             }
             self.variables_left = variables_left;
+            if let Some(text) = &text
+                && self.add_path_above_prefix(file, expression, text)
+            {
+                continue;
+            }
+            self.variables_left = variables_left;
             // A path under which the executable holds no code starts no Worker, whatever else the expression leads to.
             let is_path = text.is_some_and(|text| !is_name_of_text(&text));
             let had_unseen_start = self.has_unseen_start;
             match hir[expression].kind {
                 ExprKind::Call(call) if !self.is_evaluated => {
-                    self.has_unseen_start |= self.follow_object_url(file, call).is_none();
+                    if self.follow_object_url(file, call).is_none() {
+                        // A helper mostly hands on what it is given, so that is code that the Worker may start from.
+                        self.has_unseen_start = true;
+                        let arguments = hir.ids(hir[call].args);
+                        self.pending.extend(arguments.map(|it| (file, it)));
+                    }
                 }
+                // A path and a URL are what they are awaited as.
+                ExprKind::Await(awaited) => self.pending.push((file, awaited)),
                 ExprKind::Cond { branches, .. } => {
                     let Branches { yes, no } = hir.branches(branches);
                     self.pending.extend([(file, yes), (file, no)]);
@@ -834,7 +872,7 @@ impl Walk<'_, '_> {
             return None;
         }
         let search = self.search;
-        if search.runs_in_place {
+        if search.runs_in_place || self.reads_source_paths {
             return Some(to_native(path).to_vec());
         }
         let mut entry_points = self.files.entry_points().iter();
@@ -977,12 +1015,13 @@ impl Walk<'_, '_> {
     }
 
     fn add_text(&mut self, name: Vec<u8>, contents: Vec<u8>, loader: Loader) {
+        let started_at = Some(self.position_of_start());
         self.texts.push(WorkerFile {
             source_path: name.clone(),
             embedded_path: name,
             is_guess: false,
             has_options: self.has_options,
-            started_at: Some(self.position_of_start()),
+            started_at,
             text: Some((contents, loader as u8)),
             is_named_by_path: false,
         });
@@ -1191,8 +1230,24 @@ impl Walk<'_, '_> {
             resolve_entry_point(&written)
         };
         let is_written_down = !runs_in_place && !names_directory;
+        // An entry point above the folder where the build runs moves the root directory up. The program was written for `bun run`, which looks from that folder, so what lies there comes first.
+        let looks_elsewhere = is_written_down && self.builds_outside_root();
         let Some(named) = named else {
-            let Some(path) = resolve_bare_name(text) else {
+            let below_node_modules = join_below_root(&root, &[b"node_modules/", text].concat());
+            let from_root = resolve_bare_name(text);
+            let elsewhere = match looks_elsewhere {
+                true => resolve_entry_point(text).filter(|path| from_root.as_ref() != Some(path)),
+                false => None,
+            };
+            if let Some(path) = elsewhere {
+                let file = resolve_entry_point(&[b"./", text].concat());
+                let named = match file.is_some_and(|file| file == path) {
+                    true => name_from_working_directory(text),
+                    false => name_from_working_directory(&[b"node_modules/", text].concat()),
+                };
+                return self.add_file(&path, Some(&named));
+            }
+            let Some(path) = from_root else {
                 return false;
             };
             if !is_written_down {
@@ -1202,7 +1257,7 @@ impl Walk<'_, '_> {
             let in_root = join_below_root(&root, text);
             let named = match find_on_disk(&in_root).is_some_and(|found| found == path) {
                 true => in_root,
-                false => join_below_root(&root, &[b"node_modules/", text].concat()),
+                false => below_node_modules,
             };
             return self.add_file(&path, Some(&named));
         };
@@ -1216,7 +1271,51 @@ impl Walk<'_, '_> {
             Some(_) | None => named,
         };
         let found = find_on_disk(&named);
-        found.is_some_and(|path| self.add_file(&path, is_written_down.then_some(&named[..])))
+        let elsewhere = match is_relative && looks_elsewhere {
+            true => resolve_entry_point(text).filter(|path| found.as_ref() != Some(path)),
+            false => None,
+        };
+        match elsewhere {
+            Some(path) => self.add_file(&path, Some(&name_from_working_directory(text))),
+            None => found
+                .is_some_and(|path| self.add_file(&path, is_written_down.then_some(&named[..]))),
+        }
+    }
+
+    // `new URL("../../jobs/job.js", import.meta.url)` in the root: the steps up leave nothing of the executable's prefix, so `/jobs/job.js` does not say which file is meant. The same expression over the path of the source does.
+    fn add_path_above_prefix(&mut self, file: FileId, expression: ExprId, text: &[u8]) -> bool {
+        let &WorkerSearch {
+            paths,
+            runs_in_place,
+            resolve_entry_point,
+            ..
+        } = self.search;
+        let read_path = |walk: &Self, text: &[u8]| {
+            let text = walk.as_joined(text.to_vec());
+            match text.starts_with(b"file:") {
+                true => read_file_url(&text),
+                false => Some(text).filter(|path| is_absolute(path)),
+            }
+        };
+        let starts_in = self.files.module(self.start.0).file_name();
+        if runs_in_place || self.is_evaluated || is_in_node_modules(starts_in) {
+            return false;
+        }
+        let Some(named) = read_path(self, text).filter(|path| !path.ends_with(b"/")) else {
+            return false;
+        };
+        let root = with_forward_slashes(paths.module_prefix.clone());
+        let above_root = dirname::<Posix>(root.strip_suffix(b"/").unwrap_or(&root));
+        if (named.strip_prefix(above_root)).is_some_and(|rest| rest.starts_with(b"/")) {
+            return false;
+        }
+        self.reads_source_paths = true;
+        let on_disk = self.find_text(file, expression);
+        self.reads_source_paths = false;
+        // A path that does not come from the file's own names a file of the machine that the program runs on.
+        let on_disk = on_disk.filter(|on_disk| on_disk != text);
+        let found = on_disk.and_then(|on_disk| resolve_entry_point(&read_path(self, &on_disk)?));
+        found.is_some_and(|path| self.add_file(&path, Some(&named)))
     }
 
     /// `new Worker("./jobs/" + name + ".js")`: every file of code that the name can lead to. False: the name is not known in part, or it may be something else than the path of a file.
@@ -1251,15 +1350,48 @@ impl Walk<'_, '_> {
         // An executable looks in its own root for what a relative path names.
         let is_from_own_folder =
             is_answer_of_resolver || analysis.is_path_from_own_directory(argument);
-        let found = (self.search.find_files_named_in_part)(
-            is_from_own_folder.then_some(written_in),
+        let find = self.search.find_files_named_in_part;
+        let found = find(
+            match is_from_own_folder {
+                true => SearchedFrom::FolderOf(written_in),
+                false => SearchedFrom::RootDirectory,
+            },
             &names,
         );
         let Some(found) = found else {
             return false;
         };
+        if !is_from_own_folder
+            && self.builds_outside_root()
+            && !self.add_files_below_working_directory(&names)
+        {
+            return false;
+        }
         for path in found {
             self.add_file(&path, None);
+        }
+        true
+    }
+
+    fn builds_outside_root(&self) -> bool {
+        let search = self.search;
+        !search.runs_in_place && to_native(search.working_directory) != search.paths.root_directory
+    }
+
+    /// As in `add_path`: they come ahead of what the root directory holds under the same names.
+    fn add_files_below_working_directory(&mut self, names: &[(&[u8], Option<&[u8]>)]) -> bool {
+        let search = self.search;
+        let found = (search.find_files_named_in_part)(SearchedFrom::WorkingDirectory, names);
+        let Some(found) = found else {
+            return false;
+        };
+        let directory = to_native(search.working_directory);
+        for path in found {
+            let Some(written) = compute_relative_path(directory, to_native(&path)) else {
+                return false;
+            };
+            let written = with_forward_slashes(written);
+            self.add_file(&path, Some(&name_from_working_directory(&written)));
         }
         true
     }
@@ -1286,29 +1418,38 @@ impl Walk<'_, '_> {
             return false;
         }
         let held_as = with_forward_slashes(compute_module_path(paths, &name));
-        if let Some(named) = named.filter(|&named| named != held_as) {
+        let root = with_forward_slashes(paths.module_prefix.clone());
+        let is_held_as = |named: &[u8]| match named.strip_prefix(b"./") {
+            Some(below_root) => held_as.strip_prefix(&root[..]) == Some(below_root),
+            None => named == held_as,
+        };
+        if let Some(named) = named.filter(|&named| !is_held_as(named)) {
             self.names.push(EntryPointPaths {
                 public_path: named.to_vec(),
                 source_path: source_path_of(path),
             });
         }
+        let started_at = Some(self.position_of_start());
         self.texts.push(WorkerFile {
             source_path: source_path_of(path),
             embedded_path,
             is_guess: false,
             has_options: self.has_options,
-            started_at: Some(self.position_of_start()),
+            started_at,
             text: None,
             is_named_by_path: true,
         });
         true
     }
 
-    fn position_of_start(&self) -> ShownPosition {
+    fn position_of_start(&mut self) -> ShownPosition {
         let (file, start) = self.start;
         let offset = self.files.hir(file)[start].pos;
         let unlocated = new_driver_diagnostic(0, Category::Message, Vec::new(), &[]);
-        let located = Locator::new(self.files, file).locate(offset, offset, unlocated);
+        let known = self.locator.take().filter(|it| it.file() == file);
+        let locator = known.unwrap_or_else(|| Locator::new(self.files, file));
+        let locator = self.locator.insert(locator);
+        let located = locator.locate(offset, offset, unlocated);
         let line = located.line.saturating_sub(located.source_line) as usize;
         ShownPosition {
             position: position_of_diagnostic(&located),

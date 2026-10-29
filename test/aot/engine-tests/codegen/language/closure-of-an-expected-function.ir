@@ -666,36 +666,36 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f61 visibilit
 # CHECK-NEXT: DefineMethod v5, v6 layout=L0 side=Static key="call"
 # CHECK-NEXT: v8: f7 = FinishClass v5 layout=L0
 # CHECK-NEXT: v9: 2 = Integer integer=2
-# CHECK-NEXT: v10: anything ~ undefined|null|function = Call v0, -, v9 calleeName="makeAdder" accessSite=0 callees=[f2]
+# CHECK-NEXT: v10: anything ~ undefined|null|function|f12 = Call v0, -, v9 calleeName="makeAdder" accessSite=0 callees=[f2]
 # CHECK-NEXT: v11: 3 = Integer integer=3
-# CHECK-NEXT: v12: anything ~ undefined|null|function = Call v0, -, v11 calleeName="makeAdder" accessSite=1 callees=[f2]
+# CHECK-NEXT: v12: anything ~ undefined|null|function|f12 = Call v0, -, v11 calleeName="makeAdder" accessSite=1 callees=[f2]
 # CHECK-NEXT: v13: 0 = Integer
 # CHECK-NEXT: v14: 4 = Integer integer=4
-# CHECK-NEXT: v15: anything ~ undefined|null|function = Call v0, -, v14 calleeName="makeAdder" accessSite=2 callees=[f2]
+# CHECK-NEXT: v15: anything ~ undefined|null|function|f12 = Call v0, -, v14 calleeName="makeAdder" accessSite=2 callees=[f2]
 # CHECK-NEXT: v16: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v17: builtin(ObjectFreeze) = Builtin builtin=ObjectFreeze
 # CHECK-NEXT: v18: 5 = Integer integer=5
-# CHECK-NEXT: v19: anything ~ undefined|null|function = Call v0, -, v18 calleeName="makeAdder" accessSite=3 callees=[f2]
+# CHECK-NEXT: v19: anything ~ undefined|null|function|f12 = Call v0, -, v18 calleeName="makeAdder" accessSite=3 callees=[f2]
 # CHECK-NEXT: v20: anything = Call v17, v16, v19 calleeName="Object.freeze" accessSite=4 callees=[builtin(ObjectFreeze)]
-# CHECK-NEXT: v21: anything ~ undefined|null|function = Upcast v20 castType=anything
+# CHECK-NEXT: v21: anything ~ undefined|null|function|f12 = Upcast v20 castType=anything
 # CHECK-NEXT: v22: 6 = Integer integer=6
-# CHECK-NEXT: v23: anything ~ undefined|null|function = Call v0, -, v22 calleeName="makeAdder" accessSite=5 callees=[f2]
+# CHECK-NEXT: v23: anything ~ undefined|null|function|f12 = Call v0, -, v22 calleeName="makeAdder" accessSite=5 callees=[f2]
 # CHECK-NEXT: v24: 7 = Integer integer=7
-# CHECK-NEXT: v25: anything ~ undefined|null|function = Call v1, -, v24 calleeName="makeOther" accessSite=6 callees=[f3]
+# CHECK-NEXT: v25: anything ~ undefined|null|function|f13 = Call v1, -, v24 calleeName="makeOther" accessSite=6 callees=[f3]
 # CHECK-NEXT: v26: 1 = Integer integer=1
-# CHECK-NEXT: v27: anything ~ undefined|null|function = Call v0, -, v26 calleeName="makeAdder" accessSite=7 callees=[f2]
+# CHECK-NEXT: v27: anything ~ undefined|null|function|f12 = Call v0, -, v26 calleeName="makeAdder" accessSite=7 callees=[f2]
 # CHECK-NEXT: v28: 1 = Integer integer=1
-# CHECK-NEXT: v29: anything ~ undefined|null|function = Call v1, -, v28 calleeName="makeOther" accessSite=8 callees=[f3]
+# CHECK-NEXT: v29: anything ~ undefined|null|function|f13 = Call v1, -, v28 calleeName="makeOther" accessSite=8 callees=[f3]
 # CHECK-NEXT: v30: 1 = Integer integer=1
 # CHECK-NEXT: v31: f14 = Call v2, -, v30 calleeName="makeAsync" accessSite=9 callees=[f4]
 # CHECK-NEXT: v97: f14 = AssumeType v31 provenType=f14
 # CHECK-NEXT: v32: 8 = Integer integer=8
-# CHECK-NEXT: v33: anything ~ undefined|null|function = Call v0, -, v32 calleeName="makeAdder" accessSite=10 callees=[f2]
+# CHECK-NEXT: v33: anything ~ undefined|null|function|f12 = Call v0, -, v32 calleeName="makeAdder" accessSite=10 callees=[f2]
 # CHECK-NEXT: v34: anything = PropGet v33 key="bind" accessSite=11 receivers=[]
 # CHECK-NEXT: v35: anything ~ undefined|null|function = Upcast v34 castType=anything
 # CHECK-NEXT: v36: null = Null
 # CHECK-NEXT: v37: anything = Call v35, v33, v36 calleeKey="bind" calleeName="bind" accessSite=12 callees=[]
-# CHECK-NEXT: v38: anything ~ undefined|null|function = Upcast v37 castType=anything
+# CHECK-NEXT: v38: anything ~ undefined|null|function|f12 = Upcast v37 castType=anything
 # CHECK-NEXT: v39: f9 = NewClosure function=f9 allocationSite=6
 # CHECK-NEXT: v40: builtin(MathAbs) = Builtin builtin=MathAbs
 # CHECK-NEXT: v41: builtin(GlobalThis) = Builtin builtin=GlobalThis
@@ -709,10 +709,10 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f61 visibilit
 # CHECK-NEXT: v101: f8|builtin(FunctionPrototypeCall) = AssumeType v45 provenType=f8|builtin(FunctionPrototypeCall)
 # CHECK-NEXT: v46: builtin(Proxy) = Builtin builtin=Proxy
 # CHECK-NEXT: v47: 9 = Integer integer=9
-# CHECK-NEXT: v48: anything ~ undefined|null|function = Call v0, -, v47 calleeName="makeAdder" accessSite=15 callees=[f2]
+# CHECK-NEXT: v48: anything ~ undefined|null|function|f12 = Call v0, -, v47 calleeName="makeAdder" accessSite=15 callees=[f2]
 # CHECK-NEXT: v49: L3 = Data data=d1 allocationSite=7
 # CHECK-NEXT: v50: anything ~ object = Construct v46, -, v48, v49 calleeName="Proxy" accessSite=16 callees=[builtin(Proxy)]
-# CHECK-NEXT: v51: anything ~ function = Upcast v50 castType=anything
+# CHECK-NEXT: v51: anything ~ function|f12 = Upcast v50 castType=anything
 # CHECK-NEXT: v52: f10 = NewClosure function=f10 allocationSite=8
 # CHECK-NEXT: v53: undefined = Undefined
 # CHECK-NEXT: v54: null = Null

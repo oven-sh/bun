@@ -375,7 +375,7 @@ runtimefunction id=GeneratorPrototypeNext function=f6 visibility=Private
 # CHECK-NEXT: Branch v5 -> taken b4(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: v7: undefined = YieldBySavingFrame v4, v6, v3, v0
+# CHECK-NEXT: v7: undefined = YieldBySavingFrame v4, v6, v3
 # CHECK-NEXT: v8: anything = ResultAt v7
 # CHECK-NEXT: v9: int[0, 2] = ResultAt v7 index=1
 # CHECK-NEXT: Switch v9 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
@@ -386,7 +386,7 @@ runtimefunction id=GeneratorPrototypeNext function=f6 visibility=Private
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: "" = String string=""
-# CHECK-NEXT: v12: undefined = YieldBySavingFrame v4, v11, v3, v0
+# CHECK-NEXT: v12: undefined = YieldBySavingFrame v4, v11, v3
 # CHECK-NEXT: v13: anything = ResultAt v12
 # CHECK-NEXT: v14: int[0, 2] = ResultAt v12 index=1
 # CHECK-NEXT: Switch v14 cases=[1, 2] -> case b5(), case b6(), otherwise b7()

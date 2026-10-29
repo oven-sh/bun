@@ -113,6 +113,18 @@ function turn(i: number): number {
     .take(2)
     .toArray()[1]!;
 }
+//// iterator-helpers-for-each
+const numbers = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let sum = 0;
+  numbers
+    .values()
+    .map(n => n + i)
+    .forEach(n => {
+      sum += n;
+    });
+  return sum | 0;
+}
 //// array-iterator-by-hand
 const letters = ["a", "bb", "ccc"];
 function turn(i: number): number {

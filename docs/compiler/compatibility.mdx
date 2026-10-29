@@ -69,10 +69,12 @@ A `.wasm` file that you import is compiled at build time. Bytes that your progra
 ```ts app.ts icon="/icons/typescript.svg"
 await import("./plugins/" + name + ".ts"); // finds plugins/*.ts
 await import(new URL(`./plugins/${name}.ts`, import.meta.url)); // same
-await import(name); // only finds the entry points of the build
+await import(name); // finds the entry points, and files whose path is a string in your code
 ```
 
 The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `require.resolve()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
+
+A file that the build compiled is also found by a relative path that's written out as a string somewhere in your code, like `"./plugins/a.ts"` or the `"/plugins/a.ts"` in `import.meta.dir + "/plugins/a.ts"`, however that string and the loader meet: through a variable, a function, or a `require` that's stored in an object.
 
 `fs.readdirSync()`, `existsSync()` and `statSync()` see the compiled files, so a loader that lists a folder works too. Their source text isn't in the executable, so `readFileSync()` doesn't find them.
 
@@ -100,7 +102,7 @@ error: Cannot load '/home/me/late.ts': it isn't in this executable ...
 bun compile ./app.ts './extra/*.ts' ./node_modules/pg/lib/index.js
 ```
 
-Code that's loaded from disk is interpreted, and both flags make the executable larger.
+Code that's loaded from disk is interpreted, and both flags make the executable larger. With `--aot-allow-code-from-disk`, a dynamic path also finds every file that was compiled. A file that's loaded from disk can import your source files by their paths and gets the compiled modules, not second copies, as long as the executable runs in the folder where you ran `bun compile`. What such a file imports from disk is found as under `bun run`: the `package.json` and `tsconfig.json` files on disk are read, as with `--compile-autoload-package-json` and `--compile-autoload-tsconfig`.
 
 Workers follow the same rule. The build finds `new Worker("./worker.ts")`, `new Worker(new URL("./worker.ts", import.meta.url))` and `new Worker("./jobs/" + name + ".ts")` in your own files. Pass any other worker as an entry point, including one that a package in `node_modules` starts.
 

@@ -753,7 +753,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-LABEL: function {{*}}name="mapForEach"
 # CHECK: module=m0 position=1463 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<never, proven, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f97 callPosition=4294967295 module=m1}, {callee=f32 callPosition=4294967295 parent=1 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: Array<undefined|null|function> = NewArray contents=undefined|null|function allocationSite=5
+# CHECK-NEXT: v0: Array<undefined|null|function|f31> = NewArray contents=undefined|null|function|f31 allocationSite=5
 # CHECK-NEXT: v1: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=35
 # CHECK-NEXT: v3: Array = NewArrayLike v2, v1
@@ -850,7 +850,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: v33: f10 = GetModuleVariable variable=g9
 # CHECK-NEXT: v34: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v35: 4 = Integer integer=4
-# CHECK-NEXT: v36: undefined|null|Array<undefined|null|function> = Call v34, -, v35 calleeName="makersOf" accessSite=26 callees=[f1]
+# CHECK-NEXT: v36: undefined|null|Array<undefined|null|function|f12> = Call v34, -, v35 calleeName="makersOf" accessSite=26 callees=[f1]
 # CHECK-NEXT: v37: undefined|null|Array<number> = Call v33, -, v36 calleeName="handedIn" accessSite=27 callees=[f10]
 # CHECK-NEXT: v38: boolean = TypeTest v37 testedType=Array<number>
 # CHECK-NEXT: Branch v38 -> taken b9(| 0), notTaken b15(| 0)

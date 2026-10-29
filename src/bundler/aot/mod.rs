@@ -23,7 +23,7 @@ use bun_aot::link::ProgramNames;
 use bun_aot::module_list::ModuleList;
 use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
-use bun_aot::{BuildFailed, Compilation};
+use bun_aot::{BuildFailed, Compilation, RefusedEntryPoints};
 use bun_ast::{Loc, Log};
 use bun_options_types::aot_options::AotOptions;
 use bun_resolver::package_names::{BuildPaths, PackageName, PathAlias, add_written_names};
@@ -88,7 +88,7 @@ pub struct AotBuildFailure {
     pub is_internal_error: bool,
     pub statistics: Statistics,
     pub compilation: Option<Box<Compilation>>,
-    pub refused_entry_points: Option<Vec<u32>>,
+    pub refused_entry_points: Option<RefusedEntryPoints>,
 }
 
 pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailure> {

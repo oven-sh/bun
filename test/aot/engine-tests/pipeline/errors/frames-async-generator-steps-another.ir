@@ -3346,7 +3346,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f88 visibility=Private
 # CHECK-NEXT: v13: "inner, behind a yield" = String string="inner, behind a yield"
 # CHECK-NEXT: v14: undefined = CallDirect v13 function=f6 accessSite=3
 # CHECK-NEXT: v15: 0 = Integer
-# CHECK-NEXT: v16: 0 = AwaitBySavingFrame v15, v2, v1
+# CHECK-NEXT: v16: 0 = AwaitBySavingFrame v15, v2
 # CHECK-NEXT: v17: "inner, behind an await" = String string="inner, behind an await"
 # CHECK-NEXT: v18: undefined = CallDirect v17 function=f6 accessSite=4
 # CHECK-NEXT: v19: 2 = Integer integer=2
@@ -3384,7 +3384,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f88 visibility=Private
 # CHECK-NEXT: v13: undefined = CallDirect v12 function=f6 accessSite=11
 # CHECK-NEXT: v14: undefined = Undefined
 # CHECK-NEXT: v15: absent = Absent
-# CHECK-NEXT: v16: undefined = StepAsyncGenerator v11, v14, v15, v1, v11 calledBuiltin=AsyncGeneratorPrototypeNext
+# CHECK-NEXT: v16: undefined = StepAsyncGenerator v11, v14, v15 calledBuiltin=AsyncGeneratorPrototypeNext
 # CHECK-NEXT: v17: anything = ResultAt v16
 # CHECK-NEXT: v18: int[0, 2] = ResultAt v16 index=1
 # CHECK-NEXT: v19: 0 = Integer
@@ -3397,7 +3397,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f88 visibility=Private
 # CHECK-NEXT: Jump -> next b5(v22)
 # CHECK-NEXT: b5(v24: anything):
 # CHECK-NEXT: v25: undefined|int = AssumeType v24 provenType=undefined|int
-# CHECK-NEXT: v26: undefined = AsyncGeneratorYield v2, v25, v1, v11
+# CHECK-NEXT: v26: undefined = AsyncGeneratorYield v2, v25, v1
 # CHECK-NEXT: v27: anything = ResultAt v26
 # CHECK-NEXT: v28: int[0, 2] = ResultAt v26 index=1
 # CHECK-NEXT: Switch v28 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
@@ -3410,7 +3410,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f88 visibility=Private
 # CHECK-NEXT: v30: undefined = CallDirect v29 function=f6 accessSite=15
 # CHECK-NEXT: v31: undefined = Undefined
 # CHECK-NEXT: v32: absent = Absent
-# CHECK-NEXT: v33: undefined = StepAsyncGenerator v11, v31, v32, v1, v11 calledBuiltin=AsyncGeneratorPrototypeNext
+# CHECK-NEXT: v33: undefined = StepAsyncGenerator v11, v31, v32 calledBuiltin=AsyncGeneratorPrototypeNext
 # CHECK-NEXT: v34: anything = ResultAt v33
 # CHECK-NEXT: v35: int[0, 2] = ResultAt v33 index=1
 # CHECK-NEXT: v36: 0 = Integer

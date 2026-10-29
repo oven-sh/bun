@@ -18,7 +18,7 @@ pub mod options;
 pub mod report;
 pub mod statistics;
 
-pub use compile::{BuildFailed, Compilation, compile};
+pub use compile::{BuildFailed, Compilation, RefusedEntryPoints, compile};
 pub use linked::signatures;
 pub use load::source_provider::{SourceProvider, WithoutServices};
 pub use opaque::Opaque;

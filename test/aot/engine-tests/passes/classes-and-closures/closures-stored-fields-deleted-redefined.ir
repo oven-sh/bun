@@ -1153,7 +1153,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f136 visibility=Private
 # CHECK-NEXT: v10: boolean = HasBirthFieldsFilled v0
 # CHECK-NEXT: Branch v10 -> taken b5(| 0), notTaken b7()
 # CHECK-NEXT: b5(v11: guard):
-# CHECK-NEXT: v12: anything ~ undefined|null|function = GetSlot v0, v11 key="run" receivers=[L2] level=Expected accessSite=50
+# CHECK-NEXT: v12: anything ~ undefined|null|function|f30|f41 = GetSlot v0, v11 key="run" receivers=[L2] level=Expected accessSite=50
 # CHECK-NEXT: v13: undefined|int|f30|f41 ~ undefined|f30|f41 = AssumeType v12 provenType=undefined|int|f30|f41
 # CHECK-NEXT: v14: boolean = TypeTest v13 testedType=f41
 # CHECK-NEXT: Branch v14 -> taken b6(), notTaken b9(| 0)
@@ -1161,7 +1161,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f136 visibility=Private
 # CHECK-NEXT: v15: undefined = Undefined
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v16: anything ~ undefined|null|function = PropGet v0 key="run" accessSite=50 receivers=[L2]
+# CHECK-NEXT: v16: anything ~ undefined|null|function|f30|f41 = PropGet v0 key="run" accessSite=50 receivers=[L2]
 # CHECK-NEXT: v17: undefined|int|f30|f41 ~ undefined|f30|f41 = AssumeType v16 provenType=undefined|int|f30|f41
 # CHECK-NEXT: v18: boolean = TypeTest v17 testedType=f41
 # CHECK-NEXT: Branch v18 -> taken b8(), notTaken b9(| 0)

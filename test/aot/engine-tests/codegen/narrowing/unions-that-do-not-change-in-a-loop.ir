@@ -700,11 +700,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f33 visibility=Private
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="lengths"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 40, patchpoints: 4, rare instructions: 40
+# CHECK-NEXT: instructions: 40, patchpoints: 3, rare instructions: 50
 # CHECK-NEXT: end of function f35
 # CHECK-LABEL: function {{*}}name="lengths"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 45, patchpoints: 8, rare instructions: 78, polls: 1
+# CHECK-NEXT: instructions: 51, patchpoints: 8, rare instructions: 78, polls: 1
 # CHECK-NEXT: end of function f41
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=EntryChecks
@@ -712,9 +712,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f33 visibility=Private
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 53, patchpoints: 6, rare instructions: 216, polls: 1
+# CHECK-NEXT: instructions: 77, patchpoints: 10, rare instructions: 138, polls: 1
 # CHECK-NEXT: end of function f36
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 79, patchpoints: 8, rare instructions: 128, polls: 1
+# CHECK-NEXT: instructions: 79, patchpoints: 7, rare instructions: 127, polls: 1
 # CHECK-NEXT: end of function f42

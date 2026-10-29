@@ -497,6 +497,32 @@ const UNUSED_IMPORTS: &[(&str, &str, &[&str], usize)] = &[
         0,
     ),
     ("a.ts", r#"import { A } from "m"; if (false) A;"#, &["A"], 1),
+    ("a.ts", r#"import { A } from "m"; const A = 1; A;"#, &[], 0),
+    (
+        "a.ts",
+        r#"import { A } from "m"; function A() {} A();"#,
+        &[],
+        0,
+    ),
+    (
+        "a.ts",
+        r#"import { B as A } from "m"; const A = 1; A;"#,
+        &[],
+        0,
+    ),
+    ("a.ts", r#"import A from "m"; const A = 1; A;"#, &[], 0),
+    (
+        "a.ts",
+        r#"import { A, b } from "m"; const A = b; A;"#,
+        &[],
+        1,
+    ),
+    (
+        "a.ts",
+        r#"import { A } from "m"; declare const A: number; A;"#,
+        &[],
+        1,
+    ),
     ("a.ts", r#"import { A } from "m"; export { A };"#, &[], 1),
     ("a.mjs", r#"import { a } from "m";"#, &[], 1),
     (
@@ -758,6 +784,7 @@ fn site_kind_name(kind: ImportSiteKind) -> &'static str {
         ImportSiteKind::ImportMetaRequire(_) => "ImportMetaRequire",
         ImportSiteKind::ImportMetaResolve(_) => "ImportMetaResolve",
         ImportSiteKind::GetBuiltinModule(_) => "GetBuiltinModule",
+        ImportSiteKind::MockModule(_) => "MockModule",
     }
 }
 
@@ -768,7 +795,8 @@ fn site_call(kind: ImportSiteKind) -> Option<ExprId> {
         | ImportSiteKind::RequireResolve(call)
         | ImportSiteKind::ImportMetaRequire(call)
         | ImportSiteKind::ImportMetaResolve(call)
-        | ImportSiteKind::GetBuiltinModule(call) => Some(call),
+        | ImportSiteKind::GetBuiltinModule(call)
+        | ImportSiteKind::MockModule(call) => Some(call),
         _ => None,
     }
 }

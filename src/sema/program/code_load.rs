@@ -73,6 +73,7 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     pub(super) projects: Projects<'s>,
     pub(super) project_resolvers: ProjectResolvers<'r>,
     pub(super) entry_points: Vec<CodeTarget<'r>>,
+    keys_of_entry_points: FxHashSet<(Cow<'r, [u8]>, HostLoader)>,
     pub(super) is_case_sensitive: bool,
     shares_parsed_files: bool,
     files_loaded_before: FxHashMap<(Cow<'a, [u8]>, HostLoader), FileId>,
@@ -102,7 +103,11 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             let request = resolver.loader_request(path, CodeImportKind::EntryPoint, None, None);
             CodeTarget::of_path(resolver.keep(path), compile.host.loader_of(&request))
         });
+        let entry_points: Vec<CodeTarget<'r>> = entry_points.collect();
         let is_case_sensitive = compile.host.is_case_sensitive();
+        let keys_of_entry_points = (entry_points.iter())
+            .map(|it| (to_path(it.key.path, is_case_sensitive), it.key.loader))
+            .collect();
         let loaded_before = compile.inputs.loaded_before;
         let files_loaded_before = loaded_before.into_iter().flat_map(|files| {
             files.loaded_code_files().iter().filter_map(move |&file| {
@@ -119,7 +124,8 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             atoms: compile.inputs.atoms,
             projects: Projects::new(session),
             project_resolvers: ProjectResolvers::new(),
-            entry_points: entry_points.collect(),
+            entry_points,
+            keys_of_entry_points,
             is_case_sensitive,
             shares_parsed_files: compile.shares_parsed_files,
             files_loaded_before: files_loaded_before.collect(),
@@ -152,10 +158,8 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
     }
 
     pub(super) fn is_entry_point(&self, key: LoadKey<'_>) -> bool {
-        self.entry_points.iter().any(|entry_point| {
-            entry_point.key.loader == key.loader
-                && is_same_path(entry_point.key.path, key.path, self.is_case_sensitive)
-        })
+        let path = to_path(key.path, self.is_case_sensitive);
+        self.keys_of_entry_points.contains(&(path, key.loader))
     }
 }
 

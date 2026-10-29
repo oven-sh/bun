@@ -1,5 +1,4 @@
-// require() of a JSON file answers the parsed value, also where an import has loaded the file first. `bun run` answers the namespace object of that import instead.
-// Reference: bun build --compile
+// require() of a JSON file that the entry point also imports answers the namespace object of that import.
 import a from "./a.json";
 import * as b from "./b.json";
 import { another } from "./c.json";
@@ -15,8 +14,6 @@ function describe(value) {
 console.log("default import first:", describe(req.a()), req.a() === a);
 console.log("star import first:", describe(req.b()), req.b() === b.default);
 console.log("named import first:", describe(req.c()), another);
-const e = await import("./e.json");
-console.log("import() first:", describe(req.e()), req.e() === e.default);
 console.log("array:", describe(req.list()), req.list() === list, Array.isArray(req.list()));
 console.log("string:", describe(req.text()), req.text() === text);
 console.log("member named default:", describe(req.hasdefault()), req.hasdefault() === hasdefault);

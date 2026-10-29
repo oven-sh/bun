@@ -340,13 +340,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f42
 # CHECK-LABEL: function f17 role=
 # CHECK: Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v0:NewArray)
+# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v0:NewArray)
 # CHECK-NEXT: Int64 b@20 = Load(b@19, offset = 8, ControlDependent|Reads:JSArray_butterfly)
 # CHECK-NEXT: Int32 b@21 = Load(b@20, offset = -8, ControlDependent|Reads:Butterfly_publicLength)
 # CHECK-NEXT: Int64 b@22 = ZExt32(b@21)
 # CHECK-NEXT: Int64 b@70 = Const64(-1)
 # CHECK-NEXT: Int64 b@69 = Add(b@22, $-1(b@70))
-# CHECK-NEXT: Int32 b@25 = Load8Z(b@19, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc)
+# CHECK-NEXT: Int32 b@25 = Load8Z(b@19, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc)
 # CHECK-NEXT: Int32 b@48 = Const32(5)
 # CHECK-NEXT: Int32 b@28 = Equal(b@25, $5(b@48))
 # CHECK-NEXT: Int32 b@27 = Const32(3)

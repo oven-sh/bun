@@ -800,13 +800,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: v28: int[1, 2147483647] = Increment v21
 # CHECK-NEXT: Jump -> next b4(v27, v28)
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v29: int[0, 2147483647] = GetStringLength v13
-# CHECK-NEXT: v30: ":" = String string=":"
-# CHECK-NEXT: v31: " " = String string=" "
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: v33: number = CallDirect v32, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
-# CHECK-NEXT: v34: string = Strcat v29, v30, v16, v31, v33
-# CHECK-NEXT: Return v34
+# CHECK-NEXT: v29: ":" = String string=":"
+# CHECK-NEXT: v30: " " = String string=" "
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: number = CallDirect v31, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
+# CHECK-NEXT: v33: string = Strcat v19, v29, v16, v30, v32
+# CHECK-NEXT: Return v33
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ends"
 # CHECK: module=m0 position=1371 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=undefined|int}, {type=int}, {type=undefined|int}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=1655 module=m0}, {callee=f2 callPosition=1486 module=m0}] {
@@ -837,29 +836,26 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: v18: whole = Double number=NaN
 # CHECK-NEXT: Jump -> next b6(v18)
 # CHECK-NEXT: b6(v19: int[0, 65535]|whole ~ int[0, 65535]):
-# CHECK-NEXT: v20: int[0, 2147483647] = GetStringLength v13
-# CHECK-NEXT: v21: 1 = Integer integer=1
-# CHECK-NEXT: v22: int[-1, 2147483646] = Sub v20, v21
-# CHECK-NEXT: v23: 0 = Integer
-# CHECK-NEXT: v24: int[0, 4294967295] = URShift v22, v23
-# CHECK-NEXT: v25: int[0, 2147483647] = GetStringLength v13
-# CHECK-NEXT: v26: boolean = Less v24, v25
-# CHECK-NEXT: Branch v26 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v27: int[0, 2147483646]):
-# CHECK-NEXT: v28: int[0, 65535] = GetStringCodeUnit v13, v27
-# CHECK-NEXT: Jump -> next b9(v28)
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: int[-1, 2147483646] = Sub v15, v20
+# CHECK-NEXT: v22: 0 = Integer
+# CHECK-NEXT: v23: int[0, 4294967295] = URShift v21, v22
+# CHECK-NEXT: v24: boolean = Less v23, v15
+# CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v25: int[0, 2147483646]):
+# CHECK-NEXT: v26: int[0, 65535] = GetStringCodeUnit v13, v25
+# CHECK-NEXT: Jump -> next b9(v26)
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v29: whole = Double number=NaN
-# CHECK-NEXT: Jump -> next b9(v29)
-# CHECK-NEXT: b9(v30: int[0, 65535]|whole ~ int[0, 65535]):
-# CHECK-NEXT: v31: int[0, 2147483647] = GetStringLength v13
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: v33: number = CallDirect v32, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
-# CHECK-NEXT: v34: " " = String string=" "
-# CHECK-NEXT: v35: " " = String string=" "
-# CHECK-NEXT: v36: " " = String string=" "
-# CHECK-NEXT: v37: string = Strcat v19, v34, v30, v35, v31, v36, v33
-# CHECK-NEXT: Return v37
+# CHECK-NEXT: v27: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b9(v27)
+# CHECK-NEXT: b9(v28: int[0, 65535]|whole ~ int[0, 65535]):
+# CHECK-NEXT: v29: 0 = Integer
+# CHECK-NEXT: v30: number = CallDirect v29, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
+# CHECK-NEXT: v31: " " = String string=" "
+# CHECK-NEXT: v32: " " = String string=" "
+# CHECK-NEXT: v33: " " = String string=" "
+# CHECK-NEXT: v34: string = Strcat v19, v31, v28, v32, v15, v33, v30
+# CHECK-NEXT: Return v34
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="whereAsked"
 # CHECK: module=m0 position=1741 flags=[HasExplicitName] length=5 thisType={type=anything} parameters=[{type=int|whole}, {type=i32 flags=[IsExpected]}, {type=int}, {type=undefined|int}, {type=boolean}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=2015 module=m0}, {callee=f2 callPosition=1886 module=m0}] {
@@ -897,36 +893,34 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: v26: whole = Double number=NaN
 # CHECK-NEXT: Jump -> next b7(v26)
 # CHECK-NEXT: b7(v27: int[0, 65535]|whole ~ int[0, 65535]):
-# CHECK-NEXT: v28: int[0, 2147483647] = GetStringLength v15
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: v30: number = CallDirect v29, v18, v13 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
-# CHECK-NEXT: Jump -> next b12(v27, v28, v30)
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: number = CallDirect v28, v18, v13 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
+# CHECK-NEXT: Jump -> next b12(v27, v22, v29)
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v31: i32 ~ int[-1073741824, 1073741823] = RShift v8, v16
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: v33: int[0, 4294967295] = URShift v31, v32
-# CHECK-NEXT: v34: int[0, 2147483647] = GetStringLength v15
-# CHECK-NEXT: v35: boolean = Less v33, v34
-# CHECK-NEXT: Branch v35 -> taken b9(| 0), notTaken b10()
-# CHECK-NEXT: b9(v36: int[0, 2147483646]) frequency=Unlikely:
-# CHECK-NEXT: v37: int[0, 65535] = GetStringCodeUnit v15, v36
-# CHECK-NEXT: Jump -> next b11(v37)
+# CHECK-NEXT: v30: i32 ~ int[-1073741824, 1073741823] = RShift v8, v16
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: int[0, 4294967295] = URShift v30, v31
+# CHECK-NEXT: v33: int[0, 2147483647] = GetStringLength v15
+# CHECK-NEXT: v34: boolean = Less v32, v33
+# CHECK-NEXT: Branch v34 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v35: int[0, 2147483646]) frequency=Unlikely:
+# CHECK-NEXT: v36: int[0, 65535] = GetStringCodeUnit v15, v35
+# CHECK-NEXT: Jump -> next b11(v36)
 # CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v38: whole = Double number=NaN
-# CHECK-NEXT: Jump -> next b11(v38)
-# CHECK-NEXT: b11(v39: int[0, 65535]|whole ~ int[0, 65535]) frequency=Unlikely:
-# CHECK-NEXT: v40: int[0, 2147483647] = GetStringLength v15
-# CHECK-NEXT: v41: 1 = Integer integer=1
-# CHECK-NEXT: v42: number = CallDirect v41, v8, v13 function=f3 accessSite=52
-# CHECK-NEXT: Jump -> next b12(v39, v40, v42)
-# CHECK-NEXT: b12(v43: int[0, 65535]|whole ~ int[0, 65535], v44: int[0, 2147483647], v45: number):
+# CHECK-NEXT: v37: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b11(v37)
+# CHECK-NEXT: b11(v38: int[0, 65535]|whole ~ int[0, 65535]) frequency=Unlikely:
+# CHECK-NEXT: v39: 1 = Integer integer=1
+# CHECK-NEXT: v40: number = CallDirect v39, v8, v13 function=f3 accessSite=52
+# CHECK-NEXT: Jump -> next b12(v38, v33, v40)
+# CHECK-NEXT: b12(v41: int[0, 65535]|whole ~ int[0, 65535], v42: int[0, 2147483647], v43: number):
 # CHECK-NEXT: Branch v4 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v46: number = Add v44, v45
-# CHECK-NEXT: v47: number = Add v46, v43
-# CHECK-NEXT: Return v47
-# CHECK-NEXT: b14():
+# CHECK-NEXT: v44: number = Add v42, v43
+# CHECK-NEXT: v45: number = Add v44, v41
 # CHECK-NEXT: Return v45
+# CHECK-NEXT: b14():
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="onEveryTurn"
 # CHECK: module=m0 position=2108 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=int|whole}, {type=undefined|int}, {type=int}, {type=undefined|int}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=2400 module=m0}, {callee=f2 callPosition=2237 module=m0}] {
@@ -948,31 +942,30 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: v13: string = CallDirect v12, v10, v2, v11 function=f2 accessSite=19 [isNeverInlined] @640:2 tail
 # CHECK-NEXT: v14: int[0, 2147483647] = GetStringLength v13
 # CHECK-NEXT: v15: 0 = Integer
-# CHECK-NEXT: v16: int[0, 2147483647] = GetStringLength v13
-# CHECK-NEXT: v17: boolean = Less v15, v16
-# CHECK-NEXT: Branch v17 -> taken b4(), notTaken b5()
+# CHECK-NEXT: v16: boolean = Less v15, v14
+# CHECK-NEXT: Branch v16 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v18: int[0, 65535] = GetStringCodeUnit v13, v15
-# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: v17: int[0, 65535] = GetStringCodeUnit v13, v15
+# CHECK-NEXT: Jump -> next b6(v17)
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v19: whole = Double number=NaN
-# CHECK-NEXT: Jump -> next b6(v19)
-# CHECK-NEXT: b6(v20: int[0, 65535]|whole ~ int[0, 65535]):
+# CHECK-NEXT: v18: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b6(v19: int[0, 65535]|whole ~ int[0, 65535]):
+# CHECK-NEXT: v20: 0 = Integer
 # CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: v22: 0 = Integer
-# CHECK-NEXT: v23: number = CallDirect v22, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
-# CHECK-NEXT: v24: number = Add v23, v14
-# CHECK-NEXT: v25: number = Add v24, v20
-# CHECK-NEXT: v26: number = Add v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: number = CallDirect v27, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
-# CHECK-NEXT: v29: number = Add v28, v14
-# CHECK-NEXT: v30: number = Add v29, v20
-# CHECK-NEXT: v31: number = Add v26, v30
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: v33: number = CallDirect v32, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
-# CHECK-NEXT: v34: number = Add v33, v14
-# CHECK-NEXT: v35: number = Add v34, v20
-# CHECK-NEXT: v36: number = Add v31, v35
-# CHECK-NEXT: Return v36
+# CHECK-NEXT: v22: number = CallDirect v21, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
+# CHECK-NEXT: v23: number = Add v22, v14
+# CHECK-NEXT: v24: number = Add v23, v19
+# CHECK-NEXT: v25: number = Add v20, v24
+# CHECK-NEXT: v26: 0 = Integer
+# CHECK-NEXT: v27: number = CallDirect v26, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
+# CHECK-NEXT: v28: number = Add v27, v14
+# CHECK-NEXT: v29: number = Add v28, v19
+# CHECK-NEXT: v30: number = Add v25, v29
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: number = CallDirect v31, v10, v11 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
+# CHECK-NEXT: v33: number = Add v32, v14
+# CHECK-NEXT: v34: number = Add v33, v19
+# CHECK-NEXT: v35: number = Add v30, v34
+# CHECK-NEXT: Return v35
 # CHECK-NEXT: }

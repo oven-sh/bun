@@ -329,5 +329,5 @@ runtimefunction id=GeneratorPrototypeNext function=f12 visibility=Private
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 3383, patchpoints: 173, rare instructions: 2268, polls: 33
+# CHECK-NEXT: instructions: 2055, patchpoints: 123, rare instructions: 1589, polls: 15
 # CHECK-NEXT: end of function f0

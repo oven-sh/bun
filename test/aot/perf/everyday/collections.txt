@@ -110,6 +110,15 @@ function turn(i: number): number {
   });
   return sum;
 }
+//// map-filled-from-pairs-for-each
+const table: Map<number, number> = new Map([3, 1, 4, 1].map((value, index): [number, number] => [index, value]));
+function turn(i: number): number {
+  let sum = i & 1;
+  table.forEach((value, key) => {
+    sum += key + value;
+  });
+  return sum;
+}
 //// map-entries-to-an-object
 const stock = new Map([["tea", 3], ["milk", 2], ["bread", 4]]);
 function turn(i: number): number {

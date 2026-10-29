@@ -242,7 +242,24 @@ fn find_call_site(
         let on_process = is_process(hir, bound, object, &[known::globalThis, known::global]);
         return on_process.then(|| create_site(ImportSiteKind::GetBuiltinModule(call), args));
     }
+    if is_mock_module(hir, bound, object, name) {
+        return Some(create_site(ImportSiteKind::MockModule(call), args));
+    }
     None
+}
+
+// `object.name` is `mock.module`, `jest.mock` or `vi.mock`, where the object is imported from the test runner.
+fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
+    let holders: &[Atom] = match name {
+        _ if name == known::module => &[known::mock],
+        _ if name == known::mock => &[known::jest, known::vi],
+        _ => return false,
+    };
+    let imported = settled_symbol(hir, bound, object)
+        .and_then(|symbol| find_imported_export(hir, bound, symbol));
+    matches!(imported, Some((specifier, Some(export)))
+        if [known::bun_test, known::jest_globals, known::vitest].contains(&specifier)
+            && holders.contains(&export))
 }
 
 pub(super) fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: &[Atom]) -> bool {

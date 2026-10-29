@@ -542,7 +542,7 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="use"
-# CHECK: module=m0 position=1131 kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L1 site=w18} results=[{type=undefined|null|function site=w19 flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1131 kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L1 site=w18} results=[{type=undefined|null|function|f30 site=w19 flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f12 module=
 # CHECK: m0 position=1663 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0|L1|L2 site=w28 flags=[OmitsNull]}] results=[{type=string site=w29 flags=[OmitsNull]}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f29 callPosition=4294967295 isTailCall=true calleeIsPredicted=true module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f61 callPosition=917 parent=2 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L0|L1|L2):
@@ -694,11 +694,11 @@ function f59 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f29 module=
-# CHECK: m0 position=917 role=EntryChecks flags=[HasThis, IsChecked] length=1 thisType={type=undefined|L0|L4 site=w66 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number site=w65 flags=[IsExpected]}] results=[{type=string site=w67 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f61 fallback=f62} {
-# CHECK-NEXT: b0(v0: undefined|L0|L4, v1: anything ~ number):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
+# CHECK: m0 position=917 role=EntryChecks flags=[HasThis, IsChecked] length=1 thisType={type=undefined|L0|L4 site=w66 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=i32 site=w65 flags=[IsExpected]}] results=[{type=string site=w67 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f61 fallback=f62} {
+# CHECK-NEXT: b0(v0: undefined|L0|L4, v1: anything ~ i32):
+# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=i32
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: number):
+# CHECK-NEXT: b1(v3: i32):
 # CHECK-NEXT: v4: string = CallDirect v0, v3 function=f61
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:

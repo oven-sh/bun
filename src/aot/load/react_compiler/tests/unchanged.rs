@@ -147,16 +147,6 @@ fn ts_loader_without_jsx_is_not_compiled() {
 }
 
 #[test]
-fn commonjs_file_is_left_as_written() {
-    let text = "function Rule() { return <hr />; }\nmodule.exports = Rule;\n";
-    with_tree("main.jsx", text, ReactCompilerMode::Client, |tree| {
-        assert!(!tree.has_compiled_components());
-        assert_eq!(tree.count_jsx_elements(), 1);
-        assert!(tree.imported_names(COMPILER_RUNTIME).is_empty());
-    });
-}
-
-#[test]
 fn use_no_memo_opts_out() {
     with_compiled_tree(&["'use no memo';\n", HELLO].concat(), |tree| {
         assert!(!tree.has_compiled_components());

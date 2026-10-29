@@ -240,12 +240,12 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Predecessors: #7
 # CHECK-NEXT: Int64 b@53 = Const64(16, v5:PutSlotOrAdd)
 # CHECK-NEXT: Int64 b@61 = Add(b@47, $16(b@53), v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@62 = Patchpoint(b@18:Register(%rsi), b@61:Register(%rdx), resultConstraints = WarmAny, ControlDependent|Writes:{ObjectFields.11, AOTExtension_granuleBits, AOTSlimClosure_word, JSCell_header, OrderWords, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{argumentBuffer, ObjectFields.11, AOTExtension_granuleBits, OrderWords, AllocatorState}, v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@62 = Patchpoint(b@18:Register(%rsi), b@61:Register(%rdx), resultConstraints = WarmAny, ControlDependent|Writes:{ObjectFields.11, AOTExtension_granuleBits, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, OrderWords, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{argumentBuffer, ObjectFields.11, AOTExtension_granuleBits, OrderWords, AllocatorState}, v5:PutSlotOrAdd)
 # CHECK-NEXT: Void b@63 = Jump(Terminal, v5:PutSlotOrAdd)
 # CHECK-NEXT: Successors: #9
 # CHECK-NEXT: BB#1: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@79 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x1, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}, v7:PropDefine)
+# CHECK-NEXT: Int64 b@79 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x1, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}, v7:PropDefine)
 # CHECK-NEXT: Void b@80 = Patchpoint(b@18:Register(%rax), b@79:Register(%rsi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v7:PropDefine)
 # CHECK-NEXT: Void b@81 = Jump(Terminal)
 # CHECK-NEXT: Successors: #2

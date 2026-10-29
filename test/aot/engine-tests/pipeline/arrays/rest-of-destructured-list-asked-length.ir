@@ -177,63 +177,19 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: v7: "[\"a\"]" = String string="[\"a\"]"
 # CHECK-NEXT: Jump -> next b3(v7)
 # CHECK-NEXT: b3(v8: "[\"a\"]"|"[]"):
-# CHECK-NEXT: v9: boolean = JSONSourceOpen v8
-# CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b8()
-# CHECK-NEXT: b4(v10: guard):
-# CHECK-NEXT: v11: cursor = JSONSourceStart v10
-# CHECK-NEXT: v12: cursor = JSONSkipWhitespace v11
-# CHECK-NEXT: v13: undefined = CallDirect v12 function=f16
-# CHECK-NEXT: v14: int[0, 2] = ResultAt v13
-# CHECK-NEXT: v15: undefined|null|Array<undefined|null|string> = ResultAt v13 index=1
-# CHECK-NEXT: v16: cursor = ResultAt v13 index=2
-# CHECK-NEXT: Switch v14 cases=[1] -> case b5(), otherwise b7()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v17: boolean = JSONSourceClose v10, v16
-# CHECK-NEXT: Branch v17 -> taken b6(), notTaken b8()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v18: null|Array<undefined|null|string> = AssumeType v15 provenType=null|boolean|number|string|object
-# CHECK-NEXT: Jump -> next b9(v18)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v10
-# CHECK-NEXT: Jump -> next b8()
-# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: null|boolean|number|string|object = CallBuiltin -, v8, v9 overload=JSONParse/0 accessSite=5
+# CHECK-NEXT: v11: null|boolean|number|string|object ~ null|Array<undefined|null|string> = Upcast v10 castType=anything
+# CHECK-NEXT: v12: anything ~ undefined|null|string = CallDirect v11 function=f1 accessSite=6
+# CHECK-NEXT: v13: "[\"a\",\"b\"]" = String string="[\"a\",\"b\"]"
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: v15: null|boolean|number|string|object = CallBuiltin -, v13, v14 overload=JSONParse/0 accessSite=8
+# CHECK-NEXT: v16: null|boolean|number|string|object ~ null|Array<undefined|null|string> = Upcast v15 castType=anything
+# CHECK-NEXT: v17: anything ~ undefined|null|string = CallDirect v16 function=f1 accessSite=9
+# CHECK-NEXT: v18: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v19: undefined = CallBuiltin v18, v12, v17 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=10
 # CHECK-NEXT: v20: undefined = Undefined
-# CHECK-NEXT: v21: null|boolean|number|string|object = CallBuiltin -, v8, v20 overload=JSONParse/0 accessSite=5
-# CHECK-NEXT: Jump -> next b9(v21)
-# CHECK-NEXT: b9(v22: null|boolean|number|string|object ~ null|Array<undefined|null|string>):
-# CHECK-NEXT: v23: null|boolean|number|string|object ~ null|Array<undefined|null|string> = Upcast v22 castType=anything
-# CHECK-NEXT: v24: anything ~ undefined|null|string = CallDirect v23 function=f1 accessSite=6
-# CHECK-NEXT: v25: "[\"a\",\"b\"]" = String string="[\"a\",\"b\"]"
-# CHECK-NEXT: v26: boolean = JSONSourceOpen v25
-# CHECK-NEXT: Branch v26 -> taken b10(| 0), notTaken b14()
-# CHECK-NEXT: b10(v27: guard):
-# CHECK-NEXT: v28: cursor = JSONSourceStart v27
-# CHECK-NEXT: v29: cursor = JSONSkipWhitespace v28
-# CHECK-NEXT: v30: undefined = CallDirect v29 function=f16
-# CHECK-NEXT: v31: int[0, 2] = ResultAt v30
-# CHECK-NEXT: v32: undefined|null|Array<undefined|null|string> = ResultAt v30 index=1
-# CHECK-NEXT: v33: cursor = ResultAt v30 index=2
-# CHECK-NEXT: Switch v31 cases=[1] -> case b11(), otherwise b13()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v34: boolean = JSONSourceClose v27, v33
-# CHECK-NEXT: Branch v34 -> taken b12(), notTaken b14()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v35: null|Array<undefined|null|string> = AssumeType v32 provenType=null|boolean|number|string|object
-# CHECK-NEXT: Jump -> next b15(v35)
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v27
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v37: undefined = Undefined
-# CHECK-NEXT: v38: null|boolean|number|string|object = CallBuiltin -, v25, v37 overload=JSONParse/0 accessSite=8
-# CHECK-NEXT: Jump -> next b15(v38)
-# CHECK-NEXT: b15(v39: null|boolean|number|string|object ~ null|Array<undefined|null|string>):
-# CHECK-NEXT: v40: null|boolean|number|string|object ~ null|Array<undefined|null|string> = Upcast v39 castType=anything
-# CHECK-NEXT: v41: anything ~ undefined|null|string = CallDirect v40 function=f1 accessSite=9
-# CHECK-NEXT: v42: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v43: undefined = CallBuiltin v42, v24, v41 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=10
-# CHECK-NEXT: v44: undefined = Undefined
-# CHECK-NEXT: Return v44
+# CHECK-NEXT: Return v20
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="head"
 # CHECK: module=m0 position=209 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> site=w1 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f4 fallback=f5} {

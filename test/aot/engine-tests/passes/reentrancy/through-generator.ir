@@ -161,7 +161,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f18 visibility=Private
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: Generator = NewGenerator v0 function=f1
+# CHECK-NEXT: v2: Generator = NewGenerator function=f1
 # CHECK-NEXT: v3: anything = CallDirect v1, v0, v2 function=f21
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: Return v4
@@ -176,7 +176,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f18 visibility=Private
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: Generator = NewGenerator v4 function=f1
+# CHECK-NEXT: v6: Generator = NewGenerator function=f1
 # CHECK-NEXT: v7: Generator<never, pristine[Storage, Names]> = AssumeType v6 provenType=Generator<never, pristine[Storage, Names]>
 # CHECK-NEXT: MarkGeneratorRunning v7
 # CHECK-NEXT: v9: anything = CallDirect v5, v4, v6 function=f21 [isNeverInlined]

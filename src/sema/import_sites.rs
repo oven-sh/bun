@@ -53,6 +53,8 @@ pub enum ImportSiteKind {
     ImportMetaRequire(ExprId),
     ImportMetaResolve(ExprId),
     GetBuiltinModule(ExprId),
+    /// `mock.module(specifier, factory)` of the test runner, which also goes by `jest.mock` and `vi.mock`. It loads nothing.
+    MockModule(ExprId),
 }
 
 impl ImportSiteKind {
@@ -63,7 +65,8 @@ impl ImportSiteKind {
             | ImportSiteKind::RequireResolve(call)
             | ImportSiteKind::ImportMetaRequire(call)
             | ImportSiteKind::ImportMetaResolve(call)
-            | ImportSiteKind::GetBuiltinModule(call) => Some(call),
+            | ImportSiteKind::GetBuiltinModule(call)
+            | ImportSiteKind::MockModule(call) => Some(call),
             _ => None,
         }
     }

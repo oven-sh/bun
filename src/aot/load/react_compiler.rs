@@ -13,7 +13,6 @@ use bun_react_compiler::diagnostics::CompilerError;
 use bun_react_compiler::{AddedImport, CompiledFunction, Observer};
 use bun_sema::atom::Interner;
 use bun_sema::hir::{self, FileBuilder, FnBody, FnId};
-use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{JsxSettings, TransformRequest, TreeChange};
 use bun_sema::session::Arena;
 use bun_sema_driver::host::to_native;
@@ -62,14 +61,7 @@ impl<'a> ReactCompiler<'a> {
             Some(module) => &module.path[..],
             None => to_native(request.path),
         };
-        let can_have_import_statements = match request.analysis.module_format {
-            ModuleFormat::Esm => true,
-            ModuleFormat::CommonJs => false,
-        };
-        if !self.applies_to(provider_path, source.loader)
-            || source.kind != SourceKind::Program
-            || !can_have_import_statements
-        {
+        if !self.applies_to(provider_path, source.loader) || source.kind != SourceKind::Program {
             return TreeChange::Unchanged;
         }
         let module = match &source.plugin_module {
@@ -131,7 +123,10 @@ impl<'a> ReactCompiler<'a> {
         match output.failure {
             Some(Failure::Compiler(text)) => self.report_compiler_error(&text, request.path),
             Some(Failure::Writer(name)) => self.report_unsupported_node(name, request.path),
-            None if is_parsed => return Some(output.writer?.into_file(arena)),
+            None if is_parsed => {
+                let format = request.analysis.module_format;
+                return Some(output.writer?.into_file(arena, format));
+            }
             // Lowering reports the file's syntax errors.
             None => {}
         }

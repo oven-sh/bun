@@ -1290,7 +1290,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: Branch v4 -> taken b4(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1, v2
+# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1
 # CHECK-NEXT: v7: anything = ResultAt v6
 # CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
 # CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
@@ -1310,7 +1310,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: Branch v5 -> taken b4(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: v7: undefined = YieldBySavingFrame v4, v6, v1, v2, v3
+# CHECK-NEXT: v7: undefined = YieldBySavingFrame v4, v6, v1, v2
 # CHECK-NEXT: v8: anything = ResultAt v7
 # CHECK-NEXT: v9: int[0, 2] = ResultAt v7 index=1
 # CHECK-NEXT: Switch v9 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
@@ -1416,7 +1416,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: Branch v5 -> taken b4(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: v7: undefined = YieldBySavingFrame v4, v6, v1, v2, v3
+# CHECK-NEXT: v7: undefined = YieldBySavingFrame v4, v6, v1, v2
 # CHECK-NEXT: v8: anything = ResultAt v7
 # CHECK-NEXT: v9: int[0, 2] = ResultAt v7 index=1
 # CHECK-NEXT: Switch v9 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
@@ -1522,7 +1522,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: Branch v4 -> taken b4(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1, v2
+# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1
 # CHECK-NEXT: v7: anything = ResultAt v6
 # CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
 # CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
@@ -1616,7 +1616,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: Branch v4 -> taken b4(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1, v2
+# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v1
 # CHECK-NEXT: v7: anything = ResultAt v6
 # CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
 # CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()

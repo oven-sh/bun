@@ -1033,7 +1033,7 @@ runtimefunction id=ObjectsToLocaleString function=f110
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=393 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f32|f33|f34|f35|f36 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w1 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: f32|f33|f34|f35|f36):
-# CHECK-NEXT: v11: f32|f33|f34|f35|f36 = AssumeType v0 provenType=undefined|null|function
+# CHECK-NEXT: v11: f32|f33|f34|f35|f36 = AssumeType v0 provenType=undefined|null|function|f29|f30|f31|f32|f33|f34|f35|f36|f37|f38|f39|f40
 # CHECK-NEXT: v13: f32|f33|f34|f35|f36 = AssumeType v11 provenType=f32|f33|f34|f35|f36
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
@@ -1126,8 +1126,8 @@ runtimefunction id=ObjectsToLocaleString function=f110
 # CHECK-NEXT: v12: builtin(FunctionPrototypeBind) = AssumeType v5 provenType=builtin(FunctionPrototypeBind)
 # CHECK-NEXT: v6: anything = Call v12, v4, v3 calleeKey="bind" calleeName="this.hear.bind" accessSite=72 callees=[builtin(FunctionPrototypeBind)]
 # CHECK-NEXT: v13: function = AssumeType v6 provenType=function
-# CHECK-NEXT: v7: function = Check v13 expectedType=undefined|null|function site=w85
-# CHECK-NEXT: v14: function = AssumeType v7 provenType=function
+# CHECK-NEXT: v7: function|f18 = Check v13 expectedType=undefined|null|function|f18 site=w85
+# CHECK-NEXT: v14: function|f18 = AssumeType v7 provenType=function|f18 [isBehindChecks]
 # CHECK-NEXT: PropSet v3, v14 key="hear" accessSite=73 receivers=[L2]
 # CHECK-NEXT: v9: undefined = Undefined
 # CHECK-NEXT: Return v3
@@ -1174,10 +1174,10 @@ runtimefunction id=ObjectsToLocaleString function=f110
 # CHECK-LABEL: function f34 module=
 # CHECK: m0 position=5141 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] functionTypes=[f81] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: function = GetModuleVariable variable=g8
-# CHECK-NEXT: v9: function = Check v0 expectedType=undefined|null|function|absent site=w6 cause=AddedByPass
-# CHECK-NEXT: v1: function = CheckInitialized v9 name="boundCounted"
-# CHECK-NEXT: v10: function = AssumeType v1 provenType=function
+# CHECK-NEXT: v0: function|f15 = GetModuleVariable variable=g8
+# CHECK-NEXT: v9: function|f15 = Check v0 expectedType=undefined|null|function|absent|f15 site=w6 cause=AddedByPass
+# CHECK-NEXT: v1: function|f15 = CheckInitialized v9 name="boundCounted"
+# CHECK-NEXT: v10: function|f15 = AssumeType v1 provenType=function|f15 [isBehindChecks]
 # CHECK-NEXT: v2: 2 = Integer integer=2
 # CHECK-NEXT: v3: anything = Call v10, -, v2 calleeName="boundCounted" accessSite=78
 # CHECK-NEXT: v11: Generator<anything, pristine[Storage, Names]> = AssumeType v3 provenType=Generator<anything, pristine[Storage, Names]>

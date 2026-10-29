@@ -409,7 +409,7 @@ function f42 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int64 b@2 = Const64(0)
 # CHECK-NEXT: Void b@25 = Store($0(b@2), b@22, offset = 8, ControlDependent|Writes:EnvironmentFields.20, v5:NewObject)
 # CHECK-NEXT: Int64 b@27 = Const64(8, v7:NewObject)
-# CHECK-NEXT: Int64 b@28 = Patchpoint($8(b@27):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v7:NewObject)
+# CHECK-NEXT: Int64 b@28 = Patchpoint($8(b@27):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v7:NewObject)
 # CHECK-NEXT: Int32 b@26 = Const32(1, v6:Integer)
 # CHECK-NEXT: Void b@29 = Store($1(b@26), b@28, offset = 16, ControlDependent|Writes:ObjectFields.20, v7:NewObject)
 # CHECK-NEXT: Void b@30 = Fence(Fence|Reads:jscRoot, v7:NewObject)
@@ -434,8 +434,8 @@ function f42 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#3: ; frequency = 0.500000
 # CHECK-NEXT: Predecessors: #0
 # CHECK-NEXT: Int32 b@45 = Const32(3, v16:NewRuntimeError)
-# CHECK-NEXT: Int64 b@46 = Patchpoint($3(b@45):Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{frameSlots, AllocatorState, RuntimeState}, v16:NewRuntimeError)
-# CHECK-NEXT: Void b@47 = Patchpoint(b@46:Register(%rsi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly}|Reads:Top)
+# CHECK-NEXT: Int64 b@46 = Patchpoint($3(b@45):Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{frameSlots, AllocatorState, RuntimeState}, v16:NewRuntimeError)
+# CHECK-NEXT: Void b@47 = Patchpoint(b@46:Register(%rsi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly}|Reads:Top)
 # CHECK-NEXT: Void b@48 = Oops(Terminal)
 # CHECK-NEXT: Stack slots:
 # CHECK-NEXT: stack0: byteSize = 16, offsetFromFP = 0, kind = Locked, dead at suspensions

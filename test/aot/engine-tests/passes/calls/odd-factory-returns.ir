@@ -689,9 +689,9 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f118
 # CHECK-NEXT: v0: f36 = NewClosure function=f36 allocationSite=0
 # CHECK-NEXT: v1: anything = Call v0 calleeName="asyncArrow" accessSite=0 callees=[f36]
 # CHECK-NEXT: v2: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: anything ~ undefined|null|function = Call v2 calleeName="plain" accessSite=1 callees=[f1]
+# CHECK-NEXT: v3: anything ~ undefined|null|function|f46|f50 = Call v2 calleeName="plain" accessSite=1 callees=[f1]
 # CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v5: anything ~ undefined|null|function = Call v4 calleeName="plain" accessSite=2 callees=[f1]
+# CHECK-NEXT: v5: anything ~ undefined|null|function|f46|f50 = Call v4 calleeName="plain" accessSite=2 callees=[f1]
 # CHECK-NEXT: v6: undefined = Undefined
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }

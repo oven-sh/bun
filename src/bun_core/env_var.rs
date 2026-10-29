@@ -54,6 +54,8 @@ new!(pub BUN_BYTECODE_ORDER_NAMES_OUT: string, "BUN_BYTECODE_ORDER_NAMES_OUT", {
 // A compiled executable writes the payload order file of this run here at exit; `%p` in the path becomes the pid.
 new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
+// JavaScriptCore's option of that name: the engine logs the phases of an AOT build. The front end logs its stages beside them.
+new!(pub BUN_JSC_logAOTPhaseTimes: boolean, "BUN_JSC_logAOTPhaseTimes", { default: false });
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });
 // TODO(markovejnovic): Legacy usage had the default at 30, even though a the attached comment

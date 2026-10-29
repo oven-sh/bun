@@ -2705,7 +2705,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f36
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v10: Promise<int, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Promise<int, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v11: anything ~ int = AwaitBySavingFrame v10, v2, v0, v1
+# CHECK-NEXT: v11: anything ~ int = AwaitBySavingFrame v10, v2
 # CHECK-NEXT: v12: int = AssumeType v11 provenType=int
 # CHECK-NEXT: v13: builtin(Promise) = Builtin builtin=Promise
 # CHECK-NEXT: v14: Promise = CreatePromise v13 allocationSite=33
@@ -2761,7 +2761,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f36
 # CHECK-NEXT: Branch v4 -> taken b4(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v0, v1, v2
+# CHECK-NEXT: v6: undefined = YieldBySavingFrame v3, v5, v0, v1
 # CHECK-NEXT: v7: anything = ResultAt v6
 # CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
 # CHECK-NEXT: Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
@@ -2840,7 +2840,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f36
 # CHECK: module=m0 position=749 role=CoroutineBody flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined|L1} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}, {type=AsyncGenerator}] results=[{type=anything}] functionTypes=[f26] derivation={source=f7 parameterMap=[{original=0}, {original=1}, {original=2}, {}]} creator=Coroutine{kind=AsyncGenerator ramp=f7 body=f112 promiseType=Promise promiseParameter=3} inlineFrames=[{}, {callee=f12 callPosition=841 module=m0}, {callee=f61 callPosition=113 parent=1 isConstruction=true callIsPartOfConstruction=true module=m6}, {callee=f14 callPosition=2092 parent=2 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|L1, v1: function, v2: Array<undefined|int, proven, pristine[Storage, Names, Dense]>, v3: AsyncGenerator):
 # CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: v5: undefined = YieldBySavingFrame v3, v4, v0, v1, v2
+# CHECK-NEXT: v5: undefined = YieldBySavingFrame v3, v4, v0, v1
 # CHECK-NEXT: v6: anything = ResultAt v5
 # CHECK-NEXT: v7: int[0, 2] = ResultAt v5 index=1
 # CHECK-NEXT: Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
@@ -2919,13 +2919,13 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f36
 # CHECK-NEXT: b22(v48: int) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b23(v45, v48, v46)
 # CHECK-NEXT: b23(v49: int[1, 4294967295], v50: int, v51: Promise<int, proven, pristine[Storage, Names]>):
-# CHECK-NEXT: v52: anything ~ int = AwaitBySavingFrame v51, v3, v0, v1, v2
+# CHECK-NEXT: v52: anything ~ int = AwaitBySavingFrame v51, v3
 # CHECK-NEXT: v53: undefined = AsyncGeneratorYield v3, v50, v0, v1, v2
 # CHECK-NEXT: v54: anything = ResultAt v53
 # CHECK-NEXT: v55: int[0, 2] = ResultAt v53 index=1
 # CHECK-NEXT: Switch v55 cases=[1, 2] -> case b25(v54), case b26(v54), otherwise b27(v49)
 # CHECK-NEXT: b24() frequency=Unlikely:
-# CHECK-NEXT: v56: anything ~ int = AwaitBySavingFrame v46, v3, v0, v1, v2
+# CHECK-NEXT: v56: anything ~ int = AwaitBySavingFrame v46, v3
 # CHECK-NEXT: v57: undefined = AsyncGeneratorYield v3, v43, v0, v1, v2
 # CHECK-NEXT: v58: anything = ResultAt v57
 # CHECK-NEXT: v59: int[0, 2] = ResultAt v57 index=1

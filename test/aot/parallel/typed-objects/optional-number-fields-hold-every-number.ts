@@ -35,16 +35,22 @@ const patterns = [
   0x0000000000000001n,
 ];
 
-const made: Options[] = [{ amount: 3 }, { factor: undefined, amount: 3 }, { factor: 0 / (+process.argv.length - process.argv.length), amount: 3 }];
+const made: Options[] = [
+  { amount: 3 },
+  { factor: undefined, amount: 3 },
+  { factor: 0 / (+process.argv.length - process.argv.length), amount: 3 },
+];
 for (const pattern of patterns) {
   bits[0] = pattern;
   made.push({ factor: numbers[0], amount: 3 });
 }
-for (const value of [0, -0, 1, -1, 1.5, 2 ** 31, -(2 ** 31), 2 ** 53, Infinity, -Infinity, NaN, -NaN]) made.push({ factor: value, amount: 3 });
+for (const value of [0, -0, 1, -1, 1.5, 2 ** 31, -(2 ** 31), 2 ** 53, Infinity, -Infinity, NaN, -NaN])
+  made.push({ factor: value, amount: 3 });
 
 for (let round = 0; round < 3; round++) {
   const lines: string[] = [];
-  for (const options of made) lines.push(`${scale(options)} ${factorOf(options)} ${describe(options)} ${"factor" in options}`);
+  for (const options of made)
+    lines.push(`${scale(options)} ${factorOf(options)} ${describe(options)} ${"factor" in options}`);
   console.log(lines.join(" | "));
 }
 

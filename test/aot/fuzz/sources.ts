@@ -7,6 +7,7 @@
 //   mutation          a stored program from ../parallel with something done to it (mutate.ts)
 //   grammar           a random program built from a pool of language features (grammar.ts)
 //   stored-programs   the stored programs unchanged, for runs that vary how a program is built
+//   stored-programs-in-hot-loop   the stored programs with their top-level code made hot at default flags (hot-loop-with-cold-ballast.ts)
 //
 // Every source also exists in two variants:
 //
@@ -19,6 +20,7 @@ import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
 import { printFor, projects, scriptMarker, type Runner, type Program } from "./runners";
 import { withGcInsideCalls } from "./gc-inside-calls";
+import { inHotLoop } from "./hot-loop-with-cold-ballast";
 import { splitDeclarationsIntoFiles } from "./declarations-split-into-files";
 import { table, whole, type Drawn } from "./family";
 import { withFunctionsTheHostCouldCall } from "./host-callable-functions";
@@ -547,19 +549,23 @@ function storedPrograms(
   root: string,
   source: string,
   pick: (seed: number, count: number) => number,
+  rewrite: (text: string, extension: "ts" | "js") => string | undefined = text => text,
 ): Source | undefined {
   const { paths: files, textOf } = singleFilePrograms(root);
   if (!files.length) return;
   return (seed, runner) => {
     if (runner.name !== "product") return;
     const path = files[pick(seed, files.length)];
-    const text = textOf(path);
-    if (text.length > 60_000 || differsByDesign.test(text)) return;
+    const stored = textOf(path);
+    if (stored.length > 60_000 || differsByDesign.test(stored)) return;
+    const extension = path.endsWith(".ts") ? "ts" : "js";
+    const text = rewrite(stored, extension);
+    if (text === undefined) return;
     return {
       source,
       seed,
-      text: path.endsWith(".js") && !/^(import|export)\b/m.test(text) ? scriptMarker + text : text,
-      extension: path.endsWith(".ts") ? "ts" : "js",
+      text: extension === "js" && !/^(import|export)\b/m.test(text) ? scriptMarker + text : text,
+      extension,
       notes: relative(root, path),
     };
   };
@@ -712,6 +718,8 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     new Random(seed).between(0, count - 1),
   );
   if (shuffled) sources["stored-programs-shuffled"] = shuffled;
+  const hot = storedPrograms(programsRoot, "stored-programs-in-hot-loop", (seed, count) => seed % count, inHotLoop);
+  if (hot) sources["stored-programs-in-hot-loop"] = hot;
   const pairs = allocationUsePairs();
   if (pairs) sources["allocation-use-pairs"] = pairs;
   for (const name of [
@@ -751,6 +759,17 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "instanceof-under-relinked-constructors",
     "awaits-of-async-calls-that-answer-at-once",
     "defaults-on-class-prototypes",
+    "fields-never-read-by-name",
+    "literals-split-again-and-again",
+    "lists-of-constants-kept-and-changed",
+    "keys-joined-from-two-parts",
+    "other-kinds-stored-over-narrow-fields",
+    "loops-that-allocate-and-seldom-change-their-list",
+    "functions-and-accessors-put-on-class-prototypes",
+    "loop-variables-set-on-likely-and-rare-paths",
+    "texts-of-both-widths",
+    "one-of-a-few-written-texts",
+    "characters-read-by-index-in-loops",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(
@@ -889,6 +908,8 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "other-objects-typed-as-builtin-subclasses",
     "json-parse-list-members",
     "union-members-made-by-one-constructor",
+    "optional-fields-left-out",
+    "variables-changed-by-callbacks-given-other-types",
   ])
     sources[name] = productSource(name, generateOf(name), always);
   for (const name of [
@@ -948,6 +969,10 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "library-instances-given-to-builtins",
     "members-defined-on-instances-of-builtin-subclasses",
     "fields-added-in-a-row-after-construction",
+    "calls-that-spread-one-list",
+    "objects-created-below-a-prototype-and-only-read",
+    "typed-arrays-walked-with-callbacks",
+    "patterns-with-back-references",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

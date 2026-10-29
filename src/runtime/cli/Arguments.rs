@@ -183,7 +183,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--check                           Type check before running. Nothing runs if there are type errors. Alone: <b>bun check<r>"
     ),
     parse_param!(
-        "--aot                             Check the program like bun compile does, then run it with built-in objects read-only"
+        "--aot                             Check the program like bun compile does, then run it with built-in objects read-only. <b>bun test<r> compiles it and runs the compiled code"
     ),
     parse_param!(
         "--aot-log-type-mismatches         Compile the program like bun compile, run it, and log every value that doesn't match its declared type"
@@ -692,7 +692,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-inspector              With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower"
         ),
         parse_param!(
-            "--aot-allow-code-from-disk       With --aot: let import() and require() load code that isn't in the executable from disk at run time. Makes it larger and slower"
+            "--aot-allow-code-from-disk       With --aot: let import(), require() and new Worker() load code that isn't in the executable from disk at run time. Makes it larger and slower"
         ),
         parse_param!(
             "--disallow-code-generation-from-strings <STR>?  In the executable, eval() and new Function() throw an EvalError. \"strict\" also blocks every other way to run code from a string. Requires --compile"

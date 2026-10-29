@@ -480,6 +480,12 @@ known_atoms! {
     meta_dirname = "dirname",
     Module = "Module",
     node_process = "node:process",
+    mock = "mock",
+    jest = "jest",
+    vi = "vi",
+    bun_test = "bun:test",
+    jest_globals = "@jest/globals",
+    vitest = "vitest",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

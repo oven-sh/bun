@@ -355,6 +355,7 @@ fn with_loaded_bind_input<R>(
             deferred_exports: &deferred_exports,
             platform: build.platform,
             external_packages: &[],
+            replaced_exports: &[],
             application: None,
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,

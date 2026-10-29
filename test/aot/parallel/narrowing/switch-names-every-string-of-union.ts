@@ -54,16 +54,38 @@ function assigned(kind: Kind): string {
 const kinds: Kind[] = ["circle", "square", "box"];
 for (let round = 0; round < 3; round++) {
   for (const kind of kinds) {
-    console.log(kind, byParameter(kind, round + 2), byField({ kind, size: round + 2 }), withoutAnEnd({ kind, size: round + 2 }), assigned(kind));
+    console.log(
+      kind,
+      byParameter(kind, round + 2),
+      byField({ kind, size: round + 2 }),
+      withoutAnEnd({ kind, size: round + 2 }),
+      assigned(kind),
+    );
   }
 }
 
 const joined = ["cir", "cle"].join("") as Kind;
-console.log(byParameter(joined, 5), byField({ kind: joined, size: 5 }), withoutAnEnd({ kind: joined, size: 5 }), assigned(joined));
+console.log(
+  byParameter(joined, 5),
+  byField({ kind: joined, size: 5 }),
+  withoutAnEnd({ kind: joined, size: 5 }),
+  assigned(joined),
+);
 
 const other: any = JSON.parse('"hexagon"');
-console.log(byParameter(other, 5), byField({ kind: other, size: 5 }), withoutAnEnd({ kind: other, size: 5 }), assigned(other));
+console.log(
+  byParameter(other, 5),
+  byField({ kind: other, size: 5 }),
+  withoutAnEnd({ kind: other, size: 5 }),
+  assigned(other),
+);
 const parsed: Shape = JSON.parse('{"kind":"hexagon","size":7}');
 console.log(byField(parsed), withoutAnEnd(parsed));
 const noString: any = JSON.parse("[1, null, {}]");
-for (const value of noString) console.log(byParameter(value, 5), byField({ kind: value, size: 5 }), withoutAnEnd({ kind: value, size: 5 }), assigned(value));
+for (const value of noString)
+  console.log(
+    byParameter(value, 5),
+    byField({ kind: value, size: 5 }),
+    withoutAnEnd({ kind: value, size: 5 }),
+    assigned(value),
+  );

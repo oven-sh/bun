@@ -655,16 +655,15 @@ runtimefunction id=ArrayTraversalTraverseArray function=f65 visibility=Private
 # CHECK-NEXT: v31: undefined @JSValue = Undefined
 # CHECK-NEXT: Jump -> next b8(v31, v30, v21)
 # CHECK-NEXT: b8(v32: undefined|function|f71 @JSValue, v33: boolean @Boolean, v34: int[0, 2147483647] @Int32) handler=b9():
-# CHECK-NEXT: v35: fact @Void = Specified
-# CHECK-NEXT: v36: undefined|function @JSValue = AssumeType v32, v35 provenType=undefined|function
-# CHECK-NEXT: v37: 1 @JSValue = Integer integer=1
-# CHECK-NEXT: v38: anything @JSValue = Construct v36, -, v37 calleeName="picked" accessSite=39
-# CHECK-NEXT: v39: "picked: nothing" @JSValue = String string="picked: nothing"
-# CHECK-NEXT: v40: undefined @JSValue = CallBuiltin -, v39 overload=ConsoleLog/0 accessSite=17
+# CHECK-NEXT: v35: undefined|function|f2|f3 @JSValue = AssumeType v32 provenType=undefined|function|f2|f3
+# CHECK-NEXT: v36: 1 @JSValue = Integer integer=1
+# CHECK-NEXT: v37: anything @JSValue = Construct v35, -, v36 calleeName="picked" accessSite=39
+# CHECK-NEXT: v38: "picked: nothing" @JSValue = String string="picked: nothing"
+# CHECK-NEXT: v39: undefined @JSValue = CallBuiltin -, v38 overload=ConsoleLog/0 accessSite=17
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b9() role=CatchHandler:
-# CHECK-NEXT: v41: anything @JSValue = CatchValue
-# CHECK-NEXT: v42: string @Cell = CallDirect v41 function=f7 accessSite=18
+# CHECK-NEXT: v40: anything @JSValue = CatchValue
+# CHECK-NEXT: v41: string @Cell = CallDirect v40 function=f7 accessSite=18
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
 # CHECK-NEXT: Jump -> next b1(v33, v34)
@@ -673,15 +672,15 @@ runtimefunction id=ArrayTraversalTraverseArray function=f65 visibility=Private
 # CHECK-NEXT: v19: 0 @Int32 = Integer
 # CHECK-NEXT: Jump -> next b1(v18, v19)
 # CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: v43: function @JSValue = CallBuiltin v15, v16 overload=FunctionPrototypeBind/0 accessSite=7
-# CHECK-NEXT: Jump -> next b11(v43)
+# CHECK-NEXT: v42: function @JSValue = CallBuiltin v15, v16 overload=FunctionPrototypeBind/0 accessSite=7
+# CHECK-NEXT: Jump -> next b11(v42)
 # CHECK-NEXT: b13(v14: function @Cell):
 # CHECK-NEXT: v15: f2 @Cell = GetModuleVariable variable=g1
 # CHECK-NEXT: v16: null @JSValue = Null
 # CHECK-NEXT: TryCallInline v15, v16 inlineBuiltin=FunctionBind overload=FunctionPrototypeBind/0 accessSite=7 -> done b11(), miss b12()
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v44: function @JSValue = CallBuiltin v2, v12, v13 overload=FunctionPrototypeBind/0 accessSite=5
-# CHECK-NEXT: Jump -> next b13(v44)
+# CHECK-NEXT: v43: function @JSValue = CallBuiltin v2, v12, v13 overload=FunctionPrototypeBind/0 accessSite=5
+# CHECK-NEXT: Jump -> next b13(v43)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fail"
 # CHECK: module=m0 position=613 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -804,7 +803,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f65 visibility=Private
 # CHECK-NEXT: v15: anything @JSValue = Construct v13, -, v14 accessSite=35
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b6(v16: f22 @Cell) handler=b8():
-# CHECK-NEXT: v17: undefined|function @JSValue = GetCapture v16 function=f22
+# CHECK-NEXT: v17: undefined|function|f2|f3 @JSValue = GetCapture v16 function=f22
 # CHECK-NEXT: v18: 1 @JSValue = Integer integer=1
 # CHECK-NEXT: v19: anything @JSValue = Construct v17, -, v18 calleeName="picked" accessSite=39
 # CHECK-NEXT: Jump -> next b7()

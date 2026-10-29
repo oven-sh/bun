@@ -354,5 +354,5 @@ function f6 name="nested" module=m0 position=3333 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="swapped"
 # CHECK: role=ResultWorker
-# CHECK-NEXT: instructions: 58, patchpoints: 6, rare instructions: 17
+# CHECK-NEXT: instructions: 53, patchpoints: 5, rare instructions: 6
 # CHECK-NEXT: end of function f9

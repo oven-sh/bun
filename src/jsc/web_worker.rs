@@ -92,8 +92,8 @@ pub struct WebWorker {
     unresolved_specifier: Box<[u8]>,
     /// In an executable whose entry points begin programs of their own: the image of the program that begins at the specifier.
     image: Option<&'static [u8]>,
-    /// The specifier is a `data:` or `blob:` URL in such an executable: the Worker runs the text and nothing of the compiled program.
-    runs_text_beside_compiled_program: bool,
+    /// The specifier is a `data:` or `blob:` URL, or a file on disk, that the build has not seen: the Worker runs it and nothing of the compiled program.
+    runs_apart_from_compiled_program: bool,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
 
@@ -452,27 +452,31 @@ impl WebWorker {
 
         // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
         let specifier = spec_slice.slice();
-        let runs_text_beside_compiled_program = (specifier.starts_with(b"data:")
-            || specifier.starts_with(b"blob:"))
-            && crate::compiled_program::runs_worker_of_text_apart()
-            && {
-                let mut ignored_message = BunString::EMPTY;
-                let dot_slash = OnceCell::new();
-                // SAFETY: as for the preloads.
-                let path = unsafe {
-                    resolve_entry_point_specifier(
-                        parent,
-                        specifier,
-                        &dot_slash,
-                        &mut ignored_message,
-                        temp_log,
-                    )
-                };
-                // A text that the build knew is compiled.
-                path.is_none_or(|path| {
-                    crate::compiled_program::find_entry_point_by_source_path(path).is_none()
-                })
+        let is_text = specifier.starts_with(b"data:") || specifier.starts_with(b"blob:");
+        let runs_apart = match is_text {
+            true => crate::compiled_program::runs_worker_of_text_apart(),
+            false => crate::compiled_program::runs_worker_from_disk_apart(),
+        };
+        let runs_apart_from_compiled_program = runs_apart && {
+            let mut ignored_message = BunString::EMPTY;
+            let dot_slash = OnceCell::new();
+            // SAFETY: as for the preloads.
+            let path = unsafe {
+                resolve_entry_point_specifier(
+                    parent,
+                    specifier,
+                    &dot_slash,
+                    &mut ignored_message,
+                    temp_log,
+                )
             };
+            // A text that the build knew is compiled, and so is a file of the executable.
+            path.is_none_or(|path| {
+                crate::compiled_program::find_entry_point_by_source_path(path).is_none()
+                    && !bun_options_types::standalone_path::is_bun_standalone_file_path(path)
+                    && !crate::compiled_program::is_compiled_module(path)
+            })
+        };
         let image = crate::compiled_program::has_image_for_each_entry_point().then(|| {
             let mut ignored_message = BunString::EMPTY;
             let dot_slash = OnceCell::new();
@@ -564,7 +568,7 @@ impl WebWorker {
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             image,
-            runs_text_beside_compiled_program,
+            runs_apart_from_compiled_program,
             preloads,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
@@ -1055,7 +1059,7 @@ impl WebWorker {
             return Ok(core::ptr::null_mut());
         }
 
-        let runs_apart = self.runs_text_beside_compiled_program
+        let runs_apart = self.runs_apart_from_compiled_program
             && crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
         if !runs_apart && let Some(image) = self.image {
             crate::compiled_program::use_image_of_worker(image);
@@ -1644,6 +1648,15 @@ unsafe fn resolve_entry_point_specifier<'s>(
         });
     }
 
+    // A program compiled ahead of time whose build ran below the embedded root: a relative specifier names what lay in
+    // that folder, as under `bun run`, before it names what the root holds.
+    // SAFETY: per fn contract; the resolver is only read.
+    let resolver = unsafe { &(*parent).transpiler.resolver };
+    if let Some(module) = resolver.resolve_embedded_entry_point_from_working_directory(str)
+        && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
+    {
+        return Some(crate::compiled_program::module_key(entry));
+    }
     // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
     // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
     // (`new URL("./w.ts", import.meta.url)`).
@@ -1654,8 +1667,6 @@ unsafe fn resolve_entry_point_specifier<'s>(
         return Some(name);
     }
     // The file of the first entry point has the name of the executable, and its module the name of its source.
-    // SAFETY: per fn contract; the resolver is only read.
-    let resolver = unsafe { &(*parent).transpiler.resolver };
     if let Some(module) = resolver.resolve_embedded_entry_point(str)
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {

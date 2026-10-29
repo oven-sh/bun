@@ -396,7 +396,7 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: Then:#18, Else:Rare:#5
 # CHECK-NEXT: BB#18: ; frequency = 5.021927
 # CHECK-NEXT: Predecessors: #14
-# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = 7832, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:TypeTest)
+# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = 7848, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:TypeTest)
 # CHECK-NEXT: Int64 b@88 = Load(b@87, offset = 32, ControlDependent|Reads:AllocatorState, v22:TypeTest)
 # CHECK-NEXT: Void b@92 = Upsilon($1(b@84), ^105, WritesLocalState, v22:TypeTest)
 # CHECK-NEXT: Int64 b@93 = Load(b@82, offset = 112, ControlDependent|ReadsImmutable|Reads:BrandedStructure_brand, v22:TypeTest)
@@ -417,7 +417,7 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: Then:#4, Else:Rare:#5
 # CHECK-NEXT: BB#4: ; frequency = 7.280372
 # CHECK-NEXT: Predecessors: #15
-# CHECK-NEXT: Int64 b@124 = Patchpoint(b@43:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly}|Reads:{argumentBuffer, AOTSlimClosure_word, JSCell_header, PrototypeLinks}, v25:GetSuperBase)
+# CHECK-NEXT: Int64 b@124 = Patchpoint(b@43:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly}|Reads:{argumentBuffer, AOTSlimClosure_word, JSCell_header, PrototypeLinks}, v25:GetSuperBase)
 # CHECK-NEXT: Int64 b@125 = Patchpoint(b@124:Register(%rax), resultConstraints = Register(%rax), ControlDependent|Writes:jscRoot|Reads:jscRoot, v27:SuperGet)
 # CHECK-NEXT: Void b@127 = Branch(b@125, Terminal, v27:SuperGet)
 # CHECK-NEXT: Successors: Then:#30, Else:Rare:#31

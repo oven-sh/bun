@@ -23,7 +23,7 @@ async function run(cwd: string, ...args: string[]) {
   return { said: stdout + stderr, exitCode };
 }
 const errors = (said: string) =>
-  [...said.matchAll(/^error: (TS\d+):.*\n\s+at (\S+):(\d+):\d+$/gm)]
+  [...said.matchAll(/^(?:error|warn): (TS\d+):.*\n\s+at (\S+):(\d+):\d+$/gm)]
     .map(match => `${match[2].replaceAll("\\", "/").replace(/^.*\/(?=packages\/)/, "")}:${match[3]} ${match[1]}`)
     .sort();
 
@@ -53,5 +53,5 @@ test("a package that no tsconfig.json references and that is not built is not fo
   using dir = workspace({ files: [], references: [{ path: "packages/app" }] });
   const { said, exitCode } = await run(String(dir), "test", "--aot", "./packages/app/src/app.test.ts");
   expect(errors(said)).toEqual(["packages/app/src/app.test.ts:2 TS2307"]);
-  expect(exitCode).toBe(1);
+  expect(exitCode).toBe(0);
 }, 60_000);

@@ -493,8 +493,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: Branch v77 -> taken b11(| 0), notTaken b12(v29)
 # CHECK-NEXT: b11(v78: int[0, 2147483647]):
 # CHECK-NEXT: v79: "-mid-"|"post"|"pre" = RequireObjectCoercible v50 name="length"
-# CHECK-NEXT: v80: int[0, 2147483647] = GetStringLength v79
-# CHECK-NEXT: v81: int[0, 4294967294] = Add v78, v80
+# CHECK-NEXT: v80: int[3, 5] = GetStringLength v79
+# CHECK-NEXT: v81: int[3, 2147483652] = Add v78, v80
 # CHECK-NEXT: Jump -> next b12(v81)
 # CHECK-NEXT: b12(v82: number ~ int[0, 4294967295]):
 # CHECK-NEXT: Jump -> next b6(v47, v82)
@@ -549,8 +549,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: Branch v125 -> taken b19(| 0), notTaken b20(v110)
 # CHECK-NEXT: b19(v126: int[0, 2147483647]) frequency=Rare:
 # CHECK-NEXT: v127: "-mid-"|"post"|"pre" = RequireObjectCoercible v109 name="length"
-# CHECK-NEXT: v128: int[0, 2147483647] = GetStringLength v127
-# CHECK-NEXT: v129: int[0, 4294967294] = Add v126, v128
+# CHECK-NEXT: v128: int[3, 5] = GetStringLength v127
+# CHECK-NEXT: v129: int[3, 2147483652] = Add v126, v128
 # CHECK-NEXT: Jump -> next b20(v129)
 # CHECK-NEXT: b20(v130: number ~ int[0, 4294967295]) frequency=Rare:
 # CHECK-NEXT: Jump -> next b23(v108, v130, v25)
@@ -776,8 +776,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: b5(v55: int[0, 2147483647]):
 # CHECK-NEXT: ValidateType v2 validatedType=undefined|null|boolean|number|string|symbol|bigint
 # CHECK-NEXT: v57: "-mid-"|"post"|"pre" = RequireObjectCoercible v2 name="length"
-# CHECK-NEXT: v58: int[0, 2147483647] = GetStringLength v57
-# CHECK-NEXT: v59: int[0, 4294967294] = Add v55, v58
+# CHECK-NEXT: v58: int[3, 5] = GetStringLength v57
+# CHECK-NEXT: v59: int[3, 2147483652] = Add v55, v58
 # CHECK-NEXT: PutEnvironmentField v0, v59 layout=L0
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():

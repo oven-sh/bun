@@ -1,4 +1,3 @@
-// Todo: a constructed function that has called itself last is listed once, as constructed, at the place where it throws: plain Bun lists the call and, below it, the construction at the place of the call
 // A function that calls itself last is called and constructed. Each row prints the names and the places of the frames of what the last of the calls throws.
 const frames = (error: unknown) =>
   String((error as Error).stack)

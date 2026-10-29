@@ -631,5 +631,5 @@ runtimefunction id=WrittenListsArrayFromLength function=f36
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 59, patchpoints: 11, rare instructions: 28, polls: 1
+# CHECK-NEXT: instructions: 49, patchpoints: 11, rare instructions: 2, polls: 1
 # CHECK-NEXT: end of function f0

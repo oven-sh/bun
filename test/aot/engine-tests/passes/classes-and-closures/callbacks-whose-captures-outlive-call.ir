@@ -554,7 +554,7 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v11: undefined|L6 = ElemGet v7, v8 [keyIsIntegral]
 # CHECK-NEXT: v12: env L5 = NewObject layout=L5 allocationSite=17
 # CHECK-NEXT: v13: f17 = NewClosure v12, v1 function=f17 allocationSite=18 storage=Frame
-# CHECK-NEXT: v14: undefined|null|function = Call v13, -, v11 calleeName="mapper" accessSite=13 callees=[f10, f17]
+# CHECK-NEXT: v14: undefined|null|function|f23 = Call v13, -, v11 calleeName="mapper" accessSite=13 callees=[f10, f17]
 # CHECK-NEXT: ReleaseEnvironment v12
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b3():
@@ -562,7 +562,7 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v15: env L5 = NewObject layout=L5 allocationSite=17
 # CHECK-NEXT: v16: f17 = NewClosure v15, v1 function=f17 allocationSite=18 storage=Frame
-# CHECK-NEXT: v17: undefined|null|function = Call v16, -, v0 calleeName="mapper" accessSite=15 callees=[f10, f17]
+# CHECK-NEXT: v17: undefined|null|function|f23 = Call v16, -, v0 calleeName="mapper" accessSite=15 callees=[f10, f17]
 # CHECK-NEXT: ReleaseEnvironment v15
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

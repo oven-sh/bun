@@ -2,6 +2,7 @@ use bun_sema::bind::{CodeUnit, ScopeId, SymbolId};
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{Flags, FnId, FnKind, MemberId, MemberKind};
 use bun_sema::util::SharedSort;
+use rustc_hash::FxHashMap;
 
 use super::{Context, Parts, Placements};
 use crate::ir::FunctionKey;
@@ -95,8 +96,31 @@ fn has_local(forms: &[BindingForm], placements: &Placements, binding: BindingRef
 }
 
 // A scope has a greater number than the scope around it.
-pub(super) fn encloses(context: &Context<'_, '_>, outer: ScopeId, inner: ScopeId) -> bool {
+fn encloses(context: &Context<'_, '_>, outer: ScopeId, inner: ScopeId) -> bool {
     scope_chain(context.input.bound, inner).find(|&scope| scope <= outer) == Some(outer)
+}
+
+/// Which scopes enclose `inner`. A statement lists a name once for each store, and the walk outwards is made once for each scope.
+pub(super) struct ScopesAround<'a, 'b, 'c> {
+    context: &'a Context<'b, 'c>,
+    inner: ScopeId,
+    known: FxHashMap<ScopeId, bool>,
+}
+
+impl<'a, 'b, 'c> ScopesAround<'a, 'b, 'c> {
+    pub(super) fn new(context: &'a Context<'b, 'c>, inner: ScopeId) -> Self {
+        let known = FxHashMap::default();
+        ScopesAround {
+            context,
+            inner,
+            known,
+        }
+    }
+
+    pub(super) fn contain(&mut self, outer: ScopeId) -> bool {
+        let (context, inner) = (self.context, self.inner);
+        *(self.known.entry(outer)).or_insert_with(|| encloses(context, outer, inner))
+    }
 }
 
 fn compute_loop_stores(
@@ -108,10 +132,11 @@ fn compute_loop_stores(
     loops.shared_sort_unstable_by_key(|walked| walked.statement);
     let mut stored = Vec::new();
     for (index, &walked) in loops.iter().enumerate() {
+        let mut scopes_around = ScopesAround::new(context, walked.boundary);
         let is_loop_carried = |binding: &BindingRef| {
             has_local(forms, placements, *binding)
                 && context.owner_of(*binding) == Some(walked.function)
-                && encloses(context, context.scope_of(*binding), walked.boundary)
+                && scopes_around.contain(context.scope_of(*binding))
         };
         let bindings = walked.stored.iter().copied().filter(is_loop_carried);
         stored.extend(bindings.map(|binding| (index, binding)));

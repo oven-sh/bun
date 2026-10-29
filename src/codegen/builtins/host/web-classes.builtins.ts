@@ -570,6 +570,8 @@ export default b.declarations(
       "globalObject->m_JSS3FileStructure.getInitializedOnMainThread(globalObject)->storedPrototypeObject()",
     instanceStructureCppExpression: "globalObject->m_JSS3FileStructure.getConcurrently()",
     hasConstructor: false,
+    lockedObjects: ["prototype"],
+    types: [b.viewType("bun.S3File")],
     proto: {
       presign: b.otherwise,
       stat: b.otherwise,

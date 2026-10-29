@@ -2338,8 +2338,9 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: v13: anything ~ undefined|function|f5|f33|f40 = PropGet v1 key="run" accessSite=294 receivers=[L0, ..]
 # CHECK-NEXT: Jump -> next b10(v13)
 # CHECK-NEXT: b10(v14: anything ~ function|f5|f33|f40):
-# CHECK-NEXT: v15: anything ~ object = Construct v14 calleeName="w.run" accessSite=295 callees=[f40, f42, f55, ..]
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: v15: anything ~ function|f5|f33|f40|f42 = Upcast v14 castType=anything
+# CHECK-NEXT: v16: anything ~ object = Construct v15 calleeName="w.run" accessSite=295 callees=[f40, f42, f55, ..]
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function f29 module=
 # CHECK: m0 position=1098 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -2375,10 +2376,11 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: v13: anything ~ undefined|function|f5|f33|f40 = PropGet v1 key="run" accessSite=296 receivers=[L0, ..]
 # CHECK-NEXT: Jump -> next b10(v13)
 # CHECK-NEXT: b10(v14: anything ~ function|f5|f33|f40):
-# CHECK-NEXT: v15: Array = NewArray contents=anything allocationSite=70
-# CHECK-NEXT: v16: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v17: anything = CallBuiltin -, v14, v16 overload=ReflectConstruct/0 accessSite=297 [isDoneInPlace]
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: v15: anything ~ function|f5|f33|f40|f42 = Upcast v14 castType=anything
+# CHECK-NEXT: v16: Array = NewArray contents=anything allocationSite=70
+# CHECK-NEXT: v17: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v18: anything = CallBuiltin -, v15, v17 overload=ReflectConstruct/0 accessSite=297 [isDoneInPlace] @1112 tail constructs
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
 # CHECK: m0 position=1173 kind=Arrow thisType={type=anything} results=[{type=boolean}] functionTypes=[f60] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -2415,8 +2417,9 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: v14: anything ~ undefined|function|f5|f33|f40 = PropGet v2 key="run" accessSite=298 receivers=[L0, ..]
 # CHECK-NEXT: Jump -> next b10(v14)
 # CHECK-NEXT: b10(v15: anything ~ function|f5|f33|f40):
-# CHECK-NEXT: v16: boolean = InstanceOf v1, v15 writtenExpression="w instanceof w.run"
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v16: anything ~ function|f5|f33|f40|f42 = Upcast v15 castType=anything
+# CHECK-NEXT: v17: boolean = InstanceOf v1, v16 writtenExpression="w instanceof w.run"
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
 # CHECK: m0 position=1208 kind=Arrow thisType={type=anything} results=[{type=boolean}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -2452,16 +2455,17 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: v13: anything ~ undefined|function|f5|f33|f40 = PropGet v1 key="run" accessSite=299 receivers=[L0, ..]
 # CHECK-NEXT: Jump -> next b10(v13)
 # CHECK-NEXT: b10(v14: anything ~ function|f5|f33|f40):
-# CHECK-NEXT: v15: 1 = Integer integer=1
-# CHECK-NEXT: v16: boolean = InstanceOf v15, v14 writtenExpression="1 instanceof w.run"
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v15: anything ~ function|f5|f33|f40|f42 = Upcast v14 castType=anything
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: boolean = InstanceOf v16, v15 writtenExpression="1 instanceof w.run"
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="BelowStoresRun"
 # CHECK: module=m0 position=2479 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=L14 flags=[IsFromCompiler]}] functionTypes=[f68] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L14 {
 # CHECK-NEXT: b0(v0: function, v1: anything):
 # CHECK-NEXT: v2: f34 = AssumeType v1 provenType=f34
 # CHECK-NEXT: v3: L14 = CallDirect v2 function=f10 accessSite=305 [isConstruction]
-# CHECK-NEXT: v4: function|f52 = GetSlot v3 key="run" receivers=[L14] level=Proven accessSite=306
+# CHECK-NEXT: v4: function|f35|f52 = GetSlot v3 key="run" receivers=[L14] level=Proven accessSite=306
 # CHECK-NEXT: v5: boolean = IsPristine v4 builtinClass=Function aspects=[Names]
 # CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
@@ -2549,11 +2553,12 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: Jump -> next b10(v12)
 # CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: v13: anything ~ undefined|function|f5|f33|f40 = PropGet v1 key="run" accessSite=321 receivers=[L0, ..]
-# CHECK-NEXT: v14: undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55 = AssumeType v13 provenType=undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55
-# CHECK-NEXT: Jump -> next b10(v14)
-# CHECK-NEXT: b10(v15: undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55 ~ function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55):
-# CHECK-NEXT: v16: int|whole|string = CallDirect v15 function=f1 accessSite=322
-# CHECK-NEXT: ReturnCall v16 casts=[{declared={type=int|whole|string} resolution=Assume}]
+# CHECK-NEXT: Jump -> next b10(v13)
+# CHECK-NEXT: b10(v14: anything ~ function|f5|f33|f40):
+# CHECK-NEXT: v15: anything ~ function|f5|f33|f40|f42 = Upcast v14 castType=anything
+# CHECK-NEXT: v16: undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55 ~ function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55 = AssumeType v15 provenType=undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55
+# CHECK-NEXT: v17: int|whole|string = CallDirect v16 function=f1 accessSite=322
+# CHECK-NEXT: ReturnCall v17 casts=[{declared={type=int|whole|string} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="replaced"
 # CHECK: module=m0 position=4047 flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=string}] functionTypes=[f77] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -2609,11 +2614,12 @@ runtimefunction id=FunctionPrototypeCall function=f102
 # CHECK-NEXT: Jump -> next b10(v12)
 # CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: v13: anything ~ undefined|function|f5|f33|f40 = PropGet v1 key="run" accessSite=324 receivers=[L0, ..]
-# CHECK-NEXT: v14: undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55 = AssumeType v13 provenType=undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55
-# CHECK-NEXT: Jump -> next b10(v14)
-# CHECK-NEXT: b10(v15: undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55 ~ function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55):
-# CHECK-NEXT: v16: int|whole|string = CallDirect v15 function=f1 accessSite=325
-# CHECK-NEXT: ReturnCall v16 casts=[{declared={type=int|whole|string} resolution=Assume}]
+# CHECK-NEXT: Jump -> next b10(v13)
+# CHECK-NEXT: b10(v14: anything ~ function|f5|f33|f40):
+# CHECK-NEXT: v15: anything ~ function|f5|f33|f40|f42 = Upcast v14 castType=anything
+# CHECK-NEXT: v16: undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55 ~ function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55 = AssumeType v15 provenType=undefined|function|f5|f7|f9|f18|f21|f25|f33|f35|f37|f40|f42|f51|f52|f54|f55
+# CHECK-NEXT: v17: int|whole|string = CallDirect v16 function=f1 accessSite=325
+# CHECK-NEXT: ReturnCall v17 casts=[{declared={type=int|whole|string} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="late"
 # CHECK: module=m0 position=4249 flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=string}] functionTypes=[f79] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {

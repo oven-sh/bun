@@ -23,7 +23,6 @@ Most of these [change a built-in object](/compiler/compatibility#built-in-object
 | `sugar`               | `Sugar.Array.sum(list)`, not `Sugar.extend()` |
 | `ses`                 | Freeze the prototypes with `Object.freeze()`  |
 | `private`             | `recast` 0.20.4 or Babel 7, which dropped it  |
-| `async-listener`      | `AsyncLocalStorage` from `node:async_hooks`   |
 
 - The `/auto` and `shim()` entry points of `array.prototype.map`, `set.prototype.union`, `string.prototype.matchall` and similar packages replace a method. Call what the package exports instead, as in `map(list, f)`.
 - Remove `es5-shim`, `es6-shim`, `url-polyfill`, `harmony-reflect` and `promise/polyfill`. Bun has what they add.

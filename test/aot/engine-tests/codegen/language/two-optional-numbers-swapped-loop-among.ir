@@ -1517,154 +1517,153 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: v15: boolean = TypeTest v0 testedType=string
 # CHECK-NEXT: Branch v15 -> taken b1(| 0), notTaken b5()
 # CHECK-NEXT: b1(v16: ""|"red"):
-# CHECK-NEXT: v17: int[0, 2147483647] = GetStringLength v16
+# CHECK-NEXT: v17: int[0, 3] = GetStringLength v16
 # CHECK-NEXT: v18: 31 = Integer integer=31
-# CHECK-NEXT: v19: int[0, 66571993057] = Mul v17, v18
+# CHECK-NEXT: v19: int[0, 93] = Mul v17, v18
 # CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: v21: int[0, 2147483647] = GetStringLength v16
-# CHECK-NEXT: v22: boolean = Less v20, v21
-# CHECK-NEXT: Branch v22 -> taken b2(), notTaken b3()
+# CHECK-NEXT: v21: boolean = Less v20, v17
+# CHECK-NEXT: Branch v21 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v23: int[0, 65535] = GetStringCodeUnit v16, v20
-# CHECK-NEXT: v24: 0 = Integer
-# CHECK-NEXT: v25: int[0, 65535] = BitOr v23, v24
-# CHECK-NEXT: Jump -> next b4(v25)
+# CHECK-NEXT: v22: int[0, 65535] = GetStringCodeUnit v16, v20
+# CHECK-NEXT: v23: 0 = Integer
+# CHECK-NEXT: v24: int[0, 65535] = BitOr v22, v23
+# CHECK-NEXT: Jump -> next b4(v24)
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v26: whole = Double number=NaN
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b4(v28)
-# CHECK-NEXT: b4(v29: i32 ~ int[0, 65535]):
-# CHECK-NEXT: v30: int[-2147483648, 68719476704] ~ int[0, 66572058592] = Add v19, v29
-# CHECK-NEXT: Jump -> next b6(v30)
+# CHECK-NEXT: v25: whole = Double number=NaN
+# CHECK-NEXT: v26: 0 = Integer
+# CHECK-NEXT: v27: i32 = BitOr v25, v26
+# CHECK-NEXT: Jump -> next b4(v27)
+# CHECK-NEXT: b4(v28: i32 ~ int[0, 65535]):
+# CHECK-NEXT: v29: int[-2147483648, 2147483740] ~ int[0, 65628] = Add v19, v28
+# CHECK-NEXT: Jump -> next b6(v29)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v31: 0 = Integer
-# CHECK-NEXT: Jump -> next b6(v31)
-# CHECK-NEXT: b6(v32: int[-2147483648, 68719476704] ~ int[0, 66572058592]):
-# CHECK-NEXT: v33: 3 = Integer integer=3
-# CHECK-NEXT: v34: int[-2147483648, 68719476704] ~ int[0, 66572058592] = ToNumber v32 calledBuiltin=MathImul
-# CHECK-NEXT: v35: i32 = ToInt32 v34
-# CHECK-NEXT: v36: i32 = CallBuiltin -, v35, v33 overload=MathImul/0 accessSite=13
-# CHECK-NEXT: v37: 5 = Integer integer=5
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: i32 = CallBuiltin -, v38, v37 overload=MathImul/0 accessSite=15
-# CHECK-NEXT: v40: i32 = BitXor v36, v39
-# CHECK-NEXT: v41: 7 = Integer integer=7
-# CHECK-NEXT: v42: 5 = Integer integer=5
-# CHECK-NEXT: v43: i32 = CallBuiltin -, v42, v41 overload=MathImul/0 accessSite=17
-# CHECK-NEXT: v44: i32 = BitXor v40, v43
-# CHECK-NEXT: v45: boolean = ToBoolean v3
-# CHECK-NEXT: Branch v45 -> taken b7(), notTaken b8()
+# CHECK-NEXT: v30: 0 = Integer
+# CHECK-NEXT: Jump -> next b6(v30)
+# CHECK-NEXT: b6(v31: int[-2147483648, 2147483740] ~ int[0, 65628]):
+# CHECK-NEXT: v32: 3 = Integer integer=3
+# CHECK-NEXT: v33: int[-2147483648, 2147483740] ~ int[0, 65628] = ToNumber v31 calledBuiltin=MathImul
+# CHECK-NEXT: v34: i32 ~ int[0, 65628] = ToInt32 v33
+# CHECK-NEXT: v35: i32 = CallBuiltin -, v34, v32 overload=MathImul/0 accessSite=13
+# CHECK-NEXT: v36: 5 = Integer integer=5
+# CHECK-NEXT: v37: 0 = Integer
+# CHECK-NEXT: v38: i32 = CallBuiltin -, v37, v36 overload=MathImul/0 accessSite=15
+# CHECK-NEXT: v39: i32 = BitXor v35, v38
+# CHECK-NEXT: v40: 7 = Integer integer=7
+# CHECK-NEXT: v41: 5 = Integer integer=5
+# CHECK-NEXT: v42: i32 = CallBuiltin -, v41, v40 overload=MathImul/0 accessSite=17
+# CHECK-NEXT: v43: i32 = BitXor v39, v42
+# CHECK-NEXT: v44: boolean = ToBoolean v3
+# CHECK-NEXT: Branch v44 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v46: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b9(v46)
+# CHECK-NEXT: v45: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b9(v45)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v47: 5 = Integer integer=5
-# CHECK-NEXT: Jump -> next b9(v47)
-# CHECK-NEXT: b9(v48: int[3, 5]):
-# CHECK-NEXT: v49: 9 = Integer integer=9
-# CHECK-NEXT: v50: int[3, 5] = ToNumber v48 calledBuiltin=MathImul
-# CHECK-NEXT: v51: i32 = CallBuiltin -, v50, v49 overload=MathImul/0 accessSite=19
-# CHECK-NEXT: v52: i32 = BitXor v44, v51
-# CHECK-NEXT: v53: 11 = Integer integer=11
-# CHECK-NEXT: v54: 5 = Integer integer=5
-# CHECK-NEXT: v55: i32 = CallBuiltin -, v54, v53 overload=MathImul/0 accessSite=21
-# CHECK-NEXT: v56: i32 = BitXor v52, v55
-# CHECK-NEXT: v57: 13 = Integer integer=13
-# CHECK-NEXT: v58: 0 = Integer
-# CHECK-NEXT: v59: i32 = CallBuiltin -, v58, v57 overload=MathImul/0 accessSite=23
-# CHECK-NEXT: v60: i32 = BitXor v56, v59
-# CHECK-NEXT: v61: 15 = Integer integer=15
-# CHECK-NEXT: v62: 5 = Integer integer=5
-# CHECK-NEXT: v63: i32 = CallBuiltin -, v62, v61 overload=MathImul/0 accessSite=25
-# CHECK-NEXT: v64: i32 = BitXor v60, v63
-# CHECK-NEXT: v65: 17 = Integer integer=17
-# CHECK-NEXT: v66: 5 = Integer integer=5
-# CHECK-NEXT: v67: i32 = CallBuiltin -, v66, v65 overload=MathImul/0 accessSite=27
-# CHECK-NEXT: v68: i32 = BitXor v64, v67
-# CHECK-NEXT: v69: boolean = ToBoolean v8
-# CHECK-NEXT: Branch v69 -> taken b10(), notTaken b11()
+# CHECK-NEXT: v46: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b9(v46)
+# CHECK-NEXT: b9(v47: int[3, 5]):
+# CHECK-NEXT: v48: 9 = Integer integer=9
+# CHECK-NEXT: v49: int[3, 5] = ToNumber v47 calledBuiltin=MathImul
+# CHECK-NEXT: v50: i32 = CallBuiltin -, v49, v48 overload=MathImul/0 accessSite=19
+# CHECK-NEXT: v51: i32 = BitXor v43, v50
+# CHECK-NEXT: v52: 11 = Integer integer=11
+# CHECK-NEXT: v53: 5 = Integer integer=5
+# CHECK-NEXT: v54: i32 = CallBuiltin -, v53, v52 overload=MathImul/0 accessSite=21
+# CHECK-NEXT: v55: i32 = BitXor v51, v54
+# CHECK-NEXT: v56: 13 = Integer integer=13
+# CHECK-NEXT: v57: 0 = Integer
+# CHECK-NEXT: v58: i32 = CallBuiltin -, v57, v56 overload=MathImul/0 accessSite=23
+# CHECK-NEXT: v59: i32 = BitXor v55, v58
+# CHECK-NEXT: v60: 15 = Integer integer=15
+# CHECK-NEXT: v61: 5 = Integer integer=5
+# CHECK-NEXT: v62: i32 = CallBuiltin -, v61, v60 overload=MathImul/0 accessSite=25
+# CHECK-NEXT: v63: i32 = BitXor v59, v62
+# CHECK-NEXT: v64: 17 = Integer integer=17
+# CHECK-NEXT: v65: 5 = Integer integer=5
+# CHECK-NEXT: v66: i32 = CallBuiltin -, v65, v64 overload=MathImul/0 accessSite=27
+# CHECK-NEXT: v67: i32 = BitXor v63, v66
+# CHECK-NEXT: v68: boolean = ToBoolean v8
+# CHECK-NEXT: Branch v68 -> taken b10(), notTaken b11()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v70: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b12(v70)
+# CHECK-NEXT: v69: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b12(v69)
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v71: 5 = Integer integer=5
-# CHECK-NEXT: Jump -> next b12(v71)
-# CHECK-NEXT: b12(v72: int[3, 5]):
-# CHECK-NEXT: v73: 19 = Integer integer=19
-# CHECK-NEXT: v74: int[3, 5] = ToNumber v72 calledBuiltin=MathImul
-# CHECK-NEXT: v75: i32 = CallBuiltin -, v74, v73 overload=MathImul/0 accessSite=29
-# CHECK-NEXT: v76: i32 = BitXor v68, v75
-# CHECK-NEXT: v77: boolean = ToBoolean v9
-# CHECK-NEXT: Branch v77 -> taken b13(), notTaken b14()
+# CHECK-NEXT: v70: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b12(v70)
+# CHECK-NEXT: b12(v71: int[3, 5]):
+# CHECK-NEXT: v72: 19 = Integer integer=19
+# CHECK-NEXT: v73: int[3, 5] = ToNumber v71 calledBuiltin=MathImul
+# CHECK-NEXT: v74: i32 = CallBuiltin -, v73, v72 overload=MathImul/0 accessSite=29
+# CHECK-NEXT: v75: i32 = BitXor v67, v74
+# CHECK-NEXT: v76: boolean = ToBoolean v9
+# CHECK-NEXT: Branch v76 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v78: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b15(v78)
+# CHECK-NEXT: v77: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b15(v77)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v79: 5 = Integer integer=5
-# CHECK-NEXT: Jump -> next b15(v79)
-# CHECK-NEXT: b15(v80: int[3, 5]):
-# CHECK-NEXT: v81: 21 = Integer integer=21
-# CHECK-NEXT: v82: int[3, 5] = ToNumber v80 calledBuiltin=MathImul
-# CHECK-NEXT: v83: i32 = CallBuiltin -, v82, v81 overload=MathImul/0 accessSite=31
-# CHECK-NEXT: v84: i32 = BitXor v76, v83
-# CHECK-NEXT: v85: boolean = ToBoolean v14
-# CHECK-NEXT: Branch v85 -> taken b16(), notTaken b17()
+# CHECK-NEXT: v78: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b15(v78)
+# CHECK-NEXT: b15(v79: int[3, 5]):
+# CHECK-NEXT: v80: 21 = Integer integer=21
+# CHECK-NEXT: v81: int[3, 5] = ToNumber v79 calledBuiltin=MathImul
+# CHECK-NEXT: v82: i32 = CallBuiltin -, v81, v80 overload=MathImul/0 accessSite=31
+# CHECK-NEXT: v83: i32 = BitXor v75, v82
+# CHECK-NEXT: v84: boolean = ToBoolean v14
+# CHECK-NEXT: Branch v84 -> taken b16(), notTaken b17()
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v86: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b18(v86)
+# CHECK-NEXT: v85: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b18(v85)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v87: 5 = Integer integer=5
-# CHECK-NEXT: Jump -> next b18(v87)
-# CHECK-NEXT: b18(v88: int[3, 5]):
-# CHECK-NEXT: v89: 23 = Integer integer=23
-# CHECK-NEXT: v90: int[3, 5] = ToNumber v88 calledBuiltin=MathImul
-# CHECK-NEXT: v91: i32 = CallBuiltin -, v90, v89 overload=MathImul/0 accessSite=33
-# CHECK-NEXT: v92: i32 = BitXor v84, v91
-# CHECK-NEXT: v93: boolean = ToBoolean v11
-# CHECK-NEXT: Branch v93 -> taken b19(), notTaken b20()
+# CHECK-NEXT: v86: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b18(v86)
+# CHECK-NEXT: b18(v87: int[3, 5]):
+# CHECK-NEXT: v88: 23 = Integer integer=23
+# CHECK-NEXT: v89: int[3, 5] = ToNumber v87 calledBuiltin=MathImul
+# CHECK-NEXT: v90: i32 = CallBuiltin -, v89, v88 overload=MathImul/0 accessSite=33
+# CHECK-NEXT: v91: i32 = BitXor v83, v90
+# CHECK-NEXT: v92: boolean = ToBoolean v11
+# CHECK-NEXT: Branch v92 -> taken b19(), notTaken b20()
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v94: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b21(v94)
+# CHECK-NEXT: v93: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b21(v93)
 # CHECK-NEXT: b20():
-# CHECK-NEXT: v95: 5 = Integer integer=5
-# CHECK-NEXT: Jump -> next b21(v95)
-# CHECK-NEXT: b21(v96: int[3, 5]):
-# CHECK-NEXT: v97: 25 = Integer integer=25
-# CHECK-NEXT: v98: int[3, 5] = ToNumber v96 calledBuiltin=MathImul
-# CHECK-NEXT: v99: i32 = CallBuiltin -, v98, v97 overload=MathImul/0 accessSite=35
-# CHECK-NEXT: v100: i32 = BitXor v92, v99
-# CHECK-NEXT: v101: boolean = ToBoolean v12
-# CHECK-NEXT: Branch v101 -> taken b22(), notTaken b23()
+# CHECK-NEXT: v94: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b21(v94)
+# CHECK-NEXT: b21(v95: int[3, 5]):
+# CHECK-NEXT: v96: 25 = Integer integer=25
+# CHECK-NEXT: v97: int[3, 5] = ToNumber v95 calledBuiltin=MathImul
+# CHECK-NEXT: v98: i32 = CallBuiltin -, v97, v96 overload=MathImul/0 accessSite=35
+# CHECK-NEXT: v99: i32 = BitXor v91, v98
+# CHECK-NEXT: v100: boolean = ToBoolean v12
+# CHECK-NEXT: Branch v100 -> taken b22(), notTaken b23()
 # CHECK-NEXT: b22():
-# CHECK-NEXT: v102: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b24(v102)
+# CHECK-NEXT: v101: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b24(v101)
 # CHECK-NEXT: b23():
-# CHECK-NEXT: v103: 5 = Integer integer=5
-# CHECK-NEXT: Jump -> next b24(v103)
-# CHECK-NEXT: b24(v104: int[3, 5]):
-# CHECK-NEXT: v105: 27 = Integer integer=27
-# CHECK-NEXT: v106: int[3, 5] = ToNumber v104 calledBuiltin=MathImul
-# CHECK-NEXT: v107: i32 = CallBuiltin -, v106, v105 overload=MathImul/0 accessSite=37
-# CHECK-NEXT: v108: i32 = BitXor v100, v107
-# CHECK-NEXT: v109: boolean = ToBoolean v13
-# CHECK-NEXT: Branch v109 -> taken b25(), notTaken b26()
+# CHECK-NEXT: v102: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b24(v102)
+# CHECK-NEXT: b24(v103: int[3, 5]):
+# CHECK-NEXT: v104: 27 = Integer integer=27
+# CHECK-NEXT: v105: int[3, 5] = ToNumber v103 calledBuiltin=MathImul
+# CHECK-NEXT: v106: i32 = CallBuiltin -, v105, v104 overload=MathImul/0 accessSite=37
+# CHECK-NEXT: v107: i32 = BitXor v99, v106
+# CHECK-NEXT: v108: boolean = ToBoolean v13
+# CHECK-NEXT: Branch v108 -> taken b25(), notTaken b26()
 # CHECK-NEXT: b25():
-# CHECK-NEXT: v110: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b27(v110)
+# CHECK-NEXT: v109: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b27(v109)
 # CHECK-NEXT: b26():
-# CHECK-NEXT: v111: 5 = Integer integer=5
-# CHECK-NEXT: Jump -> next b27(v111)
-# CHECK-NEXT: b27(v112: int[3, 5]):
-# CHECK-NEXT: v113: 29 = Integer integer=29
-# CHECK-NEXT: v114: int[3, 5] = ToNumber v112 calledBuiltin=MathImul
-# CHECK-NEXT: v115: i32 = CallBuiltin -, v114, v113 overload=MathImul/0 accessSite=39
-# CHECK-NEXT: v116: i32 = BitXor v108, v115
-# CHECK-NEXT: v117: 0 = Integer
-# CHECK-NEXT: v118: i32 = BitOr v116, v117
-# CHECK-NEXT: v119: fractional = Double number=0.125
-# CHECK-NEXT: v120: number = Mul v118, v119
-# CHECK-NEXT: Return v120
+# CHECK-NEXT: v110: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b27(v110)
+# CHECK-NEXT: b27(v111: int[3, 5]):
+# CHECK-NEXT: v112: 29 = Integer integer=29
+# CHECK-NEXT: v113: int[3, 5] = ToNumber v111 calledBuiltin=MathImul
+# CHECK-NEXT: v114: i32 = CallBuiltin -, v113, v112 overload=MathImul/0 accessSite=39
+# CHECK-NEXT: v115: i32 = BitXor v107, v114
+# CHECK-NEXT: v116: 0 = Integer
+# CHECK-NEXT: v117: i32 = BitOr v115, v116
+# CHECK-NEXT: v118: fractional = Double number=0.125
+# CHECK-NEXT: v119: number = Mul v117, v118
+# CHECK-NEXT: Return v119
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="f0"
 # CHECK: module=m0 position=1595 flags=[IsChecked, HasExplicitName] length=6 thisType={type=anything} parameters=[{type=int[0, 399] site=w19}, {type=63 site=w20}, {type=0 site=w21}, {type=0 site=w22}, {type=int[0, 399] site=w24}] results=[{type=int[-42, 7] site=w25}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {original=5}]} inlineFrames=[{}, {callee=f2 callPosition=4359 module=m0}, {callee=f2 callPosition=4347 module=m0}, {callee=f2 callPosition=4335 module=m0}, {callee=f2 callPosition=4323 module=m0}, {callee=f2 callPosition=4311 module=m0}, {callee=f2 callPosition=4299 module=m0}, {callee=f2 callPosition=4287 module=m0}, {callee=f2 callPosition=4275 module=m0}, {callee=f2 callPosition=4263 module=m0}, {callee=f2 callPosition=4251 module=m0}, {callee=f2 callPosition=4239 module=m0}, {callee=f2 callPosition=4227 module=m0}, {callee=f2 callPosition=4215 module=m0}, {callee=f2 callPosition=4203 module=m0}, {callee=f2 callPosition=4191 module=m0}, {callee=f2 callPosition=4179 module=m0}, {callee=f2 callPosition=4167 module=m0}, {callee=f2 callPosition=4155 module=m0}, {callee=f2 callPosition=4143 module=m0}, {callee=f2 callPosition=4131 module=m0}, {callee=f2 callPosition=4119 module=m0}, {callee=f2 callPosition=4107 module=m0}, {callee=f2 callPosition=4095 module=m0}, {callee=f2 callPosition=4083 module=m0}, {callee=f2 callPosition=4071 module=m0}, {callee=f2 callPosition=4059 module=m0}, {callee=f2 callPosition=4047 module=m0}, {callee=f2 callPosition=4035 module=m0}, {callee=f2 callPosition=4023 module=m0}, {callee=f2 callPosition=4011 module=m0}, {callee=f2 callPosition=3999 module=m0}, {callee=f2 callPosition=3987 module=m0}, {callee=f2 callPosition=3975 module=m0}, {callee=f2 callPosition=3963 module=m0}, {callee=f2 callPosition=3952 module=m0}, {callee=f2 callPosition=3941 module=m0}, {callee=f2 callPosition=3930 module=m0}, {callee=f2 callPosition=3919 module=m0}, {callee=f2 callPosition=3908 module=m0}, {callee=f2 callPosition=3897 module=m0}, {callee=f2 callPosition=3886 module=m0}, {callee=f2 callPosition=3875 module=m0}, {callee=f2 callPosition=3638 module=m0}, {callee=f3 callPosition=3599 module=m0}, {callee=f16 callPosition=1761 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f3 callPosition=1726 isTailCall=true module=m0}, {callee=f19 callPosition=372 parent=45 module=m0}] {

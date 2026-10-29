@@ -1162,7 +1162,8 @@ fn find_refused_entry_points(files: &[(&str, &str)], entry_point_count: usize) -
     let mut project = TestProject::with_entry_points(files, entry_point_count, &default_settings());
     project.aot.checks_only = true;
     let (result, _) = link_project(&project, &WithoutServices);
-    expect_failure(result).refused_entry_points
+    let refused = expect_failure(result).refused_entry_points;
+    refused.map(|it| it.refused)
 }
 
 #[test]
@@ -1253,6 +1254,7 @@ fn engine_that_analyzed_nothing_says_nothing_about_module_objects() {
             unseen_code: &unseen_code,
             builtins_used: &[],
             library_functions_lacked: &[],
+            exports_that_spies_replace: &[],
         };
         assert!(reads_main_module(found, false));
         assert_eq!(find_ways_read_out_of_sight(found, both), both);
@@ -1263,6 +1265,7 @@ fn engine_that_analyzed_nothing_says_nothing_about_module_objects() {
         unseen_code: &[],
         builtins_used: &[],
         library_functions_lacked: &[],
+        exports_that_spies_replace: &[],
     };
     assert!(!reads_main_module(found, false));
     assert!(find_ways_read_out_of_sight(found, both).is_empty());

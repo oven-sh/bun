@@ -52,7 +52,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="counters"
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@21 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, AOTInstance_closureCells}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewArray)
+# CHECK-NEXT: Int64 b@21 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, AOTInstance_closureCells}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewArray)
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
 # CHECK-NEXT: Int64 b@27 = Load(b@10, offset = 80, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v6:NewClosure)
 # CHECK-NEXT: Int64 b@0 = Load(b@27, offset = 16, ControlDependent|Reads:AOTInstance_closureCells, v6:NewClosure)
@@ -68,7 +68,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Predecessors: #0
 # CHECK-NEXT: Int64 b@56 = Load(b@21, offset = 8, ControlDependent|Reads:JSArray_butterfly, v7:CallInline)
 # CHECK-NEXT: Int32 b@19 = Load(b@56, offset = -4, ControlDependent|Reads:Butterfly_vectorLength, v7:CallInline)
-# CHECK-NEXT: Int32 b@87 = Load8Z(b@21, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v7:CallInline)
+# CHECK-NEXT: Int32 b@87 = Load8Z(b@21, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, v7:CallInline)
 # CHECK-NEXT: Int32 b@88 = Equal(b@87, $9(b@45), v7:CallInline)
 # CHECK-NEXT: Void b@89 = Branch(b@88, Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: Then:#21, Else:Rare:#2
@@ -182,7 +182,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Successors: Then:#15, Else:Rare:#31
 # CHECK-NEXT: BB#15: ; frequency = 0.038976
 # CHECK-NEXT: Predecessors: #9
-# CHECK-NEXT: Int32 b@44 = Load8Z(b@21, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v7:CallInline)
+# CHECK-NEXT: Int32 b@44 = Load8Z(b@21, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, v7:CallInline)
 # CHECK-NEXT: Int32 b@46 = Equal(b@44, $9(b@45), v7:CallInline)
 # CHECK-NEXT: Void b@47 = Branch(b@46, Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: Then:#16, Else:Rare:#11

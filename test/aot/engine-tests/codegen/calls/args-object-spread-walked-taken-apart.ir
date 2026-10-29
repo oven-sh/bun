@@ -4237,13 +4237,23 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f90 visibilit
 # CHECK-NEXT: v14: anything = CallDirect v10, v5, v12, v13 function=f82 accessSite=202
 # CHECK-NEXT: v15: Array = AssumeType v14 provenType=Array
 # CHECK-NEXT: v16: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v17: Array<anything, Contiguous> = NewArray contents=anything allocationSite=84 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v18: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v19: undefined = CallDirect v18, v5 function=f168 [isNeverInlined]
+# CHECK-NEXT: v17: boolean = TypeTest v5 testedType=Array
+# CHECK-NEXT: Branch v17 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v18: Array):
+# CHECK-NEXT: v19: boolean = IsPristine v18 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v19 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
 # CHECK-NEXT: v20: anything = CallList v16, -, v18 calleeName="target" accessSite=203 callees=[f1]
-# CHECK-NEXT: v21: string = AssumeType v20 provenType=string
-# CHECK-NEXT: v22: Array<undefined|null|string|Array> = NewArray v8, v15, v21 contents=undefined|null|string|Array allocationSite=85
-# CHECK-NEXT: Return v22
+# CHECK-NEXT: Jump -> next b4(v20)
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v21: Array<anything, Contiguous> = NewArray contents=anything allocationSite=84 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v22: undefined = CallDirect v21, v5 function=f168 [isNeverInlined]
+# CHECK-NEXT: v23: anything = CallList v16, -, v21 calleeName="target" accessSite=203 callees=[f1]
+# CHECK-NEXT: Jump -> next b4(v23)
+# CHECK-NEXT: b4(v24: anything):
+# CHECK-NEXT: v25: string = AssumeType v24 provenType=string
+# CHECK-NEXT: v26: Array<undefined|null|string|Array> = NewArray v8, v15, v25 contents=undefined|null|string|Array allocationSite=85
+# CHECK-NEXT: Return v26
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="getterDefined"
 # CHECK: module=m0 position=4095 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=1}, {type=2}, {type=3}] results=[{type=Array<undefined|null|Array>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -436,13 +436,6 @@ function f15 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: v35: string = Strcat v34, v32 [isLikelyKey]
 # CHECK-NEXT: v36: 1 = Integer integer=1
 # CHECK-NEXT: ElemSet v0, v35, v36 accessSite=32 receivers=[L3]
-# CHECK-NEXT: v38: boolean = IsEnumeratorCurrent v1, v0, v28
-# CHECK-NEXT: Branch v38 -> taken b12(), notTaken b13()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14():
 # CHECK-NEXT: StringBuilderAppend v24, v32
 # CHECK-NEXT: Jump -> next b9(v24, v30)
 # CHECK-NEXT: }
@@ -455,7 +448,7 @@ function f15 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Jump -> next b1(v3)
 # CHECK-NEXT: b1(v5: int[0, 8589934591]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: undefined = ForInStep v2, v0 position=v5
+# CHECK-NEXT: v7: undefined = ForInStep v2, v0 position=v5 [keysChangeOnlyInSteps]
 # CHECK-NEXT: v8: int[0, 8589934590] = ResultAt v7 index=2
 # CHECK-NEXT: v9: 1 = Integer integer=1
 # CHECK-NEXT: v10: int[1, 8589934591] = Add v8, v9

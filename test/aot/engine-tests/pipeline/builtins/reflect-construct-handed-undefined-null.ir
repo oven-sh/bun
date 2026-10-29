@@ -66,7 +66,7 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b1():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2() handler=b20():
+# CHECK-NEXT: b2() handler=b11():
 # CHECK-NEXT: v2: undefined @JSValue = Undefined @0:3 tail
 # CHECK-NEXT: v3: anything @JSValue = CallBuiltin -, v0, v2 overload=ReflectConstruct/0 accessSite=6 @0:3 tail
 # CHECK-NEXT: v4: anything @JSValue = Upcast v3 castType=anything
@@ -74,60 +74,39 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v6: i32 @Int32 = StringBuilderCheckpoint v5
 # CHECK-NEXT: v7: boolean @Boolean = TypeTest v4 testedType=undefined
 # CHECK-NEXT: TestAndBranch v7 -> taken b3(), notTaken b4(| 0)
-# CHECK-NEXT: b3() handler=b20():
+# CHECK-NEXT: b3() handler=b11():
 # CHECK-NEXT: v8: buildercursor @RawWord = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b16(v8)
+# CHECK-NEXT: Jump -> next b7(v8)
 # CHECK-NEXT: b4(v9: null|boolean|number|string|symbol|bigint|object @JSValue):
 # CHECK-NEXT: v10: boolean @Boolean = TypeTest v9 testedType=null
-# CHECK-NEXT: TestAndBranch v10 -> taken b5(), notTaken b6(| 0)
-# CHECK-NEXT: b5() handler=b20():
+# CHECK-NEXT: TestAndBranch v10 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5() handler=b11():
 # CHECK-NEXT: v11: buildercursor @RawWord = StringBuilderReserve v5 size=128
 # CHECK-NEXT: v12: buildercursor @RawWord = JSONAppendToken v5, v11 jsonToken=Null
-# CHECK-NEXT: Jump -> next b16(v12)
-# CHECK-NEXT: b6(v13: boolean|number|string|symbol|bigint|object @JSValue):
-# CHECK-NEXT: v14: boolean @Boolean = TypeTest v13 testedType=object
-# CHECK-NEXT: TestAndBranch v14 -> taken b7(| 0), notTaken b14()
-# CHECK-NEXT: b7(v15: object @JSValue):
-# CHECK-NEXT: v16: boolean @Boolean = ShapeTest v15 layouts=[L0]
-# CHECK-NEXT: TestAndBranch v16 -> taken b8(| 0), notTaken b13()
-# CHECK-NEXT: b8(v17: guard @Void):
-# CHECK-NEXT: v18: boolean @Boolean = JSONHasStackSpace
-# CHECK-NEXT: Branch v18 -> taken b9(), notTaken b11()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b15() frequency=Rare handler=b20():
-# CHECK-NEXT: v19: buildercursor @RawWord = StringBuilderReserve v5 size=128
-# CHECK-NEXT: Jump -> next b16(v19)
-# CHECK-NEXT: b16(v20: buildercursor @RawWord):
-# CHECK-NEXT: StringBuilderCommit v5, v20
-# CHECK-NEXT: v22: i32 @Int32 = StringBuilderCheckpoint v5
-# CHECK-NEXT: v23: boolean @Boolean = StrictEq v6, v22 form=Integers
-# CHECK-NEXT: TestAndBranch v23 -> taken b17(), notTaken b18()
-# CHECK-NEXT: b17() frequency=Rare handler=b20():
+# CHECK-NEXT: Jump -> next b7(v12)
+# CHECK-NEXT: b6() handler=b11():
+# CHECK-NEXT: v13: buildercursor @RawWord = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b7(v13)
+# CHECK-NEXT: b7(v14: buildercursor @RawWord):
+# CHECK-NEXT: StringBuilderCommit v5, v14
+# CHECK-NEXT: v16: i32 @Int32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v17: boolean @Boolean = StrictEq v6, v16 form=Integers
+# CHECK-NEXT: TestAndBranch v17 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8() frequency=Rare handler=b11():
 # CHECK-NEXT: StringBuilderDiscard v5
-# CHECK-NEXT: v25: undefined @JSValue = Undefined
-# CHECK-NEXT: v26: undefined|string @JSValue = CallBuiltin -, v4, v25 overload=JSONStringify/0 accessSite=3
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b18() handler=b20():
-# CHECK-NEXT: v27: string @Cell = StringBuilderFinish v5
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: Jump -> next b21()
-# CHECK-NEXT: b20() role=CatchHandler:
-# CHECK-NEXT: v28: anything @JSValue = CatchValue
-# CHECK-NEXT: v29: anything @JSValue = PropGet v28 key="constructor" accessSite=4 siteCache=0
-# CHECK-NEXT: v30: anything @JSValue = PropGet v29 key="name" accessSite=5 siteCache=1
-# CHECK-NEXT: Jump -> next b21()
-# CHECK-NEXT: b21():
+# CHECK-NEXT: v19: undefined @JSValue = Undefined
+# CHECK-NEXT: v20: undefined|string @JSValue = CallBuiltin -, v4, v19 overload=JSONStringify/0 accessSite=3
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b9() handler=b11():
+# CHECK-NEXT: v21: string @Cell = StringBuilderFinish v5
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11() role=CatchHandler:
+# CHECK-NEXT: v22: anything @JSValue = CatchValue
+# CHECK-NEXT: v23: anything @JSValue = PropGet v22 key="constructor" accessSite=4 siteCache=0
+# CHECK-NEXT: v24: anything @JSValue = PropGet v23 key="name" accessSite=5 siteCache=1
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12():
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }

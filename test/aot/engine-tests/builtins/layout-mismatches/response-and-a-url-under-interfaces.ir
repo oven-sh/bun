@@ -376,132 +376,87 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v14: undefined = CallBuiltin -, v13 overload=ConsoleLog/0 accessSite=11
 # CHECK-NEXT: v15: int[0, 65535] = CallBuiltin v7 overload=ResponsePrototypeStatus/0 accessSite=12
 # CHECK-NEXT: v16: "|" = String string="|"
-# CHECK-NEXT: v17: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v17, v15, v16
-# CHECK-NEXT: v19: boolean = IsPristine v7 builtinClass=Response aspects=[Names]
-# CHECK-NEXT: Branch v19 -> taken b2(), notTaken b1()
-# CHECK-NEXT: b1() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v20: true = Boolean boolean=true
-# CHECK-NEXT: v21: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v17, v20, v21
-# CHECK-NEXT: v23: Array<string> = CallBuiltin -, v7 overload=ObjectKeys/0 accessSite=14
-# CHECK-NEXT: v24: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v25: string = CallBuiltin v24 overload=ArrayPrototypeJoin/0 accessSite=16
-# CHECK-NEXT: v26: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v17, v25, v26
-# CHECK-NEXT: v28: string = CallBuiltin v7 overload=ObjectPrototypeToString/0 accessSite=18
-# CHECK-NEXT: StringBuilderAppend v17, v28
-# CHECK-NEXT: v30: string = StringBuilderFinish v17
-# CHECK-NEXT: v31: undefined = CallBuiltin -, v30 overload=ConsoleLog/0 accessSite=11
-# CHECK-NEXT: v32: "plain|false|href" = String string="plain|false|href"
-# CHECK-NEXT: v33: undefined = CallBuiltin -, v32 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v34: string = CallBuiltin v10 overload=URLPrototypeHref/0 accessSite=19
-# CHECK-NEXT: v35: string ~ "plain" = Upcast v34 castType=string
-# CHECK-NEXT: v36: "|" = String string="|"
-# CHECK-NEXT: v37: string = Add v35, v36
-# CHECK-NEXT: v38: boolean = IsPristine v10 builtinClass=URL aspects=[Names]
-# CHECK-NEXT: Branch v38 -> taken b4(), notTaken b3()
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v39: true = Boolean boolean=true
-# CHECK-NEXT: v40: "|" = String string="|"
-# CHECK-NEXT: v41: string = Strcat v37, v39, v40
-# CHECK-NEXT: v42: Array<string> = CallBuiltin -, v10 overload=ObjectKeys/0 accessSite=21
-# CHECK-NEXT: v43: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v42 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v44: string = CallBuiltin v43 overload=ArrayPrototypeJoin/0 accessSite=23
-# CHECK-NEXT: v45: string = Add v41, v44
-# CHECK-NEXT: v46: undefined = CallBuiltin -, v45 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v47: "1|false|status|" = String string="1|false|status|"
-# CHECK-NEXT: v48: string = CallBuiltin v1 overload=ObjectPrototypeToString/0 accessSite=18
-# CHECK-NEXT: v49: string = Add v47, v48
-# CHECK-NEXT: v50: undefined = CallBuiltin -, v49 overload=ConsoleLog/0 accessSite=11
-# CHECK-NEXT: v51: int[0, 65535] = CallBuiltin v7 overload=ResponsePrototypeStatus/0 accessSite=12
-# CHECK-NEXT: v52: "|" = String string="|"
-# CHECK-NEXT: v53: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v53, v51, v52
-# CHECK-NEXT: v55: boolean = IsPristine v7 builtinClass=Response aspects=[Names]
-# CHECK-NEXT: Branch v55 -> taken b6(), notTaken b5()
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v56: true = Boolean boolean=true
-# CHECK-NEXT: v57: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v53, v56, v57
-# CHECK-NEXT: v59: Array<string> = CallBuiltin -, v7 overload=ObjectKeys/0 accessSite=14
-# CHECK-NEXT: v60: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v59 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v61: string = CallBuiltin v60 overload=ArrayPrototypeJoin/0 accessSite=16
+# CHECK-NEXT: v17: true = Boolean boolean=true
+# CHECK-NEXT: v18: "|" = String string="|"
+# CHECK-NEXT: v19: Array<string> = CallBuiltin -, v7 overload=ObjectKeys/0 accessSite=14
+# CHECK-NEXT: v20: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v19 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v21: string = CallBuiltin v20 overload=ArrayPrototypeJoin/0 accessSite=16
+# CHECK-NEXT: v22: "|" = String string="|"
+# CHECK-NEXT: v23: string = Strcat v15, v16, v17, v18, v21, v22
+# CHECK-NEXT: v24: string = CallBuiltin v7 overload=ObjectPrototypeToString/0 accessSite=18
+# CHECK-NEXT: v25: string = Add v23, v24
+# CHECK-NEXT: v26: undefined = CallBuiltin -, v25 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v27: "plain|false|href" = String string="plain|false|href"
+# CHECK-NEXT: v28: undefined = CallBuiltin -, v27 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v29: string = CallBuiltin v10 overload=URLPrototypeHref/0 accessSite=19
+# CHECK-NEXT: v30: string ~ "plain" = Upcast v29 castType=string
+# CHECK-NEXT: v31: "|" = String string="|"
+# CHECK-NEXT: v32: true = Boolean boolean=true
+# CHECK-NEXT: v33: "|" = String string="|"
+# CHECK-NEXT: v34: string = Strcat v30, v31, v32, v33
+# CHECK-NEXT: v35: Array<string> = CallBuiltin -, v10 overload=ObjectKeys/0 accessSite=21
+# CHECK-NEXT: v36: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v37: string = CallBuiltin v36 overload=ArrayPrototypeJoin/0 accessSite=23
+# CHECK-NEXT: v38: string = Add v34, v37
+# CHECK-NEXT: v39: undefined = CallBuiltin -, v38 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v40: "1|false|status|" = String string="1|false|status|"
+# CHECK-NEXT: v41: string = CallBuiltin v1 overload=ObjectPrototypeToString/0 accessSite=18
+# CHECK-NEXT: v42: string = Add v40, v41
+# CHECK-NEXT: v43: undefined = CallBuiltin -, v42 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v44: int[0, 65535] = CallBuiltin v7 overload=ResponsePrototypeStatus/0 accessSite=12
+# CHECK-NEXT: v45: "|" = String string="|"
+# CHECK-NEXT: v46: true = Boolean boolean=true
+# CHECK-NEXT: v47: "|" = String string="|"
+# CHECK-NEXT: v48: Array<string> = CallBuiltin -, v7 overload=ObjectKeys/0 accessSite=14
+# CHECK-NEXT: v49: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v48 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v50: string = CallBuiltin v49 overload=ArrayPrototypeJoin/0 accessSite=16
+# CHECK-NEXT: v51: "|" = String string="|"
+# CHECK-NEXT: v52: string = Strcat v44, v45, v46, v47, v50, v51
+# CHECK-NEXT: v53: string = CallBuiltin v7 overload=ObjectPrototypeToString/0 accessSite=18
+# CHECK-NEXT: v54: string = Add v52, v53
+# CHECK-NEXT: v55: undefined = CallBuiltin -, v54 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v56: "plain|false|href" = String string="plain|false|href"
+# CHECK-NEXT: v57: undefined = CallBuiltin -, v56 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v58: string = CallBuiltin v10 overload=URLPrototypeHref/0 accessSite=19
+# CHECK-NEXT: v59: string ~ "plain" = Upcast v58 castType=string
+# CHECK-NEXT: v60: "|" = String string="|"
+# CHECK-NEXT: v61: true = Boolean boolean=true
 # CHECK-NEXT: v62: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v53, v61, v62
-# CHECK-NEXT: v64: string = CallBuiltin v7 overload=ObjectPrototypeToString/0 accessSite=18
-# CHECK-NEXT: StringBuilderAppend v53, v64
-# CHECK-NEXT: v66: string = StringBuilderFinish v53
-# CHECK-NEXT: v67: undefined = CallBuiltin -, v66 overload=ConsoleLog/0 accessSite=11
-# CHECK-NEXT: v68: "plain|false|href" = String string="plain|false|href"
-# CHECK-NEXT: v69: undefined = CallBuiltin -, v68 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v70: string = CallBuiltin v10 overload=URLPrototypeHref/0 accessSite=19
-# CHECK-NEXT: v71: string ~ "plain" = Upcast v70 castType=string
-# CHECK-NEXT: v72: "|" = String string="|"
-# CHECK-NEXT: v73: string = Add v71, v72
-# CHECK-NEXT: v74: boolean = IsPristine v10 builtinClass=URL aspects=[Names]
-# CHECK-NEXT: Branch v74 -> taken b8(), notTaken b7()
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8()
-# CHECK-NEXT: b8():
+# CHECK-NEXT: v63: string = Strcat v59, v60, v61, v62
+# CHECK-NEXT: v64: Array<string> = CallBuiltin -, v10 overload=ObjectKeys/0 accessSite=21
+# CHECK-NEXT: v65: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v64 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v66: string = CallBuiltin v65 overload=ArrayPrototypeJoin/0 accessSite=23
+# CHECK-NEXT: v67: string = Add v63, v66
+# CHECK-NEXT: v68: undefined = CallBuiltin -, v67 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v69: "1|false|status|" = String string="1|false|status|"
+# CHECK-NEXT: v70: string = CallBuiltin v1 overload=ObjectPrototypeToString/0 accessSite=18
+# CHECK-NEXT: v71: string = Add v69, v70
+# CHECK-NEXT: v72: undefined = CallBuiltin -, v71 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v73: int[0, 65535] = CallBuiltin v7 overload=ResponsePrototypeStatus/0 accessSite=12
+# CHECK-NEXT: v74: "|" = String string="|"
 # CHECK-NEXT: v75: true = Boolean boolean=true
 # CHECK-NEXT: v76: "|" = String string="|"
-# CHECK-NEXT: v77: string = Strcat v73, v75, v76
-# CHECK-NEXT: v78: Array<string> = CallBuiltin -, v10 overload=ObjectKeys/0 accessSite=21
-# CHECK-NEXT: v79: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v78 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v80: string = CallBuiltin v79 overload=ArrayPrototypeJoin/0 accessSite=23
-# CHECK-NEXT: v81: string = Add v77, v80
-# CHECK-NEXT: v82: undefined = CallBuiltin -, v81 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v83: "1|false|status|" = String string="1|false|status|"
-# CHECK-NEXT: v84: string = CallBuiltin v1 overload=ObjectPrototypeToString/0 accessSite=18
-# CHECK-NEXT: v85: string = Add v83, v84
-# CHECK-NEXT: v86: undefined = CallBuiltin -, v85 overload=ConsoleLog/0 accessSite=11
-# CHECK-NEXT: v87: int[0, 65535] = CallBuiltin v7 overload=ResponsePrototypeStatus/0 accessSite=12
-# CHECK-NEXT: v88: "|" = String string="|"
-# CHECK-NEXT: v89: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v89, v87, v88
-# CHECK-NEXT: v91: boolean = IsPristine v7 builtinClass=Response aspects=[Names]
-# CHECK-NEXT: Branch v91 -> taken b10(), notTaken b9()
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v92: true = Boolean boolean=true
-# CHECK-NEXT: v93: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v89, v92, v93
-# CHECK-NEXT: v95: Array<string> = CallBuiltin -, v7 overload=ObjectKeys/0 accessSite=14
-# CHECK-NEXT: v96: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v95 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v97: string = CallBuiltin v96 overload=ArrayPrototypeJoin/0 accessSite=16
-# CHECK-NEXT: v98: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v89, v97, v98
-# CHECK-NEXT: v100: string = CallBuiltin v7 overload=ObjectPrototypeToString/0 accessSite=18
-# CHECK-NEXT: StringBuilderAppend v89, v100
-# CHECK-NEXT: v102: string = StringBuilderFinish v89
-# CHECK-NEXT: v103: undefined = CallBuiltin -, v102 overload=ConsoleLog/0 accessSite=11
-# CHECK-NEXT: v104: "plain|false|href" = String string="plain|false|href"
-# CHECK-NEXT: v105: undefined = CallBuiltin -, v104 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v106: string = CallBuiltin v10 overload=URLPrototypeHref/0 accessSite=19
-# CHECK-NEXT: v107: string ~ "plain" = Upcast v106 castType=string
-# CHECK-NEXT: v108: "|" = String string="|"
-# CHECK-NEXT: v109: string = Add v107, v108
-# CHECK-NEXT: v110: boolean = IsPristine v10 builtinClass=URL aspects=[Names]
-# CHECK-NEXT: Branch v110 -> taken b12(), notTaken b11()
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v111: true = Boolean boolean=true
-# CHECK-NEXT: v112: "|" = String string="|"
-# CHECK-NEXT: v113: string = Strcat v109, v111, v112
-# CHECK-NEXT: v114: Array<string> = CallBuiltin -, v10 overload=ObjectKeys/0 accessSite=21
-# CHECK-NEXT: v115: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v114 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v116: string = CallBuiltin v115 overload=ArrayPrototypeJoin/0 accessSite=23
-# CHECK-NEXT: v117: string = Add v113, v116
-# CHECK-NEXT: v118: undefined = CallBuiltin -, v117 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v119: undefined = Undefined
-# CHECK-NEXT: Return v119
+# CHECK-NEXT: v77: Array<string> = CallBuiltin -, v7 overload=ObjectKeys/0 accessSite=14
+# CHECK-NEXT: v78: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v77 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v79: string = CallBuiltin v78 overload=ArrayPrototypeJoin/0 accessSite=16
+# CHECK-NEXT: v80: "|" = String string="|"
+# CHECK-NEXT: v81: string = Strcat v73, v74, v75, v76, v79, v80
+# CHECK-NEXT: v82: string = CallBuiltin v7 overload=ObjectPrototypeToString/0 accessSite=18
+# CHECK-NEXT: v83: string = Add v81, v82
+# CHECK-NEXT: v84: undefined = CallBuiltin -, v83 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v85: "plain|false|href" = String string="plain|false|href"
+# CHECK-NEXT: v86: undefined = CallBuiltin -, v85 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v87: string = CallBuiltin v10 overload=URLPrototypeHref/0 accessSite=19
+# CHECK-NEXT: v88: string ~ "plain" = Upcast v87 castType=string
+# CHECK-NEXT: v89: "|" = String string="|"
+# CHECK-NEXT: v90: true = Boolean boolean=true
+# CHECK-NEXT: v91: "|" = String string="|"
+# CHECK-NEXT: v92: string = Strcat v88, v89, v90, v91
+# CHECK-NEXT: v93: Array<string> = CallBuiltin -, v10 overload=ObjectKeys/0 accessSite=21
+# CHECK-NEXT: v94: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v93 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v95: string = CallBuiltin v94 overload=ArrayPrototypeJoin/0 accessSite=23
+# CHECK-NEXT: v96: string = Add v92, v95
+# CHECK-NEXT: v97: undefined = CallBuiltin -, v96 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v98: undefined = Undefined
+# CHECK-NEXT: Return v98
 # CHECK-NEXT: }

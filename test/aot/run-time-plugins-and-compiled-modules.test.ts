@@ -67,7 +67,7 @@ describe.concurrent("plugins registered at run time", () => {
 
 describe.concurrent("mock.module under bun test --debug-aot", () => {
   test(
-    "a built-in module a compiled module imports throws",
+    "a built-in module a compiled module imports is mocked",
     async () => {
       using dir = tempDir("aot-run-time-mock", {
         "tsconfig.json": tsconfig,
@@ -77,20 +77,13 @@ describe.concurrent("mock.module under bun test --debug-aot", () => {
             import { exists } from "./user.js";
             test("case", () => {
               console.log("exists:", exists("main.test.ts"));
-              try {
-                mock.module("node:fs", () => ({ existsSync: () => false }));
-                console.log("mocked");
-              } catch (error: any) {
-                console.log(error.name + ": " + error.message);
-              }
+              mock.module("node:fs", () => ({ existsSync: () => false }));
+              console.log("mocked:", exists("main.test.ts"));
             });
           `,
       });
       const { output, exitCode } = await runTests(String(dir));
-      expect(output).toContain(
-        `TypeError: mock(module, fn) cannot replace a module that was compiled ahead of time: "node:fs"`,
-      );
-      expect(output).not.toContain("mocked");
+      expect(output).toContain("exists: true\nmocked: false\n");
       expect(exitCode).toBe(0);
     },
     timeout,

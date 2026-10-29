@@ -128,28 +128,76 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="makeRing"
 # CHECK: module=m0 position=431 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=L0}] functionTypes=[f5] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces]
 # CHECK-LABEL: function {{*}}name="main"
-# CHECK: module=m0 position=667 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=667 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 calleeIsPredicted=true module=m0}, {callee=f10 callPosition=4294967295 parent=1 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 0 = Integer
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v0, v1)
-# CHECK-NEXT: b1(v2: number|string|bigint ~ number, v3: int|whole):
+# CHECK-NEXT: b1(v2: number|string|bigint ~ 0, v3: int|whole ~ 0):
+# CHECK-NEXT: Jump -> next b2(v2, v3)
+# CHECK-NEXT: b2(v4: number|string|bigint ~ number, v5: int|whole):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v5: anything = GetModuleVariable variable=g0
-# CHECK-NEXT: v6: anything ~ undefined|null|function = Upcast v5 castType=anything
-# CHECK-NEXT: v7: 777 = Integer integer=777
-# CHECK-NEXT: v8: boolean = StrictEq v3, v7
-# CHECK-NEXT: v9: anything = Call v6, -, v3, v8 calleeName="makeRing" accessSite=5
-# CHECK-NEXT: v10: anything ~ undefined|null|L0 = Upcast v9 castType=anything
-# CHECK-NEXT: v11: number|string|bigint ~ number = Add v2, v10
-# CHECK-NEXT: v12: int|whole = Increment v3
-# CHECK-NEXT: Jump -> next b1(v11, v12)
+# CHECK-NEXT: v7: anything = GetModuleVariable variable=g0
+# CHECK-NEXT: v8: anything ~ undefined|null|function|f1 = Upcast v7 castType=anything
+# CHECK-NEXT: v9: 777 = Integer integer=777
+# CHECK-NEXT: v10: boolean = StrictEq v5, v9
+# CHECK-NEXT: v11: boolean = IsClosureOf v8 function=f1
+# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b6(v4, v5, v8, v10)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v12: null = Null
+# CHECK-NEXT: v13: L0 = NewObject -, v12 layout=L0 fields=[1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v14: guard = AllGuards v13
+# CHECK-NEXT: v15: guard = AllGuards v13
+# CHECK-NEXT: v16: L0 = NewObject -, v13 layout=L0 fields=[1] allocationClass=0
+# CHECK-NEXT: Jump -> next b4(v14)
+# CHECK-NEXT: b4(v17: guard):
+# CHECK-NEXT: Jump -> next b5(v15)
+# CHECK-NEXT: b5(v18: guard):
+# CHECK-NEXT: v19: guard = AllGuards v17, v18
+# CHECK-NEXT: PutSlot v13, v19, v16 key="next" receivers=[L0] level=Expected accessSite=4
+# CHECK-NEXT: v21: number|string|bigint ~ number = Add v4, v13
+# CHECK-NEXT: v22: int|whole = Increment v5
+# CHECK-NEXT: Jump -> next b2(v21, v22)
+# CHECK-NEXT: b6(v23: number|string|bigint ~ number, v24: int|whole, v25: anything ~ undefined|null|function|f1, v26: boolean) frequency=Rare:
+# CHECK-NEXT: v27: anything = Call v25, -, v24, v26 calleeName="makeRing" accessSite=5
+# CHECK-NEXT: v28: boolean ~ true = TypeTest v23 testedType=number
+# CHECK-NEXT: Branch v28 -> taken b7(| 0), notTaken b11()
+# CHECK-NEXT: b7(v29: number) frequency=Rare:
+# CHECK-NEXT: v30: boolean = TypeTest v27 testedType=L0
+# CHECK-NEXT: Branch v30 -> taken b8(| 0), notTaken b10()
+# CHECK-NEXT: b8(v31: L0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b9(v29, v24, v31)
+# CHECK-NEXT: b9(v32: number, v33: int|whole, v34: L0) frequency=Unlikely:
+# CHECK-NEXT: v35: number|string|bigint ~ number = Add v32, v34
+# CHECK-NEXT: Jump -> next b14(v35, v33)
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: v36: anything ~ undefined|null|L0 = Upcast v27 castType=anything
+# CHECK-NEXT: v37: number|string|bigint ~ number = Add v23, v36
+# CHECK-NEXT: v38: boolean ~ true = TypeTest v37 testedType=number
+# CHECK-NEXT: Branch v38 -> taken b13(| 0), notTaken b15()
+# CHECK-NEXT: b13(v39: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b14(v39, v24)
+# CHECK-NEXT: b14(v40: number|string|bigint ~ number, v41: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v42: int|whole = Increment v41
+# CHECK-NEXT: Jump -> next b1(v40, v42)
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v43: int|whole = Increment v24
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v45: anything = GetModuleVariable variable=g0
+# CHECK-NEXT: v46: anything ~ undefined|null|function|f1 = Upcast v45 castType=anything
+# CHECK-NEXT: v47: 777 = Integer integer=777
+# CHECK-NEXT: v48: boolean = StrictEq v43, v47
+# CHECK-NEXT: Jump -> next b6(v37, v43, v46, v48)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="replace"
 # CHECK: module=m0 position=1126 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: anything = GetModuleVariable variable=g0
-# CHECK-NEXT: v1: anything ~ undefined|null|function = Upcast v0 castType=anything
+# CHECK-NEXT: v1: anything ~ undefined|null|function|f1 = Upcast v0 castType=anything
 # CHECK-NEXT: v2: L1 = NewObject layout=L1 allocationSite=3 allocationClass=1
 # CHECK-NEXT: v3: Proxy = CallBuiltin -, v1, v2 overload=Proxy/1 builtinCallForm=AnyReceiver accessSite=6
 # CHECK-NEXT: PutModuleVariable v3 variable=g0

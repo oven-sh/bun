@@ -17,7 +17,7 @@ use bun_options_types::aot_options::AotOptions;
 use bun_paths::resolve_path::{self, platform};
 use bun_sema::util::FxHashSet;
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileResult, ExecutableRequest, GraphRequest, target_base_public_path, to_graph_bytes,
+    CompileResult, ExecutableRequest, Flags, GraphRequest, target_base_public_path, to_graph_bytes,
     write_executable,
 };
 use bun_standalone_graph::{
@@ -55,6 +55,11 @@ pub(crate) fn compile_to_executable(
     }
     let bundler = request.bundler.take().expect("one call per request");
     let target = check_request(request)?;
+    // Code from disk finds what it imports as under `bun run`: by the package.json and tsconfig.json files that lie there.
+    if request.options.loads_code_from_disk {
+        let disabled = Flags::DISABLE_AUTOLOAD_PACKAGE_JSON | Flags::DISABLE_AUTOLOAD_TSCONFIG;
+        request.executable.flags.remove(disabled);
+    }
     let _reports_where_it_stops =
         bun_crash_handler::report_stopped_builds(bun_crash_handler::BuildDescribers {
             where_this_thread_stopped: Bun__AOT__describeWhereThisThreadStopped,
@@ -186,6 +191,11 @@ fn write_product(
             is_base_url: alias.is_base_url,
         })
         .collect();
+    let root_below_working_directory = match options.loads_code_from_disk && !options.runs_in_place
+    {
+        true => find_root_below_working_directory(&build.root_directory),
+        false => None,
+    };
     let settings = &mut request.executable;
     let graph = GraphRequest {
         target: settings.target,
@@ -202,6 +212,8 @@ fn write_product(
             entry_points: &entry_points,
             package_names: &package_names,
             path_aliases: &path_aliases,
+            root_below_working_directory: root_below_working_directory.as_deref(),
+            allows_code_from_disk: options.loads_code_from_disk,
             preserves_source_paths: options.runs_in_place,
             symbols: build.engine.symbols(),
         }),
@@ -682,6 +694,19 @@ pub(super) fn asset_output_file(dest: Vec<u8>, bytes: Vec<u8>) -> OutputFile {
         side: Some(options::Side::Client),
         ..OutputFile::zero_value()
     }
+}
+
+/// Where the root directory of the build lies, seen from the working directory: below it, the same folder, or above it.
+/// An executable that is shipped tells nobody the folders of the machine that built it, so a root that lies elsewhere is not written down.
+fn find_root_below_working_directory(root_directory: &[u8]) -> Option<Vec<u8>> {
+    let working_directory = bun_sys::getcwd_alloc().ok()?;
+    let root = resolve_path::relative(
+        working_directory.as_bytes(),
+        trim_trailing_separators(root_directory),
+    );
+    let mut names = root.split(|&byte| bun_paths::is_sep_native(byte));
+    let goes_up = names.next() == Some(b"..");
+    (!goes_up || names.all(|name| name == b"..")).then(|| root.to_vec())
 }
 
 pub(super) fn pair_entry_points<'b>(

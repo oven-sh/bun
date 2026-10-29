@@ -515,6 +515,7 @@ fn errors_and_failures_are_separate_lists() {
         module: file_module(0),
         name: known::default,
         is_known_member: false,
+        is_replaceable: false,
     };
     let graph = ModuleGraph {
         synthetic_exports: vec![synthetic_export],

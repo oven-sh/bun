@@ -514,7 +514,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f19 visibility=Private
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: ""|"four"|"one"|"three"|"two"|"xa"|"xc"|"xz" @LiteralString = RequireObjectCoercible v0 name="slice"
 # CHECK-NEXT: v6: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v7: int[0, 2147483647] @Int32 = GetStringLength v5 @0:2 tail
+# CHECK-NEXT: v7: int[0, 5] @Int32 = GetStringLength v5 @0:2 tail
 # CHECK-NEXT: v8: undefined @Void = StringRange v7, v6 @0:2 tail
 # CHECK-NEXT: v9: int[0, 2147483647] @Int32 = ResultAt v8 @0:2 tail
 # CHECK-NEXT: v10: int[0, 2147483647] @Int32 = ResultAt v8 index=1 @0:2 tail
@@ -580,7 +580,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f19 visibility=Private
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: ""|"four"|"one"|"three"|"two"|"xa"|"xc"|"xz" @LiteralString = RequireObjectCoercible v0 name="slice"
 # CHECK-NEXT: v6: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v7: int[0, 2147483647] @Int32 = GetStringLength v5 @0:1 tail
+# CHECK-NEXT: v7: int[0, 5] @Int32 = GetStringLength v5 @0:1 tail
 # CHECK-NEXT: v8: undefined @Void = StringRange v7, v6 @0:1 tail
 # CHECK-NEXT: v9: int[0, 2147483647] @Int32 = ResultAt v8 @0:1 tail
 # CHECK-NEXT: v10: int[0, 2147483647] @Int32 = ResultAt v8 index=1 @0:1 tail

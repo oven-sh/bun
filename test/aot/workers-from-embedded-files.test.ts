@@ -251,6 +251,22 @@ function serverWithPagesAndItsOwnWorker(count: number) {
   };
 }
 
+// The path of the server's own Worker passes through the helper that the paths of the pages pass through.
+function serverWithPagesAndItsOwnWorkerBehindTheHelper(count: number) {
+  return {
+    ...serverWithPages(count, ""),
+    "main.ts": `
+      import table from "./table.ts";
+      import job from "./job.js" with { type: "file" };
+      const settings: any = JSON.parse(process.env.SETTINGS ?? "{}");
+      function later<T>(value: T): Promise<T> { return new Promise(resolve => setTimeout(() => resolve(value), 0)); }
+      console.log((await Bun.file(await later(table[settings.page ?? "page-1"]!)).text()).trim());
+      const worker = new Worker(await later(job));
+      worker.onmessage = event => { console.log(event.data); worker.terminate(); };
+    `,
+  };
+}
+
 // What a build did: the files of untyped code that it compiled, in all its programs, how often it ran the engine, and which embedded files it says it left out, and where.
 async function countCompiled(folder: string, entryPoint: string) {
   const executable = join(folder, isWindows ? "server.exe" : "server");
@@ -436,12 +452,13 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
   );
 
   test.each([
-    [100, "", { untypedFiles: 0, engineRuns: 1, leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more' }],
+    // The one file is what the program hands to the helper whose answer starts the Worker.
+    [100, "", { untypedFiles: 1, engineRuns: 2, leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more' }],
     // The one file is what `preload` names.
     [100, preload, { untypedFiles: 1, engineRuns: 1, leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more' }],
-    [5, "", { untypedFiles: 0, engineRuns: 1, leftOut: '"page-1.js", "page-2.js", "page-3.js" and 2 more' }],
+    [5, "", { untypedFiles: 1, engineRuns: 2, leftOut: '"page-1.js", "page-2.js", "page-3.js" and 2 more' }],
     // Few enough to try: each is a program of its own, and both numbers see it.
-    [4, "", { untypedFiles: 4, engineRuns: 5, leftOut: undefined }],
+    [4, "", { untypedFiles: 5, engineRuns: 6, leftOut: undefined }],
     // Not worth a second build of the whole program.
     [4, preload, { untypedFiles: 1, engineRuns: 1, leftOut: '"page-1.js", "page-2.js", "page-3.js" and 1 more' }],
   ])(
@@ -469,6 +486,23 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
           engineRuns: 2,
           leftOut: undefined,
           leftOutAt: undefined,
+          stdout: 'document.title = "page-1";\nfrom the job\n',
+          exitCode: 0,
+        });
+      }),
+    timeout,
+  );
+
+  test(
+    "compiles the file that the program hands to a helper whose answer starts a Worker, beside many embedded pages that pass through the helper too",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-worker-from-embedded-file", serverWithPagesAndItsOwnWorkerBehindTheHelper(100));
+        expect(await countCompiled(String(dir), "./main.ts")).toEqual({
+          untypedFiles: 1,
+          engineRuns: 2,
+          leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more',
+          leftOutAt: "main.ts:7:26",
           stdout: 'document.title = "page-1";\nfrom the job\n',
           exitCode: 0,
         });

@@ -779,7 +779,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f69 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
-# CHECK: m0 position=1754 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function site=w51 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w53 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f71 fallback=f72}
+# CHECK: m0 position=1754 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22 site=w51 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w53 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f71 fallback=f72}
 # CHECK-LABEL: function f29 module=
 # CHECK: m0 position=2773 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int|whole site=w66}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():

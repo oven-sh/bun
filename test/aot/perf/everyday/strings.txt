@@ -142,6 +142,16 @@ const text = "a1b22c333d";
 function turn(i: number): number {
   return text.split(/\d+/).length + (i & 1);
 }
+//// split-one-of-four-literals-by-a-pattern
+const texts: string[] = ["one two  three four", "a b c d e f g h", "no-space-at-all", "x  y\tz\nw"];
+function turn(i: number): number {
+  return texts[i & 3]!.split(/\s+/).length;
+}
+//// split-one-of-four-literals-by-a-text
+const texts: string[] = ["one two three four", "a b c d e f g h", "no-space-at-all", "x y z w"];
+function turn(i: number): number {
+  return texts[i & 3]!.split(" ").length;
+}
 //// split-a-pair
 const headers = ["host: example.com", "accept: */*", "x-id: 7", "te: trailers"];
 function turn(i: number): number {
@@ -251,6 +261,26 @@ const inputs = ["10:42", "7:05", "23:59", "nope"];
 function turn(i: number): number {
   const match = /^(\d+):(\d+)$/.exec(inputs[i & 3]!);
   return match ? Number(match[1]) * 60 + Number(match[2]) : -1;
+}
+//// a-lazy-run-from-every-bracket-of-a-long-line
+const lines: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
+function turn(i: number): number {
+  return /\[.+?\]\(#/.test(lines[i & 1]!) ? 1 : 2;
+}
+//// a-greedy-run-from-every-bracket-of-a-long-line
+const lines: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
+function turn(i: number): number {
+  return /\[.*\]\(#/.test(lines[i & 1]!) ? 1 : 2;
+}
+//// four-emulated-atomic-groups-on-a-long-line
+const lines: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
+function turn(i: number): number {
+  return /\[(?=(.+?\]\(#))\1|\[(?=(.+?\]\(!))\2|\[(?=(.+?\]\(%))\3|\[(?=(.+?\]\(&))\4/.test(lines[i & 1]!) ? 1 : 2;
+}
+//// an-emulated-atomic-group-on-ten-lines-of-thirty-links
+const texts: string[] = [("[a](".repeat(30) + "\n").repeat(10), ("[b](".repeat(30) + "\n").repeat(10)];
+function turn(i: number): number {
+  return /\[(?=(.+?\]\(#))\1/.test(texts[i & 1]!) ? 1 : 2;
 }
 //// pattern-named-groups
 const inputs = ["2026-10-23", "1999-01-02"];

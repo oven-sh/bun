@@ -128,6 +128,7 @@ pub(super) struct Plan {
     inner_callbacks: Vec<FnId>,
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
+    is_found_by_name: Vec<bool>,
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     ways_followed_for_their_names: WaysBetweenModuleObjects,
     lets_process_out_of_sight: bool,
@@ -137,6 +138,13 @@ pub(super) struct Plan {
     /// A file stores `__esModule` on what `require` of the module answers.
     is_marker_stored: Vec<bool>,
     is_imported_as_namespace: Vec<bool>,
+    /// `mock.module` names the module.
+    may_be_mocked: Vec<bool>,
+    /// The order numbers no module of the library.
+    mocked_runtime_modules: Vec<RuntimeModule>,
+    may_mock_every_module: bool,
+    /// Ascending. The test runner stores into them.
+    replaced_variables: Vec<Sym>,
     /// The statements that define inner modules, and those of modules that cannot be loaded.
     erased_statements: Vec<(FileId, StmtId)>,
     pub named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
@@ -156,6 +164,7 @@ impl Plan {
             inner_callbacks: inner_modules.map(|inner| inner.1).collect(),
             keeps_module_object: vec![false; order.numbers.len()],
             names_way_to_module_objects: vec![false; order.numbers.len()],
+            is_found_by_name: vec![false; order.numbers.len()],
             ways_not_followed_out_of_sight: WaysBetweenModuleObjects::default(),
             ways_followed_for_their_names: WaysBetweenModuleObjects::default(),
             lets_process_out_of_sight: false,
@@ -163,6 +172,10 @@ impl Plan {
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
             is_imported_as_namespace: vec![false; order.numbers.len()],
+            may_be_mocked: vec![false; order.numbers.len()],
+            mocked_runtime_modules: Vec::new(),
+            may_mock_every_module: false,
+            replaced_variables: Vec::new(),
             order,
             erased_statements,
             named_members: FxHashMap::default(),
@@ -191,6 +204,23 @@ impl Plan {
 
     pub(super) fn set_is_imported_as_namespace(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.is_imported_as_namespace, module);
+    }
+
+    pub(super) fn set_may_be_mocked(&mut self, module: ModuleRef) {
+        match module {
+            ModuleRef::Runtime(module) => self.mocked_runtime_modules.push(module),
+            _ => self.add(|plan| &mut plan.may_be_mocked, module),
+        }
+    }
+
+    pub(super) fn set_every_module_may_be_mocked(&mut self) {
+        self.may_mock_every_module = true;
+    }
+
+    pub(super) fn set_replaced_variables(&mut self, mut variables: Vec<Sym>) {
+        variables.sort_unstable();
+        variables.dedup();
+        self.replaced_variables = variables;
     }
 
     pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
@@ -511,7 +541,7 @@ impl ModuleGraph {
                 .has(&self.plan.order.is_required_during_load, module)
     }
 
-    /// An ES module that the CommonJS file leads to by a `require` imports the file.
+    /// An ES module that the CommonJS file leads to by a `require` or an `import()` imports the file.
     pub fn may_be_imported_while_it_runs(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self
@@ -522,6 +552,21 @@ impl ModuleGraph {
     /// A file has `import * as` of the module.
     pub fn is_imported_as_namespace(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.is_imported_as_namespace, module)
+    }
+
+    pub fn may_be_mocked(&self, module: ModuleRef) -> bool {
+        let plan = &self.plan;
+        plan.may_mock_every_module
+            || match module {
+                ModuleRef::Runtime(module) => plan.mocked_runtime_modules.contains(&module),
+                _ => plan.has(&plan.may_be_mocked, module),
+            }
+    }
+
+    /// Whether the test runner may store another value into the variable, which an ES module exports.
+    pub fn is_replaceable(&self, variable: Sym) -> bool {
+        let replaced = &self.plan.replaced_variables;
+        replaced.binary_search(&variable).is_ok()
     }
 
     /// A later site of a module whose body threw throws the same error again.
@@ -556,6 +601,11 @@ impl ModuleGraph {
     pub fn names_way_to_module_objects(&self, module: ModuleRef) -> bool {
         let plan = &self.plan;
         plan.has(&plan.names_way_to_module_objects, module)
+    }
+
+    /// A load under a name that the build does not follow may find the file.
+    pub fn is_found_by_name(&self, module: ModuleRef) -> bool {
+        self.plan.has(&self.plan.is_found_by_name, module)
     }
 
     pub fn settled(&self, module: ModuleRef, name: Atom) -> bool {
@@ -676,6 +726,10 @@ impl ModuleGraph {
             .add(|plan| &mut plan.names_way_to_module_objects, module);
     }
 
+    pub fn set_is_found_by_name(&mut self, module: ModuleRef) {
+        self.plan.add(|plan| &mut plan.is_found_by_name, module);
+    }
+
     pub fn set_namespace_is_seen(&mut self, module: ModuleRef) {
         self.plan.add(|plan| &mut plan.is_namespace_seen, module);
     }
@@ -694,6 +748,9 @@ impl ModuleGraph {
             }
             if theirs.names_way_to_module_objects(their_module) {
                 self.set_names_way_to_module_objects(module);
+            }
+            if theirs.is_found_by_name(their_module) {
+                self.set_is_found_by_name(module);
             }
             if their_plan.has(&their_plan.is_namespace_seen, their_module) {
                 self.set_namespace_is_seen(module);

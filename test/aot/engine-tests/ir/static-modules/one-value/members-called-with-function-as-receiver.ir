@@ -165,14 +165,14 @@ function f7 module=m1 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f2 module=
-# CHECK: m0 position=42 flags=[IsSloppy, HasThis] thisType={type=undefined|f1} results=[{type=undefined|null|function flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=42 flags=[IsSloppy, HasThis] thisType={type=undefined|f1} results=[{type=undefined|null|function|f1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|f1):
 # CHECK-NEXT: v1: object = ToThis v0
 # CHECK-NEXT: v2: f1|builtin(GlobalThis) = AssumeType v1 provenType=f1|builtin(GlobalThis)
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f3 module=
-# CHECK: m0 position=102 flags=[IsSloppy, HasThis] thisType={type=undefined|f1} results=[{type=undefined|null|function flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=102 flags=[IsSloppy, HasThis] thisType={type=undefined|f1} results=[{type=undefined|null|function|f1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|f1):
 # CHECK-NEXT: v1: object = ToThis v0
 # CHECK-NEXT: v2: f1|builtin(GlobalThis) = AssumeType v1 provenType=f1|builtin(GlobalThis)

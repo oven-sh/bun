@@ -18,6 +18,7 @@ mod module_reach_tests;
 mod paths;
 mod program_reach;
 pub(crate) mod removable;
+mod replaced_exports;
 pub(crate) mod runtime_reach;
 #[cfg(test)]
 mod runtime_reach_tests;
@@ -33,14 +34,15 @@ use self::lower_stage::LoweredRuntimes;
 #[cfg(test)]
 pub(crate) use self::lower_stage::collect_file_inputs;
 #[cfg(test)]
-pub use self::paths::{EntryPointPaths, FolderPaths};
+pub use self::paths::{EntryPointPaths, FolderPaths, RefusedEntryPoints};
 #[cfg(not(test))]
-pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths};
+pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths, RefusedEntryPoints};
 
 use self::import_graph::ImportGraph;
 use self::load_stage::{AssetReads, SharedByLoads};
 use self::module_list::ListedModules;
 use self::program_reach::LeftOutCode;
+use self::replaced_exports::ExportedVariables;
 use self::runtime_reach::{HeldLibraryCode, KnownRegions, loads_modules_by_computed_names};
 use crate::builtins::table::RuntimeFunctionRole;
 use crate::builtins::{
@@ -68,7 +70,8 @@ use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
 use crate::options::{
-    EntryText, LibraryCode, LoadOptions, Options, PathOptions, WaysBetweenModuleObjects,
+    EntryText, LibraryCode, LoadOptions, Options, PathOptions, ReplacedExport,
+    WaysBetweenModuleObjects,
 };
 use crate::report::{ModuleLocator, SourceTexts};
 use crate::statistics::{LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics};
@@ -80,7 +83,7 @@ use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::CodeHost;
 use bun_sema::session::Session;
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::{
     ChosenThreads, CompileRequest, LoadedProgram, ThreadCaches, drop_thread_caches,
     for_each_parallel_in_runs, run_on_one_thread_while,
@@ -133,6 +136,8 @@ pub struct Compilation {
     ways_read_out_of_sight: WaysBetweenModuleObjects,
     /// No program reads them, by the word of the engine, and the front end has followed them because a file names them.
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    /// A spy of the test runner may replace them, by the word of the engine, and they were compiled as exports that keep their values.
+    replaced_exports: Vec<ReplacedExport>,
     /// A program is too large for whole-program analysis, by the word of the engine.
     is_too_large_to_analyze: bool,
     /// The load expected the analysis to stop, and it came to an end, by the word of the engine.
@@ -201,7 +206,7 @@ pub struct BuildFailed {
     pub is_internal_error: bool,
     pub statistics: Statistics,
     pub compilation: Option<Box<Compilation>>,
-    pub refused_entry_points: Option<Vec<u32>>,
+    pub refused_entry_points: Option<RefusedEntryPoints>,
     /// No failure: see `compile_program_at_each_entry_point`.
     pub is_one_program: bool,
     /// No failure yet: see `compile`.
@@ -359,6 +364,8 @@ struct FrontEndOutput {
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     ways_followed_for_their_names: WaysBetweenModuleObjects,
     holds_whole_library_as_guess: bool,
+    /// Of a build that runs tests.
+    exported_variables: ExportedVariables,
 }
 
 impl FrontEndOutput {
@@ -818,6 +825,7 @@ fn find_load_options_with_what_engine_found(
         compiled.reads_main_module_without_its_name,
         compiled.ways_read_out_of_sight,
         compiled.ways_named_that_nobody_reads,
+        &compiled.replaced_exports,
         compiled.is_too_large_to_analyze,
         compiled.holds_whole_library_for_nothing,
     )
@@ -829,6 +837,7 @@ fn find_load_options_with(
     reads_main_module_without_its_name: bool,
     ways_read_out_of_sight: WaysBetweenModuleObjects,
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    replaced_exports: &[ReplacedExport],
     is_too_large_to_analyze: bool,
     holds_whole_library_for_nothing: bool,
 ) -> Option<LoadOptions> {
@@ -853,6 +862,15 @@ fn find_load_options_with(
     {
         let load = load.get_or_insert_with(|| options.load.clone());
         load.reads_main_module_without_its_name = true;
+    }
+    let known = &options.load.replaced_exports;
+    if (replaced_exports.iter()).any(|export| known.binary_search(export).is_err())
+        && !options.aot.checks_only
+    {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.replaced_exports.extend_from_slice(replaced_exports);
+        load.replaced_exports.sort_unstable();
+        load.replaced_exports.dedup();
     }
     if let Some(load) = &mut load {
         load.is_too_large_to_analyze |= is_too_large_to_analyze;
@@ -1117,20 +1135,21 @@ fn add_programs_of_worker_files(
     let mut files = core::mem::take(&mut first.started_workers.files);
     // A file that was followed to one Worker is not a guess, and it has options if any of its Workers has.
     files.shared_sort_by_key(|file| file.is_guess);
-    for index in 0..files.len() {
-        let mut same = files
-            .iter()
-            .filter(|it| it.source_path == files[index].source_path);
-        files[index].has_options = same.any(|it| it.has_options);
+    let with_options = files.iter().filter(|file| file.has_options);
+    let with_options: FxHashSet<Vec<u8>> = with_options.map(|it| it.source_path.clone()).collect();
+    for file in &mut files {
+        file.has_options = with_options.contains(&file.source_path);
     }
+    let are_too_many = splits && are_too_many_programs(&first, &files, left_out);
     let mut pending: VecDeque<WorkerFile> = files.into();
     let mut found: Vec<WorkerFile> = Vec::new();
     let mut texts_not_started: Vec<WorkerFile> = Vec::new();
-    let mut are_one_program = !splits;
+    let mut are_one_program = !splits || are_too_many;
+    // The entry points and `found`.
+    let entry_points = first.summary.entry_points.iter();
+    let mut known: FxHashSet<Vec<u8>> = entry_points.map(|it| it.source_path.clone()).collect();
     while let Some(file) = pending.pop_front() {
-        let mut entry_points = first.summary.entry_points.iter();
-        let is_known = entry_points.any(|it| it.source_path == file.source_path)
-            || found.iter().any(|it| it.source_path == file.source_path);
+        let is_known = known.contains(&file.source_path);
         // A guess is worth one small program, not a second build of everything else.
         let is_guess = file.is_guess;
         let is_named_by_path = file.is_named_by_path;
@@ -1149,6 +1168,7 @@ fn add_programs_of_worker_files(
             first.started_workers.left_out.push(file);
             continue;
         }
+        known.insert(file.source_path.clone());
         found.push(file);
         are_one_program = must_be_one_program;
         if are_one_program {
@@ -1171,7 +1191,10 @@ fn add_programs_of_worker_files(
             Err(_) if is_guess => {
                 log.msgs.truncate(said_before);
                 (log.warnings, log.errors) = counted_before;
-                first.started_workers.left_out.extend(found.pop());
+                first
+                    .started_workers
+                    .left_out
+                    .extend(take_back(&mut found, &mut known));
                 continue;
             }
             Err(failure) if failure.is_one_program => None,
@@ -1189,7 +1212,7 @@ fn add_programs_of_worker_files(
                     ) =>
             {
                 (log.warnings, log.errors) = counted_before;
-                texts_not_started.extend(found.pop());
+                texts_not_started.extend(take_back(&mut found, &mut known));
                 continue;
             }
             Err(failure) if is_named_by_path && fails_to_load(&failure) => {
@@ -1198,7 +1221,7 @@ fn add_programs_of_worker_files(
                 left_out
                     .names
                     .extend(found.last().map(|file| file.source_path.clone()));
-                texts_not_started.extend(found.pop());
+                texts_not_started.extend(take_back(&mut found, &mut known));
                 continue;
             }
             Err(failure) => return Err(failure),
@@ -1216,7 +1239,10 @@ fn add_programs_of_worker_files(
                 first.summary.statistics.add_values(counted);
                 add_program(&mut first, program);
             }
-            _ if is_guess => first.started_workers.left_out.extend(found.pop()),
+            _ if is_guess => first
+                .started_workers
+                .left_out
+                .extend(take_back(&mut found, &mut known)),
             _ => are_one_program = true,
         }
     }
@@ -1235,6 +1261,33 @@ fn add_programs_of_worker_files(
         log_diagnostic_at(&mut left_out.said, Code::WorkerTextNotCompiled, &[], place);
     }
     Ok(Ok(first))
+}
+
+fn take_back(found: &mut Vec<WorkerFile>, known: &mut FxHashSet<Vec<u8>>) -> Option<WorkerFile> {
+    let file = found.pop()?;
+    known.remove(&file.source_path);
+    Some(file)
+}
+
+// Past the limit all are one program. Knowing that ahead saves compiling a program for each file up to the limit and discarding them.
+fn are_too_many_programs(
+    first: &Compilation,
+    files: &[WorkerFile],
+    left_out: &TextsLeftOut,
+) -> bool {
+    let entry_points = source_paths_of(&first.summary.entry_points);
+    let begins_program = |file: &&WorkerFile| {
+        !file.is_guess
+            && !left_out.names.contains(&file.source_path)
+            && !entry_points.contains(&file.source_path[..])
+    };
+    let mut further: Vec<&[u8]> = (files.iter().filter(begins_program))
+        .map(|file| &file.source_path[..])
+        .collect();
+    further.shared_sort_unstable();
+    further.dedup();
+    let most = LimitValues::for_host().get(LimitId::MaxProgramsPerBuild);
+    (entry_points.len() + further.len()) as u64 > most
 }
 
 // A Worker that gets the path of such a file fails to load, so the build says where that can happen.
@@ -1275,6 +1328,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     first.reads_main_module_without_its_name |= program.reads_main_module_without_its_name;
     (first.ways_read_out_of_sight).add(program.ways_read_out_of_sight);
     (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
+    first.replaced_exports.extend(program.replaced_exports);
     first.is_too_large_to_analyze |= program.is_too_large_to_analyze;
     first.holds_whole_library_for_nothing |= program.holds_whole_library_for_nothing;
 }
@@ -1288,12 +1342,10 @@ fn compile_written_entry_points(
     if !begins_program_at_each_entry_point(options) {
         return compile_program(options, ProgramPlace::Only, known, provider, log);
     }
-    // They are one program whatever the files say, so nothing is loaded to find that out.
+    // They are one program whatever the files say, so nothing is loaded to find that out. The load of the one program says whether
+    // the count alone has joined them.
     if has_more_entry_points_than_programs(options) {
-        let mut compiled = compile_program(options, ProgramPlace::Only, known, provider, log)?;
-        let statistics = &mut compiled.summary.statistics;
-        statistics.gave_up(LimitId::MaxProgramsPerBuild, None);
-        return Ok(compiled);
+        return compile_program(options, ProgramPlace::Only, known, provider, log);
     }
     let said_before = (log.msgs.len(), log.warnings, log.errors);
     if let Some(compiled) = compile_program_at_each_entry_point(options, provider, log) {
@@ -1381,6 +1433,7 @@ fn compile_program_at_each_entry_point(
                             program.ways_read_out_of_sight = WaysBetweenModuleObjects::default();
                             program.ways_named_that_nobody_reads =
                                 WaysBetweenModuleObjects::default();
+                            program.replaced_exports = Vec::new();
                             programs[index] = Some(program);
                         }
                     }
@@ -1626,6 +1679,7 @@ fn compile_programs<'a>(
         let ways_not_followed = output.ways_not_followed_out_of_sight;
         let ways_followed = output.ways_followed_for_their_names;
         let holds_whole_library = output.holds_whole_library_as_guess;
+        let exported_variables = &output.exported_variables;
         // All of it was asked for, so what is still lacked is not to be had.
         let find_lacked = |found: FlowFindings<'_>| match holds_whole_library {
             true => RuntimeUses::default(),
@@ -1645,6 +1699,7 @@ fn compile_programs<'a>(
                 reads_main_module,
                 ways,
                 nobody_reads,
+                &exported_variables.find_replaced(found),
                 is_too_large,
                 holds_whole_library && !has_followed_nothing(found),
             );
@@ -1674,6 +1729,10 @@ fn compile_programs<'a>(
     started_workers.writes_preload = compiled.iter().any(|it| it.2.writes_preload);
     let mut reported: Vec<WorkerFile> = Vec::new();
     for (_, engine, output) in &compiled {
+        // The search for the code of Workers begins where the constructor is named.
+        if !engine.worker_starts_without_name().is_empty() {
+            started_workers.code = CodeOfWorkers::Unseen;
+        }
         let mut locator = ModuleLocator::new(&output.texts);
         for record in engine.worker_entries() {
             let path = engine.text(record.path);
@@ -1748,11 +1807,14 @@ fn compile_programs<'a>(
                 engine.flow_findings(),
                 output.ways_followed_for_their_names,
             );
+            let replaced_exports =
+                (output.exported_variables).find_replaced(engine.flow_findings());
             let is_too_large_to_analyze = is_too_large_to_analyze(engine.flow_findings());
             let holds_whole_library_for_nothing = output.holds_whole_library_as_guess
                 && !has_followed_nothing(engine.flow_findings());
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
+                replaced_exports,
                 is_too_large_to_analyze,
                 holds_whole_library_for_nothing,
                 reads_main_module_without_its_name,
@@ -1792,9 +1854,9 @@ fn find_files_of_the_one_program(
     started: &StartedWorkers,
     output: &FrontEndOutput,
 ) -> Vec<WorkerFile> {
-    let files = find_further_worker_files(started, known.left_out, |path| {
-        (output.entry_points.iter()).any(|it| it.source_path == path)
-    });
+    let entry_points = source_paths_of(&output.entry_points);
+    let files =
+        find_further_worker_files(started, known.left_out, |path| entry_points.contains(path));
     let has_options = files.iter().any(|file| file.has_options);
     match joins_workers(known.splits, started) || (output.writes_preload && has_options) {
         true => files,
@@ -1807,6 +1869,11 @@ fn joins_workers(splits: bool, started: &StartedWorkers) -> bool {
     // The host loads node:worker_threads into the global of a Worker of that module. So its program holds the module and the streams, the
     // console and the file system behind it, as does the program that constructs it: on their own each would compile a copy of all that.
     !splits || started.constructs_node_workers
+}
+
+fn source_paths_of(entry_points: &[EntryPointPaths]) -> FxHashSet<&[u8]> {
+    let paths = entry_points.iter().map(|it| &it.source_path[..]);
+    paths.collect()
 }
 
 /// The files that Workers start from and that are no entry points yet.
@@ -1831,7 +1898,7 @@ fn fail(
     stage: Stage,
     diagnostics: Diagnostics,
     statistics: Statistics,
-    refused_entry_points: Option<Vec<u32>>,
+    refused_entry_points: Option<RefusedEntryPoints>,
     log: &mut Log,
 ) -> BuildFailed {
     let is_internal_error = diagnostics.has_internal_errors();
@@ -1908,11 +1975,15 @@ impl<'a> Build<'a> {
         self.checked_elsewhere.clear();
     }
 
-    fn find_refused_entry_points(&self) -> Option<Vec<u32>> {
+    fn find_refused_entry_points(&self) -> Option<RefusedEntryPoints> {
         let paths = self.diagnostics.paths_of_errors()?;
-        self.import_graph
-            .as_ref()?
-            .find_entry_points_that_reach(paths.into_iter())
+        let other_paths = self.diagnostics.paths_of_errors_that_are_no_type_errors();
+        let graph = self.import_graph.as_ref()?;
+        Some(RefusedEntryPoints {
+            refused: graph.find_entry_points_that_reach(paths.into_iter())?,
+            refused_without_types: graph.find_entry_points_that_reach(other_paths.into_iter())?,
+            files_with_type_errors: self.diagnostics.files_with_type_errors(),
+        })
     }
 
     fn run_front_end(&mut self) -> Result<FrontEndOutput, Stage> {

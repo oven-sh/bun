@@ -883,7 +883,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f138 visibility=Private
 # CHECK-NEXT: v31: 0 = Integer
 # CHECK-NEXT: v32: boolean = StrictEq v30, v31
 # CHECK-NEXT: v33: string = Strcat v21
-# CHECK-NEXT: v34: undefined|null|function = Call v0, -, v32, v33 calleeName="eitherWay" accessSite=8 callees=[f4]
+# CHECK-NEXT: v34: undefined|null|function|f24|f25 = Call v0, -, v32, v33 calleeName="eitherWay" accessSite=8 callees=[f4]
 # CHECK-NEXT: v35: f23 = AssumeType v34 provenType=f23
 # CHECK-NEXT: Jump -> next b5(v35)
 # CHECK-NEXT: b5(v36: f23):

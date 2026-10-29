@@ -88,6 +88,14 @@ pub(super) struct FileImports {
     /// The calls of `require` of which only this counts: the module has run. `true`: whatever becomes of the names of the module.
     pub unread_sites: Vec<(ExprId, bool)>,
     pub required_names: Vec<RequiredName>,
+    /// The variables behind the exports that `spyOn(ns, "name")` names.
+    pub replaced_variables: Vec<Sym>,
+    /// The same for a name that the loader fills: of a module of the library, or of a CommonJS file.
+    pub replaced_names: Vec<(ModuleRef, Atom)>,
+    /// The modules that `mock.module(specifier, ..)` names.
+    pub mocked_modules: Vec<ModuleRef>,
+    /// `mock.module` is called with a specifier that the build does not know.
+    pub mocks_any_module: bool,
     pub failures: Vec<PendingFailure>,
 }
 
@@ -116,6 +124,7 @@ pub(super) fn bind_imports(
         order,
         sites,
         marker,
+        mocked: find_mocked_modules(input, scans, modules),
     };
     let compiled_files = modules.compiled_files.iter();
     let mut slots: Vec<(FileId, Option<FileImports>)> =
@@ -209,6 +218,44 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) order: &'a EvaluationOrder,
     pub(super) sites: &'a PlannedSites,
     pub(super) marker: FindMarker<'a>,
+    mocked: MockedModules,
+}
+
+#[derive(Default)]
+struct MockedModules {
+    modules: FxHashSet<ModuleRef>,
+    is_every_module: bool,
+}
+
+impl MockedModules {
+    fn contains(&self, module: ModuleRef) -> bool {
+        self.is_every_module || self.modules.contains(&module)
+    }
+}
+
+// A file is bound without a look at the others, any of which may hold the mock.
+fn find_mocked_modules(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+) -> MockedModules {
+    let mut mocked = MockedModules::default();
+    for &file in &modules.compiled_files {
+        let sites = input.files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scans.of(file).sites) {
+            match (site.kind, answer) {
+                (ImportSiteKind::MockModule(_), &ScannedSite::Module(module)) => {
+                    mocked.modules.insert(module);
+                }
+                (
+                    ImportSiteKind::MockModule(_),
+                    ScannedSite::AllModules | ScannedSite::Candidates(_),
+                ) => mocked.is_every_module = true,
+                _ => {}
+            }
+        }
+    }
+    mocked
 }
 
 pub(super) enum ImportedItem {
@@ -292,6 +339,7 @@ impl<'a, 's> FileBinder<'a, 's> {
         }
         self.bind_jsx_imports();
         self.bind_namespace_members();
+        self.collect_mocked_modules();
         let bindings = &mut self.imports.bindings;
         bindings.shared_sort_by_key(|&(symbol, _)| symbol);
         bindings.dedup_by_key(|&mut (symbol, _)| symbol);
@@ -383,7 +431,9 @@ impl<'a, 's> FileBinder<'a, 's> {
         let interop = context.modules.interop(exporter);
         let names = &context.tables.commonjs;
         let is_half_at_link = names.is_half(exporter) && context.order.half_at_link(exporter);
+        // A mock replaces `module.exports`, and leaves the default import what it was.
         interop.kind == ModuleKind::CommonJs
+            && !context.mocked.contains(exporter)
             && context.order.is_code_of_program(exporter)
             && match (context.marker)(exporter) {
                 Some(false) => true,
@@ -481,8 +531,14 @@ impl<'a, 's> FileBinder<'a, 's> {
             }
             Resolution::RuntimeMember { module, name } => {
                 let (names, platform) = (context.builtin_names, context.platform);
-                let is_direct_import = exporter == ModuleRef::Runtime(module);
-                bind_runtime_member(names, module, name, platform, is_direct_import)
+                let import = if context.mocked.contains(ModuleRef::Runtime(module)) {
+                    Import::OfMocked
+                } else if exporter == ModuleRef::Runtime(module) {
+                    Import::Direct
+                } else {
+                    Import::ThroughAnotherModule
+                };
+                bind_runtime_member(names, module, name, platform, import)
                     .map_err(|()| not_found)?
             }
             Resolution::Synthetic { module, name } => PendingBinding::Synthetic { module, name },
@@ -701,14 +757,27 @@ fn is_property_that_a_store_replaces(member: BuiltinId) -> bool {
     entry.module.is_none() && entry.holder.is_some() && entry.mutability != Mutability::AlwaysLocked
 }
 
+#[derive(Copy, Clone, PartialEq)]
+enum Import {
+    Direct,
+    ThroughAnotherModule,
+    /// A mock may stand under any name of the module, so each is read from a variable that the loader fills.
+    OfMocked,
+}
+
 fn bind_runtime_member(
     names: &BuiltinNames,
     module: RuntimeModule,
     name: Atom,
     platform: Platforms,
-    is_direct_import: bool,
+    import: Import,
 ) -> Result<PendingBinding, ()> {
     let binding = match find_module_export(names, module, name, platform) {
+        ModuleExport::Absent => return Err(()),
+        _ if import == Import::OfMocked => {
+            let module = ModuleRef::Runtime(module);
+            return Ok(PendingBinding::Synthetic { module, name });
+        }
         ModuleExport::Found(member)
             if name != known::default && is_property_that_a_store_replaces(member) =>
         {
@@ -720,10 +789,9 @@ fn bind_runtime_member(
             });
         }
         ModuleExport::Found(member) => ImportBinding::Builtin(member),
-        ModuleExport::PropertyOfNamespace(holder) if is_direct_import => {
+        ModuleExport::PropertyOfNamespace(holder) if import == Import::Direct => {
             ImportBinding::BuiltinMember { holder, name }
         }
-        ModuleExport::Absent => return Err(()),
         ModuleExport::PropertyOfNamespace(_)
         | ModuleExport::Unknown
         | ModuleExport::HeldByNamespace => {

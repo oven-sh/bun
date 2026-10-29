@@ -270,24 +270,32 @@ function mergeValueRuns<T>(from: T[], to: T[], low: number, middle: number, end:
   for (let k = first; k < high; k = (k + 1) | 0) $putContiguousIndex(from, k, $getContiguousIndex<T>(to, k));
 }
 
+// The compiler copies the functions that a comparator passes through for that comparator, so those are kept short:
+// what needs no comparator, and what only long arrays need, stands in functions of its own.
 function sortValues<T>(from: T[], count: number, comparator: unknown): void {
   const extendRunCutoff = 8;
-  const minGallopThreshold = 7;
-  const runStackLength = 72;
   if (count < extendRunCutoff) {
     insertionSortValues<T>(from, 0, 0, count, comparator);
     return;
   }
+  // A short array is one run once its first run is found.
+  const end = findValueRun<T>(from, 0, count, comparator);
+  if (end + 1 < count) mergeFurtherValueRuns<T>(from, count, end, comparator);
+}
+
+function mergeFurtherValueRuns<T>(from: T[], count: number, endOfFirstRun: number, comparator: unknown): void {
+  const minGallopThreshold = 7;
+  const runStackLength = 72;
   let to: T[] = from;
   let depth = 0;
   let previousBegin = 0;
-  let previousEnd = 0;
-  for (let begin = 0; ;) {
+  let previousEnd = endOfFirstRun;
+  for (let begin = (endOfFirstRun + 1) | 0; ;) {
     let end = begin;
     let power = -1;
     if (begin < count) {
       end = findValueRun<T>(from, begin, count, comparator);
-      if (begin > 0) power = computeRunPower(previousBegin, begin, end, count);
+      power = computeRunPower(previousBegin, begin, end, count);
     }
     while (depth > 0) {
       const powerBelow: number = $getContiguousIndex<number>(to, count + depth * 2 - 1);
@@ -298,16 +306,14 @@ function sortValues<T>(from: T[], count: number, comparator: unknown): void {
       previousBegin = low;
     }
     if (begin >= count) return;
-    if (begin > 0) {
-      if (to === from) {
-        // The scratch array holds the merged elements, then the stack of pending runs, then minGallop.
-        to = $newContiguousArray<T>(count + runStackLength + 1);
-        $putContiguousIndex(to, count + runStackLength, minGallopThreshold);
-      }
-      $putContiguousIndex(to, count + depth * 2, previousBegin);
-      $putContiguousIndex(to, count + depth * 2 + 1, power);
-      depth = (depth + 1) | 0;
+    if (to === from) {
+      // The scratch array holds the merged elements, then the stack of pending runs, then minGallop.
+      to = $newContiguousArray<T>(count + runStackLength + 1);
+      $putContiguousIndex(to, count + runStackLength, minGallopThreshold);
     }
+    $putContiguousIndex(to, count + depth * 2, previousBegin);
+    $putContiguousIndex(to, count + depth * 2 + 1, power);
+    depth = (depth + 1) | 0;
     previousBegin = begin;
     previousEnd = end;
     begin = (end + 1) | 0;
@@ -450,22 +456,27 @@ function mergeDoubleRuns(
 
 function sortDoubles(from: number[], count: number, comparator: unknown): void {
   const extendRunCutoff = 8;
-  const minGallopThreshold = 7;
-  const runStackLength = 72;
   if (count < extendRunCutoff) {
     insertionSortDoubles(from, 0, 0, count, comparator);
     return;
   }
+  const end = findDoubleRun(from, 0, count, comparator);
+  if (end + 1 < count) mergeFurtherDoubleRuns(from, count, end, comparator);
+}
+
+function mergeFurtherDoubleRuns(from: number[], count: number, endOfFirstRun: number, comparator: unknown): void {
+  const minGallopThreshold = 7;
+  const runStackLength = 72;
   let to: number[] = from;
   let depth = 0;
   let previousBegin = 0;
-  let previousEnd = 0;
-  for (let begin = 0; ;) {
+  let previousEnd = endOfFirstRun;
+  for (let begin = (endOfFirstRun + 1) | 0; ;) {
     let end = begin;
     let power = -1;
     if (begin < count) {
       end = findDoubleRun(from, begin, count, comparator);
-      if (begin > 0) power = computeRunPower(previousBegin, begin, end, count);
+      power = computeRunPower(previousBegin, begin, end, count);
     }
     while (depth > 0) {
       const powerBelow: number = $getDoubleIndex(to, count + depth * 2 - 1);
@@ -476,20 +487,28 @@ function sortDoubles(from: number[], count: number, comparator: unknown): void {
       previousBegin = low;
     }
     if (begin >= count) return;
-    if (begin > 0) {
-      if (to === from) {
-        // The scratch array holds the merged elements, then the stack of pending runs, then minGallop.
-        to = $newDoubleArray(count + runStackLength + 1);
-        $putDoubleIndex(to, count + runStackLength, minGallopThreshold);
-      }
-      $putDoubleIndex(to, count + depth * 2, previousBegin);
-      $putDoubleIndex(to, count + depth * 2 + 1, power);
-      depth = (depth + 1) | 0;
+    if (to === from) {
+      // The scratch array holds the merged elements, then the stack of pending runs, then minGallop.
+      to = $newDoubleArray(count + runStackLength + 1);
+      $putDoubleIndex(to, count + runStackLength, minGallopThreshold);
     }
+    $putDoubleIndex(to, count + depth * 2, previousBegin);
+    $putDoubleIndex(to, count + depth * 2 + 1, power);
+    depth = (depth + 1) | 0;
     previousBegin = begin;
     previousEnd = end;
     begin = (end + 1) | 0;
   }
+}
+
+// From the first store that the program's array refused on.
+function putRestOfSortedDoubles<T>(array: T[], length: number, from: number[], count: number, index: number): void {
+  for (; index < count; index++) {
+    const value: number = $getDoubleIndex(from, index);
+    const isStored: boolean = $tryPutIndex(array, index, value);
+    if (!isStored) array[index] = value as unknown as T;
+  }
+  for (; index < length; index++) delete array[index];
 }
 
 function sortDoubleArray<T>(array: T[], length: number, comparator: unknown): void {
@@ -508,24 +527,51 @@ function sortDoubleArray<T>(array: T[], length: number, comparator: unknown): vo
     const first: number = $getDoubleIndex(from, 0);
     const isFirstStored: boolean = $tryPutIndex(array, 0, first);
     if (!isFirstStored) array[0] = first as unknown as T;
-    // $putDoubleIndex is for arrays that this file made. The program's array may refuse a store: the last loop stores the rest.
+    // $putDoubleIndex is for arrays that this file made. The program's array may refuse a store.
     for (index = 1; index < count; index++) {
       const isStored: boolean = $tryPutDoubleIndex(array, index, $getDoubleIndex(from, index));
       if (!isStored) break;
     }
   }
-  for (; index < count; index++) {
-    const value: number = $getDoubleIndex(from, index);
-    const isStored: boolean = $tryPutIndex(array, index, value);
-    if (!isStored) array[index] = value as unknown as T;
-  }
-  for (; index < length; index++) delete array[index];
+  if (index < length) putRestOfSortedDoubles<T>(array, length, from, count, index);
 }
 
-function copyToContiguousArray<T>(values: T[], count: number): T[] {
-  const copy: T[] = $newContiguousArray<T>(count);
-  for (let index = 0; index < count; index++) $putContiguousIndex(copy, index, values[index]);
-  return copy;
+// What an array of another kind holds but for holes and undefined, and behind that how many values these are and how often undefined was met.
+function takeDefinedValuesOneByOne<T>(array: T[], length: number): T[] {
+  const from: T[] = $newContiguousArray<T>(length + 2);
+  let count = 0;
+  let undefinedCount = 0;
+  for (let index = 0; index < length; index++) {
+    if (!(index in array)) continue;
+    const value = array[index];
+    if (value === undefined) {
+      undefinedCount++;
+      continue;
+    }
+    $putContiguousIndex(from, count, value);
+    count = (count + 1) | 0;
+  }
+  $putContiguousIndex(from, length, count);
+  $putContiguousIndex(from, length + 1, undefinedCount);
+  return from;
+}
+
+// From the first store that the program's array refused on, then undefined as often as it was met, then holes.
+function putRestOfSortedValues<T>(
+  array: T[],
+  length: number,
+  from: T[],
+  count: number,
+  index: number,
+  undefinedCount: number,
+): void {
+  for (; index < count; index++) {
+    const value = $getContiguousIndex<T>(from, index);
+    const isStored: boolean = $tryPutIndex(array, index, value);
+    if (!isStored) array[index] = value;
+  }
+  for (; undefinedCount > 0 && index < length; undefinedCount--, index++) array[index] = undefined as unknown as T;
+  for (; index < length; index++) delete array[index];
 }
 
 export function sort<T>(this: T[], comparator: unknown): T[] {
@@ -543,36 +589,28 @@ export function sort<T>(this: T[], comparator: unknown): T[] {
   if (isContiguousArray(this)) {
     from = $newContiguousArray<T>(length);
     for (let index = 0; index < length; index++) {
-      const has: boolean = $hasContiguousIndex(this, index);
-      if (!has) continue;
       const value = $getContiguousIndex<T>(this, index);
       if (value === undefined) {
-        undefinedCount++;
+        // A hole reads as undefined too.
+        const has: boolean = $hasContiguousIndex(this, index);
+        if (has) undefinedCount++;
         continue;
       }
       $putContiguousIndex(from, count, value);
       count = (count + 1) | 0;
     }
   } else {
-    const defined: T[] = [];
-    for (let index = 0; index < length; index++) {
-      if (!(index in this)) continue;
-      const value = this[index];
-      if (value === undefined) undefinedCount++;
-      else defined.push(value);
-    }
-    count = defined.length;
-    from = copyToContiguousArray<T>(defined, count);
+    from = takeDefinedValuesOneByOne<T>(this, length);
+    count = $getContiguousIndex<number>(from, length) | 0;
+    undefinedCount = $getContiguousIndex<number>(from, length + 1) | 0;
   }
   sortValues<T>(from, count, comparator);
   let index = 0;
   for (; index < count; index++) {
-    const value = $getContiguousIndex<T>(from, index);
-    const isStored: boolean = $tryPutIndex(this, index, value);
-    if (!isStored) this[index] = value;
+    const isStored: boolean = $tryPutIndex(this, index, $getContiguousIndex<T>(from, index));
+    if (!isStored) break;
   }
-  for (; undefinedCount > 0 && index < length; undefinedCount--, index++) this[index] = undefined as unknown as T;
-  for (; index < length; index++) delete this[index];
+  if (index < length) putRestOfSortedValues<T>(this, length, from, count, index, undefinedCount);
   return this;
 }
 

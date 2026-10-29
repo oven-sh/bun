@@ -1007,7 +1007,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="toString"
-# CHECK: module=m0 position=1904 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1904 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function|f35 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="SetterRuns"
 # CHECK: module=m0 position=2004 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L7 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 inlineFrames=[{}, {callee=f36 callPosition=1998 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
@@ -1038,7 +1038,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L0 = GetModuleVariable variable=g7
 # CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: never = Call v1, v0 calleeKey="toString" calleeName="hidesToString.toString" accessSite=33 callees=[builtin(ObjectPrototypeToString)]
+# CHECK-NEXT: v2: never = Call v1, v0 calleeKey="toString" calleeName="hidesToString.toString" accessSite=33 callees=[builtin(ObjectPrototypeToString)] @837 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
@@ -1081,7 +1081,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: v0: L2 = NewObject layout=L2 allocationClass=2
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: "x" = String string="x"
-# CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="hasOwnProperty" calleeName="hasOwnProperty" accessSite=43 callees=[builtin(ObjectPrototypeHasOwnProperty)]
+# CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="hasOwnProperty" calleeName="hasOwnProperty" accessSite=43 callees=[builtin(ObjectPrototypeHasOwnProperty)] @1125 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
@@ -1090,7 +1090,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: v0: L3 = NewObject layout=L3 allocationClass=3
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: L11 = NewObject layout=L11 allocationSite=43 allocationClass=10
-# CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="isPrototypeOf" calleeName="isPrototypeOf" accessSite=46 callees=[builtin(ObjectPrototypeIsPrototypeOf)]
+# CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="isPrototypeOf" calleeName="isPrototypeOf" accessSite=46 callees=[builtin(ObjectPrototypeIsPrototypeOf)] @1207 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f26 module=
@@ -1099,7 +1099,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: v0: L4 = NewObject layout=L4 allocationClass=4
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: "x" = String string="x"
-# CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="propertyIsEnumerable" calleeName="propertyIsEnumerable" accessSite=49 callees=[builtin(ObjectPrototypePropertyIsEnumerable)]
+# CHECK-NEXT: v3: never = Call v1, v0, v2 calleeKey="propertyIsEnumerable" calleeName="propertyIsEnumerable" accessSite=49 callees=[builtin(ObjectPrototypePropertyIsEnumerable)] @1301 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 module=
@@ -1107,7 +1107,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L5 = NewObject layout=L5 allocationClass=5
 # CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: never = Call v1, v0 calleeKey="toLocaleString" calleeName="toLocaleString" accessSite=52 callees=[builtin(ObjectPrototypeToLocaleString)]
+# CHECK-NEXT: v2: never = Call v1, v0 calleeKey="toLocaleString" calleeName="toLocaleString" accessSite=52 callees=[builtin(ObjectPrototypeToLocaleString)] @1391 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=

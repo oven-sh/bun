@@ -336,7 +336,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f19 visibility=Private
 # CHECK-NEXT: v50: undefined|null|Array<undefined|null|string> = GetSlot v16, v40 key="tags" receivers=[L0] level=Expected accessSite=11
 # CHECK-NEXT: v51: undefined|null|Array<1|"x", proven, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1|"x", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v52: undefined|null|L2 = GetSlot v16, v40 key="owner" receivers=[L0] level=Expected accessSite=12
-# CHECK-NEXT: v53: anything ~ undefined|null|function = GetSlot v16, v40 key="run" receivers=[L0] level=Expected accessSite=13
+# CHECK-NEXT: v53: anything ~ undefined|null|function|f5 = GetSlot v16, v40 key="run" receivers=[L0] level=Expected accessSite=13
 # CHECK-NEXT: v54: undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|f5|Array<1, proven, pristine[Storage, Names, Dense]> ~ undefined|null|f4|f5 = AssumeType v53 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|f5|Array<1, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v55: anything ~ undefined|null|string = GetSlotOrUndefined v16 key="note" receivers=[L0] level=Proven accessSite=14
 # CHECK-NEXT: v56: undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1, proven, pristine[Storage, Names, Dense]> ~ undefined|null|"text" = AssumeType v55 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1, proven, pristine[Storage, Names, Dense]>
@@ -365,7 +365,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f19 visibility=Private
 # CHECK-NEXT: v74: undefined|null|Array<undefined|null|string> = GetSlot v16, v65 key="tags" receivers=[L0] level=Expected accessSite=11
 # CHECK-NEXT: v75: undefined|null|Array<1|"x", proven, pristine[Storage, Names, Dense]> = AssumeType v74 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1|"x", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v76: undefined|null|L2 = GetSlot v16, v65 key="owner" receivers=[L0] level=Expected accessSite=12
-# CHECK-NEXT: v77: anything ~ undefined|null|function = GetSlot v16, v65 key="run" receivers=[L0] level=Expected accessSite=13
+# CHECK-NEXT: v77: anything ~ undefined|null|function|f5 = GetSlot v16, v65 key="run" receivers=[L0] level=Expected accessSite=13
 # CHECK-NEXT: v78: undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|f5|Array<1, proven, pristine[Storage, Names, Dense]> ~ undefined|null|f4|f5 = AssumeType v77 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|f5|Array<1, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v79: anything ~ undefined|null|string = GetSlotOrUndefined v16 key="note" receivers=[L0] level=Proven accessSite=14
 # CHECK-NEXT: v80: undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1, proven, pristine[Storage, Names, Dense]> ~ undefined|null|"text" = AssumeType v79 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1, proven, pristine[Storage, Names, Dense]>
@@ -388,7 +388,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f19 visibility=Private
 # CHECK-NEXT: v94: undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1|"x", proven, pristine[Storage, Names, Dense]> ~ undefined|null|Array<1|"x", proven, pristine[Storage, Names, Dense]> = AssumeType v93 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1|"x", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v95: anything ~ undefined|null|L2 = PropGet v16 key="owner" accessSite=12 receivers=[L0]
 # CHECK-NEXT: v96: undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|L2|f4|Array<1, proven, pristine[Storage, Names, Dense]> ~ undefined|null|L2 = AssumeType v95 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|L2|f4|Array<1, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v97: anything ~ undefined|null|function = PropGet v16 key="run" accessSite=13 receivers=[L0]
+# CHECK-NEXT: v97: anything ~ undefined|null|function|f5 = PropGet v16 key="run" accessSite=13 receivers=[L0]
 # CHECK-NEXT: v98: undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|f5|Array<1, proven, pristine[Storage, Names, Dense]> ~ undefined|null|f4|f5 = AssumeType v97 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|f5|Array<1, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v99: anything ~ undefined|null|string = GetSlotOrUndefined v16 key="note" receivers=[L0] level=Proven accessSite=14
 # CHECK-NEXT: v100: undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1, proven, pristine[Storage, Names, Dense]> ~ undefined|null|"text" = AssumeType v99 provenType=undefined|null|true|number|bigint|"text"|symbol("s")@m0:4|L1|f4|Array<1, proven, pristine[Storage, Names, Dense]>

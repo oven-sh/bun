@@ -32,6 +32,7 @@ export default b.declarations(
   ]),
   marked("HoldsLoader", [
     "%ModuleRequire%.cache",
+    "%ModuleRequirePrototype%.cache",
     "node:module._cache",
     "%ModuleObject%.require",
     "node:module.prototype.require",

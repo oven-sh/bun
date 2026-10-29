@@ -126,6 +126,7 @@ fn create_module(names: &Names) -> Module {
             name: names.text,
             variable: None,
             is_known_member: true,
+            is_replaceable: false,
         }],
         required_names: vec![RequiredName {
             module: MODULE,

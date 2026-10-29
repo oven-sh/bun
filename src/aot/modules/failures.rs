@@ -77,9 +77,10 @@ impl ModuleFailure {
         match self.kind {
             ModuleFailureKind::Unresolved { .. } => match site_form(self.site) {
                 SiteForm::Declaration => FailureEffect::StopsBuild,
-                SiteForm::Load | SiteForm::Resolve | SiteForm::GetBuiltinModule => {
-                    FailureEffect::ThrowsAtSite
-                }
+                SiteForm::Load
+                | SiteForm::Resolve
+                | SiteForm::GetBuiltinModule
+                | SiteForm::Mock => FailureEffect::ThrowsAtSite,
             },
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: true,

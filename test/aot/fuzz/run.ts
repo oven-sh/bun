@@ -19,7 +19,7 @@
 //
 // What is generated
 //   --sources a,b:8       only these sources (default: all). A number is a weight: b is used eight times as often as a
-//   --programs-root <folder>   the stored programs that `mutation` and `stored-programs` use (default ../parallel)
+//   --programs-root <folder>   the stored programs that `mutation` and the `stored-programs` sources use (default ../parallel)
 //   --single-file         by default every second program is also generated as <source>-multi-file: its top-level declarations move into up to four
 //                         more files that import each other. --sources and --replay accept that name too. A finding in such a program is first tried
 //                         as a single file; if it needs the files, the reducer removes files first, then lines

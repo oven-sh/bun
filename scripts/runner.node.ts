@@ -37,6 +37,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { ownTemporaryFolder } from "../test/aot/harness/temporary-folders.ts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
@@ -498,6 +499,8 @@ const aotTestsThatFeedNothingNew = [
   "aot/trim-keeps-functions-handed-on",
   "aot/trim-report-",
   "aot/later-awaits-avoid-runtime",
+  // The driver compiles the same programs there.
+  "aot/counts-pinned-by-programs",
 ];
 // The engine's shell, its test program and its tests are packed beside Bun and are as large as Bun. They stay packed in a shard
 // that has none of the tests that start them. A test that starts them and is not listed fails in CI and names this list.
@@ -505,6 +508,7 @@ const aotTestsThatStartToolsOfTheEngine = [
   "aot/engine",
   "aot/cli/library-types",
   "aot/code-addresses-have-names",
+  "aot/counts-pinned-by-programs",
   "aot/generated-code-of-module-bodies",
   "aot/library-ticks",
   "aot/programs-that-died-in-the-shell-on-one-platform",
@@ -1023,7 +1027,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
     const verdicts = new Map<string, AotVerdict>();
     const started = new Set<string>();
     const byPath = new Map(files.map(testPath => [join(testsPath, testPath), testPath]));
-    const folder = mkdtempSync(join(tmpdir(), "aot-programs-"));
+    const folder = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "aot-programs-")));
     const list = join(folder, "files.txt");
     writeFileSync(list, [...byPath.keys()].join("\n") + "\n");
     let unfinishedLine = "";
@@ -2506,7 +2510,7 @@ async function spawnBun(
   { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }: SpawnBunOptions,
 ): Promise<SpawnBunResult> {
   const path = getCombinedPath(execPath);
-  const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
+  const tmpdirPath = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "buntmp-")));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
   const bunEnv: SpawnEnv = {
@@ -3362,7 +3366,7 @@ function filesAtOnce(testPath: string) {
  * dealt one by one, every shard would compile it for its few.
  */
 function getBuildsOfAotPrograms(execPath: string, testsPath: string, programs: string[]) {
-  const folder = mkdtempSync(join(tmpdir(), "aot-programs-"));
+  const folder = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "aot-programs-")));
   try {
     const byPath = new Map(programs.map(testPath => [join(testsPath, testPath), testPath]));
     writeFileSync(join(folder, "files.txt"), [...byPath.keys()].join("\n") + "\n");
@@ -3618,7 +3622,7 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
   // The disk is the bottleneck of a shard's first minute, and an archive is read once: it stays in memory where it can.
   let archives = releasePath;
   try {
-    if (isLinux) archives = mkdtempSync("/dev/shm/bun-archives-");
+    if (isLinux) archives = ownTemporaryFolder(mkdtempSync("/dev/shm/bun-archives-"));
   } catch {}
 
   let unpackedStripped: Promise<string | undefined> | undefined;

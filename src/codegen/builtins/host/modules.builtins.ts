@@ -39,6 +39,13 @@ const resolvesFromModule = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
+// The receiver stands where the bound form has the module object: a Module._resolveFilename that the program has replaced is called with it.
+const resolvesFromReceiver = {
+  ...resolvesFromModule,
+  this: b.any,
+  uses: { ...resolvesFromModule.uses, this: [b.everything] },
+} satisfies b.FunctionField;
+
 const resolvesFromImportMeta = (specifier: b.TableType) =>
   ({
     this: b.any,
@@ -73,6 +80,18 @@ const changesOnItsOwn = { mutability: "ChangesOnItsOwn" } satisfies b.EntryColum
 
 const constantUnlessWritten = { mutability: "ConstantUnlessWritten" } satisfies b.EntryColumns;
 
+// A require function finds these three on the object above it. The table lists them under both.
+const inheritedByRequire = {
+  cache: b.property(moduleCache, changesOnItsOwn),
+  main: {
+    getter: b.union(moduleObject, b.undefined),
+    capability: "js",
+    uses: { this: b.inspected },
+    implementation: b.generic,
+  },
+  extensions: b.property(moduleExtensions, changesOnItsOwn),
+} satisfies Record<string, b.Field>;
+
 // INIT_NATIVE_MODULE (src/jsc/modules/_NativeModule.h) makes the object that require() answers with constructEmptyObject.
 const objectsMadeByNativeModuleMacro: readonly b.BuiltinPath[] = [
   "bun:jsc",
@@ -86,22 +105,16 @@ const objectsMadeByNativeModuleMacro: readonly b.BuiltinPath[] = [
 export default b.declarations(
   b.namespace("%ModuleCache%", {}),
   b.namespace("%ModuleExtensions%", {}),
-  b.namespace(
-    "%ModuleRequire%",
-    {
-      resolve: resolvesFromModule,
-      cache: b.property(moduleCache, changesOnItsOwn),
-      main: {
-        getter: b.union(moduleObject, b.undefined),
-        capability: "js",
-        uses: { this: b.inspected },
-        implementation: b.generic,
-      },
-      extensions: b.property(moduleExtensions, changesOnItsOwn),
-    },
-    { scope: "Module" },
-  ),
+  b.namespace("%ModuleRequire%", { resolve: resolvesFromModule, ...inheritedByRequire }, { scope: "Module" }),
   b.fn("%ModuleRequire%", loadsModule),
+  // RequireFunctionPrototype in src/jsc/bindings/JSCommonJSModule.cpp.
+  b.namespace(
+    "%ModuleRequirePrototype%",
+    { resolve: resolvesFromReceiver, ...inheritedByRequire },
+    { listsAllMembers: true },
+  ),
+  b.inherits("%ModuleRequirePrototype%", "Function.prototype"),
+  b.inherits("%ModuleRequire%", "%ModuleRequirePrototype%"),
   b.namespace(
     "%ModuleObject%",
     {

@@ -121,6 +121,7 @@ fn commonjs_member_gets_a_synthetic_export() {
             module: program.module("c.cjs"),
             name: program.atom("x"),
             is_known_member: true,
+            is_replaceable: false,
         };
         assert_eq!(program.graph.synthetic_exports(), [expected]);
         assert_eq!(id, SyntheticExportId(0));

@@ -55,14 +55,28 @@ sentry-cli sourcemaps upload --org my-org --project my-project dist
 
 If the process crashes, Bun prints a report to stderr. It ends with the functions of your program that were running, innermost first, with file, line and column. The `Build ID:` line matches the ID that `bun compile` printed when you built it. Please [open an issue](https://github.com/oven-sh/bun/issues) with the report.
 
+## Run your tests compiled
+
+```bash terminal icon="terminal"
+bun test --aot
+```
+
+`bun test --aot` compiles your test files, your preloads and everything they import the way `bun compile` does, in one build, and runs the compiled code. Every [difference from `bun run`](/compiler/compatibility) shows up in your tests as it would in the executable.
+
+- `--isolate`, `--parallel` and `--rerun-each` work as in `bun test`. Each test file gets a new global object and fresh modules. With `--rerun-each`, so does each run of a file.
+- `spyOn()` on a module's exports and `mock.module()` work. `spyOn()` on a [read-only member of a built-in object](/compiler/compatibility#built-in-objects-are-read-only) throws a `TypeError` that names the member.
+- Type errors are printed as warnings and stop nothing, as in `bun test`. A file that has one is compiled without its types: it still works, but runs slower. `bun compile` stops at the same errors.
+- A test file that can't be compiled, for example because an import doesn't resolve, fails. The other files run.
+- `process.platform`, `process.arch` and `process.versions.bun` are read when the code runs, so a test can redefine them. In an executable they are constants.
+- `--watch`, `--hot` and `--inspect` exit with an error. `--coverage` is ignored, with a warning.
+
 ## Run under the compiler's rules
 
 ```bash terminal icon="terminal"
 bun run --aot ./app.ts
-bun test --aot
 ```
 
-Both commands check your program the way `bun compile` does, and exit with code `1` on anything that would stop the build. Then they run it from its source files with the JIT, with [built-in objects read-only](/compiler/compatibility#built-in-objects-are-read-only) as in an executable. Mocks, `--watch`, `--inspect` and `--coverage` work. The other [differences from `bun run`](/compiler/compatibility) don't show up, because the code that runs isn't compiled. To see those, build the executable and run it.
+`bun run --aot` checks your program the way `bun compile` does, and exits with code `1` on anything that would stop the build. Then it runs the program from its source files with the JIT, with [built-in objects read-only](/compiler/compatibility#built-in-objects-are-read-only) as in an executable. `--watch` and `--inspect` work. The other [differences from `bun run`](/compiler/compatibility) don't show up, because the code that runs isn't compiled. To see those, run your tests with `bun test --aot`, or build the executable and run it.
 
 ## Find the guards that fail
 

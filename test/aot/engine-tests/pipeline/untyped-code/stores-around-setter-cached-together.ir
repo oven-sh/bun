@@ -57,10 +57,9 @@ module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js
 module m2 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
 module m3 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
 module m4 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m4)
-module m5 path="/$bun/js/engine/IteratorOperations.ts" displayPath="/$bun/js/engine/IteratorOperations.ts" flags=[IsLibrary] namespaceLayout=L(m5)
-module m6 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m6)
-module m7 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m7)
-module m8 path="/$bun/js/prelude/array-traversal.ts" displayPath="/$bun/js/prelude/array-traversal.ts" flags=[IsLibrary] namespaceLayout=L(m8)
+module m5 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m5)
+module m6 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m6)
+module m7 path="/$bun/js/prelude/array-traversal.ts" displayPath="/$bun/js/prelude/array-traversal.ts" flags=[IsLibrary] namespaceLayout=L(m7)
 entry module=m0
 typesite w0 module=m2 position=5386 kind=Variable
 typesite w1 module=m2 position=5634 kind=Variable
@@ -68,86 +67,86 @@ typesite w2 module=m3 position=973 kind=Variable
 typesite w3 module=m3 position=270 kind=Variable
 typesite w4 module=m3 position=309 kind=Variable
 typesite w5 module=m3 position=1007 kind=Variable
-typesite w6 module=m8 position=743 kind=Parameter
-typesite w7 module=m8 position=761 kind=Parameter
-typesite w8 module=m8 position=720 kind=Result
-typesite w9 module=m8 position=980 kind=Parameter
-typesite w10 module=m8 position=996 kind=Parameter
-typesite w11 module=m8 position=1263 kind=Parameter
-typesite w12 module=m8 position=1279 kind=Parameter
-typesite w13 module=m8 position=1242 kind=Result
-typesite w14 module=m8 position=1819 kind=Result
-typesite w15 module=m8 position=1954 kind=Parameter
-typesite w16 module=m8 position=1968 kind=Parameter
-typesite w17 module=m8 position=1987 kind=Parameter
-typesite w18 module=m8 position=2007 kind=Parameter
-typesite w19 module=m8 position=1934 kind=Result
-typesite w20 module=m8 position=2138 kind=Parameter
-typesite w21 module=m8 position=2370 kind=Parameter
-typesite w22 module=m8 position=2390 kind=Parameter
-typesite w23 module=m8 position=2407 kind=Parameter
-typesite w24 module=m8 position=2434 kind=Parameter
-typesite w25 module=m8 position=2451 kind=Parameter
-typesite w26 module=m8 position=819 kind=Variable
-typesite w27 module=m8 position=1046 kind=Variable
-typesite w28 module=m8 position=1326 kind=Variable
-typesite w29 module=m8 position=1526 kind=Variable
-typesite w30 module=m8 position=1396 kind=PropertyRead
-typesite w31 module=m8 position=1544 kind=PropertyRead
-typesite w32 module=m8 position=1570 kind=Variable
-typesite w33 module=m8 position=1664 kind=PropertyRead
-typesite w34 module=m8 position=2513 kind=Variable
-typesite w35 module=m8 position=2534 kind=Variable
-typesite w36 module=m8 position=2558 kind=Variable
-typesite w37 module=m8 position=2580 kind=Variable
-typesite w38 module=m8 position=2603 kind=Variable
-typesite w39 module=m8 position=2627 kind=Variable
-typesite w40 module=m8 position=2650 kind=Variable
-typesite w41 module=m8 position=2671 kind=Variable
-typesite w42 module=m8 position=2693 kind=Variable
-typesite w43 module=m8 position=2714 kind=Variable
-typesite w44 module=m8 position=2740 kind=Variable
-typesite w45 module=m8 position=2761 kind=Variable
-typesite w46 module=m8 position=2785 kind=Variable
-typesite w47 module=m8 position=2807 kind=Variable
-typesite w48 module=m8 position=2829 kind=Variable
-typesite w49 module=m8 position=2857 kind=Variable
-typesite w50 module=m8 position=2886 kind=Variable
-typesite w51 module=m8 position=2914 kind=Variable
-typesite w52 module=m8 position=2949 kind=Variable
-typesite w53 module=m8 position=2980 kind=Variable
-typesite w54 module=m8 position=3015 kind=Variable
-typesite w55 module=m8 position=3073 kind=Variable
-typesite w56 module=m8 position=3133 kind=Variable
-typesite w57 module=m8 position=3191 kind=Variable
-typesite w58 module=m8 position=3292 kind=Variable
-typesite w59 module=m8 position=3509 kind=Variable
-typesite w60 module=m8 position=3573 kind=Variable
-typesite w61 module=m8 position=3645 kind=Variable
-typesite w62 module=m8 position=3714 kind=Variable
-typesite w63 module=m8 position=3737 kind=Variable
-typesite w64 module=m8 position=3761 kind=Variable
-typesite w65 module=m8 position=3784 kind=Variable
-typesite w66 module=m8 position=3832 kind=Variable
-typesite w67 module=m8 position=3900 kind=Variable
-typesite w68 module=m8 position=3917 kind=Variable
-typesite w69 module=m8 position=4489 kind=Variable
-typesite w70 module=m8 position=7097 kind=Variable
-typesite w71 module=m8 position=3487 kind=PropertyRead
-typesite w72 module=m8 position=3535 kind=CallResult
-typesite w73 module=m8 position=3609 kind=CallResult
-typesite w74 module=m8 position=4581 kind=Variable
-typesite w75 module=m8 position=5811 kind=Variable
-typesite w76 module=m8 position=6914 kind=Assertion
-typesite w77 module=m8 position=6938 kind=CallResult
-typesite w78 module=m8 position=6980 kind=CallResult
-typesite w79 module=m8 position=7575 kind=Assertion
-typesite w80 module=m8 position=7547 kind=CallResult
+typesite w6 module=m7 position=743 kind=Parameter
+typesite w7 module=m7 position=761 kind=Parameter
+typesite w8 module=m7 position=720 kind=Result
+typesite w9 module=m7 position=980 kind=Parameter
+typesite w10 module=m7 position=996 kind=Parameter
+typesite w11 module=m7 position=1263 kind=Parameter
+typesite w12 module=m7 position=1279 kind=Parameter
+typesite w13 module=m7 position=1242 kind=Result
+typesite w14 module=m7 position=1819 kind=Result
+typesite w15 module=m7 position=1954 kind=Parameter
+typesite w16 module=m7 position=1968 kind=Parameter
+typesite w17 module=m7 position=1987 kind=Parameter
+typesite w18 module=m7 position=2007 kind=Parameter
+typesite w19 module=m7 position=1934 kind=Result
+typesite w20 module=m7 position=2138 kind=Parameter
+typesite w21 module=m7 position=2370 kind=Parameter
+typesite w22 module=m7 position=2390 kind=Parameter
+typesite w23 module=m7 position=2407 kind=Parameter
+typesite w24 module=m7 position=2434 kind=Parameter
+typesite w25 module=m7 position=2451 kind=Parameter
+typesite w26 module=m7 position=819 kind=Variable
+typesite w27 module=m7 position=1046 kind=Variable
+typesite w28 module=m7 position=1326 kind=Variable
+typesite w29 module=m7 position=1526 kind=Variable
+typesite w30 module=m7 position=1396 kind=PropertyRead
+typesite w31 module=m7 position=1544 kind=PropertyRead
+typesite w32 module=m7 position=1570 kind=Variable
+typesite w33 module=m7 position=1664 kind=PropertyRead
+typesite w34 module=m7 position=2513 kind=Variable
+typesite w35 module=m7 position=2534 kind=Variable
+typesite w36 module=m7 position=2558 kind=Variable
+typesite w37 module=m7 position=2580 kind=Variable
+typesite w38 module=m7 position=2603 kind=Variable
+typesite w39 module=m7 position=2627 kind=Variable
+typesite w40 module=m7 position=2650 kind=Variable
+typesite w41 module=m7 position=2671 kind=Variable
+typesite w42 module=m7 position=2693 kind=Variable
+typesite w43 module=m7 position=2714 kind=Variable
+typesite w44 module=m7 position=2740 kind=Variable
+typesite w45 module=m7 position=2761 kind=Variable
+typesite w46 module=m7 position=2785 kind=Variable
+typesite w47 module=m7 position=2807 kind=Variable
+typesite w48 module=m7 position=2829 kind=Variable
+typesite w49 module=m7 position=2857 kind=Variable
+typesite w50 module=m7 position=2886 kind=Variable
+typesite w51 module=m7 position=2914 kind=Variable
+typesite w52 module=m7 position=2949 kind=Variable
+typesite w53 module=m7 position=2980 kind=Variable
+typesite w54 module=m7 position=3015 kind=Variable
+typesite w55 module=m7 position=3073 kind=Variable
+typesite w56 module=m7 position=3133 kind=Variable
+typesite w57 module=m7 position=3191 kind=Variable
+typesite w58 module=m7 position=3292 kind=Variable
+typesite w59 module=m7 position=3509 kind=Variable
+typesite w60 module=m7 position=3573 kind=Variable
+typesite w61 module=m7 position=3645 kind=Variable
+typesite w62 module=m7 position=3714 kind=Variable
+typesite w63 module=m7 position=3737 kind=Variable
+typesite w64 module=m7 position=3761 kind=Variable
+typesite w65 module=m7 position=3784 kind=Variable
+typesite w66 module=m7 position=3832 kind=Variable
+typesite w67 module=m7 position=3900 kind=Variable
+typesite w68 module=m7 position=3917 kind=Variable
+typesite w69 module=m7 position=4489 kind=Variable
+typesite w70 module=m7 position=7097 kind=Variable
+typesite w71 module=m7 position=3487 kind=PropertyRead
+typesite w72 module=m7 position=3535 kind=CallResult
+typesite w73 module=m7 position=3609 kind=CallResult
+typesite w74 module=m7 position=4581 kind=Variable
+typesite w75 module=m7 position=5811 kind=Variable
+typesite w76 module=m7 position=6914 kind=Assertion
+typesite w77 module=m7 position=6938 kind=CallResult
+typesite w78 module=m7 position=6980 kind=CallResult
+typesite w79 module=m7 position=7575 kind=Assertion
+typesite w80 module=m7 position=7547 kind=CallResult
 layout L0 kind=Instance name="Known" module=m0 position=608 constructor=f4 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="c" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="d" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="guarded" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="f" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="g" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=9
 layout L1 kind=Instance name="Unknown" module=m0 position=794 constructor=f5 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="c" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="d" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="veiled" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="f" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="g" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=9
 layout L2 module=m0 position=997 fields=[{key="Known" declared={type=undefined|null|function|f4|f9 flags=[IsExpected]} flags=[IsRequired]}, {key="Unknown" declared={type=undefined|null|function|f5|f10 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
 layout L3 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="get" declared={type=undefined|null|function|f11|f13 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function|f12|f14 flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
-layout L4 module=m7 position=3027 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L4 module=m6 position=3027 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
 data d0 root=Array{contents=anything} module=m3
 data d1 root=Array{contents=anything} module=m3
 variable g0 name="HeirOfKnown" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
@@ -156,12 +155,12 @@ variable g2 name="describe" module=m0 declared={type=f3 flags=[IsFromCompiler]} 
 variable g3 name="count" module=m0 declared={type=anything|absent} flags=[IsImmutable]
 variable g4 name="calls" module=m0 declared={type=number|absent flags=[IsExpected]}
 variable g5 name="library" module=m0 declared={type=undefined|null|absent|L2 flags=[IsExpected]} flags=[IsImmutable]
-variable g6 name="storeInNewArray" module=m8 declared={type=f49 flags=[IsFromCompiler]} initialization=Function function=f49 flags=[IsImmutable]
-variable g7 name="clampToLength" module=m8 declared={type=f48 flags=[IsFromCompiler]} initialization=Function function=f48 flags=[IsImmutable]
-variable g8 name="joinedText" module=m8 declared={type=f51 flags=[IsFromCompiler]} initialization=Function function=f51 flags=[IsImmutable]
-variable g9 name="appendParts" module=m8 declared={type=f50 flags=[IsFromCompiler]} initialization=Function function=f50 flags=[IsImmutable]
-variable g10 name="finishReduce" module=m8 declared={type=f53 flags=[IsFromCompiler]} initialization=Function function=f53 flags=[IsImmutable]
-variable g11 name="finishJoin" module=m8 declared={type=f52 flags=[IsFromCompiler]} initialization=Function function=f52 flags=[IsImmutable]
+variable g6 name="storeInNewArray" module=m7 declared={type=f48 flags=[IsFromCompiler]} initialization=Function function=f48 flags=[IsImmutable]
+variable g7 name="clampToLength" module=m7 declared={type=f47 flags=[IsFromCompiler]} initialization=Function function=f47 flags=[IsImmutable]
+variable g8 name="joinedText" module=m7 declared={type=f50 flags=[IsFromCompiler]} initialization=Function function=f50 flags=[IsImmutable]
+variable g9 name="appendParts" module=m7 declared={type=f49 flags=[IsFromCompiler]} initialization=Function function=f49 flags=[IsImmutable]
+variable g10 name="finishReduce" module=m7 declared={type=f52 flags=[IsFromCompiler]} initialization=Function function=f52 flags=[IsImmutable]
+variable g11 name="finishJoin" module=m7 declared={type=f51 flags=[IsFromCompiler]} initialization=Function function=f51 flags=[IsImmutable]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     Jump -> next b1() @0
@@ -893,40 +892,7 @@ function f42 name="throw" module=m4 position=1077 kind=Method role=Library flags
     v13 = CreateIteratorResult v3, v12 @1489
     Return v13 @1489
 }
-function f43 name="iteratorGenericClose" module=m5 position=314 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorOperationsIteratorGenericClose thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    Jump -> next b1() @314
-  b1():
-    v1 = Undefined @351
-    v2 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]} @405
-    v3 = PropGet v2 key="return" @405
-    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @405
-    v5 = TypeTest v4 testedType=undefined|null @430
-    Branch v5 -> taken b2(| 0), notTaken b4(| 0) @430
-  b2(v6):
-    Jump -> next b3() @430
-  b3():
-    v7 = Undefined @472
-    Return v7 @472
-  b4(v8):
-    Jump -> next b5() @430
-  b5():
-    v9 = Convert v8 declared={type=undefined|null|function flags=[IsExpected]} @499
-    v10 = Call v9, v2 @499
-    v11 = TypeTest v10 testedType=object @489
-    Branch v11 -> taken b6(| 0), notTaken b8(| 0) @489
-  b6(v12):
-    Jump -> next b7() @489
-  b7():
-    v13 = Undefined @538
-    Return v13 @538
-  b8(v14):
-    Jump -> next b9() @489
-  b9():
-    v15 = ThrowNewError errorKind=TypeError message="Iterator result interface is not an object." @538
-    Unreachable @538
-}
-function f44 name="next" module=m6 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f43 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @25
   b1():
@@ -947,14 +913,14 @@ function f44 name="next" module=m6 position=25 kind=Method role=Library flags=[H
     v9 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @111
     Unreachable @111
 }
-function f45 name="return" module=m6 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f44 name="return" module=m5 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @326
   b1():
     v1 = Undefined @326
     v2 = HasJSType v0 first=6 last=6 @382
     v3 = ToBoolean v2 @382
-    Branch v3 -> taken b2(| 0), notTaken b12(| 0) @382
+    Branch v3 -> taken b2(| 0), notTaken b15(| 0) @382
   b2(v4):
     Jump -> next b3() @382
   b3():
@@ -962,7 +928,7 @@ function f45 name="return" module=m6 position=326 kind=Method role=Library flags
     v6 = GetInternalField v5 @492
     v7 = IsGeneratorSuspendedAtStart v6 @571
     v8 = ToBoolean v7 @571
-    Branch v8 -> taken b4(| 0), notTaken b10(| 0) @571
+    Branch v8 -> taken b4(| 0), notTaken b13(| 0) @571
   b4(v9):
     Jump -> next b5() @571
   b5():
@@ -973,32 +939,41 @@ function f45 name="return" module=m6 position=326 kind=Method role=Library flags
     v14 = TypeTest v13 testedType=null @866
     Branch v14 -> taken b6(| 0), notTaken b7(| 0) @866
   b6(v15):
-    Jump -> next b9() @866
+    Jump -> next b12() @866
   b7(v16):
     Jump -> next b8() @866
   b8():
-    v17 = NewClosure function=f43 @903
-    v18 = Call v17, -, v16 @903
-    Jump -> next b9() @903
-  b9():
-    v19 = Undefined @977
-    v20 = Boolean boolean=true @988
-    v21 = Convert v20 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @957
-    v22 = CreateIteratorResult v19, v21 @957
-    Return v22 @957
-  b10(v23):
-    Jump -> next b11() @571
+    v17 = PropGet v16 key="return" @903
+    v18 = TypeTest v17 testedType=undefined|null @903
+    Branch v18 -> taken b9(| 0), notTaken b10(| 0) @903
+  b9(v19):
+    Jump -> next b11() @903
+  b10(v20):
+    v21 = Call v20, v16 @903
+    v22 = RequireObject v21 runtimeError=IteratorResultNotObject @903
+    Jump -> next b11() @903
   b11():
-    v24 = Undefined @674
-    v25 = ResumeGenerator v6, v24 resumeMode=Return @627
-    Return v25 @627
-  b12(v26):
-    Jump -> next b13() @382
-  b13():
-    v27 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @415
+    v23 = Undefined @903
+    Jump -> next b12() @903
+  b12():
+    v24 = Undefined @977
+    v25 = Boolean boolean=true @988
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @957
+    v27 = CreateIteratorResult v24, v26 @957
+    Return v27 @957
+  b13(v28):
+    Jump -> next b14() @571
+  b14():
+    v29 = Undefined @674
+    v30 = ResumeGenerator v6, v29 resumeMode=Return @627
+    Return v30 @627
+  b15(v31):
+    Jump -> next b16() @382
+  b16():
+    v32 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @415
     Unreachable @415
 }
-function f46 name="next" module=m7 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f45 name="next" module=m6 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @1421
   b1():
@@ -1020,7 +995,7 @@ function f46 name="next" module=m7 position=1421 kind=Method role=Library flags=
     v10 = ThrowNewError errorKind=TypeError message="%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object" @1650
     Unreachable @1650
 }
-function f47 name="return" module=m7 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f46 name="return" module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @2171
   b1():
@@ -1057,7 +1032,7 @@ function f47 name="return" module=m7 position=2171 kind=Method role=Library flag
     v19 = ThrowNewError errorKind=TypeError message="%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object" @2403
     Unreachable @2403
 }
-function f48 name="clampToLength" module=m8 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w6}, {type=number site=w7}] results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f47 name="clampToLength" module=m7 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w6}, {type=number site=w7}] results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: number, v1: number):
     Jump -> next b1() @720
   b1():
@@ -1105,7 +1080,7 @@ function f48 name="clampToLength" module=m8 position=720 role=Library flags=[IsC
     v25 = Convert v24 declared={type=number site=w8} @898
     Return v25 @898
 }
-function f49 name="storeInNewArray" module=m8 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w9 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w10}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f48 name="storeInNewArray" module=m7 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w9 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w10}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: anything):
     Jump -> next b1() @955
   b1():
@@ -1126,7 +1101,7 @@ function f49 name="storeInNewArray" module=m8 position=955 role=Library flags=[I
     v11 = Undefined @1125
     Return v11 @1125
 }
-function f50 name="appendParts" module=m8 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w12}, {type=anything}] results=[{type=number site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f49 name="appendParts" module=m7 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w12}, {type=anything}] results=[{type=number site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: anything):
     Jump -> next b1() @1242
   b1():
@@ -1228,7 +1203,7 @@ function f50 name="appendParts" module=m8 position=1242 role=Library flags=[IsCh
     v71 = Convert v70 declared={type=number site=w13} @1493
     Return v71 @1493
 }
-function f51 name="joinedText" module=m8 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f50 name="joinedText" module=m7 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1() @1819
   b1():
@@ -1255,7 +1230,7 @@ function f51 name="joinedText" module=m8 position=1819 role=Library flags=[IsChe
     v10 = Convert v9 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]} @1922
     Return v10 @1922
 }
-function f52 name="finishJoin" module=m8 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w17}, {type=number site=w18}] results=[{type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f51 name="finishJoin" module=m7 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w17}, {type=number site=w18}] results=[{type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|string, v1: undefined|null|string, v2: number, v3: number):
     Jump -> next b1() @1934
   b1():
@@ -1282,7 +1257,7 @@ function f52 name="finishJoin" module=m8 position=1934 role=Library flags=[IsChe
     v16 = Convert v4 declared={type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]} @2107
     Return v16 @2107
 }
-function f53 name="finishReduce" module=m8 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w20}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f52 name="finishReduce" module=m7 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w20}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: boolean, v1: anything):
     Jump -> next b1() @2116
   b1():
@@ -1301,7 +1276,7 @@ function f53 name="finishReduce" module=m8 position=2116 role=Library flags=[IsC
     v8 = Convert v7 declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @2225
     Throw v8 @2284
 }
-function f54 name="traverseArray" module=m8 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w22}, {type=undefined|number site=w23}, {type=number site=w24}, {type=undefined|null|Array site=w25 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f53 name="traverseArray" module=m7 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w22}, {type=undefined|number site=w23}, {type=number site=w24}, {type=undefined|null|Array site=w25 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     Jump -> next b1() @2337
   b1():
@@ -2102,14 +2077,13 @@ runtimefunction id=FunctionPrototypeCall function=f38
 runtimefunction id=ArrayPrototypeMap function=f37
 runtimefunction id=ArrayIteratorPrototypeNext function=f36 visibility=Private
 runtimefunction id=GeneratorPrototypeNext function=f40 visibility=Private
-runtimefunction id=JSIteratorHelperPrototypeNext function=f44 visibility=Private
-runtimefunction id=WrapForValidIteratorPrototypeNext function=f46
+runtimefunction id=JSIteratorHelperPrototypeNext function=f43 visibility=Private
+runtimefunction id=WrapForValidIteratorPrototypeNext function=f45
 runtimefunction id=GeneratorPrototypeReturn function=f41 visibility=Private
-runtimefunction id=JSIteratorHelperPrototypeReturn function=f45
-runtimefunction id=WrapForValidIteratorPrototypeReturn function=f47
+runtimefunction id=JSIteratorHelperPrototypeReturn function=f44
+runtimefunction id=WrapForValidIteratorPrototypeReturn function=f46
 runtimefunction id=GeneratorPrototypeThrow function=f42 visibility=Private
-runtimefunction id=IteratorOperationsIteratorGenericClose function=f43 visibility=Private
-runtimefunction id=ArrayTraversalTraverseArray function=f54 visibility=Private
+runtimefunction id=ArrayTraversalTraverseArray function=f53 visibility=Private
 # -- generated: f0 HeirOfKnown HeirOfUnknown describe Known Unknown prototypeOf f8 Unused get set f15 f16 f17
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -2129,48 +2103,26 @@ runtimefunction id=ArrayTraversalTraverseArray function=f54 visibility=Private
 # CHECK-NEXT: v12: f2 = GetModuleVariable variable=g1
 # CHECK-NEXT: v13: object = CallDirect v12 function=f6 accessSite=10
 # CHECK-NEXT: v14: "[\"veiled\"]" = String string="[\"veiled\"]"
-# CHECK-NEXT: v15: boolean = JSONSourceOpen v14
-# CHECK-NEXT: Branch v15 -> taken b1(| 0), notTaken b5()
-# CHECK-NEXT: b1(v16: guard):
-# CHECK-NEXT: v17: cursor = JSONSourceStart v16
-# CHECK-NEXT: v18: cursor = JSONSkipWhitespace v17
-# CHECK-NEXT: v19: undefined = CallDirect v18 function=f72
-# CHECK-NEXT: v20: int[0, 2] = ResultAt v19
-# CHECK-NEXT: v21: undefined|null|Array<undefined|null|number|string|symbol> = ResultAt v19 index=1
-# CHECK-NEXT: v22: cursor = ResultAt v19 index=2
-# CHECK-NEXT: Switch v20 cases=[1] -> case b2(), otherwise b4()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v23: boolean = JSONSourceClose v16, v22
-# CHECK-NEXT: Branch v23 -> taken b3(), notTaken b5()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v24: null|Array<undefined|null|number|string|symbol> = AssumeType v21 provenType=null|boolean|number|string|object
-# CHECK-NEXT: Jump -> next b6(v24)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v16
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: v27: null|boolean|number|string|object = CallBuiltin -, v14, v26 overload=JSONParse/0 accessSite=12
-# CHECK-NEXT: Jump -> next b6(v27)
-# CHECK-NEXT: b6(v28: null|boolean|number|string|object ~ null|Array<undefined|null|number|string|symbol>):
-# CHECK-NEXT: v29: null|boolean|number|string|object ~ null|Array<undefined|null|number|string|symbol> = Upcast v28 castType=anything
-# CHECK-NEXT: v30: 0 = Integer
-# CHECK-NEXT: v31: anything ~ undefined|null|number|string|symbol = ElemGet v29, v30 accessSite=13 [keyIsIntegral]
-# CHECK-NEXT: v32: f13 = NewClosure function=f13 allocationSite=11
-# CHECK-NEXT: v33: f14 = NewClosure function=f14 allocationSite=13
-# CHECK-NEXT: v34: L3 = NewObject -, v32, v33 layout=L3 fields=[2, 3] allocationSite=12 allocationClass=3
-# CHECK-NEXT: v35: L3 = FinishObject v34
-# CHECK-NEXT: v36: string|symbol = ToPropertyKey v31 calledBuiltin=ObjectDefineProperty
-# CHECK-NEXT: v37: object = CallBuiltin -, v13, v36, v35 overload=ObjectDefineProperty/0 accessSite=16
-# CHECK-NEXT: v38: f15 = NewClosure function=f15 allocationSite=14 storage=Frame
-# CHECK-NEXT: v39: anything ~ number = CallDirect v38 function=f77 accessSite=17
-# CHECK-NEXT: v40: f16 = NewClosure function=f16 allocationSite=15 storage=Frame
-# CHECK-NEXT: v41: anything ~ number = CallDirect v40 function=f77 accessSite=18
-# CHECK-NEXT: v42: int|whole = GetModuleVariable variable=g4
-# CHECK-NEXT: v43: "the stores around the setter were learnt together" = String string="the stores around the setter were learnt together"
-# CHECK-NEXT: v44: undefined = CallBuiltin -, v42, v43 overload=ConsoleLog/0 accessSite=21
-# CHECK-NEXT: v45: undefined = Undefined
-# CHECK-NEXT: Return v45
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: null|boolean|number|string|object = CallBuiltin -, v14, v15 overload=JSONParse/0 accessSite=12
+# CHECK-NEXT: v17: null|boolean|number|string|object ~ null|Array<undefined|null|number|string|symbol> = Upcast v16 castType=anything
+# CHECK-NEXT: v18: 0 = Integer
+# CHECK-NEXT: v19: anything ~ undefined|null|number|string|symbol = ElemGet v17, v18 accessSite=13 [keyIsIntegral]
+# CHECK-NEXT: v20: f13 = NewClosure function=f13 allocationSite=11
+# CHECK-NEXT: v21: f14 = NewClosure function=f14 allocationSite=13
+# CHECK-NEXT: v22: L3 = NewObject -, v20, v21 layout=L3 fields=[2, 3] allocationSite=12 allocationClass=3
+# CHECK-NEXT: v23: L3 = FinishObject v22
+# CHECK-NEXT: v24: string|symbol = ToPropertyKey v19 calledBuiltin=ObjectDefineProperty
+# CHECK-NEXT: v25: object = CallBuiltin -, v13, v24, v23 overload=ObjectDefineProperty/0 accessSite=16
+# CHECK-NEXT: v26: f15 = NewClosure function=f15 allocationSite=14 storage=Frame
+# CHECK-NEXT: v27: anything ~ number = CallDirect v26 function=f74 accessSite=17
+# CHECK-NEXT: v28: f16 = NewClosure function=f16 allocationSite=15 storage=Frame
+# CHECK-NEXT: v29: anything ~ number = CallDirect v28 function=f74 accessSite=18
+# CHECK-NEXT: v30: int|whole = GetModuleVariable variable=g4
+# CHECK-NEXT: v31: "the stores around the setter were learnt together" = String string="the stores around the setter were learnt together"
+# CHECK-NEXT: v32: undefined = CallBuiltin -, v30, v31 overload=ConsoleLog/0 accessSite=21
+# CHECK-NEXT: v33: undefined = Undefined
+# CHECK-NEXT: Return v33
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HeirOfKnown"
 # CHECK: module=m0 position=1111 flags=[HasThis, HasExplicitName] length=1 thisType={type=object} parameters=[{type=int[0, 1]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f9 callPosition=1155 calleeIsPredicted=true module=m0}] {
@@ -2179,7 +2131,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f54 visibility=Private
 # CHECK-NEXT: v3: boolean = TypeTest v2 testedType=absent
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v4: L2 = CallDirect function=f56
+# CHECK-NEXT: v4: L2 = CallDirect function=f55
 # CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v5: fact = Specified
@@ -2203,7 +2155,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f54 visibility=Private
 # CHECK-NEXT: v3: boolean = TypeTest v2 testedType=absent
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v4: L2 = CallDirect function=f56
+# CHECK-NEXT: v4: L2 = CallDirect function=f55
 # CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v5: fact = Specified
@@ -2482,7 +2434,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f54 visibility=Private
 # CHECK-NEXT: v6: boolean = TypeTest v5 testedType=absent
 # CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v7: L2 = CallDirect function=f56
+# CHECK-NEXT: v7: L2 = CallDirect function=f55
 # CHECK-NEXT: Jump -> next b3(v7)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v8: fact = Specified
@@ -2508,7 +2460,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f54 visibility=Private
 # CHECK-NEXT: v6: boolean = TypeTest v5 testedType=absent
 # CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v7: L2 = CallDirect function=f56
+# CHECK-NEXT: v7: L2 = CallDirect function=f55
 # CHECK-NEXT: Jump -> next b3(v7)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v8: fact = Specified
@@ -2526,7 +2478,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f54 visibility=Private
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Known"
-# CHECK: module=m0 position=608 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers constructEntrypoint=f74} inlineFrames=[{}, {callee=f4 callPosition=608 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=608 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers constructEntrypoint=f71} inlineFrames=[{}, {callee=f4 callPosition=608 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything):
 # CHECK-NEXT: v3: undefined|int = AssumeType v2 provenType=undefined|int
 # CHECK-NEXT: v4: anything ~ L0 = Upcast v1 castType=anything @608 tail
@@ -2564,7 +2516,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f54 visibility=Private
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Unknown"
-# CHECK: module=m0 position=794 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f5}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers constructEntrypoint=f76} inlineFrames=[{}, {callee=f5 callPosition=794 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=794 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f5}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers constructEntrypoint=f73} inlineFrames=[{}, {callee=f5 callPosition=794 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f5, v1: anything, v2: anything):
 # CHECK-NEXT: v3: undefined|int = AssumeType v2 provenType=undefined|int
 # CHECK-NEXT: v4: anything ~ L1 = Upcast v1 castType=anything @794 tail

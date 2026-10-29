@@ -43,37 +43,25 @@ async function bunTest(cwd: string, ...flags: string[]) {
   return { output: stdout + stderr, exitCode };
 }
 
-test.skipIf(!!unsupported)(
-  "bun test --aot names every refused change to a locked built-in, where it was made and which file ran",
-  async () => {
-    using dir = tempDir("aot-refused-changes", files);
-    const { output, exitCode } = await bunTest(String(dir), "--aot");
-    const lines = output.split("\n");
-    const heading = lines.findIndex(line => line.includes("read-only built-ins"));
-    expect(lines[heading]).toBe(
-      "5 writes to read-only built-ins failed during this run, caught or not. Code that continued after one may have left its work half done:",
-    );
-    expect(lines.slice(heading + 1, heading + 6)).toEqual([
-      expect.stringMatching(
-        /^  Cannot assign to Headers\.prototype\.set, at a-patches\.test\.js:5:\d+, while a-patches\.test\.js ran$/,
-      ),
-      expect.stringMatching(
-        /^  Cannot assign to Array\.prototype\.push, at a-patches\.test\.js:20:\d+, while a-patches\.test\.js ran$/,
-      ),
-      expect.stringMatching(
-        /^  Cannot delete Headers\.prototype\.append, at a-patches\.test\.js:15:\d+, while a-patches\.test\.js ran$/,
-      ),
-      expect.stringMatching(
-        /^  Cannot change the prototype of Request\.prototype, at a-patches\.test\.js:16:\d+, while a-patches\.test\.js ran$/,
-      ),
-      expect.stringMatching(
-        /^  Cannot assign to URL\.prototype\.toString, at b-later\.test\.js:4:\d+, while b-later\.test\.js ran$/,
-      ),
-    ]);
-    expect(output).toContain(" 4 pass");
-    expect(exitCode).toBe(0);
-  },
-);
+test.skipIf(!!unsupported)("bun test --aot warns of every write to a read-only built-in when it builds", async () => {
+  using dir = tempDir("aot-refused-changes", files);
+  const { output, exitCode } = await bunTest(String(dir), "--aot");
+  const lines = output.split("\n");
+  const places = lines.flatMap((line, index) =>
+    line.startsWith("warn: TS100014: this assignment throws if it runs")
+      ? [lines[index + 1].replace(/^.*[\\/]/, "")]
+      : [],
+  );
+  expect(places.map(place => place.replace(/:\d+$/, ""))).toEqual([
+    "a-patches.test.js:5",
+    "a-patches.test.js:15",
+    "a-patches.test.js:16",
+    "a-patches.test.js:20",
+    "b-later.test.js:4",
+  ]);
+  expect(output).toContain(" 4 pass");
+  expect(exitCode).toBe(0);
+});
 
 test.skipIf(!!unsupported)("a run in which nothing is refused says nothing", async () => {
   using dir = tempDir("aot-nothing-refused", {

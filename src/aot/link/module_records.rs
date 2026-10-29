@@ -10,7 +10,7 @@ use super::state::{
 };
 use super::unit::LinkUnit;
 use super::{LinkProject, key_context};
-use crate::builtins::table;
+use crate::builtins::{RuntimeModule, table};
 use crate::ir::generated::{
     self, ModuleExportKind, ModuleFlags, RuntimeFunctionEntry, WebAssemblyModule,
 };
@@ -18,10 +18,11 @@ use crate::ir::{FunctionId, Id, ModuleId, StringId, StringTable, VariableId, Var
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
 use crate::modules::{
-    self, ExportBinding, ExportLookup, Interop, ModuleFailureKind, ModuleKind, ModuleRef,
-    compare_code_units,
+    self, ExportBinding, ExportLookup, ImportBinding, Interop, ModuleFailureKind, ModuleKind,
+    ModuleRef, compare_code_units,
 };
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Interner, known};
+use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::SharedSort;
 use rustc_hash::FxHashMap;
@@ -98,6 +99,7 @@ struct MergedSyntheticExport {
     name: Atom,
     merged_variable: u32,
     is_known_member: bool,
+    is_replaceable: bool,
 }
 
 fn collect_synthetic_exports(input: &RecordInput<'_, '_>) -> Vec<Vec<MergedSyntheticExport>> {
@@ -108,11 +110,13 @@ fn collect_synthetic_exports(input: &RecordInput<'_, '_>) -> Vec<Vec<MergedSynth
                 module,
                 name,
                 is_known_member,
+                is_replaceable,
                 writer: ExportWriter::Loader | ExportWriter::Face | ExportWriter::Capture,
             }) => exports[module as usize].push(MergedSyntheticExport {
                 name,
                 merged_variable: merged_variable as u32,
                 is_known_member,
+                is_replaceable,
             }),
             Some(
                 VariableDefinition::SyntheticExport {
@@ -182,6 +186,7 @@ impl RecordBuilder<'_, '_, '_> {
                     let mut record = create_record(Interop::RUNTIME, path, path);
                     record.runtime_module = Some(runtime_module);
                     record.synthetic_exports = self.build_synthetic_exports(index);
+                    record.flags |= self.flags_of_runtime_module(Some(runtime_module));
                     record
                 }
                 ProgramModule::External {
@@ -278,6 +283,7 @@ impl RecordBuilder<'_, '_, '_> {
             }
             ModuleKind::RuntimeSource => {
                 record.runtime_module = graph.runtime_module(file.file);
+                record.flags |= self.flags_of_runtime_module(record.runtime_module);
                 record.synthetic_exports = self.build_synthetic_exports(index);
                 // Native code asks for a module by its number. Only a name that the build does not know is looked up among the modules.
                 if !self.is_named_at_run_time[index as usize] {
@@ -332,6 +338,17 @@ impl RecordBuilder<'_, '_, '_> {
         record
     }
 
+    // The application says what it does to a module of the library.
+    fn flags_of_runtime_module(&self, module: Option<RuntimeModule>) -> ModuleFlags {
+        let graph = self.input.projects.get(ProjectId::Application).graph;
+        match module {
+            Some(module) if graph.may_be_mocked(ModuleRef::Runtime(module)) => {
+                ModuleFlags::MAY_BE_MOCKED
+            }
+            Some(_) | None => ModuleFlags::default(),
+        }
+    }
+
     fn planned_flags(&self, project: ProjectId, module: ModuleRef) -> ModuleFlags {
         let graph = self.input.projects.get(project).graph;
         let mut flags = ModuleFlags::default();
@@ -350,8 +367,14 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.is_imported_as_namespace(module) {
             flags |= ModuleFlags::IS_IMPORTED_AS_NAMESPACE;
         }
+        if graph.may_be_mocked(module) {
+            flags |= ModuleFlags::MAY_BE_MOCKED;
+        }
         if graph.names_way_to_module_objects(module) {
             flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
+        }
+        if graph.is_found_by_name(module) {
+            flags |= ModuleFlags::IS_FOUND_BY_NAME;
         }
         flags
     }
@@ -407,6 +430,35 @@ impl RecordBuilder<'_, '_, '_> {
                 specifier: (required.asked_by).map(|it| self.intern_atom(it.specifier)),
             })
             .collect();
+        // The loader may be left with an empty record of such a file, which lacks even `default`.
+        let mut faces_asked_for_default: Vec<FileId> = graph
+            .import_bindings(file)
+            .iter()
+            .filter_map(|&(_, binding)| match binding {
+                ImportBinding::Synthetic(export) => {
+                    let export = graph.synthetic_export(export);
+                    (export.name == known::default).then_some(export.module)
+                }
+                ImportBinding::Exports { module } => Some(module),
+                _ => None,
+            })
+            .filter(|&exporter| graph.may_be_imported_while_it_runs(exporter))
+            .filter_map(|exporter| match graph.face(exporter) {
+                Some(ModuleRef::Face(face)) => Some(face),
+                _ => None,
+            })
+            .collect();
+        faces_asked_for_default.sort_unstable();
+        faces_asked_for_default.dedup();
+        for face in faces_asked_for_default {
+            record.required_names.push(generated::RequiredName {
+                module: input.id_of(project, ModuleRef::Face(face)),
+                name: self.intern_atom(known::default),
+                may_be_absent: false,
+                export_name: None,
+                specifier: None,
+            });
+        }
     }
 
     // A name of an ES module of the other project is bound here, where both export tables are at hand.
@@ -479,13 +531,14 @@ impl RecordBuilder<'_, '_, '_> {
         let mut records = Vec::with_capacity(exports.len());
         for export in exports {
             let variable = self.input.numbering.variables[export.merged_variable as usize];
-            if export.is_known_member && variable.is_none() {
+            if export.is_known_member && variable.is_none() && !export.is_replaceable {
                 continue;
             }
             records.push(generated::SyntheticExport {
                 name: self.intern_atom(export.name),
                 variable,
                 is_known_member: export.is_known_member,
+                is_replaceable: export.is_replaceable,
             });
         }
         records

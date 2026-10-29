@@ -18,6 +18,7 @@ use super::compile_command::{
 use crate::cli::command::{Context, ContextData};
 
 static IS_FROM_DESCRIPTOR: AtomicBool = AtomicBool::new(false);
+static GRAPH_DESCRIPTOR: OnceLock<Fd> = OnceLock::new();
 static IS_CHECKED: AtomicBool = AtomicBool::new(false);
 static REFUSED_FILES: OnceLock<Vec<Box<[u8]>>> = OnceLock::new();
 static FILES_OF_CHECK: OnceLock<Vec<Box<[u8]>>> = OnceLock::new();
@@ -99,8 +100,10 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         })));
     }
 
-    let independent_files = entry_points[..independent_count].to_vec();
-    ctx.args.entry_points = entry_points;
+    let mut entry_points = entry_points;
+    let mut independent_count = independent_count;
+    let mut refused_files = Vec::new();
+    let defines = ctx.args.define.clone();
     ctx.bundler_options.compile = true;
     ctx.bundler_options.inline_entrypoint_import_meta_main = true;
     ctx.bundler_options.outfile = Box::from(&b"program"[..]);
@@ -109,40 +112,87 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         true => CompileProduct::ReportsOnly,
         false => CompileProduct::GraphBytes,
     };
-    let outcome = match compile_from_context(&mut *ctx, product) {
-        Err(error) => {
-            print_log(ctx.log_ref());
-            Output::err_generic("{}", (BStr::new(error.name()),));
-            exit_or_wait_for_change(watched)
-        }
-        Ok(Err(failure)) => match list_refused_files(&failure, &independent_files) {
-            Some(refused_files) => {
+    let outcome = loop {
+        ctx.args.entry_points.clone_from(&entry_points);
+        let failure = match compile_from_context(&mut *ctx, product) {
+            Err(error) => {
                 print_log(ctx.log_ref());
-                let check_result = write_check_result(&refused_files, watched);
-                let handover = Handover {
-                    flag: CHECKED_FLAG,
-                    bytes: Some(&check_result),
-                };
-                start_second_process(&typed, own_count, handover, ctx.original_cwd.as_deref())
-            }
-            None => {
-                let target = &ctx.bundler_options.compile_target;
-                print_failure(ctx.log_ref(), RequestOrigin::BuildFlag, target, &failure);
+                Output::err_generic("{}", (BStr::new(error.name()),));
                 exit_or_wait_for_change(watched)
             }
-        },
-        Ok(Ok(outcome)) => outcome,
+            Ok(Err(failure)) => failure,
+            Ok(Ok(outcome)) => break outcome,
+        };
+        // A type error stops no test run: plain `bun test` checks no types. The file is compiled as JavaScript is.
+        let untyped = match ctx.bundler_options.aot.as_mut() {
+            Some(aot) if aot.runs_tests && !checks_only => {
+                add_files_with_type_errors(&failure, &mut aot.files_without_types)
+            }
+            _ => false,
+        };
+        let Some(refused) = find_refused_files(&failure, independent_count, untyped) else {
+            let target = &ctx.bundler_options.compile_target;
+            print_failure(ctx.log_ref(), RequestOrigin::BuildFlag, target, &failure);
+            exit_or_wait_for_change(watched)
+        };
+        if !checks_only {
+            // The next build repeats the warnings.
+            // SAFETY: nothing else borrows the log between two builds.
+            let messages = &mut unsafe { ctx.log_mut() }.msgs;
+            messages.retain(|message| message.kind == bun_ast::Kind::Err);
+            let aot = ctx.bundler_options.aot.as_ref();
+            let untyped_files = aot.map_or(&[][..], |aot| &aot.files_without_types);
+            for message in messages.iter_mut() {
+                let location = message.data.location.as_ref();
+                if location.is_some_and(|it| untyped_files.contains(&it.file)) {
+                    message.kind = bun_ast::Kind::Warn;
+                }
+            }
+        }
+        print_log(ctx.log_ref());
+        for &position in refused.iter().rev() {
+            refused_files.extend_from_slice(&entry_points.remove(position));
+            refused_files.push(0);
+        }
+        independent_count -= refused.len();
+        if checks_only {
+            let check_result = write_check_result(&refused_files, watched);
+            let handover = Handover {
+                flag: CHECKED_FLAG,
+                bytes: Some(&check_result),
+                bytes_after: &[],
+            };
+            start_second_process(&typed, own_count, handover, ctx.original_cwd.as_deref())
+        }
+        // The other files are compiled without them.
+        // SAFETY: nothing else borrows the log between two builds.
+        unsafe { ctx.log_mut() }.reset();
+        ctx.args.define.clone_from(&defines);
     };
     print_log(ctx.log_ref());
-    let check_result = watched.map(|watched| write_check_result(&[], Some(watched)));
+    let aot = ctx.bundler_options.aot.as_ref();
+    match aot.map_or(0, |aot| aot.files_without_types.len()) {
+        0 => {}
+        1 => bun_core::warn!(
+            "1 file has type errors, so it is compiled without its types. It still works, but runs slower"
+        ),
+        count => bun_core::warn!(
+            "{} files have type errors, so they are compiled without their types. They still work, but run slower",
+            count
+        ),
+    }
+    let check_result = (watched.is_some() || !refused_files.is_empty())
+        .then(|| write_check_result(&refused_files, watched));
     let handover = match &outcome.graph_bytes {
         Some(graph_bytes) => Handover {
             flag: GRAPH_FLAG,
             bytes: Some(graph_bytes),
+            bytes_after: check_result.as_deref().unwrap_or_default(),
         },
         None => Handover {
             flag: CHECKED_FLAG,
             bytes: check_result.as_deref(),
+            bytes_after: &[],
         },
     };
     start_second_process(&typed, own_count, handover, ctx.original_cwd.as_deref())
@@ -269,10 +319,31 @@ fn write_check_result(refused_files: &[u8], watched: Option<&WatchedFiles>) -> V
     result
 }
 
-fn list_refused_files(
+/// Whether the failed build found a type error in a file that still had its types.
+fn add_files_with_type_errors(failure: &CompileFailure, untyped: &mut Vec<Box<[u8]>>) -> bool {
+    let CompileFailure::Build {
+        refused_entry_points: Some(refused),
+        ..
+    } = failure
+    else {
+        return false;
+    };
+    let count_before = untyped.len();
+    for path in &refused.files_with_type_errors {
+        if !untyped.iter().any(|known| **known == **path) {
+            untyped.push(Box::from(&path[..]));
+        }
+    }
+    untyped.len() > count_before
+}
+
+/// The positions, in ascending order, of the entry points that the others can run without.
+/// `forgives_type_errors`: the next build compiles the files that have them without their types.
+fn find_refused_files(
     failure: &CompileFailure,
-    independent_files: &[Box<[u8]>],
-) -> Option<Vec<u8>> {
+    independent_count: usize,
+    forgives_type_errors: bool,
+) -> Option<Vec<usize>> {
     let CompileFailure::Build {
         refused_entry_points: Some(refused),
         ..
@@ -280,21 +351,26 @@ fn list_refused_files(
     else {
         return None;
     };
-    if refused.len() >= independent_files.len() {
-        return None;
-    }
-    let mut list = Vec::new();
-    for &position in refused {
-        list.extend_from_slice(independent_files.get(position as usize)?);
-        list.push(0);
-    }
-    Some(list)
+    let refused = match forgives_type_errors {
+        true => &refused.refused_without_types,
+        false => &refused.refused,
+    };
+    let mut refused: Vec<usize> = refused.iter().map(|&position| position as usize).collect();
+    refused.sort_unstable();
+    refused.dedup();
+    let are_independent = match refused.last() {
+        Some(&last) => last < independent_count,
+        None => forgives_type_errors,
+    };
+    (are_independent && refused.len() < independent_count).then_some(refused)
 }
 
 #[derive(Copy, Clone)]
 struct Handover<'a> {
     flag: &'static [u8],
     bytes: Option<&'a [u8]>,
+    /// The check result after a graph.
+    bytes_after: &'a [u8],
 }
 
 const GRAPH_FLAG: &[u8] = b"--aot-graph-fd=";
@@ -350,9 +426,10 @@ fn create_unnamed_file() -> Maybe<Fd> {
 }
 
 #[cfg(unix)]
-fn write_to_unnamed_file(bytes: &[u8]) -> Maybe<Fd> {
+fn write_to_unnamed_file(bytes: &[u8], bytes_after: &[u8]) -> Maybe<Fd> {
     let file = File::from_fd(create_unnamed_file()?);
     file.write_all(bytes)?;
+    file.write_all(bytes_after)?;
     Ok(file.into_raw())
 }
 
@@ -394,7 +471,10 @@ fn start_second_process(
     handover: Handover<'_>,
     original_cwd: Option<&[u8]>,
 ) -> ! {
-    let descriptor = match handover.bytes.map(write_to_unnamed_file) {
+    let written = handover
+        .bytes
+        .map(|bytes| write_to_unnamed_file(bytes, handover.bytes_after));
+    let descriptor = match written {
         None => None,
         Some(Ok(descriptor)) => Some(descriptor),
         Some(Err(error)) => exit_write_failed(&error),
@@ -471,7 +551,7 @@ fn list_inherited_extra_descriptors() -> Box<[bool]> {
 }
 
 #[cfg(windows)]
-fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8]) -> Maybe<Fd> {
+fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8], bytes_after: &[u8]) -> Maybe<Fd> {
     let file = File::from_fd(bun_sys::openat(
         Fd::cwd(),
         path,
@@ -479,6 +559,7 @@ fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8]) -> Maybe<Fd> {
         0o700,
     )?);
     file.write_all(bytes)?;
+    file.write_all(bytes_after)?;
     Ok(file.into_raw())
 }
 
@@ -556,7 +637,7 @@ fn start_second_process(
         Global::exit(run_second_process(arguments, original_cwd))
     };
     let path = temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
-    let descriptor = match write_to_named_file(&path, bytes) {
+    let descriptor = match write_to_named_file(&path, bytes, handover.bytes_after) {
         Ok(descriptor) => descriptor,
         Err(error) => {
             let _ = bun_sys::unlinkat(Fd::cwd(), &path);
@@ -611,6 +692,8 @@ pub(crate) fn use_graph_descriptor(text: &[u8]) {
     let failure = match Graph::from_descriptor(descriptor) {
         Ok(Some(_)) => {
             IS_FROM_DESCRIPTOR.store(true, Ordering::Relaxed);
+            let _ = GRAPH_DESCRIPTOR.set(descriptor);
+            remember_check_result(&Graph::read_after_graph(descriptor).unwrap_or_default());
             return;
         }
         Ok(None) => "empty",
@@ -628,6 +711,23 @@ pub(crate) fn graph() -> Option<&'static dyn bun_resolver::StandaloneModuleGraph
         return None;
     }
     Some(Graph::get_ref()?)
+}
+
+/// The compiled program, to pass on to the workers of `bun test --parallel`.
+pub(crate) fn graph_descriptor() -> Option<Fd> {
+    GRAPH_DESCRIPTOR.get().copied()
+}
+
+/// Tells a worker of `bun test --parallel` where the compiled program is.
+pub(crate) fn graph_flag_of_test_worker() -> Option<Vec<u8>> {
+    let descriptor = graph_descriptor()?;
+    let number = match cfg!(windows) {
+        // A worker inherits the handle, as this process did.
+        true => descriptor.native() as usize,
+        // After stdio and the channel to the coordinator.
+        false => 4,
+    };
+    Some([GRAPH_FLAG, number.to_string().as_bytes()].concat())
 }
 
 #[inline]
@@ -653,7 +753,11 @@ pub(crate) fn use_check_result(text: &[u8]) {
         );
         Global::exit(1)
     };
-    let mut paths = bun_core::strings::split(&list, b"\0");
+    remember_check_result(&list);
+}
+
+fn remember_check_result(list: &[u8]) {
+    let mut paths = bun_core::strings::split(list, b"\0");
     let refused = paths.by_ref().take_while(|path| !path.is_empty());
     let _ = REFUSED_FILES.set(refused.map(Box::from).collect());
     let _ = FILES_OF_CHECK.set(

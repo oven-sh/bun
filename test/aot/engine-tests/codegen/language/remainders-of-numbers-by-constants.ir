@@ -829,7 +829,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f26 visibility=Private
 # -- generated: tested asNumbers
 # CHECK-LABEL: function {{*}}name="tested"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 260, patchpoints: 11, rare instructions: 425, polls: 2
+# CHECK-NEXT: instructions: 257, patchpoints: 11, rare instructions: 407, polls: 2
 # CHECK-NEXT: end of function f28
 # CHECK-LABEL: function {{*}}name="tested"
 # CHECK: role=GenericVersion
@@ -837,7 +837,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f26 visibility=Private
 # CHECK-NEXT: end of function f30
 # CHECK-LABEL: function {{*}}name="asNumbers"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 700, patchpoints: 48, rare instructions: 336, polls: 2
+# CHECK-NEXT: instructions: 688, patchpoints: 48, rare instructions: 295, polls: 2
 # CHECK-NEXT: end of function f29
 # CHECK-LABEL: function {{*}}name="asNumbers"
 # CHECK: role=GenericVersion

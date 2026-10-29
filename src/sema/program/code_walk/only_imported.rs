@@ -29,7 +29,9 @@ impl LoadedBy {
 
 fn loading_kind(site: ImportSiteKind) -> Option<CodeImportKind> {
     match site {
-        ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_) => None,
+        ImportSiteKind::RequireResolve(_)
+        | ImportSiteKind::ImportMetaResolve(_)
+        | ImportSiteKind::MockModule(_) => None,
         _ => Some(CodeImportKind::from_site(site)),
     }
 }

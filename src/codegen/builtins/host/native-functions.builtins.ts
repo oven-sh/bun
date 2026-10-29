@@ -40,6 +40,7 @@ const looksForModuleGraph = (returns: b.TableType, uses: readonly b.UseSpec[]) =
 // Functions on which the host puts members that have no entry yet: Bun.inspect.custom, process.hrtime.bigint .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
 const functionsWithUndeclaredMembers = [
   "%ModuleRequire%.resolve",
+  "%ModuleRequirePrototype%.resolve",
   "Bun.$",
   "Bun.cron",
   "Bun.inspect",
@@ -49,7 +50,7 @@ const functionsWithUndeclaredMembers = [
   "process.memoryUsage",
 ];
 
-const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "Bun.$", "Bun.sql"];
+const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "%ModuleRequirePrototype%.resolve", "Bun.$", "Bun.sql"];
 
 // src/jsc/modules/NodeUtilTypesModule.cpp. Each looks at the type or the C++ class of a cell, isAsyncFunction also at what lies above a function.
 const typeTestsOfNode = [

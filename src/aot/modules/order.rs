@@ -755,6 +755,7 @@ struct LoadsSeenByProgram {
 // `bun run` loads a graph in steps, and an imported CommonJS file runs in one of them. What such a file reaches runs while the graph is loaded, in the file or in a job that it queues.
 // A `require` of an ES module there asks the run time. Where the ES module leads back to the file that requires it, the loader of the run time loads every graph that comes to that cycle:
 // whatever imports or requires, directly or not, a module of the cycle. What no such way leads from is loaded as if the cycle were not in the executable.
+// An `import()` that leads back starts a second load of the file while the first one runs it. That changes no order, so the loader is not needed for it.
 // An ES module on such a way back imports its CommonJS file while the file runs. If the file then throws, nobody gets the error and a later `require` of the file is answered with the names of that import: it asks the run time too.
 fn find_loads_seen_by_program(
     scans: &Scans,
@@ -797,7 +798,26 @@ fn find_loads_seen_by_program(
     let runs_during_load = find_reached(edges, imported);
     let mut component_of = None;
     let mut components_that_lead_back = Vec::new();
+    let mut components_imported_back = Vec::new();
     for (file, file_sites) in planned {
+        if scans.of(*file).interop.kind == ModuleKind::CommonJs {
+            for &(referrer, target) in &file_sites.other_loads {
+                let Some((target, ModuleKind::SourceText)) = kind_of(target) else {
+                    continue;
+                };
+                let Some(referrer) = numbers.number_of(referrer) else {
+                    continue;
+                };
+                if !runs_during_load[referrer] {
+                    continue;
+                }
+                let component_of =
+                    component_of.get_or_insert_with(|| strongly_connected_components(edges).0);
+                if component_of[referrer] == component_of[target.idx()] {
+                    components_imported_back.push(component_of[referrer]);
+                }
+            }
+        }
         let sites = file_sites.sites.iter();
         let sites = sites.map(|site| (site.referrer, site.target));
         for (referrer, target) in sites.chain(file_sites.required_candidates.iter().copied()) {
@@ -821,9 +841,17 @@ fn find_loads_seen_by_program(
             }
         }
     }
-    let Some(component_of) = component_of.filter(|_| !components_that_lead_back.is_empty()) else {
+    let Some(component_of) = component_of else {
         return seen;
     };
+    for &(importer, file) in &imports {
+        seen.may_be_imported_while_it_runs[file.idx()] |= components_imported_back
+            .contains(&component_of[file.idx()])
+            && component_of[importer.idx()] == component_of[file.idx()];
+    }
+    if components_that_lead_back.is_empty() {
+        return seen;
+    }
     let leads_back = |module: usize| components_that_lead_back.contains(&component_of[module]);
     let mut askers = vec![Vec::new(); count];
     let mut asks = |referrer: ModuleRef, target: ModuleRef| {

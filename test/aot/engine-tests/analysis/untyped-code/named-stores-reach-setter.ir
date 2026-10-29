@@ -1205,7 +1205,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f87 visibility=Private
 # CHECK-NEXT: b0(v0: int[0, 5]):
 # CHECK-NEXT: v1: anything|absent = GetModuleVariable variable=g20
 # CHECK-NEXT: v2: anything = CheckInitialized v1 name="storeSloppily"
-# CHECK-NEXT: v3: anything ~ undefined|null|function = Upcast v2 castType=anything
+# CHECK-NEXT: v3: anything ~ undefined|null|function|f2 = Upcast v2 castType=anything
 # CHECK-NEXT: v4: undefined|f2 = AssumeType v3 provenType=undefined|f2
 # CHECK-NEXT: v5: anything ~ undefined|null|number|string|symbol|bigint|L1|L2|L3|L4|L5 = GetModuleVariable variable=g4
 # CHECK-NEXT: v6: Object = AssumeType v5 provenType=Object
@@ -1271,7 +1271,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f87 visibility=Private
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: anything|absent = GetModuleVariable variable=g20
 # CHECK-NEXT: v1: anything = CheckInitialized v0 name="storeSloppily"
-# CHECK-NEXT: v2: anything ~ undefined|null|function = Upcast v1 castType=anything
+# CHECK-NEXT: v2: anything ~ undefined|null|function|f2 = Upcast v1 castType=anything
 # CHECK-NEXT: v3: undefined|f2 = AssumeType v2 provenType=undefined|f2
 # CHECK-NEXT: v4: L15 = GetModuleVariable variable=g6
 # CHECK-NEXT: v5: boolean = TypeTest v3 testedType=f2

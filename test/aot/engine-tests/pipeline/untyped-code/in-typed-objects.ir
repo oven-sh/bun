@@ -2717,39 +2717,38 @@ runtimefunction id=ArrayTraversalTraverseArray function=f80 visibility=Private
 # CHECK-NEXT: v26: int|whole = ResultAt v23 index=2
 # CHECK-NEXT: v27: Array<number|string> = NewArray v24, v25, v26 contents=number|string allocationSite=29 [contentsAreProven]
 # CHECK-NEXT: v28: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v27 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v29: 5 = Integer integer=5
-# CHECK-NEXT: v30: Array<Array<number|string, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v22, v28 contents=Array<number|string, proven, pristine[Storage, Names, Dense]> capacity=v29 allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v31: Array<Array<number|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<Array<number|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v32: boolean = PropDelete v12 key="a" accessSite=97
-# CHECK-NEXT: v33: boolean = PropDelete v12 key="zz" accessSite=98
-# CHECK-NEXT: v34: undefined = CallDirect v1 function=f84
-# CHECK-NEXT: v35: string = ResultAt v34
-# CHECK-NEXT: v36: string = ResultAt v34 index=1
-# CHECK-NEXT: v37: int|whole = ResultAt v34 index=2
-# CHECK-NEXT: v38: Array<number|string> = NewArray v35, v36, v37 contents=number|string allocationSite=29 [contentsAreProven]
-# CHECK-NEXT: v39: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v38 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v40: undefined = CallDirect v4 function=f84
-# CHECK-NEXT: v41: string = ResultAt v40
-# CHECK-NEXT: v42: string = ResultAt v40 index=1
-# CHECK-NEXT: v43: int|whole = ResultAt v40 index=2
-# CHECK-NEXT: v44: Array<number|string> = NewArray v41, v42, v43 contents=number|string allocationSite=29 [contentsAreProven]
-# CHECK-NEXT: v45: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v44 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v46: int[0, 4294967295] = CallBuiltin v31, v39, v45 overload=ArrayPrototypePush/0 accessSite=102
-# CHECK-NEXT: v47: 1 = Integer integer=1
-# CHECK-NEXT: PropSet v12, v47 key="c" accessSite=103
-# CHECK-NEXT: v49: undefined = CallDirect v1 function=f84
-# CHECK-NEXT: v50: string = ResultAt v49
-# CHECK-NEXT: v51: string = ResultAt v49 index=1
-# CHECK-NEXT: v52: int|whole = ResultAt v49 index=2
-# CHECK-NEXT: v53: Array<number|string> = NewArray v50, v51, v52 contents=number|string allocationSite=29 [contentsAreProven]
-# CHECK-NEXT: v54: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v53 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v55: int[0, 4294967295] = CallBuiltin v31, v54 overload=ArrayPrototypePush/0 accessSite=106
-# CHECK-NEXT: Return v31
-# CHECK-NEXT: b3(v56: boolean|number|string ~ number|string) frequency=Rare:
-# CHECK-NEXT: v57: builtin(Object) = Builtin builtin=Object
-# CHECK-NEXT: v58: L2 = CallBuiltin v57, v1, v56 overload=ObjectSetPrototypeOf/0 builtinCallForm=AnyReceiver accessSite=93
-# CHECK-NEXT: v59: builtin(Object) = Builtin builtin=Object
-# CHECK-NEXT: v60: L2 = CallBuiltin v59, v4, v56 overload=ObjectSetPrototypeOf/0 builtinCallForm=AnyReceiver accessSite=94
+# CHECK-NEXT: v29: boolean = PropDelete v12 key="a" accessSite=97
+# CHECK-NEXT: v30: boolean = PropDelete v12 key="zz" accessSite=98
+# CHECK-NEXT: v31: undefined = CallDirect v1 function=f84
+# CHECK-NEXT: v32: string = ResultAt v31
+# CHECK-NEXT: v33: string = ResultAt v31 index=1
+# CHECK-NEXT: v34: int|whole = ResultAt v31 index=2
+# CHECK-NEXT: v35: Array<number|string> = NewArray v32, v33, v34 contents=number|string allocationSite=29 [contentsAreProven]
+# CHECK-NEXT: v36: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v37: undefined = CallDirect v4 function=f84
+# CHECK-NEXT: v38: string = ResultAt v37
+# CHECK-NEXT: v39: string = ResultAt v37 index=1
+# CHECK-NEXT: v40: int|whole = ResultAt v37 index=2
+# CHECK-NEXT: v41: Array<number|string> = NewArray v38, v39, v40 contents=number|string allocationSite=29 [contentsAreProven]
+# CHECK-NEXT: v42: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v41 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v43: 4 = Integer integer=4
+# CHECK-NEXT: v44: 1 = Integer integer=1
+# CHECK-NEXT: PropSet v12, v44 key="c" accessSite=103
+# CHECK-NEXT: v46: undefined = CallDirect v1 function=f84
+# CHECK-NEXT: v47: string = ResultAt v46
+# CHECK-NEXT: v48: string = ResultAt v46 index=1
+# CHECK-NEXT: v49: int|whole = ResultAt v46 index=2
+# CHECK-NEXT: v50: Array<number|string> = NewArray v47, v48, v49 contents=number|string allocationSite=29 [contentsAreProven]
+# CHECK-NEXT: v51: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v52: Array<Array<number|string, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v22, v28, v36, v42, v51 contents=Array<number|string, proven, pristine[Storage, Names, Dense]> allocationSite=45 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v53: Array<Array<number|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v52 provenType=Array<Array<number|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v54: 5 = Integer integer=5
+# CHECK-NEXT: Return v53
+# CHECK-NEXT: b3(v55: boolean|number|string ~ number|string) frequency=Rare:
+# CHECK-NEXT: v56: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v57: L2 = CallBuiltin v56, v1, v55 overload=ObjectSetPrototypeOf/0 builtinCallForm=AnyReceiver accessSite=93
+# CHECK-NEXT: v58: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v59: L2 = CallBuiltin v58, v4, v55 overload=ObjectSetPrototypeOf/0 builtinCallForm=AnyReceiver accessSite=94
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=

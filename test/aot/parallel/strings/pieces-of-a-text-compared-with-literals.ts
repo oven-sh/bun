@@ -29,12 +29,25 @@ function onesBySlice(text: string): number {
 
 function pastTheEnd(text: string): string {
   const seen: boolean[] = [];
-  for (let at = text.length - 2; at < text.length + 2; at++) seen.push(text.slice(at, at + 1) === ",", text.slice(at, at + 2) === ",,", text.charAt(at) === ",");
+  for (let at = text.length - 2; at < text.length + 2; at++)
+    seen.push(text.slice(at, at + 1) === ",", text.slice(at, at + 2) === ",,", text.charAt(at) === ",");
   return seen.join(" ");
 }
 
-const texts = ["", ",", ",,", "a,b, c,, d", "no comma", ", ".repeat(9), "café, 中文, 😀,", "\ud83d,\ude00", "x".repeat(70) + ",", ",".repeat(33)];
+const texts = [
+  "",
+  ",",
+  ",,",
+  "a,b, c,, d",
+  "no comma",
+  ", ".repeat(9),
+  "café, 中文, 😀,",
+  "\ud83d,\ude00",
+  "x".repeat(70) + ",",
+  ",".repeat(33),
+];
 for (let round = 0; round < 3; round++) {
-  for (const text of texts) console.log(commasIn(text), wideIn(text), pairsIn(text), onesBySlice(text), pastTheEnd(text));
+  for (const text of texts)
+    console.log(commasIn(text), wideIn(text), pairsIn(text), onesBySlice(text), pastTheEnd(text));
 }
 console.log(commasIn(texts.join(",") + String(texts.length)), commasIn(JSON.stringify(texts)));

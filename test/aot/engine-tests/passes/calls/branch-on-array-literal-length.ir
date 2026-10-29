@@ -377,7 +377,7 @@ function f14 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Int64 b@20 = Load(b@18, offset = 8, ControlDependent|Reads:JSArray_butterfly, v1:CallInline)
 # CHECK-NEXT: Int32 b@21 = Load(b@20, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v1:CallInline)
 # CHECK-NEXT: Int64 b@22 = ZExt32(b@21, v1:CallInline)
-# CHECK-NEXT: Int64 b@23 = Patchpoint(b@22:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v2:Strcat)
+# CHECK-NEXT: Int64 b@23 = Patchpoint(b@22:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v2:Strcat)
 # CHECK-NEXT: Int64 b@27 = Const64(2, v4:Integer)
 # CHECK-NEXT: Int32 b@28 = Equal(b@22, $2(b@27), v5:StrictEq)
 # CHECK-NEXT: Int32 b@33 = Const32(5, v7:CallInline)
@@ -394,8 +394,8 @@ function f14 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Int64 b@83 = Load(b@18, offset = 8, ControlDependent|Reads:JSArray_butterfly, v8:CallInline)
 # CHECK-NEXT: Int32 b@84 = Load(b@83, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v8:CallInline)
 # CHECK-NEXT: Int64 b@85 = ZExt32(b@84, v8:CallInline)
-# CHECK-NEXT: Int64 b@86 = Patchpoint(b@85:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v9:Add)
-# CHECK-NEXT: Int64 b@87 = Patchpoint(b@23:Register(%rax), b@86:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v9:Add)
+# CHECK-NEXT: Int64 b@86 = Patchpoint(b@85:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v9:Add)
+# CHECK-NEXT: Int64 b@87 = Patchpoint(b@23:Register(%rax), b@86:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v9:Add)
 # CHECK-NEXT: Int32 b@91 = Equal(b@85, $2(b@27), v12:StrictEq)
 # CHECK-NEXT: Void b@92 = Branch(b@91, Terminal, v12:StrictEq)
 # CHECK-NEXT: Successors: Then:Unlikely:#4, Else:#6
@@ -404,8 +404,8 @@ function f14 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Int64 b@138 = Load(b@18, offset = 8, ControlDependent|Reads:JSArray_butterfly, v15:CallInline)
 # CHECK-NEXT: Int32 b@139 = Load(b@138, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v15:CallInline)
 # CHECK-NEXT: Int64 b@140 = ZExt32(b@139, v15:CallInline)
-# CHECK-NEXT: Int64 b@141 = Patchpoint(b@140:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v16:Add)
-# CHECK-NEXT: Int64 b@142 = Patchpoint(b@87:Register(%rax), b@141:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v16:Add)
+# CHECK-NEXT: Int64 b@141 = Patchpoint(b@140:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v16:Add)
+# CHECK-NEXT: Int64 b@142 = Patchpoint(b@87:Register(%rax), b@141:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v16:Add)
 # CHECK-NEXT: Int32 b@146 = Equal(b@140, $2(b@27), v19:StrictEq)
 # CHECK-NEXT: Void b@147 = Branch(b@146, Terminal, v19:StrictEq)
 # CHECK-NEXT: Successors: Then:Unlikely:#7, Else:#9
@@ -414,7 +414,7 @@ function f14 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Void b@193 = Return(b@142, Terminal)
 # CHECK-NEXT: BB#7: ; frequency = 0.200000
 # CHECK-NEXT: Predecessors: #6
-# CHECK-NEXT: Int32 b@149 = Load8Z(b@18, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v21:CallInline)
+# CHECK-NEXT: Int32 b@149 = Load8Z(b@18, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, v21:CallInline)
 # CHECK-NEXT: Int32 b@150 = Equal(b@149, $5(b@33), v21:CallInline)
 # CHECK-NEXT: Int32 b@151 = Equal(b@149, $7(b@35), v21:CallInline)
 # CHECK-NEXT: Int32 b@152 = BitOr(b@150, b@151, v21:CallInline)
@@ -475,7 +475,7 @@ function f14 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Successors: Then:#56, Else:Rare:#44
 # CHECK-NEXT: BB#4: ; frequency = 0.058824
 # CHECK-NEXT: Predecessors: #3
-# CHECK-NEXT: Int32 b@94 = Load8Z(b@18, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v14:CallInline)
+# CHECK-NEXT: Int32 b@94 = Load8Z(b@18, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, v14:CallInline)
 # CHECK-NEXT: Int32 b@95 = Equal(b@94, $5(b@33), v14:CallInline)
 # CHECK-NEXT: Int32 b@96 = Equal(b@94, $7(b@35), v14:CallInline)
 # CHECK-NEXT: Int32 b@97 = BitOr(b@95, b@96, v14:CallInline)
@@ -536,7 +536,7 @@ function f14 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Successors: Then:#40, Else:Rare:#28
 # CHECK-NEXT: BB#1: ; frequency = 0.058824
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int32 b@32 = Load8Z(b@18, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v7:CallInline)
+# CHECK-NEXT: Int32 b@32 = Load8Z(b@18, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, v7:CallInline)
 # CHECK-NEXT: Int32 b@34 = Equal(b@32, $5(b@33), v7:CallInline)
 # CHECK-NEXT: Int32 b@36 = Equal(b@32, $7(b@35), v7:CallInline)
 # CHECK-NEXT: Int32 b@37 = BitOr(b@34, b@36, v7:CallInline)

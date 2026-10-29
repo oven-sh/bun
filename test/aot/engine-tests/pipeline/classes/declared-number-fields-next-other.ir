@@ -684,34 +684,33 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v11: 15 = Integer integer=15
 # CHECK-NEXT: v12: int[0, 15] = BitAnd v10, v11
 # CHECK-NEXT: v13: int|whole = Add v5, v12
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: Array<int[0, 15], Int32> = NewArray contents=int[0, 15] capacity=v14 allocationSite=14 arrayStorage=Int32 [contentsAreProven]
-# CHECK-NEXT: v16: Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v17: int[0, 4294967295] = CallBuiltin v16, v12 overload=ArrayPrototypePush/0 accessSite=7
-# CHECK-NEXT: v18: int[0, 4294967295] = CallBuiltin v16 overload=ArrayPrototypeLength/0 accessSite=10
-# CHECK-NEXT: v19: int[0, 4294967310] = Add v12, v18
-# CHECK-NEXT: v20: int|whole = Add v13, v19
-# CHECK-NEXT: v21: fact = Entered function=f16
-# CHECK-NEXT: v22: int|whole = GetModuleVariable fact=v21 variable=g9
-# CHECK-NEXT: v23: int|whole = ToNumeric v22
-# CHECK-NEXT: v24: int|whole = Increment v23
-# CHECK-NEXT: PutModuleVariable v24 variable=g9
-# CHECK-NEXT: v26: int|whole = Add v12, v23
-# CHECK-NEXT: v27: int|whole = Add v20, v26
-# CHECK-NEXT: v28: 1 = Integer integer=1
-# CHECK-NEXT: v29: int[1, 16] = Add v12, v28
-# CHECK-NEXT: v30: int|whole = Add v27, v29
-# CHECK-NEXT: v31: int[0, 30] = Add v12, v12
-# CHECK-NEXT: v32: int|whole = Add v30, v31
-# CHECK-NEXT: v33: 1 = Integer integer=1
-# CHECK-NEXT: v34: int[1, 16] = Add v12, v33
-# CHECK-NEXT: v35: int|whole = Add v32, v34
-# CHECK-NEXT: v36: int[1, 100] = Increment v10
-# CHECK-NEXT: Jump -> next b1(v35, v36)
+# CHECK-NEXT: v14: Array<int[0, 15], Int32> = NewArray v12 contents=int[0, 15] allocationSite=14 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v15: Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<int[0, 15], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: int[0, 4294967295] = CallBuiltin v15 overload=ArrayPrototypeLength/0 accessSite=10
+# CHECK-NEXT: v18: int[0, 4294967310] = Add v12, v17
+# CHECK-NEXT: v19: int|whole = Add v13, v18
+# CHECK-NEXT: v20: fact = Entered function=f16
+# CHECK-NEXT: v21: int|whole = GetModuleVariable fact=v20 variable=g9
+# CHECK-NEXT: v22: int|whole = ToNumeric v21
+# CHECK-NEXT: v23: int|whole = Increment v22
+# CHECK-NEXT: PutModuleVariable v23 variable=g9
+# CHECK-NEXT: v25: int|whole = Add v12, v22
+# CHECK-NEXT: v26: int|whole = Add v19, v25
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: int[1, 16] = Add v12, v27
+# CHECK-NEXT: v29: int|whole = Add v26, v28
+# CHECK-NEXT: v30: int[0, 30] = Add v12, v12
+# CHECK-NEXT: v31: int|whole = Add v29, v30
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: int[1, 16] = Add v12, v32
+# CHECK-NEXT: v34: int|whole = Add v31, v33
+# CHECK-NEXT: v35: int[1, 100] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v34, v35)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v37: undefined = CallBuiltin -, v5 overload=ConsoleLog/0 accessSite=27
-# CHECK-NEXT: v38: undefined = Undefined
-# CHECK-NEXT: Return v38
+# CHECK-NEXT: v36: undefined = CallBuiltin -, v5 overload=ConsoleLog/0 accessSite=27
+# CHECK-NEXT: v37: undefined = Undefined
+# CHECK-NEXT: Return v37
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeWithCounter"
 # CHECK: module=m0 position=1260 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=f9 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

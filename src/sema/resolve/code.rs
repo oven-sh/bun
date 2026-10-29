@@ -53,9 +53,9 @@ impl CodeImportForm {
     pub fn from_site(kind: ImportSiteKind) -> CodeImportForm {
         match kind {
             ImportSiteKind::ImportCall(_) => CodeImportForm::Dynamic,
-            ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_) => {
-                CodeImportForm::ResolveOnly
-            }
+            ImportSiteKind::RequireResolve(_)
+            | ImportSiteKind::ImportMetaResolve(_)
+            | ImportSiteKind::MockModule(_) => CodeImportForm::ResolveOnly,
             _ => CodeImportForm::Static,
         }
     }

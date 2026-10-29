@@ -299,7 +299,7 @@ function f43 module=m3 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: L1):
 # CHECK-NEXT: v1: object = CopyObject v0
 # CHECK-NEXT: v20: Object = AssumeType v1 provenType=Object
-# CHECK-NEXT: v2: anything ~ undefined|null|function = PropGet v0 key="add" accessSite=3 receivers=[L1]
+# CHECK-NEXT: v2: anything ~ undefined|null|function|f26 = PropGet v0 key="add" accessSite=3 receivers=[L1]
 # CHECK-NEXT: v3: L0 = NewObject layout=L0 allocationSite=1 allocationClass=0
 # CHECK-NEXT: CopyDataProperties v3, v0 excludedKeys=["add"]
 # CHECK-NEXT: v5: 1 = Integer integer=1

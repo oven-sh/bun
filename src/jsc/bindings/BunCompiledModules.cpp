@@ -16,6 +16,7 @@
 #include "WebCoreJSBuiltins.h"
 #include "ZigGlobalObject.h"
 #if ENABLE(AOT)
+#include <JavaScriptCore/AOTImage.h>
 #include <JavaScriptCore/AOTPropertyWalk.h>
 #endif
 #include <JavaScriptCore/AOTSchemaEnums.h>
@@ -148,6 +149,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
 extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObject*);
 extern "C" bool Bun__compiledProgramRunsInPlace();
+extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, const BunString* path);
+extern "C" bool Bun__AOT__isStartOfWorker(JSC::JSGlobalObject*, const BunString* path);
+extern "C" bool Bun__AOT__allowsCodeFromDisk();
 extern "C" JSC::EncodedJSValue ResolveMessage__createModuleNotFound(JSC::JSGlobalObject*, const BunString* specifier, const BunString* referrer, bool isForRequire);
 extern "C" BunString Bun__AOT__pathOfForm(const BunString* path, const BunString* typeAttribute, bool* isFormWithoutAttributes);
 
@@ -591,6 +595,11 @@ static JSObject* requireExtensions(JSGlobalObject* realm)
     return uncheckedDowncast<Zig::GlobalObject>(realm)->lazyRequireExtensionsObject();
 }
 
+static JSObject* requirePrototype(JSGlobalObject* realm)
+{
+    return uncheckedDowncast<Zig::GlobalObject>(realm)->requireFunctionUnbound()->getPrototypeDirect().getObject();
+}
+
 static JSObject* createEmptyJSONBodyError(JSGlobalObject* realm)
 {
     return asObject(JSValue::decode(Blob__createEmptyJSONBodyError(realm)));
@@ -653,6 +662,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isImportOfMainModule,
     &runMainModule,
     &createModuleNotFoundError,
+    &requirePrototype,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
@@ -660,7 +670,17 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
     // --disallow-code-generation-from-strings=strict refuses code from the disk in an executable built without --aot too. Whoever set the flag expects its error.
     if (what == NotInExecutable::Code && isCodeGenerationFromStringsStrictByFlags())
         return createCodeGenerationFromStringsError(globalObject);
-    return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk."_s));
+    BunString text = Bun::toString(path);
+    // A Worker runs text apart from the compiled program, and with --aot-allow-code-from-disk a file too.
+    if (what == NotInExecutable::Code && (isDataOrBlobURL(path) || Bun__AOT__allowsCodeFromDisk())) {
+        if (Bun__AOT__isWorkerTextRefusedByTrimming(globalObject, &text))
+            return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, and --trim removed what a Worker needs to run code that wasn't compiled into it. Build without --trim."_s));
+    }
+    // The flag acts on the file that a Worker starts from, and where the compiler found an import() or a require() of a path that it does not know.
+    const AOT::Image* image = AOT::Image::current();
+    bool startsWorker = !isDataOrBlobURL(path) && !Bun__AOT__allowsCodeFromDisk() && Bun__AOT__isStartOfWorker(globalObject, &text);
+    bool flagWouldHelp = !image || image->findsDataFilesByName() || startsWorker;
+    return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point"_s, flagWouldHelp ? ", or build with --aot-allow-code-from-disk."_s : "."_s));
 }
 
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode code, const String& path)

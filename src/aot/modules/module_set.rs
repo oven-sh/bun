@@ -1,9 +1,12 @@
-use super::interop::{Interop, ModuleKind, file_interop};
+use super::interop::{Interop, ModuleKind, RequireResult, file_interop};
 use super::requests::{ScannedSite, Scans};
 use super::wrapped::WrappedModules;
 use super::{BindInput, ModuleRef, compare_modules};
+use crate::load::sources::parsed_source;
+use bun_ast::Loader;
 use bun_sema::atom::Atom;
 use bun_sema::hir::FnId;
+use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, FileRole};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::SharedSort;
@@ -105,6 +108,8 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
     for &file in &compiled_files {
         interops[file.idx()] = Some(scans.of(file).interop);
     }
+    answer_require_with_namespace_of_imported_data(input, scans, &mut interops);
+    leave_require_of_data_imported_later_to_loader(input, scans, &compiled_files, &mut interops);
     let mut other_modules = Vec::new();
     let mut external_kinds = Vec::new();
     for &importer in &compiled_files {
@@ -161,6 +166,90 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         wrapped,
         inner_modules,
         interops,
+    }
+}
+
+/// The file is parsed into a value. Any other file stands for something in an executable, which `require()` answers: its path, an addon.
+fn is_parsed_into_value(input: &BindInput<'_, '_>, file: FileId) -> bool {
+    parsed_source(input.files, file).is_some_and(|source| {
+        matches!(
+            source.loader,
+            Loader::Json
+                | Loader::Jsonc
+                | Loader::Json5
+                | Loader::Toml
+                | Loader::Yaml
+                | Loader::Text
+        )
+    })
+}
+
+// `require()` answers the namespace object of a file that the loader of ES modules already holds, and it holds all that an entry point imports before any code runs.
+fn answer_require_with_namespace_of_imported_data(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    interops: &mut [Option<Interop>],
+) {
+    let entry_points = input.sources.entry_points().iter();
+    let mut pending: Vec<FileId> = entry_points.map(|it| it.file).collect();
+    let mut is_seen = vec![false; interops.len()];
+    while let Some(file) = pending.pop() {
+        if core::mem::replace(&mut is_seen[file.idx()], true) {
+            continue;
+        }
+        let (Some(interop), Some(scan)) = (&mut interops[file.idx()], scans.find(file)) else {
+            continue;
+        };
+        if interop.kind == ModuleKind::Data && is_parsed_into_value(input, file) {
+            interop.require_result = RequireResult::Namespace;
+        }
+        pending.extend(scan.requests.iter().filter_map(|it| match it.target {
+            ModuleRef::File(target) => Some(target),
+            _ => None,
+        }));
+    }
+}
+
+// Whether an import outside of that graph comes before the first `require()` of the file shows when the program runs.
+fn leave_require_of_data_imported_later_to_loader(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    compiled_files: &[FileId],
+    interops: &mut [Option<Interop>],
+) {
+    let mut leave = |file: FileId| {
+        if let Some(interop) = &mut interops[file.idx()]
+            && interop.kind == ModuleKind::Data
+            && interop.require_result == RequireResult::DefaultExport
+            && is_parsed_into_value(input, file)
+        {
+            interop.require_result = RequireResult::NamespaceIfImported;
+        }
+    };
+    for &importer in compiled_files {
+        let scan = scans.of(importer);
+        let sites = input.files.analysis(importer).import_sites.iter();
+        for (site, scanned) in sites.zip(&scan.sites) {
+            let imports = matches!(
+                site.kind,
+                ImportSiteKind::Import(_)
+                    | ImportSiteKind::ExportFrom(_)
+                    | ImportSiteKind::ExportStar(_)
+                    | ImportSiteKind::ImportCall(_)
+            );
+            let targets = match scanned {
+                _ if !imports => &[][..],
+                ScannedSite::Module(module) => core::slice::from_ref(module),
+                ScannedSite::Candidates(_) => &scan.candidates[..],
+                ScannedSite::AllModules => return compiled_files.iter().copied().for_each(leave),
+                ScannedSite::Unresolved | ScannedSite::Erased => &[][..],
+            };
+            for target in targets {
+                if let ModuleRef::File(target) = *target {
+                    leave(target);
+                }
+            }
+        }
     }
 }
 

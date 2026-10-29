@@ -87,7 +87,7 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::ExportStar(_) | ImportSiteKind::ImportCall(_)
                 | ImportSiteKind::Require(_) | ImportSiteKind::RequireResolve(_)
                 | ImportSiteKind::ImportMetaRequire(_) | ImportSiteKind::ImportMetaResolve(_)
-                | ImportSiteKind::GetBuiltinModule(_) => {}
+                | ImportSiteKind::GetBuiltinModule(_) | ImportSiteKind::MockModule(_) => {}
             }
         }
         if !table::exists_on(BuiltinId::BunBundle, input.platform) {
@@ -247,7 +247,8 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::JsxPackage | ImportSiteKind::Import(_)
                 | ImportSiteKind::ImportEquals(_) | ImportSiteKind::Require(_)
                 | ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaRequire(_)
-                | ImportSiteKind::ImportMetaResolve(_) | ImportSiteKind::GetBuiltinModule(_) => {}
+                | ImportSiteKind::ImportMetaResolve(_) | ImportSiteKind::GetBuiltinModule(_)
+                | ImportSiteKind::MockModule(_) => {}
             }
         }
     }

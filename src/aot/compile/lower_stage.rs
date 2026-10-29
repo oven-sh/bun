@@ -411,6 +411,12 @@ impl Build<'_> {
                 ProjectId::Runtime => keep_verified_roles(project.loaded, compiled_files),
             };
             if id == ProjectId::Application {
+                let files = project.loaded.files();
+                for path in &project.request.code.files_without_types {
+                    if let Some(file) = files.by_path.get(path) {
+                        roles.roles[file.idx()] = FileRole::Inferred;
+                    }
+                }
                 for &demotion in &worlds.demoted {
                     roles.roles[demotion.file.idx()] = FileRole::Inferred;
                     roles.demoted.push(demotion);

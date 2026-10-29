@@ -315,6 +315,18 @@ export const shapes: Shape[] = [
       "main.ts": `${declaredConsole}async function large(o: any, r: any[]) {\n${lines(size, index => `  r.push(await o.p(${index}));`)}}\n${operand}const out: any[] = [];\nlarge(o, out).then(() => console.log(out.length));\n`,
     }),
   },
+  // Each suspension listed every value that lives across it, and every pass walked those lists.
+  {
+    name: "awaits in a row, each of a function that is declared before the first",
+    counted: "awaits",
+    size: 1000,
+    entry: "main.mjs",
+    write: size => ({
+      "main.mjs":
+        lines(size, index => `async function a${index}(x) { return x + ${index}; }`) +
+        `let sum = 0;\n${lines(size, index => `sum += await a${index}(sum & 7);`)}console.log(sum);\n`,
+    }),
+  },
   // A join "paid" while any join that takes its object was still a candidate, so a row of merge blocks was given up from its far end, one parameter for each analysis of the whole function.
   {
     name: "a row of branches that hand one new object on",
@@ -1158,6 +1170,165 @@ export const shapes: Shape[] = [
         `function pick(which) { return which & 1 ? kept[(which >> 1) % kept.length] : handedOut[(which >> 1) % handedOut.length]; }\n` +
         lines(Math.ceil(size / 10), index => `use(pick(${index * 10 + 1}).own${index * 10 + 1});`) +
         `console.log(sum);\n`,
+    }),
+  },
+  // An array that grows by push has the union of what was pushed for its element type, and each push reduces that union anew: the new member is held against all the others.
+  {
+    name: "classes with the same fields, an object of each pushed into one array",
+    counted: "classes",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        lines(size, index => `class C${index} {\n  constructor() {\n${lines(8, field => `    this.field${field} = ${index} + ${field};`)}  }\n}`) +
+        `const all = [];\n` +
+        lines(size, index => `all.push(new C${index}());`) +
+        `let sum = 0;\nfor (const one of all) sum += one.field0 + one.field7;\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    name: "entry points that a pattern finds",
+    counted: "entry points",
+    size: 3000,
+    entry: "main.ts",
+    flags: ["./pages/*.ts"],
+    write: size => ({
+      "main.ts": `console.log("main");\n`,
+      "pages/first.ts": `console.log("first");\n`,
+      ...Object.fromEntries(upTo(size, index => [`pages/page${index}.ts`, `console.log(${index});\n`])),
+    }),
+  },
+  {
+    name: "a chain of conditional types",
+    counted: "conditional types",
+    size: 10000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}type Chain<X> = ${upTo(size, index => `X extends ${index} ? ${index} : `).join("")}never;\nconst one: Chain<1> | 0 = 0;\nconsole.log(one);\n`,
+    }),
+  },
+  {
+    name: "operands of one && that are parameters, numbers and conversions to int32",
+    counted: "operands",
+    size: 4000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => {
+      // In no regular order, and with a conversion first: each parameter is then tested again and again.
+      let seed = 1;
+      const draw = (below: number) => (seed = (seed * 48271) % 2147483647) % below;
+      const operands = upTo(size, index => (draw(4) ? ["a", "b", "c", "(a | 0)", "(b >>> 0)"][draw(5)] : `${index}${draw(2) ? ".5" : ""}`));
+      return { "main.js": `function all(a, b, c) {\n  return ${operands.join(" && ") || "a"};\n}\nconsole.log(all(1, 2, 3), all(2147483647, -2147483648, 1), all(0.5, -0, null), all(-0, -0, -0));\n` };
+    },
+  },
+  {
+    name: "parts that two loops join to the key of a table",
+    counted: "parts",
+    size: 4000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => {
+      const key = ['""', ...upTo(size, index => (index % 7 === 6 ? `"p${index}"` : ["i", "`${b}`", '":"', "a.slice(1)", "b", '"-"', "a", "(i % 3)"][index % 8]))].join(" + ");
+      return {
+        "tsconfig.json": withoutLibraryTypes,
+        "main.ts": `${declaredConsole}function look(a: any, b: any) {\n  const table: any = {};\n  for (let i = 0; i < 40; i++) table[${key}] = i;\n  let found = 0;\n  for (let i = 0; i < 40; i++) found += table[${key}] ?? -100;\n  return found;\n}\nconsole.log(look("xy", "z"), look("", ""));\n`,
+      };
+    },
+  },
+  {
+    name: "loops nested in one another",
+    counted: "loops",
+    size: 200,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `function run() {\n  let sum = 0;\n` +
+        lines(size, index => `for (let i${index} = 0; i${index} < 1; i${index}++) {`) +
+        `sum++;\n${"}\n".repeat(size)}  return sum;\n}\nconsole.log(run());\n`,
+    }),
+  },
+  {
+    name: "loops that test at their end, nested in one another",
+    counted: "loops",
+    size: 200,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `function run() {\n  let sum = 0;\n` +
+        lines(size, index => `let i${index} = 0; do {`) +
+        `sum++;\n` +
+        lines(size, index => `} while (++i${size - 1 - index} < 1);`) +
+        `  return sum;\n}\nconsole.log(run());\n`,
+    }),
+  },
+  {
+    name: "try statements with a finally block, nested in one another",
+    counted: "try statements",
+    size: 150,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function run(): number {\n  let sum = 0;\n${"try {\n".repeat(size)}sum++;\n${"} finally { sum++; }\n".repeat(size)}  return sum;\n}\nconsole.log(run());\nexport {};\n`,
+    }),
+  },
+  {
+    name: "fields of one class that methods read and store, in a build without the results of the analysis",
+    counted: "fields",
+    size: 500,
+    entry: "main.ts",
+    // Without Bun's own modules, which such a build holds all of.
+    flags: [buildFlags.withoutFlowResults, buildFlags.withoutBuiltinModules],
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}function add(list: number[]): number {\n  let sum = 0;\n  for (const n of list) sum += n;\n  return sum;\n}\nclass Large {\n` +
+        lines(size, index => `  n${index}: number;`) +
+        `  o: { x: number } = { x: 1 };\n  constructor() {\n` +
+        lines(size, index => `    this.n${index} = ${index} + 0.5;`) +
+        `  }\n  sum(): number {\n    return add([\n` +
+        lines(size, index => `      this.n${index},`) +
+        `      this.o.x,\n    ]);\n  }\n  bump(): void {\n` +
+        lines(size, index => `    this.n${index} += 1;`) +
+        `  }\n}\nconst large = new Large();\nlarge.bump();\nconsole.log(large.sum());\nexport {};\n`,
+    }),
+  },
+  {
+    name: "objects that a generator is sent, in one array literal",
+    counted: "yields",
+    size: 1000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `function* all() {\n  return [${upTo(size, index => `yield ${index}`).join(", ")}];\n}\n` +
+        `let count = 0;\nconst steps = all();\nlet step;\nwhile (!(step = steps.next({ count })).done) count++;\nconsole.log(count, step.value.length);\n`,
+    }),
+  },
+  {
+    name: "awaited calls in one array literal",
+    counted: "awaits",
+    size: 1000,
+    entry: "main.mjs",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.mjs":
+        `function make(x) {\n  return globalThis.asText ? String(x) : { x };\n}\n` +
+        `async function all() {\n  return [${upTo(size, index => `await make(${index})`).join(", ")}];\n}\nconsole.log((await all()).length);\n`,
+    }),
+  },
+  {
+    name: "literals that each spread the one before",
+    counted: "literals",
+    size: 500,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const o0 = { a: 0 };\n${lines(size, index => `const o${index + 1} = { ...o${index}, a: ${index} };`)}console.log(o${size}.a);\n`,
     }),
   },
 ];

@@ -24,7 +24,7 @@ async function run(cwd: string, ...args: string[]) {
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 const errors = (said: string) =>
-  [...said.matchAll(/^error: (TS\d+): .*\n +at (\S+):(\d+):\d+$/gm)]
+  [...said.matchAll(/^(?:error|warn): (TS\d+): .*\n +at (\S+):(\d+):\d+$/gm)]
     .map(match => `${match[2]}:${match[3]} ${match[1]}`)
     .sort();
 
@@ -69,9 +69,9 @@ test("a file of another entry point's project outside the program's rootDir does
       include: ["src"],
     }),
     "src/wrong.ts": `export const wrong: number = "text";\n`,
-    "src/wrong.test.ts": `import { expect, test } from "bun:test";\nimport { wrong } from "./wrong";\ntest("never runs", () => {\n  expect(wrong).toBe("text");\n});\n`,
+    "src/wrong.test.ts": `import { expect, test } from "bun:test";\nimport { wrong } from "./wrong";\ntest("wrong", () => {\n  expect(wrong).toBe("text");\n});\n`,
   });
   const together = await run(String(dir), "test", "--aot", "./src/wrong.test.ts", "./packages/host/src/host.test.ts");
   expect(errors(together.said)).toContain("src/wrong.ts:1 TS2322");
-  expect(passed(together.said)).toEqual(["host"]);
+  expect(passed(together.said)).toEqual(["host", "wrong"]);
 }, 60_000);

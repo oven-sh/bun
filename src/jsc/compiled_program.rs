@@ -438,23 +438,77 @@ mod write_execute {
         Err(Failure::Failed { call, errno })
     }
 
+    /// A started program inherits the filter. Without address randomization its loader runs where this process's own does.
+    #[cfg(bun_hardened)]
+    fn has_fixed_addresses() -> bool {
+        const ASKS_FOR_THE_PERSONALITY: libc::c_ulong = 0xffff_ffff;
+        // SAFETY: the request takes and returns integers only.
+        let personality = unsafe { libc::personality(ASKS_FOR_THE_PERSONALITY) };
+        personality != -1 && personality & libc::ADDR_NO_RANDOMIZE != 0
+    }
+
+    /// What is loaded at its first use, which the filter would refuse.
+    #[cfg(all(bun_hardened, target_env = "gnu"))]
+    fn load_libraries_early() {
+        use bun_exe_format::executable_memory_filter::name_services;
+        use bun_removable_features::{Feature, is_removed};
+        let load = |name: &core::ffi::CStr| {
+            // SAFETY: `name` ends with a NUL and outlives the call.
+            unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW) };
+        };
+        // SAFETY: it returns a string that ends with a NUL and lives as long as the process.
+        let version = unsafe { core::ffi::CStr::from_ptr(libc::gnu_get_libc_version()) };
+        let mut version = bun_core::strings::split(version.to_bytes(), b".")
+            .map(|part| core::str::from_utf8(part).ok()?.parse::<u32>().ok());
+        let version = (version.next().flatten(), version.next().flatten());
+        // glibc 2.34 moved libutil, librt and the services `files` and `dns` into libc.so.6.
+        let is_merged = version >= (Some(2), Some(34));
+        // pthread_exit() unwinds with it, and only a reload calls that.
+        if !is_removed(Feature::HotReload) {
+            load(c"libgcc_s.so.1");
+        }
+        if !is_merged && !is_removed(Feature::Terminal) {
+            load(c"libutil.so.1");
+        }
+        if !is_merged && !is_removed(Feature::WebView) {
+            load(c"librt.so.1");
+        }
+        let configuration =
+            bun_sys::File::read_from(bun_sys::Fd::cwd(), b"/etc/nsswitch.conf").unwrap_or_default();
+        let databases: [&[u8]; 5] = [b"hosts", b"passwd", b"group", b"initgroups", b"services"];
+        for service in name_services(&configuration, &databases) {
+            if is_merged && (service == b"files" || service == b"dns") {
+                continue;
+            }
+            let name = [b"libnss_", service, b".so.2"].concat();
+            if let Ok(name) = std::ffi::CString::new(name) {
+                load(&name);
+            }
+        }
+    }
+
     #[cfg(bun_hardened)]
     pub(super) fn refuse_new_executable_memory(
         image_code: core::ops::Range<u64>,
     ) -> Result<(), Failure> {
         use bun_exe_format::executable_memory_filter::{Libraries, program};
         use bun_removable_features::{Feature, is_removed};
-        let libraries = match [
+        let loads_no_library = [
             Feature::Ffi,
             Feature::NativeAddons,
             Feature::SqliteExtensions,
+            Feature::Secrets,
         ]
         .into_iter()
-        .all(is_removed)
-        {
+        .all(is_removed);
+        let libraries = match loads_no_library && !has_fixed_addresses() {
             true => Libraries::AreNeverLoaded,
             false => Libraries::MayBeLoaded,
         };
+        #[cfg(target_env = "gnu")]
+        if libraries == Libraries::AreNeverLoaded {
+            load_libraries_early();
+        }
         let mut code_of_this_process = executable_segments();
         code_of_this_process.push(image_code);
         let program = program(&code_of_this_process, libraries);
@@ -620,6 +674,40 @@ pub(crate) fn runs_worker_of_text_apart() -> bool {
         && bun_removable_features::RuntimeRequirement::WholeRuntime.is_available()
         && bun_core::code_generation_from_strings_by_flags()
             != bun_core::CodeGenerationFromStrings::Strict
+}
+
+/// Whether a Worker that starts from a file on disk runs it apart from the compiled program, as one that starts from text does.
+pub(crate) fn runs_worker_from_disk_apart() -> bool {
+    program_of_executable().is_some_and(|program| program.allows_code_from_disk)
+        && runs_worker_of_text_apart()
+}
+
+/// BunCompiledModules.cpp. `path` is the text that the Worker of this thread starts from, and only what `--trim` removed keeps it from running: see `runs_worker_of_text_apart`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isWorkerTextRefusedByTrimming(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let vm = global.bun_vm();
+    vm.worker_ref().is_some()
+        && vm.main() == Some(path.to_utf8().slice())
+        && !bun_removable_features::RuntimeRequirement::WholeRuntime.is_available()
+}
+
+/// BunCompiledModules.cpp
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isStartOfWorker(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let vm = global.bun_vm();
+    vm.worker_ref().is_some() && vm.main() == Some(path.to_utf8().slice())
+}
+
+/// BunCompiledModules.cpp
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__allowsCodeFromDisk() -> bool {
+    program_of_executable().is_some_and(|program| program.allows_code_from_disk)
 }
 
 /// On the thread of a Worker that starts from text, before its VM is created. False where this Bun runs nothing but compiled code.

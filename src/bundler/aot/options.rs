@@ -12,7 +12,7 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
@@ -205,7 +205,10 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     // An executable holds the file of a package that a bundle holds. `bun run` takes "main" where a package has both.
     code.prefers_module_field = !input.aot.runs_in_place;
     code.preserves_symlinks = options.preserve_symlinks;
-    code.transpiles_by_working_directory = input.aot.checks_only;
+    // As `bun run` and `bun test` transpile the same files.
+    code.transpiles_by_working_directory = input.aot.checks_only || input.aot.runs_tests;
+    let files_without_types = input.aot.files_without_types.iter();
+    code.files_without_types = files_without_types.map(|path| from_native(path)).collect();
     code.tsconfig_override = (options.tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 
@@ -270,6 +273,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         reads_main_module_without_its_name: false,
         ways_read_out_of_sight: Default::default(),
         ways_named_that_nobody_reads: Default::default(),
+        replaced_exports: Vec::new(),
         is_too_large_to_analyze: false,
         is_known_to_be_analyzed: false,
     }
@@ -442,6 +446,7 @@ fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
 /// `bun run` starts a file under its real path, and so `node_modules/.bin/tool` finds what lies beside the file that the link names.
 fn follow_links(input: &OptionsInput<'_, '_, '_>, entry_points: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     let mut followed: Vec<Vec<u8>> = Vec::with_capacity(entry_points.len());
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     for entry in entry_points {
         let is_in_memory = input.file_map.is_some_and(|files| files.contains(&entry));
         let absolute = absolute_path(input.working_directory, &entry);
@@ -450,7 +455,7 @@ fn follow_links(input: &OptionsInput<'_, '_, '_>, entry_points: Vec<Vec<u8>>) ->
             false => real_file_path(&absolute).filter(|real| *real != absolute),
         };
         let entry = real.unwrap_or(entry);
-        if !followed.contains(&entry) {
+        if seen.insert(entry.clone()) {
             followed.push(entry);
         }
     }

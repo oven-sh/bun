@@ -845,6 +845,7 @@ impl<'s> Program<'s> {
             this_types: Default::default(),
             this_types_in_progress: Vec::new(),
             thisless_members: Default::default(),
+            flow_type_skips: Default::default(),
             instantiated_symbol_links: Default::default(),
             late_binding: Vec::new(),
             late_binding_by_symbol: Vec::new(),
@@ -1004,6 +1005,7 @@ impl<'s> Program<'s> {
             deepest_stack: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
             scopes_inside_exprs: Default::default(),
+            containers_inside_exprs: Default::default(),
             spread_indices_of_many: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
@@ -1517,6 +1519,17 @@ pub enum Requested {
     EarlyErrors,
 }
 
+/// The ancestors of a node at which `conditional_flow_type_of_type` finds nothing.
+#[derive(Clone, Copy)]
+struct FlowTypeSkip {
+    /// The highest of them, or the node itself.
+    below: Node,
+    /// The highest type node among them. `NONE` if there's none.
+    node: TypeNodeId,
+    /// True if an odd number of them are parameters.
+    flips_variance: bool,
+}
+
 pub struct Checker<'p, 's> {
     pub p: &'p Program<'s>,
     /// The arena of the thread that runs the task. It's for the records the task creates, which may
@@ -1558,6 +1571,8 @@ pub struct Checker<'p, 's> {
     this_types_in_progress: Vec<Sym>,
     /// See `is_thisless_for_this_mapper`.
     thisless_members: FxHashMap<Sym, bool>,
+    /// See `skip_ancestors_without_flow_constraint`.
+    flow_type_skips: FxHashMap<(FileId, Node), FlowTypeSkip>,
     /// `links.resolvedType` of instantiated symbols, by target and mapper. Only contains the ones that differ from what
     /// the target's type gives. See `link_of_instantiated_symbol`.
     instantiated_symbol_links: FxHashMap<Sym, Vec<(MapperId, TypeId)>>,
@@ -1971,6 +1986,8 @@ pub struct Checker<'p, 's> {
     ran_out_of_stack: std::cell::Cell<bool>,
     /// `enclosing_scope_of_expr` for the contents of these expressions.
     scopes_inside_exprs: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
+    /// `get_control_flow_container` for the children of these expressions.
+    containers_inside_exprs: std::cell::RefCell<FxHashMap<(FileId, ExprId), errors::Container>>,
     /// `spread_indices` of the array literals and the calls with many elements or arguments.
     spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
     /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.

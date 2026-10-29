@@ -185,6 +185,10 @@ extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult* result, Wire:
         return noBytes;
     case Wire::ResultSection::LibraryFunctionsLacked:
         return output ? bytesOf(output->flowReport.libraryFunctionsLacked) : noBytes;
+    case Wire::ResultSection::WorkerStartsWithoutName:
+        return output ? bytesOf(output->flowReport.workerStartsWithoutName) : noBytes;
+    case Wire::ResultSection::ExportsThatSpiesReplace:
+        return output ? bytesOf(output->flowReport.exportsThatSpiesReplace) : noBytes;
     }
     return noBytes;
 }

@@ -96,7 +96,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.lower_elements(TypeTable::ANYTHING, prefix, arguments, position)
     }
 
-    fn lower_elements(
+    pub(in crate::lower) fn lower_elements(
         &mut self,
         contents: TypeId,
         prefix: &[ValueId],

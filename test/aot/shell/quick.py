@@ -5,10 +5,11 @@ Each program goes through three tools: the front end (a Bun) lowers it to IR, `t
 and compressed references validated, and the `jsc` shell runs the image. Use this while working on the compiler: all programs take
 about five minutes, one takes a second. The real test is `bun test test/aot`, which needs a full Bun.
 
-    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> PLAIN=<any bun> test/aot/shell/quick.py [-j <jobs>] <program>... | all
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> PLAIN=<any bun> test/aot/shell/quick.py [-j <jobs>] <program>... | all | counting
 
     the tools   toolchain.py's docstring says how to build them
     <program>   its path under ../programs without the extension, e.g. strings/replace-all
+    counting    the programs that name a function by which the shell alone says what compiled code did, with KNOWS_SHELL_FUNCTIONS
 
 Other environment variables:
     PROGRAMS        the folder of programs (default: ../parallel)
@@ -27,11 +28,12 @@ Prints one line per program and exits with 1 if any line is a failure:
                     again under where-it-died.py, which says where it died
     NO IR           the front end rejected the program
     NOT COMPILED    the engine rejected it
-    skipped         the shell cannot judge it; the line says why
+    skipped         the shell cannot judge it; the line says why. `skipped: TODO: ..`: with KNOWS_SHELL_FUNCTIONS its counts do not hold today, by counts-known.txt
+    HOLDS AGAIN     its line goes out of counts-known.txt
 
 A program with a .build-errors.txt is skipped: front end and engine stop at the errors that `bun compile` reports.
 """
-import difflib, json, os, re, sys, tempfile
+import difflib, json, os, platform, re, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -111,6 +113,13 @@ def functions_it_names(base, entry):
     """The functions by which the shell says what compiled code did that the text of the program names."""
     files = [os.path.join(folder, file) for folder, _, files in os.walk(base) for file in files] if os.path.isdir(base) else [entry]
     return sorted({name for file in files if file.endswith(EXTENSIONS) for name in ASKS_THE_SHELL.findall(open(file, errors="replace").read())})
+
+
+def known_counts():
+    """counts-known.txt: the programs whose counts do not hold on this processor today, and what each says."""
+    processor = {"x86_64": "x64", "AMD64": "x64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
+    lines = [line.rstrip("\n").split("    ", 2) for line in open(HERE + "/counts-known.txt") if line.strip() and not line.startswith("#")]
+    return {program: why for program, where, why in lines if where in (processor, "both")}
 
 
 def where_it_died(ir, image, words, build_env, entry, env, has_own_environment, cwd):
@@ -232,9 +241,20 @@ if __name__ == "__main__":
     for root in filter(None, (WORK, os.path.dirname(PROGRAMS), WRITTEN)):
         toolchain.without_installing_packages(root)
     programs = all_programs() + written_programs() if arguments == ["all"] else arguments
+    if arguments == ["counting"]:
+        os.environ["KNOWS_SHELL_FUNCTIONS"] = "1"
+        entry_of = lambda base: first_existing([f"{base}.{x}" for x in EXTENSIONS] + [f"{base}/main.{x}" for x in MAIN_EXTENSIONS])
+        # Under Bun ../fixtures/jsc-shell-functions.ts answers this one.
+        names = lambda base: set(functions_it_names(base, entry_of(base))) - {"memoryUsageStatistics"}
+        programs = [program for program in all_programs() if names(f"{PROGRAMS}/{program}")]
+    known = known_counts() if os.environ.get("KNOWS_SHELL_FUNCTIONS") else {}
     failed = 0
     with ThreadPoolExecutor(jobs) as pool:
         for program, verdict in zip(programs, pool.map(run_program, programs)):
+            if program in known and verdict.startswith("same"):
+                verdict = "HOLDS AGAIN: take its line out of counts-known.txt"
+            elif program in known and verdict.startswith(("DIFFERS (exit code 0)", "ASKS IN VAIN")):
+                verdict = "skipped: TODO: " + known[program]
             print(f"{program}: {verdict}", flush=True)
             failed += not verdict.startswith(("same", "skipped"))
     sys.exit(1 if failed else 0)

@@ -657,7 +657,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f66 visibility=Private
 # CHECK-NEXT: BB#10: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #0
 # CHECK-NEXT: Int64 b@30 = Const64(80, v2:ToObject)
-# CHECK-NEXT: Int64 b@31 = Patchpoint(b@18:ColdAny, $80(b@30):ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:Top, v2:ToObject)
+# CHECK-NEXT: Int64 b@31 = Patchpoint(b@18:ColdAny, $80(b@30):ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:Top, v2:ToObject)
 # CHECK-NEXT: Void b@32 = Upsilon(b@31, ^34, WritesLocalState, v2:ToObject)
 # CHECK-NEXT: Void b@33 = Jump(Terminal, v2:ToObject)
 # CHECK-NEXT: Successors: #11

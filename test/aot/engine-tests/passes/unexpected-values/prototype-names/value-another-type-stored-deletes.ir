@@ -416,123 +416,118 @@ runtimefunction id=ArrayTraversalTraverseArray function=f23 visibility=Private
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v18: 3000 = Integer integer=3000
 # CHECK-NEXT: v19: boolean = Less v16, v18
-# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b23()
+# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b24()
 # CHECK-NEXT: b5(v20: int[0, 2999]):
 # CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: v22: L0 = NewObject -, v21 layout=L0 fields=[1] allocationClass=0
-# CHECK-NEXT: v23: boolean = HasBirthFieldsFilled v22
-# CHECK-NEXT: Branch v23 -> taken b6(), notTaken b8()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: number = Add v15, v24
-# CHECK-NEXT: v26: 2 = Integer integer=2
-# CHECK-NEXT: v27: anything = Call v0, -, v22, v26 calleeName="setCount" accessSite=4 callees=[f2]
-# CHECK-NEXT: v28: boolean = HasBirthFieldsFilled v22
-# CHECK-NEXT: Branch v28 -> taken b7(| 0), notTaken b11(v25, v20, v22)
-# CHECK-NEXT: b7(v29: guard):
-# CHECK-NEXT: v30: "ab" = String string="ab"
-# CHECK-NEXT: PutSlot v22, v29, v30 key="name" receivers=[L0] level=Expected accessSite=17
-# CHECK-NEXT: v32: undefined|null|string = Call v1, -, v22 calleeName="nameOf" accessSite=7 callees=[f5]
+# CHECK-NEXT: v22: 1 = Integer integer=1
+# CHECK-NEXT: v23: number = Add v15, v22
+# CHECK-NEXT: v24: 2 = Integer integer=2
+# CHECK-NEXT: v25: L0 = NewObject -, v21 layout=L0 fields=[1] allocationClass=0
+# CHECK-NEXT: v26: anything = Call v0, -, v25, v24 calleeName="setCount" accessSite=4 callees=[f2]
+# CHECK-NEXT: v27: "ab" = String string="ab"
+# CHECK-NEXT: v28: boolean = HasBirthFieldsFilled v25
+# CHECK-NEXT: Branch v28 -> taken b6(| 0), notTaken b8(v23, v20, v25)
+# CHECK-NEXT: b6(v29: guard):
+# CHECK-NEXT: PutSlot v25, v29, v27 key="name" receivers=[L0] level=Expected accessSite=17
+# CHECK-NEXT: v31: boolean = HasNoFieldOutsideSlot v25 [mayMeetUnfinishedObject]
+# CHECK-NEXT: Branch v31 -> taken b7(), notTaken b11(v23, v20, v25)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v32: undefined|null|string = Call v1, -, v25 calleeName="nameOf" accessSite=7 callees=[f5]
 # CHECK-NEXT: v33: undefined = Undefined
 # CHECK-NEXT: v34: 0 = Integer
 # CHECK-NEXT: v35: number = Add v33, v34
-# CHECK-NEXT: v36: number = Add v25, v35
+# CHECK-NEXT: v36: number = Add v23, v35
 # CHECK-NEXT: v37: int[1, 3000] = Increment v20
 # CHECK-NEXT: Jump -> next b4(v36, v37)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v38: anything ~ undefined = PropGet v22 key="count" accessSite=18 receivers=[L0]
-# CHECK-NEXT: v39: 1 = Integer integer=1
-# CHECK-NEXT: v40: number = Add v15, v39
-# CHECK-NEXT: v41: 2 = Integer integer=2
-# CHECK-NEXT: v42: anything = Call v0, -, v22, v41 calleeName="setCount" accessSite=4 callees=[f2]
-# CHECK-NEXT: Jump -> next b9(v40, v20, v22)
-# CHECK-NEXT: b9(v43: number, v44: int[0, 2999], v45: L0) frequency=Unlikely:
-# CHECK-NEXT: v46: boolean = HasBirthFieldsFilled v45
-# CHECK-NEXT: Branch v46 -> taken b10(| 0), notTaken b11(v43, v44, v45)
-# CHECK-NEXT: b10(v47: guard) frequency=Unlikely:
-# CHECK-NEXT: v48: "ab" = String string="ab"
-# CHECK-NEXT: PutSlot v45, v47, v48 key="name" receivers=[L0] level=Expected accessSite=17
-# CHECK-NEXT: v50: undefined|null|string = Call v1, -, v45 calleeName="nameOf" accessSite=7 callees=[f5]
-# CHECK-NEXT: Jump -> next b13(v43, v44)
-# CHECK-NEXT: b11(v51: number, v52: int[0, 2999], v53: L0) frequency=Rare:
-# CHECK-NEXT: v54: "ab" = String string="ab"
-# CHECK-NEXT: PropSet v53, v54 key="name" accessSite=17 receivers=[L0]
-# CHECK-NEXT: v56: anything ~ undefined = PropGet v53 key="count" accessSite=18 receivers=[L0]
-# CHECK-NEXT: v57: undefined|"many" ~ undefined = AssumeType v56 provenType=undefined|"many"
-# CHECK-NEXT: v58: undefined|null|string = Call v1, -, v53 calleeName="nameOf" accessSite=7 callees=[f5]
-# CHECK-NEXT: v59: boolean ~ true = TypeTest v57 testedType=undefined
-# CHECK-NEXT: Branch v59 -> taken b12(), notTaken b14()
+# CHECK-NEXT: b8(v38: number, v39: int[0, 2999], v40: L0) frequency=Rare:
+# CHECK-NEXT: PropSet v40, v27 key="name" accessSite=17 receivers=[L0]
+# CHECK-NEXT: Jump -> next b9(v38, v39, v40)
+# CHECK-NEXT: b9(v42: number, v43: int[0, 2999], v44: L0) frequency=Unlikely:
+# CHECK-NEXT: v45: boolean = HasNoFieldOutsideSlot v44 [mayMeetUnfinishedObject]
+# CHECK-NEXT: Branch v45 -> taken b10(), notTaken b11(v42, v43, v44)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v46: undefined|null|string = Call v1, -, v44 calleeName="nameOf" accessSite=7 callees=[f5]
+# CHECK-NEXT: Jump -> next b13(v42, v43)
+# CHECK-NEXT: b11(v47: number, v48: int[0, 2999], v49: L0) frequency=Rare:
+# CHECK-NEXT: v50: anything ~ undefined = PropGet v49 key="count" accessSite=18 receivers=[L0]
+# CHECK-NEXT: v51: undefined|"many" ~ undefined = AssumeType v50 provenType=undefined|"many"
+# CHECK-NEXT: v52: undefined|null|string = Call v1, -, v49 calleeName="nameOf" accessSite=7 callees=[f5]
+# CHECK-NEXT: v53: boolean ~ true = TypeTest v51 testedType=undefined
+# CHECK-NEXT: Branch v53 -> taken b12(), notTaken b14()
 # CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: Jump -> next b13(v51, v52)
-# CHECK-NEXT: b13(v60: number, v61: int[0, 2999]) frequency=Unlikely:
-# CHECK-NEXT: v62: undefined = Undefined
-# CHECK-NEXT: v63: 0 = Integer
-# CHECK-NEXT: v64: number = Add v62, v63
-# CHECK-NEXT: v65: number = Add v60, v64
-# CHECK-NEXT: v66: int[1, 3000] = Increment v61
-# CHECK-NEXT: Jump -> next b3(v65, v66)
+# CHECK-NEXT: Jump -> next b13(v47, v48)
+# CHECK-NEXT: b13(v54: number, v55: int[0, 2999]) frequency=Unlikely:
+# CHECK-NEXT: v56: undefined = Undefined
+# CHECK-NEXT: v57: 0 = Integer
+# CHECK-NEXT: v58: number = Add v56, v57
+# CHECK-NEXT: v59: number = Add v54, v58
+# CHECK-NEXT: v60: int[1, 3000] = Increment v55
+# CHECK-NEXT: Jump -> next b3(v59, v60)
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v67: 0 = Integer
-# CHECK-NEXT: v68: number|string|bigint ~ number = Add v57, v67
-# CHECK-NEXT: v69: boolean ~ true = TypeTest v68 testedType=number
-# CHECK-NEXT: Branch v69 -> taken b15(| 0), notTaken b16(| 0)
-# CHECK-NEXT: b15(v70: number) frequency=Rare:
-# CHECK-NEXT: v71: number = Add v51, v70
-# CHECK-NEXT: v72: int[1, 3000] = Increment v52
-# CHECK-NEXT: Jump -> next b2(v71, v72)
-# CHECK-NEXT: b16(v73: string|bigint) frequency=Rare:
-# CHECK-NEXT: Jump -> next b17(v51, v52, v73)
-# CHECK-NEXT: b17(v74: number|string|bigint ~ number, v75: int[0, 2999], v76: number|string|bigint ~ number) frequency=Rare:
-# CHECK-NEXT: v77: number|string|bigint ~ number = Add v74, v76
-# CHECK-NEXT: v78: int[1, 3000] = Increment v75
-# CHECK-NEXT: v79: boolean ~ true = TypeTest v77 testedType=number
-# CHECK-NEXT: Branch v79 -> taken b18(| 0), notTaken b19()
-# CHECK-NEXT: b18(v80: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b1(v80, v78)
+# CHECK-NEXT: v61: 0 = Integer
+# CHECK-NEXT: v62: number|string|bigint ~ number = Add v51, v61
+# CHECK-NEXT: v63: boolean ~ true = TypeTest v62 testedType=number
+# CHECK-NEXT: Branch v63 -> taken b15(| 0), notTaken b16(| 0)
+# CHECK-NEXT: b15(v64: number) frequency=Rare:
+# CHECK-NEXT: v65: number = Add v47, v64
+# CHECK-NEXT: v66: int[1, 3000] = Increment v48
+# CHECK-NEXT: Jump -> next b2(v65, v66)
+# CHECK-NEXT: b16(v67: string|bigint) frequency=Rare:
+# CHECK-NEXT: Jump -> next b17(v47, v48, v67)
+# CHECK-NEXT: b17(v68: number|string|bigint ~ number, v69: int[0, 2999], v70: number|string|bigint ~ number) frequency=Rare:
+# CHECK-NEXT: v71: number|string|bigint ~ number = Add v68, v70
+# CHECK-NEXT: v72: int[1, 3000] = Increment v69
+# CHECK-NEXT: v73: boolean ~ true = TypeTest v71 testedType=number
+# CHECK-NEXT: Branch v73 -> taken b18(| 0), notTaken b19()
+# CHECK-NEXT: b18(v74: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v74, v72)
 # CHECK-NEXT: b19() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v82: 3000 = Integer integer=3000
-# CHECK-NEXT: v83: boolean = Less v78, v82
-# CHECK-NEXT: Branch v83 -> taken b20(| 0), notTaken b23()
-# CHECK-NEXT: b20(v84: int[1, 2999]) frequency=Rare:
-# CHECK-NEXT: v85: undefined = Undefined
-# CHECK-NEXT: v86: L0 = NewObject -, v85 layout=L0 fields=[1] allocationClass=0
-# CHECK-NEXT: v87: anything ~ undefined = PropGet v86 key="count" accessSite=18 receivers=[L0]
-# CHECK-NEXT: v88: 1 = Integer integer=1
-# CHECK-NEXT: v89: number|string|bigint ~ number = Add v77, v88
-# CHECK-NEXT: v90: 2 = Integer integer=2
-# CHECK-NEXT: v91: anything = Call v0, -, v86, v90 calleeName="setCount" accessSite=4 callees=[f2]
-# CHECK-NEXT: v92: boolean ~ true = TypeTest v89 testedType=number
-# CHECK-NEXT: Branch v92 -> taken b21(| 0), notTaken b22()
-# CHECK-NEXT: b21(v93: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b9(v93, v84, v86)
-# CHECK-NEXT: b22() frequency=Rare:
-# CHECK-NEXT: v94: "ab" = String string="ab"
-# CHECK-NEXT: PropSet v86, v94 key="name" accessSite=17 receivers=[L0]
-# CHECK-NEXT: v96: anything ~ undefined = PropGet v86 key="count" accessSite=18 receivers=[L0]
-# CHECK-NEXT: v97: undefined|"many" ~ undefined = AssumeType v96 provenType=undefined|"many"
-# CHECK-NEXT: v98: undefined|null|string = Call v1, -, v86 calleeName="nameOf" accessSite=7 callees=[f5]
-# CHECK-NEXT: v99: 0 = Integer
-# CHECK-NEXT: v100: number|string|bigint ~ number = Add v97, v99
-# CHECK-NEXT: Jump -> next b17(v89, v84, v100)
+# CHECK-NEXT: v76: 3000 = Integer integer=3000
+# CHECK-NEXT: v77: boolean = Less v72, v76
+# CHECK-NEXT: Branch v77 -> taken b20(| 0), notTaken b24()
+# CHECK-NEXT: b20(v78: int[1, 2999]) frequency=Rare:
+# CHECK-NEXT: v79: undefined = Undefined
+# CHECK-NEXT: v80: number|string|bigint ~ number = Add v71, v22
+# CHECK-NEXT: v81: 2 = Integer integer=2
+# CHECK-NEXT: v82: L0 = NewObject -, v79 layout=L0 fields=[1] allocationClass=0
+# CHECK-NEXT: v83: anything = Call v0, -, v82, v81 calleeName="setCount" accessSite=4 callees=[f2]
+# CHECK-NEXT: v84: boolean ~ true = TypeTest v80 testedType=number
+# CHECK-NEXT: Branch v84 -> taken b21(| 0), notTaken b23()
+# CHECK-NEXT: b21(v85: number) frequency=Rare:
+# CHECK-NEXT: v86: boolean = HasBirthFieldsFilled v82
+# CHECK-NEXT: Branch v86 -> taken b22(| 0), notTaken b8(v85, v78, v82)
+# CHECK-NEXT: b22(v87: guard) frequency=Unlikely:
+# CHECK-NEXT: v88: "ab" = String string="ab"
+# CHECK-NEXT: PutSlot v82, v87, v88 key="name" receivers=[L0] level=Expected accessSite=17
+# CHECK-NEXT: Jump -> next b9(v85, v78, v82)
 # CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: v101: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v102: undefined = CallDirect v101 function=f11 accessSite=31
-# CHECK-NEXT: v103: boolean = PropDelete v101 key="count" accessSite=32 receivers=[L0]
-# CHECK-NEXT: v104: "a string" = String string="a string"
-# CHECK-NEXT: v105: L1 = NewObject -, v104 layout=L1 fields=[0] allocationSite=6 allocationClass=1
-# CHECK-NEXT: PropSet v101, v105 key="name" accessSite=9 receivers=[L0]
-# CHECK-NEXT: v107: "many" = String string="many"
-# CHECK-NEXT: PropSet v101, v107 key="count" accessSite=10 receivers=[L0]
-# CHECK-NEXT: TryFinishBirth v101
-# CHECK-NEXT: v109: L0 = NewObject layout=L0 allocationClass=0
-# CHECK-NEXT: v110: undefined = CallDirect v109 function=f11 accessSite=31
-# CHECK-NEXT: v111: boolean = PropDelete v109 key="count" accessSite=32 receivers=[L0]
-# CHECK-NEXT: v112: "nine" = String string="nine"
-# CHECK-NEXT: PropSet v109, v112 key="name" accessSite=17 receivers=[L0]
-# CHECK-NEXT: v114: string = CallDirect v101 function=f6 accessSite=13
-# CHECK-NEXT: v115: undefined = Undefined
-# CHECK-NEXT: Return v115
+# CHECK-NEXT: v90: "ab" = String string="ab"
+# CHECK-NEXT: PropSet v82, v90 key="name" accessSite=17 receivers=[L0]
+# CHECK-NEXT: v92: anything ~ undefined = PropGet v82 key="count" accessSite=18 receivers=[L0]
+# CHECK-NEXT: v93: undefined|"many" ~ undefined = AssumeType v92 provenType=undefined|"many"
+# CHECK-NEXT: v94: undefined|null|string = Call v1, -, v82 calleeName="nameOf" accessSite=7 callees=[f5]
+# CHECK-NEXT: v95: 0 = Integer
+# CHECK-NEXT: v96: number|string|bigint ~ number = Add v93, v95
+# CHECK-NEXT: Jump -> next b17(v80, v78, v96)
+# CHECK-NEXT: b24() frequency=Rare:
+# CHECK-NEXT: v97: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v98: undefined = CallDirect v97 function=f11 accessSite=31
+# CHECK-NEXT: v99: boolean = PropDelete v97 key="count" accessSite=32 receivers=[L0]
+# CHECK-NEXT: v100: "a string" = String string="a string"
+# CHECK-NEXT: v101: L1 = NewObject -, v100 layout=L1 fields=[0] allocationSite=6 allocationClass=1
+# CHECK-NEXT: PropSet v97, v101 key="name" accessSite=9 receivers=[L0]
+# CHECK-NEXT: v103: "many" = String string="many"
+# CHECK-NEXT: PropSet v97, v103 key="count" accessSite=10 receivers=[L0]
+# CHECK-NEXT: TryFinishBirth v97
+# CHECK-NEXT: v105: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v106: undefined = CallDirect v105 function=f11 accessSite=31
+# CHECK-NEXT: v107: boolean = PropDelete v105 key="count" accessSite=32 receivers=[L0]
+# CHECK-NEXT: v108: "nine" = String string="nine"
+# CHECK-NEXT: PropSet v105, v108 key="name" accessSite=17 receivers=[L0]
+# CHECK-NEXT: v110: string = CallDirect v97 function=f6 accessSite=13
+# CHECK-NEXT: v111: undefined = Undefined
+# CHECK-NEXT: Return v111
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="handOver"
 # CHECK: module=m0 position=646 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

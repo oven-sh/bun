@@ -491,15 +491,10 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v4: f24 = FinishClass v3 layout=L5
 # CHECK-NEXT: v5: 8 = Integer integer=8
 # CHECK-NEXT: PutEnvironmentField v0, v5 layout=L4
-# CHECK-NEXT: v7: boolean = AreMembersUnchanged conditions=[{layout=L5 side=Static key="prototype"}, {kind=ClassEvaluatedOnce layout=L5}]
-# CHECK-NEXT: Branch v7 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v8: env L4 = GetCapture v4 function=f24
-# CHECK-NEXT: v10: 8|absent = GetEnvironmentField v8 layout=L4
-# CHECK-NEXT: v11: 8 = CheckInitialized v10 name="s"
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: v7: env L4 = GetCapture v4 function=f24
+# CHECK-NEXT: v9: 8|absent = GetEnvironmentField v7 layout=L4
+# CHECK-NEXT: v10: 8 = CheckInitialized v9 name="s"
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cycle"
 # CHECK: module=m0 position=1483 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[4, 5] site=w10}] results=[{type=boolean site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

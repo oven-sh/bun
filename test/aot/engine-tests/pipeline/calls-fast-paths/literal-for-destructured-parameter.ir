@@ -495,31 +495,48 @@ function f3 name="inLoop" module=m0 position=1038 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: b32():
 # CHECK-NEXT: v55: "" = String string=""
 # CHECK-NEXT: Jump -> next b33(v55, v32)
-# CHECK-NEXT: b33(v56: string, v57: int|whole):
+# CHECK-NEXT: b33(v56: string, v57: int|whole ~ i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v59: 0 = Integer
-# CHECK-NEXT: v60: boolean = Greater v57, v59
-# CHECK-NEXT: Branch v60 -> taken b34(), notTaken b35()
-# CHECK-NEXT: b34():
-# CHECK-NEXT: v61: 10 = Integer integer=10
-# CHECK-NEXT: v62: int|whole = Mod v57, v61
-# CHECK-NEXT: v63: string = CallBuiltin -, v62 overload=String/0 accessSite=11
-# CHECK-NEXT: v64: string = Add v63, v56
-# CHECK-NEXT: v65: 10 = Integer integer=10
-# CHECK-NEXT: v66: number = Div v57, v65
-# CHECK-NEXT: v67: int|whole = CallBuiltin -, v66 overload=MathFloor/0 accessSite=12
-# CHECK-NEXT: Jump -> next b33(v64, v67)
+# CHECK-NEXT: v60: boolean ~ true = TypeTest v57 testedType=i32
+# CHECK-NEXT: Branch v60 -> taken b34(| 0), notTaken b36()
+# CHECK-NEXT: b34(v61: i32):
+# CHECK-NEXT: v62: boolean = Greater v61, v59
+# CHECK-NEXT: Branch v62 -> taken b35(), notTaken b39()
 # CHECK-NEXT: b35():
-# CHECK-NEXT: v68: ":" = String string=":"
-# CHECK-NEXT: StringBuilderAppend v29, v68
-# CHECK-NEXT: v70: "" = String string=""
-# CHECK-NEXT: v71: boolean = StrictEq v56, v70
-# CHECK-NEXT: Branch v71 -> taken b36(), notTaken b37(v56)
-# CHECK-NEXT: b36():
-# CHECK-NEXT: v72: "0" = String string="0"
-# CHECK-NEXT: Jump -> next b37(v72)
-# CHECK-NEXT: b37(v73: string):
-# CHECK-NEXT: StringBuilderAppend v29, v73
-# CHECK-NEXT: v75: string = StringBuilderFinish v29
-# CHECK-NEXT: Return v75
+# CHECK-NEXT: v63: 10 = Integer integer=10
+# CHECK-NEXT: v64: int[-9, 9]|whole = Mod v61, v63
+# CHECK-NEXT: v65: string = CallBuiltin -, v64 overload=String/0 accessSite=11
+# CHECK-NEXT: v66: string = Add v65, v56
+# CHECK-NEXT: v67: 10 = Integer integer=10
+# CHECK-NEXT: v68: number = Div v61, v67
+# CHECK-NEXT: Jump -> next b38(v66, v68)
+# CHECK-NEXT: b36() frequency=Rare:
+# CHECK-NEXT: v69: boolean = Greater v57, v59
+# CHECK-NEXT: Branch v69 -> taken b37(), notTaken b39()
+# CHECK-NEXT: b37() frequency=Rare:
+# CHECK-NEXT: v70: 10 = Integer integer=10
+# CHECK-NEXT: v71: int|whole ~ int[-9, 9]|whole = Mod v57, v70
+# CHECK-NEXT: v72: string = CallBuiltin -, v71 overload=String/0 accessSite=11
+# CHECK-NEXT: v73: string = Add v72, v56
+# CHECK-NEXT: v74: 10 = Integer integer=10
+# CHECK-NEXT: v75: number = Div v57, v74
+# CHECK-NEXT: Jump -> next b38(v73, v75)
+# CHECK-NEXT: b38(v76: string, v77: number):
+# CHECK-NEXT: v78: int|whole = CallBuiltin -, v77 overload=MathFloor/0 accessSite=12
+# CHECK-NEXT: v79: int|whole ~ i32 = Upcast v78 castType=int|whole
+# CHECK-NEXT: Jump -> next b33(v76, v79)
+# CHECK-NEXT: b39():
+# CHECK-NEXT: v80: ":" = String string=":"
+# CHECK-NEXT: StringBuilderAppend v29, v80
+# CHECK-NEXT: v82: "" = String string=""
+# CHECK-NEXT: v83: boolean = StrictEq v56, v82
+# CHECK-NEXT: Branch v83 -> taken b40(), notTaken b41(v56)
+# CHECK-NEXT: b40():
+# CHECK-NEXT: v84: "0" = String string="0"
+# CHECK-NEXT: Jump -> next b41(v84)
+# CHECK-NEXT: b41(v85: string):
+# CHECK-NEXT: StringBuilderAppend v29, v85
+# CHECK-NEXT: v87: string = StringBuilderFinish v29
+# CHECK-NEXT: Return v87
 # CHECK-NEXT: }

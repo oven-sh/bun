@@ -1,12 +1,13 @@
 use super::import_graph::ImportGraph;
 use super::runtime_reach::ReachWhileLoading;
 use super::{
-    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, chooses_library_code_by_names,
-    find_further_worker_files, joins_workers, library_code_of, mentions_worker_constructor,
-    preload_of,
+    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad,
+    begins_program_at_each_entry_point, chooses_library_code_by_names, find_further_worker_files,
+    joins_workers, library_code_of, mentions_worker_constructor, preload_of,
 };
 use crate::builtins::{BuiltinNames, RuntimeUses};
-use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
+use crate::diagnostic_codes::Code;
+use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::link::run_beside;
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
@@ -23,7 +24,8 @@ use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
 use crate::load::worker_files::{
-    WorkerSearch, find_code_that_starts_workers, find_embedded_code_files, source_path_of,
+    SearchedFrom, WorkerSearch, find_code_that_starts_workers, find_embedded_code_files,
+    source_path_of,
 };
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
 use crate::options::{LibraryCode, LoadOptions};
@@ -36,6 +38,7 @@ use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::{FileId, Files, MainModule, Run};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
+use bun_sema::util::FxHashSet;
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
     ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
@@ -554,7 +557,7 @@ impl<'a> Build<'a> {
         if project.asset_reads == AssetReads::FinishedLater {
             read_assets(project.scope, host);
         }
-        if options.aot.checks_only && options.entry_points.len() > 1 {
+        if options.aot.runs_tests || (options.aot.checks_only && options.entry_points.len() > 1) {
             self.import_graph = Some(ImportGraph::of(application.files()));
         }
         resolve_loads_through_imported_loaders(application.files(), &self.parallel_runner());
@@ -580,13 +583,19 @@ impl<'a> Build<'a> {
                 provider: self.provider,
                 resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
                 resolve_bare_name: &|name| resolve_entry_point(host, &code_from_root, name),
-                find_files_named_in_part: &|written_in, names| {
-                    let directory = match written_in {
-                        Some(file) => host.directory_of(file),
-                        None => Cow::Borrowed(&code_from_root.working_directory[..]),
+                find_files_named_in_part: &|from, names| {
+                    let directory = match from {
+                        SearchedFrom::FolderOf(file) => host.directory_of(file),
+                        SearchedFrom::RootDirectory => {
+                            Cow::Borrowed(&code_from_root.working_directory[..])
+                        }
+                        SearchedFrom::WorkingDirectory => {
+                            Cow::Borrowed(&request.code.working_directory[..])
+                        }
                     };
                     resolve_names_known_in_part(host, request.code, &directory, names)
                 },
+                working_directory: &request.code.working_directory,
             };
             let found = find_code_that_starts_workers(files, &search, &self.parallel_runner());
             self.started_workers.files = found.files;
@@ -598,13 +607,14 @@ impl<'a> Build<'a> {
             && joins_workers(*splits, &self.started_workers)
         {
             // A text that a Worker starts from is an entry point under the name that the build has given it.
-            let mut entry_points = options.entry_points.clone();
+            let mut entry_points: FxHashSet<Vec<u8>> =
+                options.entry_points.iter().cloned().collect();
             let loaded = files.entry_points().iter();
             entry_points
                 .extend(loaded.map(|&first| source_path_of(files.module(first).file_name())));
             self.files_of_the_one_program =
                 find_further_worker_files(&self.started_workers, left_out, |path| {
-                    entry_points.iter().any(|it| it == path)
+                    entry_points.contains(path)
                 });
             // The build starts over with them. Nothing but the load is thrown away.
             if !self.files_of_the_one_program.is_empty() {
@@ -636,7 +646,22 @@ impl<'a> Build<'a> {
         };
         // Each program with its position and the file it begins at. A build of one program looks at all that was loaded.
         let programs: Vec<(usize, Option<FileId>)> = match self.programs {
-            None => vec![(0, None)],
+            None => {
+                if begins_program_at_each_entry_point(options)
+                    && has_too_many_entry_points(files, &self.limits)
+                    && (options.aot.separates_programs
+                        || !are_one_program(
+                            files,
+                            true,
+                            self.started_workers.constructs_node_workers,
+                            &self.limits,
+                            &mut self.statistics,
+                        ))
+                {
+                    self.warn_about_joined_programs(files);
+                }
+                vec![(0, None)]
+            }
             Some(ProgramsOfOneLoad {
                 held_elsewhere: Some(held),
                 indexes,
@@ -653,13 +678,14 @@ impl<'a> Build<'a> {
             Some(of_one_load)
                 if files.entry_points().len() != positions.len()
                     || (!self.options.aot.separates_programs
-                        && are_one_program(
-                            files,
-                            of_one_load.indexes[positions[0]] == 0,
-                            self.started_workers.constructs_node_workers,
-                            &self.limits,
-                            &mut self.statistics,
-                        )) =>
+                        && (has_too_many_entry_points(files, &self.limits)
+                            || are_one_program(
+                                files,
+                                of_one_load.indexes[positions[0]] == 0,
+                                self.started_workers.constructs_node_workers,
+                                &self.limits,
+                                &mut self.statistics,
+                            ))) =>
             {
                 let holds_all = of_one_load.are_all_of_the_build
                     && of_one_load.indexes.len() == positions.len();
@@ -669,7 +695,7 @@ impl<'a> Build<'a> {
                 }
                 // What was loaded is what a build of one program loads.
                 self.programs = None;
-                vec![(0, None)]
+                return self.compile_loaded(shared, project, application, then, kept_runtime);
             }
             Some(_) => {
                 let first_files = files.entry_points().iter().copied().map(Some);
@@ -862,6 +888,16 @@ impl<'a> Build<'a> {
             *kept_runtime = Some((roots.swap_remove(index), runtime));
         }
         Ok(result.expect("a build has a program"))
+    }
+
+    // Nothing but their number makes the entry points one program, so one more of them changes how all the others are compiled.
+    fn warn_about_joined_programs(&mut self, files: &Files<'_>) {
+        self.statistics.gave_up(LimitId::MaxProgramsPerBuild, None);
+        let count = files.entry_points().len().to_string();
+        let most = self.limits.get(LimitId::MaxProgramsPerBuild).to_string();
+        let arguments = [count.as_bytes(), most.as_bytes()];
+        let warning = Diagnostic::new(Code::EntryPointsCompiledTogether, None, &arguments);
+        self.diagnostics.add(None, warning);
     }
 
     fn create_runtime_load_inputs<'c, 's>(
@@ -1164,7 +1200,8 @@ impl<'a> Build<'a> {
 //   copy of it and of the streams, the console and the file system behind it;
 // - a program loads a module by a name that the build does not know, which may be that of any entry point: it has to hold them all;
 // - the programs share much of their files, and a file is compiled once for each program that holds it;
-// - there are very many: pages or plugins that a pattern has found.
+// - there are very many: `has_too_many_entry_points`.
+// The walk visits a file once for each program that holds it and stops where the programs share too much, so its cost is linear in the text.
 fn are_one_program(
     files: &Files<'_>,
     has_first_of_build: bool,
@@ -1172,48 +1209,61 @@ fn are_one_program(
     limits: &LimitValues,
     statistics: &mut Statistics,
 ) -> bool {
+    const NO_PROGRAM: u32 = u32::MAX;
     let limit = |limit: LimitId| usize::try_from(limits.get(limit)).unwrap_or(usize::MAX);
-    let entry_points = files.entry_points();
-    let view = |first: Option<FileId>| {
-        // SAFETY: the load has ended, and no thread works for the build.
-        unsafe { files.view_program(first) };
-    };
-    let size_of = |compiled: &[FileId]| -> usize {
-        let texts = compiled
-            .iter()
-            .map(|&file| files.module(file).hir.text.len());
-        texts.sum()
-    };
-    let mut is_held = vec![false; files.modules.len()];
-    let (mut size_of_all, mut size_of_each) = (0, 0);
-    let mut are_one = entry_points.len() > limit(LimitId::MaxProgramsPerBuild);
-    if are_one {
-        statistics.gave_up(LimitId::MaxProgramsPerBuild, None);
-    }
-    are_one |= constructs_node_workers;
-    for (position, &first) in entry_points.iter().enumerate() {
-        if are_one {
-            break;
-        }
-        view(Some(first));
-        let compiled = files.compiled_files();
-        let is_first_of_build = position == 0 && has_first_of_build;
-        are_one = (is_first_of_build && !mentions_worker_constructor(files))
-            || loads_modules_by_names_that_are_not_constant(files);
-        size_of_each += size_of(compiled);
-        for &file in compiled {
-            if !core::mem::replace(&mut is_held[file.idx()], true) {
-                size_of_all += size_of(&[file]);
-            }
-        }
-    }
-    view(None);
-    if are_one {
+    if constructs_node_workers {
         return true;
     }
-    let repeated = size_of_each - size_of_all;
-    let share = size_of_all / 100 * limit(LimitId::MaxRepeatedSourcePercent);
+    let entry_points = files.entry_points();
+    if has_first_of_build {
+        // SAFETY: the load has ended, and no thread works for the build.
+        unsafe { files.view_program(Some(entry_points[0])) };
+        let starts_workers = mentions_worker_constructor(files);
+        // SAFETY: as above.
+        unsafe { files.view_program(None) };
+        if !starts_workers {
+            return true;
+        }
+    }
+    let text_of = |file: FileId| files.module(file).hir.text.len();
+    let mut is_compiled = vec![false; files.modules.len()];
+    let mut size_of_loaded = 0;
+    for &file in files.compiled_files() {
+        is_compiled[file.idx()] = true;
+        size_of_loaded += text_of(file);
+    }
     let most = limit(LimitId::MaxRepeatedSourceBytes);
+    let share_of = |size: usize| size / 100 * limit(LimitId::MaxRepeatedSourcePercent);
+    // The programs hold no more than was loaded.
+    let most_of_any_programs = most.max(share_of(size_of_loaded));
+    let mut last_holder = vec![NO_PROGRAM; files.modules.len()];
+    let (mut size_of_all, mut repeated) = (0, 0);
+    let mut pending: Vec<FileId> = Vec::new();
+    for (program, &first) in entry_points.iter().enumerate() {
+        pending.push(first);
+        while let Some(file) = pending.pop() {
+            let holder = core::mem::replace(&mut last_holder[file.idx()], program as u32);
+            if holder == program as u32 {
+                continue;
+            }
+            pending.extend_from_slice(files.module(file).code_edges);
+            if !is_compiled[file.idx()] {
+                continue;
+            }
+            if holder != NO_PROGRAM {
+                repeated += text_of(file);
+            } else if loads_modules_by_names_that_are_not_constant(files, file) {
+                return true;
+            } else {
+                size_of_all += text_of(file);
+            }
+        }
+        if repeated > most_of_any_programs {
+            size_of_all = size_of_loaded;
+            break;
+        }
+    }
+    let share = share_of(size_of_all);
     if repeated > most.max(share) {
         statistics.gave_up(
             match share > most {
@@ -1225,6 +1275,11 @@ fn are_one_program(
         return true;
     }
     false
+}
+
+// Pages or plugins that a pattern has found. Each program costs the build and the executable a fixed amount.
+fn has_too_many_entry_points(files: &Files<'_>, limits: &LimitValues) -> bool {
+    files.entry_points().len() as u64 > limits.get(LimitId::MaxProgramsPerBuild)
 }
 
 fn texts_of_program_files<'f, 's>(
@@ -1321,12 +1376,10 @@ fn repeats_much_text(files: &Files<'_>, held: &[(Vec<u8>, usize)], limits: &Limi
 }
 
 // No fewer than `loads_modules_by_computed_names` finds once the modules are bound.
-fn loads_modules_by_names_that_are_not_constant(files: &Files<'_>) -> bool {
-    files.compiled_files().iter().any(|&file| {
-        parsed_source(files, file).is_none_or(|it| it.builtins.loads_unknown_modules())
-            || (files.analysis(file).import_sites.iter())
-                .any(|site| !matches!(site.specifier, ImportSpecifier::Constant(_)))
-    })
+fn loads_modules_by_names_that_are_not_constant(files: &Files<'_>, file: FileId) -> bool {
+    parsed_source(files, file).is_none_or(|it| it.builtins.loads_unknown_modules())
+        || (files.analysis(file).import_sites.iter())
+            .any(|site| !matches!(site.specifier, ImportSpecifier::Constant(_)))
 }
 
 pub(super) fn max_computed_candidates(limits: &LimitValues) -> u32 {

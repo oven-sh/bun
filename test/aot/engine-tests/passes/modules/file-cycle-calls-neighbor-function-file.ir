@@ -543,7 +543,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f17
 # CHECK-NEXT: v8: anything = ResultAt v7 index=1
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2() handler=b7():
-# CHECK-NEXT: v9: anything ~ undefined|null|function = Upcast v8 castType=anything
+# CHECK-NEXT: v9: anything ~ undefined|null|function|f7|f8 = Upcast v8 castType=anything
 # CHECK-NEXT: v13: undefined|f7|f8 = AssumeType v9 provenType=undefined|f7|f8
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b5():

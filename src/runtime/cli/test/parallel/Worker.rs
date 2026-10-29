@@ -124,11 +124,14 @@ impl Worker {
         {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
+            let compiled_program = crate::cli::run_compiled::graph_descriptor().map(Stdio::Pipe);
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer,
                 stderr: Stdio::Buffer,
-                extra_fds: vec![Stdio::Buffer].into_boxed_slice(),
+                extra_fds: core::iter::once(Stdio::Buffer)
+                    .chain(compiled_program)
+                    .collect(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 stream: true,
                 // Own pgrp so abortAll can kill(-pid, SIGTERM) the worker and

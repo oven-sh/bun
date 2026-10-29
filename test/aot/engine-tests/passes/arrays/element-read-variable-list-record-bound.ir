@@ -560,9 +560,11 @@ runtimefunction id=WrittenListsFilledArray function=f16 visibility=Private
 # CHECK-NEXT: v15: f4 = NewClosure function=f4 allocationSite=3
 # CHECK-NEXT: v16: L0 = NewObject layout=L0 allocationSite=4 allocationClass=0
 # CHECK-NEXT: v17: function = CallBuiltin v15, v16 overload=FunctionPrototypeBind/0 accessSite=6
-# CHECK-NEXT: PutModuleVariable v17 variable=g1
-# CHECK-NEXT: v19: undefined = Undefined
-# CHECK-NEXT: Return v19
+# CHECK-NEXT: v18: function|f4 = Upcast v17 castType=function|f4
+# CHECK-NEXT: v19: function = AssumeType v18 provenType=undefined|function|Array<L1, proven, pristine[Storage, Names, Dense]>|Object
+# CHECK-NEXT: PutModuleVariable v19 variable=g1
+# CHECK-NEXT: v21: undefined = Undefined
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="change"
 # CHECK: module=m0 position=207 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f5 site=w0 flags=[OmitsNull, OmitsUndefined]}, {type="a" site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=278 module=m0}] {

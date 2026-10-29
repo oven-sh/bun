@@ -86,6 +86,8 @@ pub(in crate::modules) fn collect_seen_namespaces(
         let values = &file_imports.namespace_values;
         let is_value = |file: &FileId| values.contains(&ModuleRef::File(*file));
         seen.extend(namespaces.filter(is_value));
+        let mocked = file_imports.mocked_modules.iter();
+        seen.extend(mocked.filter_map(|&module| modules.find_commonjs_file(module)));
     }
     seen.sort_unstable();
     seen.dedup();

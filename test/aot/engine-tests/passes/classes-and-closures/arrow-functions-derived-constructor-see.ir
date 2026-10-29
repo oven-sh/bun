@@ -885,7 +885,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f120
 # CHECK-NEXT: v2: "below" = String string="below"
 # CHECK-NEXT: v3: anything ~ object = Construct v1, -, v2 calleeName="Below" accessSite=11 callees=[f33]
 # CHECK-NEXT: v4: anything ~ L11 = Upcast v3 castType=anything
-# CHECK-NEXT: v5: anything ~ undefined|null|function = PropGet v4 key="both" accessSite=12 receivers=[]
+# CHECK-NEXT: v5: anything ~ undefined|null|function|f55 = PropGet v4 key="both" accessSite=12 receivers=[]
 # CHECK-NEXT: v6: anything = Call v5, v4 calleeKey="both" calleeName="both" accessSite=13 callees=[]
 # CHECK-NEXT: ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[IsExpected]} resolution=Nothing}]
 # CHECK-NEXT: }

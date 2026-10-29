@@ -152,6 +152,7 @@ test.skipIf(!hasShadowRealm)("a Bun built without the option has ShadowRealm", a
 });
 
 const refusal = "bun:ffi: this build of Bun does not call native functions";
+const compiler = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 function callsNativeFunctions() {
   try {
@@ -177,6 +178,40 @@ describe.skipIf(callsNativeFunctions())("a Bun built with --ffi=off", () => {
     `;
     expect(await run(source)).toEqual({
       stdout: Array(3)
+        .fill("TypeError: " + refusal)
+        .join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(isWindows || !compiler)("dlopen() and cc() load no library", async () => {
+    using dir = tempDir("build-left-out-features", {
+      "library.c": `#include <unistd.h>
+__attribute__((constructor)) static void loaded(void) { (void)!write(1, "loaded\\n", 7); }
+int answer(void) { return 42; }`,
+      "source.c": "int answer(void); int twice(void) { return 2 * answer(); }",
+    });
+    const library = join(String(dir), "libanswer.so");
+    await using compile = Bun.spawn({
+      cmd: [compiler!, "-shared", "-fPIC", "-o", library, join(String(dir), "library.c")],
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await compile.exited).toBe(0);
+    const source = `
+      const { cc, dlopen } = require("bun:ffi");
+      const signature = { returns: "int", args: [] };
+      for (const load of [
+        () => dlopen(process.env.LIBRARY, { answer: signature }),
+        () => cc({ source: process.env.SOURCE, library: ["answer"], flags: ["-L" + process.env.DIRECTORY], symbols: { twice: signature } }),
+      ]) {
+        try { load(); console.log("returned"); } catch (error) { console.log(error.name + ": " + error.message); }
+      }
+    `;
+    const env = { LIBRARY: library, SOURCE: join(String(dir), "source.c"), DIRECTORY: String(dir) };
+    expect(await run(source, env)).toEqual({
+      stdout: Array(2)
         .fill("TypeError: " + refusal)
         .join("\n"),
       stderr: "",

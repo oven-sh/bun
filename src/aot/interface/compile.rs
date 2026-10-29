@@ -1,7 +1,7 @@
 #[path = "../compile/paths.rs"]
 mod paths;
 
-pub use self::paths::{EntryPointPaths, FolderPaths};
+pub use self::paths::{EntryPointPaths, FolderPaths, RefusedEntryPoints};
 use crate::engine::EngineResult;
 use crate::link::ProgramNames;
 pub use crate::linked::bun_aot_compile as compile;
@@ -37,5 +37,5 @@ pub struct BuildFailed {
     pub is_internal_error: bool,
     pub statistics: Statistics,
     pub compilation: Option<Box<Compilation>>,
-    pub refused_entry_points: Option<Vec<u32>>,
+    pub refused_entry_points: Option<RefusedEntryPoints>,
 }

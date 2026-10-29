@@ -6542,6 +6542,466 @@ class Scenes {
   }
 
   /**
+   * Loops carry a variable from turn to turn that does not stay: it flips between two values, walks round three, swaps with a second variable, lags a turn behind, or changes once, late.
+   * The values are constants and reads that stay the same through the loop (a member, an element, a parameter, a length). Every turn also makes something (a text through a small helper,
+   * a list, a literal, a closure); many loops have a second counter, a second way to end and a path that is seldom taken. Plain functions and generators; what the variable held is told
+   * turn by turn and once more behind the loop.
+   */
+  sceneOfVariablesThatChangeFromTurnToTurn() {
+    const number = ++this.count;
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let told = "";`,
+      `function show(value${this.typed("unknown")})${this.typed("string")} { return typeof value === "object" && value !== null ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); }`,
+      `function num(value${this.typed("number")})${this.typed("string")} { return Object.is(value, -0) ? "-0" : String(value); }`,
+      `const first = { k: 1 };`,
+      `const second = { k: 2 };`,
+      `const third = { k: 3 };`,
+    );
+    for (let index = this.pick([1, 1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [type, constants, outside] = this.pick<[string, string[], string]>([
+        ["number", ["9", "3", "5"], "7"],
+        ["number", ["9", "3", "5"], "7"],
+        ["number", ["9", "3", "5"], "7"],
+        ["number", ["1", "0", "2"], "4"],
+        ["number", ["0.5", "2", "-0"], "7"],
+        ["number", ["2147483647", "-1", "4294967296"], "0"],
+        ["string", ['"on"', '"off"', '"idle"'], '"?"'],
+        ["boolean", ["true", "false", "true"], "false"],
+        ["number | string", ["9", '"3"', "5"], "7"],
+        ["number | undefined", ["9", "undefined", "3"], "7"],
+        ["{ k: number } | null", ["first", "null", "second"], "third"],
+        ["{ k: number }", ["first", "second", "third"], "{ k: 4 }"],
+      ]);
+      const isNumber = type === "number";
+      const way = this.pick(["constants", "constants", "constants", "members", "elements", "parameters", "lengths"]);
+      const areLengths = way === "lengths" && constants.every(constant => /^\d$/.test(constant));
+      const [p, q, r] =
+        way === "members"
+          ? ["box.p", "box.q", "box.r"]
+          : way === "elements"
+            ? ["values[0]", "values[1]", "values[2]"]
+            : way === "parameters"
+              ? ["p", "q", "r"]
+              : areLengths
+                ? ["listP.length", "listQ.length", "listR.length"]
+                : constants;
+      const turns = this.pick([3, 3, 3, 4, 5, 8, 20, 100]);
+      const most = this.pick([turns * 2, turns * 2, turns * 2, turns, turns - 1]);
+      const late = this.pick([1, 2, turns - 1, turns >> 1]);
+      const [before, head, tail] = this.pick<[string[], string, string]>([
+        [[], `for (let turn = 0; turn < ${turns} && spent++ < ${most}; turn++) {`, "}"],
+        [[], `for (let turn = 0; turn < ${turns} && spent++ < ${most}; turn++) {`, "}"],
+        [[], `for (let turn = 0; turn < ${turns} && spent++ < ${most}; turn++) {`, "}"],
+        [[], `for (let turn = 0; turn < ${turns} && spent++ < ${most}; turn++) {`, "}"],
+        [[], `for (let turn = 0; turn < ${turns}; turn++) {`, "}"],
+        [[], `for (let turn = ${turns - 1}; turn >= 0 && spent++ < ${most}; turn--) {`, "}"],
+        [[`const walked = Array.from({ length: ${turns} }, (_, at) => at);`], `for (const turn of walked) {`, "}"],
+        [[`let turn = -1;`], `while (++turn < ${turns} && spent++ < ${most}) {`, "}"],
+        [[`let turn = -1;`], `while (++turn < ${turns}) {`, "}"],
+        [[`let turn = 0;`], `do {`, `} while (++turn < ${turns});`],
+      ]);
+      const step = this.pick<string[]>([
+        [`a = a === ${p} ? ${q} : ${p};`],
+        [`a = a === ${p} ? ${q} : ${p};`],
+        [`a = a === ${p} ? ${q} : ${p};`],
+        [`a = a === ${p} ? ${q} : ${p};`],
+        [`if (a === ${p}) a = ${q}; else a = ${p};`],
+        [`if (a === ${p}) a = ${q}; else a = ${p};`],
+        [`a = a !== ${p} ? ${p} : ${q};`],
+        [`a = ${p};`, `if (turn === ${late}) a = ${q};`],
+        [`a = turn === ${late} ? ${q} : ${p};`],
+        [`a = a === ${p} ? ${q} : a === ${q} ? ${r} : ${p};`],
+        [`a = a === ${p} ? ${q} : a === ${q} ? ${r} : ${p};`],
+        [`switch (a) { case ${p}: a = ${q}; break; case ${q}: a = ${r}; break; default: a = ${p}; }`],
+        [`[a, b] = [b, a];`],
+        [`const held = a;`, `a = b;`, `b = held;`],
+        [`b = a;`, `a = a === ${p} ? ${q} : ${p};`],
+        [`b = a === ${p} ? ${q} : ${p};`, `a = b;`],
+        [`a = flip(a);`],
+        [`a = turn % 2 === 0 ? ${p} : ${q};`],
+        [`if (turn === ${late}) a = ${q};`],
+        [`a = ${p};`],
+        ...(isNumber ? [[`a = ${p} + ${q} - a;`], [`a = -a;`], [`a ^= 1;`]] : []),
+      ]);
+      const use = this.pick([
+        ...(isNumber
+          ? [
+              `out += num((a + a) >>> 0) + " ";`,
+              `out += num((a + a) >>> 0) + " ";`,
+              `out += num(a) + " ";`,
+              `out += num(a) + " ";`,
+              `out += num(a) + " ";`,
+              `out += num(a + 1) + " ";`,
+            ]
+          : []),
+        `out += show(a) + " ";`,
+        `out += show(a) + " ";`,
+        `out += show(a) + " ";`,
+        `out += String(a) + " ";`,
+        `out += a + " ";`,
+        "out += `${a} `;",
+        `seen.push(a);`,
+        `seen.push([a]);`,
+        `seen.push({ held: a });`,
+        `seen.push(() => a);`,
+        `seen.push(show(a));`,
+      ]);
+      const seldom = this.pick([
+        `if (turn === ${late}) a = ${r};`,
+        `if (turn === ${late}) a = ${r};`,
+        `if (turn === ${late}) a = ${r};`,
+        `if ((turn & 7) === 7) a = ${r};`,
+        `if (typeof a === "symbol") a = ${r};`,
+        `if (spent++ >= ${most}) break;`,
+        `if (spent++ >= ${most}) break;`,
+        `if (turn === ${late}) continue;`,
+        `if (turn === ${late}) out += "!";`,
+        `if (turn === ${late}) seen.push("late");`,
+        `try { if (turn === ${late}) throw new Error("late"); } catch { a = ${r}; }`,
+      ]);
+      const isGenerator = this.chance(35);
+      const body = this.pick([
+        [...step, use],
+        [...step, use],
+        [...step, use],
+        [seldom, ...step, use],
+        [...step, seldom, use],
+        [...step, use, seldom],
+      ]);
+      if (isGenerator && this.chance(35)) body.push(`yield turn;`);
+      const uses = (name: string) => [head, tail, ...body].some(line => new RegExp(`\\b${name}\\b`).test(line));
+      const declared = this.isTypeScript ? this.pick([`: ${type}`, `: ${type}`, `: ${type}`, ": any", ""]) : "";
+      const parameter = (name: string) => (this.isTypeScript ? `${name}: ${type}` : name);
+      this.emit(
+        1,
+        `function orStart${id}(${this.isTypeScript ? `value?: ${type}` : "value"})${this.typed(type)} { return value === undefined ? ${outside} : value; }`,
+        `function${isGenerator ? "*" : ""} turns${id}(${["given", "p", "q", "r"].map(parameter).join(", ")})${this.typed(isGenerator ? "Generator<number, string, unknown>" : "string")} {`,
+      );
+      this.emit(
+        2,
+        `let out = "";`,
+        ...(uses("spent") ? [`let spent = 0;`] : []),
+        ...(uses("seen") ? [`const seen${this.typed("any[]")} = [];`] : []),
+        ...(way === "members" ? [`const box = { p: ${constants[0]}, q: ${constants[1]}, r: ${constants[2]} };`] : []),
+        ...(way === "elements" ? [`const values = [${constants.join(", ")}];`] : []),
+        ...(areLengths
+          ? ["P", "Q", "R"].map((name, at) => `const list${name} = new Array(${constants[at]}).fill(0);`)
+          : []),
+        ...(uses("flip") ? [`const flip = (value${this.typed("any")}) => (value === ${p} ? ${q} : ${p});`] : []),
+        `let a${declared} = ${this.pick([`orStart${id}()`, `orStart${id}()`, `orStart${id}(given)`, "given", outside, constants[0]])};`,
+        ...(uses("b") ? [`let b${declared} = ${this.pick([q, q, p, outside])};`] : []),
+        ...before,
+        head,
+      );
+      this.emit(3, ...body);
+      this.emit(
+        2,
+        tail,
+        ...(uses("seen")
+          ? [`for (const kept of seen) out += (typeof kept === "function" ? show(kept()) : show(kept)) + ",";`]
+          : []),
+        uses("b")
+          ? `return out + show(a) + " " + show(b);`
+          : this.pick([`return out + show(a);`, `return out + show(a);`, `return out + a;`]),
+      );
+      this.emit(1, "}");
+      const given = `${this.pick([outside, outside, constants[0], constants[1]])}, ${constants.join(", ")}`;
+      if (isGenerator)
+        this.emit(
+          1,
+          `const steps${id} = turns${id}(${given});`,
+          `let result${id} = steps${id}.next();`,
+          `for (let more = 0; more < 300 && !result${id}.done; more++) result${id} = steps${id}.next(result${id}.value);`,
+          `told += result${id}.value + "|";`,
+        );
+      else
+        this.emit(
+          1,
+          `${this.pick(["", "", "for (let again = 0; again < 2; again++) ", "for (let again = 0; again < 5; again++) "])}told += turns${id}(${given}) + "|";`,
+        );
+    }
+    this.emit(1, `printValue("variables from turn to turn ${number}", told);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * A literal comes back under a second name: a built-in hands back its receiver, an argument or an element; or it calls a member, a getter, a trap or a callback of the program and hands on what
+   * that returned; or it hands the literal to a function of the program as `this`. The literal is changed through the second name (a member is added, deleted, redefined or given a value of
+   * another kind; the object is frozen, sealed or given another prototype) and then read through the first: its keys in order, its members by name, whether it is frozen.
+   */
+  sceneOfLiteralsChangedThroughASecondName() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const self = "Object.prototype.valueOf";
+    const like = "{ length: 1, 0: made }";
+    const handsOn = "{ next() { return { done: false, value: made }; } }";
+    const plain = [
+      "made.valueOf()",
+      `${self}.call(made)`,
+      `${self}.apply(made, [])`,
+      `${self}.bind(made)()`,
+      `Reflect.apply(${self}, made, [])`,
+      `Function.prototype.call.bind(${self})(made)`,
+      `Function.prototype.call.call(${self}, made)`,
+      "Object(made)",
+      "new Object(made)",
+      "Reflect.construct(Object, [made])",
+      "Reflect.apply(Object, undefined, [made])",
+      "Object.assign(made)",
+      "Object.assign(made, {})",
+      "Object.defineProperties(made, {})",
+      "Object.setPrototypeOf(made, Object.prototype)",
+      `[0].map(${self}, made)[0]`,
+      `[0].flatMap(${self}, made)[0]`,
+      `Array.from([0], ${self}, made)[0]`,
+      "[made].map(Object)[0]",
+      "Array.from([made], Object)[0]",
+      "[made].values().map(Object).next().value",
+      "[made].find(Boolean)",
+      "[made].findLast(Boolean)",
+      "[made].at(0)",
+      "[made].pop()",
+      "[made].shift()",
+      "[[made]].flat()[0]",
+      "[].concat([made])[0]",
+      "[made].slice()[0]",
+      "[...[made]][0]",
+      "[made].splice(0, 1)[0]",
+      "[made].values().next().value",
+      "[made].entries().next().value[1]",
+      "Array.of(made)[0]",
+      "Array.from([made])[0]",
+      `Array.from(${like})[0]`,
+      `Array.prototype.at.call(${like}, 0)`,
+      `Array.prototype.find.call(${like}, Boolean)`,
+      `Array.prototype.slice.call(${like})[0]`,
+      "Array.prototype.concat.call(made)[0]",
+      "Object.values({ a: made })[0]",
+      "Object.entries({ a: made })[0][1]",
+      'Object.fromEntries([["a", made]]).a',
+      "Object.assign({}, { a: made }).a",
+      "({ ...{ a: made } }).a",
+      "new Map([[1, made]]).get(1)",
+      "[...new Map([[made, 1]]).keys()][0]",
+      "[...new Set([made])][0]",
+      "new WeakRef(made).deref()",
+      "new WeakMap([[made, made]]).get(made)",
+      "[made].reduce((a, b) => b, null)",
+      "[made].sort()[0]",
+      "[made].reverse()[0]",
+      "[made].toSorted()[0]",
+      "[made].toReversed()[0]",
+      "[0].with(0, made)[0]",
+      "new Array(1).fill(made)[0]",
+      "[made].filter(Boolean)[0]",
+      "[made].flatMap(x => [x])[0]",
+      'Object.groupBy([made], () => "a").a[0]',
+      "Map.groupBy([made], () => 1).get(1)[0]",
+      "[made].values().map(x => x).toArray()[0]",
+      "[made].values().find(Boolean)",
+      `Iterator.from(${handsOn}).next().value`,
+      `Iterator.from(${handsOn}).take(1).toArray()[0]`,
+      'Reflect.get({ a: made }, "a")',
+      `Reflect.get(Object.defineProperty({}, "g", { get: ${self} }), "g", made)`,
+      'Object.getOwnPropertyDescriptor({ a: made }, "a").value',
+      "Object.getOwnPropertyDescriptors({ a: made }).a.value",
+      "new Proxy({ a: made }, {}).a",
+      "new Proxy(made, {})",
+      "new Proxy(made, Reflect)",
+      "new (class { constructor() { return made; } })()",
+      "new (function () { return made; })()",
+      "(function* () { yield made; })().next().value",
+      "((...all) => all[0]).apply(null, [made])",
+      "(function () { return arguments[0]; })(made)",
+      "(x => x).bind(null, made)()",
+      "((texts, x) => x)`${made}`",
+      "(({ a }) => a)({ a: made })",
+      "(([a]) => a)([made])",
+      "({ get me() { return made; } }).me",
+      'JSON.parse("[0]", (key, value) => (key === "0" ? made : value))[0]',
+      "Object.getPrototypeOf(Object.create(made))",
+      "Reflect.getPrototypeOf(Object.create(made))",
+      "Object.create(made).__proto__",
+      "({ __proto__: made }).__proto__",
+      'new Error("x", { cause: made }).cause',
+      "new AggregateError([made]).errors[0]",
+      "(() => { try { throw made; } catch (caught) { return caught; } })()",
+      "new DisposableStack().adopt(made, () => {})",
+      "(class extends Array { static get [Symbol.species]() { return function () { return made; }; } }).from([]).map(x => x)",
+    ].map((expression): [string, string[], string] => ["", [], expression]);
+    const bySymbol = (
+      [
+        ["Symbol.search", '"a-b".search(made)'],
+        ["Symbol.match", '"a-b".match(made)'],
+        ["Symbol.matchAll", '"a-b".matchAll(made)'],
+        ["Symbol.replace", '"a-b".replace(made, "x")'],
+        ["Symbol.replace", '"a-b".replaceAll(made, "x")'],
+        ["Symbol.split", '"a-b".split(made)'],
+      ] as const
+    ).flatMap(([symbol, call]): [string, string[], string][] => [
+      [`[${symbol}]: ${self}`, [], call],
+      [`[${symbol}]: function () { return this; }`, [], call],
+      [`[${symbol}]() { return this; }`, [], call],
+    ]);
+    const throughTheProgram: [string, string[], string][] = [
+      [`get: ${self}`, ["const proxy = new Proxy({}, made);"], "proxy.anything"],
+      ["", [`Object.defineProperty(made, "self", { get: ${self}, configurable: true });`], "made.self"],
+      ["", [`made.__defineGetter__("self", ${self});`], "made.self"],
+      ["", [`Object.setPrototypeOf(made, Object.defineProperty({}, "self", { get: ${self} }));`], "made.self"],
+      [`toISOString: ${self}, [Symbol.toPrimitive]: () => 1`, [], "Date.prototype.toJSON.call(made)"],
+      ["toISOString() { return this; }, [Symbol.toPrimitive]: () => 1", [], "Date.prototype.toJSON.call(made)"],
+      [`exec: ${self}, flags: ""`, [], 'RegExp.prototype[Symbol.match].call(made, "a")'],
+      [`join: ${self}`, [], "Array.prototype.toString.call(made)"],
+      ["join() { return this; }", [], "Array.prototype.toString.call(made)"],
+      [`toString: ${self}`, [], "Object.prototype.toLocaleString.call(made)"],
+      [`toString: ${self}`, [], "made.toLocaleString()"],
+      ["[Symbol.dispose]() {}", [], "new DisposableStack().use(made)"],
+      [
+        `[Symbol.iterator]: ${self}, next() { return { done: true, value: undefined }; }`,
+        [],
+        "made[Symbol.iterator]()",
+      ],
+      [`same: ${self}`, [], "made.same()"],
+      [`same: ${self}`, [], "made.same?.()"],
+      [`same: ${self}`, ['const name = "same";'], "made[name]()"],
+      [`same: ${self}`, ["const bound = made.same.bind(made);"], "bound()"],
+      ["same: Object", [], "made.same(made)"],
+      ["get me() { return this; }", [], "made.me"],
+      ["me() { return this; }", [], "made.me()"],
+      ['toString() { seen = this; return "x"; }', ["`${made}`;"], "seen"],
+      ["valueOf() { seen = this; return 1; }", ["+made;"], "seen"],
+      ["[Symbol.toPrimitive]() { seen = this; return 1; }", ["+made;"], "seen"],
+      ["toJSON() { seen = this; return 1; }", ["JSON.stringify(made);"], "seen"],
+      ["[Symbol.search]() { seen = this; return 0; }", ['"a".search(made);'], "seen"],
+      ["[Symbol.iterator]() { seen = this; return [][Symbol.iterator](); }", ["[...made];"], "seen"],
+      [
+        "",
+        ["const judge = { [Symbol.hasInstance](value) { seen = value; return true; } };", "made instanceof judge;"],
+        "seen",
+      ],
+      ["", ["[made, {}].sort((a, b) => { seen = a === made ? a : b; return 0; });"], "seen"],
+      ["", ["new Proxy(made, { get(target) { seen = target; return 1; } }).x;"], "seen"],
+      [
+        "",
+        [
+          "Object.setPrototypeOf(made, new Proxy({}, { get(target, key, receiver) { seen = receiver; return undefined; } }));",
+          "made.nobody;",
+        ],
+        "seen",
+      ],
+      ["", ["Object.setPrototypeOf(made, { set taken(value) { seen = this; } });", "made.taken = 1;"], "seen"],
+      [
+        "",
+        ['JSON.stringify(made, function (key, value) { if (key === "count") seen = this; return value; });'],
+        "seen",
+      ],
+      ["", ["[0].forEach(function () { seen = this; }, made);"], "seen"],
+      ["", ['"a".replace("a", () => { seen = made; return ""; });'], "seen"],
+    ];
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "function" ? "a function" : typeof value === "object" && value !== null ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)) + ";"; }`,
+    );
+    for (let index = this.pick([1, 2, 2, 3, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [more, front, expression] = this.pick(
+        this.pick([plain, plain, bySymbol, throughTheProgram, throughTheProgram]),
+      );
+      const [value, same, other] = this.pick([
+        ["1", "5", '"a text"'],
+        ["1", "5", '"a text"'],
+        ["1", "5", "0.5"],
+        ["0.5", "2.5", "null"],
+        ['"text"', '"more"', "7"],
+        ["{ deep: 1 }", "{ deep: 2 }", "3"],
+        ["[1]", "[2, 3]", '"none"'],
+        ["true", "false", "0"],
+        ["() => 1", "() => 2", "4"],
+      ]);
+      const tries = (statement: string) => `try { ${statement} } catch (error) { note("refused"); }`;
+      const write = this.pick<string[]>([
+        ["again.added = 1;"],
+        ["again.added = 1;"],
+        [`again.count = ${other};`],
+        [`again.count = ${other};`],
+        [`again.count = ${other};`],
+        [`again.count = ${same};`],
+        ["delete again.count;"],
+        ["delete again.count;"],
+        ["delete again.count;", `again.count = ${same};`],
+        ['Object.defineProperty(again, "count", { get() { return 7; }, enumerable: true, configurable: true });'],
+        ['Object.defineProperty(again, "count", { get() { return 7; }, enumerable: true, configurable: true });'],
+        [
+          `Object.defineProperty(again, "count", { value: ${other}, enumerable: false, writable: true, configurable: true });`,
+        ],
+        [
+          `Object.defineProperty(again, "count", { value: ${same}, writable: false });`,
+          tries(`made.count = ${other};`),
+        ],
+        ["Object.freeze(again);", tries(`made.count = ${same};`)],
+        ["Object.freeze(again);", tries(`made.count = ${same};`)],
+        ["Object.seal(again);", tries("made.added = 1;"), tries("delete made.count;")],
+        ["Object.preventExtensions(again);", tries("made.added = 1;")],
+        ["Object.setPrototypeOf(again, { inherited: 1 });"],
+        ["Object.setPrototypeOf(again, { inherited: 1 });"],
+        [`Object.assign(again, { count: ${other}, added: 2 });`],
+        [`Reflect.set(again, "count", ${other});`],
+        ['Reflect.deleteProperty(again, "count");'],
+        [`again["count"] = ${other};`],
+        ['const key = "count";', `again[key] = ${other};`],
+        ["again.count++;"],
+        [`[again.count] = [${other}];`],
+        [`for (const each in again) again[each] = ${other};`],
+      ]);
+      const asked = () =>
+        this.pick([
+          "note(made.count);",
+          "note(made.count);",
+          "note(typeof made.count);",
+          "note(Object.keys(made).join());",
+          'note("count" in made);',
+          "note(made.label);",
+        ]);
+      const literal = `{ count: ${value}${more ? `, ${more}` : ""}, label: "two" }`;
+      const isMadeElsewhere = this.chance(25);
+      const uses = (name: string) => [more, expression, ...front].some(text => new RegExp(`\\b${name}\\b`).test(text));
+      if (isMadeElsewhere && !uses("seen")) this.emit(1, `function make${id}()${any} { return ${literal}; }`);
+      this.emit(1, `function second${id}()${this.typed("void")} {`);
+      this.emit(
+        2,
+        ...(uses("seen") ? [`let seen${any};`] : []),
+        `const made${this.isTypeScript ? this.pick([": any", ": any", ""]) : ""} = ${isMadeElsewhere && !uses("seen") ? `make${id}()` : literal};`,
+        ...this.several(0, 1, asked),
+        ...front,
+        `const again${this.isTypeScript ? this.pick([": any", ""]) : ""} = ${expression};`,
+        ...this.several(0, 1, asked),
+        ...write,
+        "note(again === made);",
+        "note(Object.keys(made).join());",
+        "note(made.count);",
+        "note(typeof made.count);",
+        "note(made.label);",
+        "note(made.inherited);",
+        "note(made.added);",
+        "note(Object.isFrozen(made));",
+        "note(Object.isExtensible(made));",
+      );
+      this.emit(1, "}");
+      this.emit(
+        1,
+        `${this.pick(["", "", "for (let turn = 0; turn < 2; turn++) ", "for (let turn = 0; turn < 5; turn++) "])}try { second${id}(); } catch (error) { note("threw " + (error${this.isTypeScript ? " as any" : ""})?.constructor?.name); }`,
+      );
+    }
+    this.emit(1, `printValue("literals under a second name ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
    * Functions take what they were called with as the arguments object, as a rest list or as a copy of either. Something else comes to hold it: a closure kept on the global object, in a
    * variable, a list or a Map of the module, a literal, a list, a callee. The function walks it, has the holder change it (an element, the length, a deleted element, its iterator, a push,
    * a sort), and walks it again. Several such functions stand side by side and are called with none to four arguments, through apply and through a spread.
@@ -6694,6 +7154,16 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfMembersWrittenOverByAnotherKind(),
         () => scenes.sceneOfMembersWrittenOverByAnotherKind(),
         () => scenes.sceneOfMembersWrittenOverByAnotherKind(),
+        () => scenes.sceneOfVariablesThatChangeFromTurnToTurn(),
+        () => scenes.sceneOfVariablesThatChangeFromTurnToTurn(),
+        () => scenes.sceneOfVariablesThatChangeFromTurnToTurn(),
+        () => scenes.sceneOfVariablesThatChangeFromTurnToTurn(),
+        () => scenes.sceneOfVariablesThatChangeFromTurnToTurn(),
+        () => scenes.sceneOfLiteralsChangedThroughASecondName(),
+        () => scenes.sceneOfLiteralsChangedThroughASecondName(),
+        () => scenes.sceneOfLiteralsChangedThroughASecondName(),
+        () => scenes.sceneOfLiteralsChangedThroughASecondName(),
+        () => scenes.sceneOfLiteralsChangedThroughASecondName(),
         () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),
         () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),
         () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),

@@ -242,16 +242,16 @@ function f43 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v32 -> taken b8(| 0), notTaken b9(| 0)
 # CHECK-NEXT: b8(v33: number):
 # CHECK-NEXT: v34: number = Add v28, v33
-# CHECK-NEXT: v35: undefined|null|function = Call v6, -, v19 calleeName="makerOf" accessSite=7 callees=[f7]
+# CHECK-NEXT: v35: undefined|null|function|f22|f23|f24 = Call v6, -, v19 calleeName="makerOf" accessSite=7 callees=[f7]
 # CHECK-NEXT: Jump -> next b11(v34, v35)
 # CHECK-NEXT: b9(v36: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
 # CHECK-NEXT: v37: number|string|bigint = Add v28, v36
-# CHECK-NEXT: v38: undefined|null|function = Call v6, -, v19 calleeName="makerOf" accessSite=7 callees=[f7]
+# CHECK-NEXT: v38: undefined|null|function|f22|f23|f24 = Call v6, -, v19 calleeName="makerOf" accessSite=7 callees=[f7]
 # CHECK-NEXT: v39: boolean = TypeTest v37 testedType=number
 # CHECK-NEXT: Branch v39 -> taken b10(| 0), notTaken b14()
 # CHECK-NEXT: b10(v40: number) frequency=Rare:
 # CHECK-NEXT: Jump -> next b11(v40, v38)
-# CHECK-NEXT: b11(v41: number, v42: undefined|null|function):
+# CHECK-NEXT: b11(v41: number, v42: undefined|null|function|f22|f23|f24):
 # CHECK-NEXT: v43: anything = Call v42 accessSite=8 callees=[]
 # CHECK-NEXT: v44: anything ~ number = Expect v43 expectedType=number
 # CHECK-NEXT: v45: boolean ~ true = TypeTest v44 testedType=number

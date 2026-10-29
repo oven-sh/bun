@@ -1122,9 +1122,16 @@ describe.concurrent("Bun REPL", () => {
       using dir = tempDir("repl-preload", {
         "pre.ts": `await new Promise(resolve => setImmediate(resolve)); globalThis.PRE = "ran";`,
       });
-      const script = `globalThis.PRE + ":" + (require("bun:jsc").heapStats().protectedObjectTypeCounts.Promise ?? 0)`;
-      const args = ["repl", "--preload", "./pre.ts", "-p", script];
-      expect(await bun(String(dir), args)).toEqual({ stdout: '"ran:0"\n', stderr: "", exitCode: 0 });
+      const script = `
+        const roots = require("bun:jsc").heapStats().protectedObjectTypeCounts;
+        const promises = Object.keys(roots).filter(name => name.includes("Promise"));
+        console.log(globalThis.PRE + ":" + promises.map(name => roots[name]).join());
+      `;
+      const args = ["--preload", "./pre.ts", "-e", script];
+      const [repl, run] = await Promise.all([bun(String(dir), ["repl", ...args]), bun(String(dir), args)]);
+      expect(repl).toEqual({ stdout: "ran:\n", stderr: "", exitCode: 0 });
+      // The control: `bun run` roots its entry point's promise in the slot that held the preload's.
+      expect(run).toEqual({ stdout: "ran:1\n", stderr: "", exitCode: 0 });
     });
 
     test("a whitespace-only script still runs what a preload left behind", async () => {

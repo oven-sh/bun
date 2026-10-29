@@ -3,6 +3,7 @@
 use super::instantiate::PropInstantiation;
 use super::relate::Ternary;
 use super::*;
+use crate::atom::is_reserved_member_name;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
 use crate::util::{PositionSet, SharedSort, in_order_of_decimal_text};
@@ -1223,16 +1224,10 @@ impl<'p, 's> Checker<'p, 's> {
         sym: Sym,
         under: MapperId,
     ) -> Shape<'s> {
-        let dropped: Vec<bool> = self
-            .frames
-            .iter()
-            .map(|frame| frame.drops_reported)
-            .collect();
+        let dropped = self.save_drops_reported();
         let (binding, bases) = (MemberBinding::Late, BaseMembers::Inherited);
         let shape = self.build_declared_shape(sym, under, binding, bases, None, Some(ty));
-        for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
-            frame.drops_reported = dropped;
-        }
+        self.restore_drops_reported(dropped);
         shape
     }
 
@@ -4370,6 +4365,11 @@ impl<'p, 's> Checker<'p, 's> {
             Origin::GlobalThis => {
                 let global_this = self.files().global_this_symbol;
                 for &(name, sym) in self.files().globals.iter() {
+                    if is_reserved_member_name(self.atoms().bytes(name))
+                        || self.is_ambient_module_symbol(sym)
+                    {
+                        continue;
+                    }
                     // The alias target determines whether it's a value. The symbol itself
                     // determines its scoping.
                     if self.symbol_is_value(sym)
@@ -4398,6 +4398,21 @@ impl<'p, 's> Checker<'p, 's> {
         let is_contained = |i: usize| contained.iter().any(|range| range.contains(&i));
         self.get_named_members(&mut b.shape.props, is_contained, &ranges);
         b.shape
+    }
+
+    /// `core.Every(p.Declarations, ast.IsAmbientModule)` for a value module: only `declare module "name"` and
+    /// `declare global` declare it.
+    fn is_ambient_module_symbol(&self, sym: Sym) -> bool {
+        let files = self.files();
+        if !files.flags(sym).contains(SymFlags::VALUE_MODULE) {
+            return false;
+        }
+        let decls = files.decls_of(sym);
+        !decls.is_empty()
+            && decls.iter().all(|&(file, decl)| {
+                matches!(decl, Decl::Module(module)
+                    if !matches!(files.hir(file)[module].name, ModuleName::Ident(_)))
+            })
     }
 
     /// `symbolIsValue`: a value itself, or an alias whose resolution chain reaches a value with no

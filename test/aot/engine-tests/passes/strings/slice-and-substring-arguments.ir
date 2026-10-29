@@ -1,0 +1,517 @@
+# slice() and substring() with every kind of argument (in range, reversed, negative, fractional, NaN, infinite, huge, past the end) on every internal representation of a string, inside and outside loops.
+# FORM: AsRead
+# RUN: lower-to-air size f0 f6 f7
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="slice-and-substring-arguments.ts" displayPath="slice-and-substring-arguments.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=2}, Number{value=3}, Number{value=5}, Number{value=15}, Number{value=16}, Number{value=17}, Number{value=100}, Number{value=-1}, Number{value=-2}, Number{value=-3}, Number{value=-15}, Number{value=-16}, Number{value=-17}, Number{value=-100}, Number{value=0.5}, Number{value=1.9}, Number{value=-0.5}, Number{value=-0.99}, Number{value=-1.5}, Number{value=15.99}, Number{value=16.5}, Number{value=NaN}, Number{value=Infinity}, Number{value=-Infinity}, Number{value=2147483647}, Number{value=2147483648}, Number{value=-2147483648}, Number{value=-2147483649}, Number{value=4294967299}, Number{value=9007199254740992}, Number{value=-9007199254740992}, Number{value=1e+300}, Number{value=-1e+300}, Number{value=-0}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f7
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = String string="0123456789abcdef"
+    v15 = Convert v14 declared={type=undefined|null|"0123456789abcdef" flags=[OmitsNull, OmitsUndefined]}
+    v16 = String string="0123456789\u{430}\u{431}\u{432}\u{433}\u{434}\u{435}"
+    v17 = Convert v16 declared={type=undefined|null|"0123456789\u{430}\u{431}\u{432}\u{433}\u{434}\u{435}" flags=[OmitsNull, OmitsUndefined]}
+    v18 = String string="flat 8-bit"
+    v19 = NewClosure function=f8
+    v20 = NewArray v18, v19 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v21 = String string="flat 16-bit"
+    v22 = NewClosure function=f9
+    v23 = NewArray v21, v22 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v24 = String string="rope"
+    v25 = NewClosure function=f10
+    v26 = NewArray v24, v25 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v27 = String string="16-bit rope"
+    v28 = NewClosure function=f11
+    v29 = NewArray v27, v28 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v30 = String string="substring"
+    v31 = NewClosure function=f12
+    v32 = NewArray v30, v31 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v33 = String string="substring of a substring"
+    v34 = NewClosure function=f13
+    v35 = NewArray v33, v34 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v36 = String string="16-bit substring"
+    v37 = NewClosure function=f14
+    v38 = NewArray v36, v37 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v39 = String string="empty"
+    v40 = NewClosure function=f15
+    v41 = NewArray v39, v40 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v42 = String string="one character"
+    v43 = NewClosure function=f16
+    v44 = NewArray v42, v43 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v45 = String string="two characters"
+    v46 = NewClosure function=f17
+    v47 = NewArray v45, v46 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v48 = String string="three characters"
+    v49 = NewClosure function=f18
+    v50 = NewArray v48, v49 contents=undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18
+    v51 = NewArray v20, v23, v26, v29, v32, v35, v38, v41, v44, v47, v50 contents=undefined|null|Array<undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18>
+    v52 = Convert v51 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18>> flags=[OmitsNull, OmitsUndefined]}
+    v53 = Data data=d0
+    v54 = Convert v53 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v55 = IteratorOpen v52
+    Jump -> next b1()
+  b1():
+    v56 = IteratorResume v55
+    v57 = ResultAt v56
+    v58 = ResultAt v56 index=1
+    Branch v57 -> taken b2(), notTaken b8()
+  b2():
+    v59 = Add v15, v17
+    v60 = PropGet v59 key="repeat"
+    v61 = Integer integer=50
+    v62 = Call v60, v59, v61 calleeKey="repeat" calleeName="repeat"
+    v63 = Convert v62 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v64 = Integer
+    v65 = Convert v64 declared={type=number}
+    Jump -> next b3(v65)
+  b3(v66: number):
+    LoopHint
+    v68 = Integer integer=20000
+    v69 = Less v66, v68
+    Branch v69 -> taken b4(| 0), notTaken b7(| 0)
+  b4(v70):
+    v71 = PropGet v63 key="slice"
+    v72 = Integer integer=1500
+    v73 = Mod v70, v72
+    v74 = Integer integer=1500
+    v75 = Mod v70, v74
+    v76 = Integer integer=2
+    v77 = Add v75, v76
+    v78 = Integer integer=9
+    v79 = Mod v70, v78
+    v80 = Add v77, v79
+    v81 = Call v71, v63, v73, v80 calleeKey="slice" calleeName="long.slice"
+    v82 = Convert v81 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v83 = Integer integer=997
+    v84 = Mod v70, v83
+    v85 = Integer
+    v86 = StrictEq v84, v85
+    Branch v86 -> taken b5(), notTaken b6()
+  b5():
+    v87 = String string=":"
+    v88 = Add v82, v87
+    Jump -> next b6()
+  b6():
+    v89 = Increment v70
+    v90 = Convert v89 declared={type=number}
+    Jump -> next b3(v90)
+  b7(v91):
+    v92 = Undefined
+    Return v92
+  b8():
+    Jump -> next b9()
+  b9() handler=b23():
+    v93 = Convert v58 declared={type=undefined|null|Array<undefined|null|string|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v94 = IteratorOpen v93 elementCount=2 [isDestructuring]
+    Jump -> next b10()
+  b10() handler=b22():
+    v95 = IteratorResume v94 stepIndex=1
+    v96 = ResultAt v95 index=1
+    v97 = Convert v96 declared={type=undefined|null|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18} illTypedCause=Assertion
+    Jump -> next b11()
+  b11() handler=b23():
+    v98 = Call v97 calleeName="make"
+    v99 = Convert v98 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v100 = Call v13, -, v99 calleeName="constants"
+    v101 = Call v97 calleeName="make"
+    v102 = Convert v101 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v103 = Call v11, -, v102 calleeName="countedSlices"
+    LoopHint
+    v105 = IteratorOpen v54
+    Jump -> next b12()
+  b12() handler=b23():
+    v106 = IteratorResume v105
+    v107 = ResultAt v106
+    v108 = ResultAt v106 index=1
+    Branch v107 -> taken b13(), notTaken b14()
+  b13() handler=b23():
+    Jump -> next b1()
+  b14() handler=b23():
+    Jump -> next b15()
+  b15() handler=b21():
+    v109 = Convert v108 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v110 = String string=""
+    v111 = Convert v110 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v112 = IteratorOpen v54
+    Jump -> next b16(v111)
+  b16(v113: undefined|null|string) handler=b21():
+    LoopHint
+    v115 = IteratorResume v112
+    v116 = ResultAt v115
+    v117 = ResultAt v115 index=1
+    Branch v116 -> taken b17(), notTaken b18()
+  b17() handler=b21():
+    v118 = Call v9, -, v97, v109, v54 calleeName="slicesInLoop"
+    Jump -> next b12()
+  b18() handler=b21():
+    Jump -> next b19()
+  b19() handler=b20():
+    v119 = Convert v117 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v120 = Call v97 calleeName="make"
+    v121 = Convert v120 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v122 = Call v1, -, v121, v109, v119 calleeName="sliceOutsideLoops"
+    v123 = Convert v122 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v124 = String string=","
+    v125 = Add v123, v124
+    v126 = Call v97 calleeName="make"
+    v127 = Convert v126 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v128 = Call v3, -, v127, v109, v119 calleeName="substringOutsideLoops"
+    v129 = Convert v128 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v130 = Add v125, v129
+    v131 = String string=","
+    v132 = Add v130, v131
+    v133 = Call v97 calleeName="make"
+    v134 = Convert v133 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v135 = Call v5, -, v134, v109, v119 calleeName="sliceOfIntegers"
+    v136 = Convert v135 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v137 = Add v132, v136
+    v138 = String string=","
+    v139 = Add v137, v138
+    v140 = Call v97 calleeName="make"
+    v141 = Convert v140 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v142 = Call v7, -, v141, v109, v119 calleeName="substringOfIntegers"
+    v143 = Convert v142 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v144 = Add v139, v143
+    v145 = String string="|"
+    v146 = Add v144, v145
+    v147 = Add v113, v146
+    v148 = Convert v147 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b16(v148)
+  b20() role=IterationCleanup subject=v112 handler=b21():
+    v149 = CatchException
+    Rethrow v149
+  b21() role=IterationCleanup subject=v105 handler=b23():
+    v150 = CatchException
+    Rethrow v150
+  b22() role=IterationCleanup subject=v94 handler=b23():
+    v151 = CatchException
+    Rethrow v151
+  b23() role=IterationCleanup subject=v55:
+    v152 = CatchException
+    Rethrow v152
+}
+function f1 name="sliceOutsideLoops" module=m0 position=1176 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="substringOutsideLoops" module=m0 position=1277 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="sliceOfIntegers" module=m0 position=1548 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="substringOfIntegers" module=m0 position=1655 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number, v2: number):
+    v3 = PropGet v0 key="substring"
+    v4 = Integer
+    v5 = BitOr v1, v4
+    v6 = Integer
+    v7 = BitOr v2, v6
+    v8 = Call v3, v0, v5, v7 calleeKey="substring" calleeName="s.substring"
+    ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f5 name="slicesInLoop" module=m0 position=1770 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18 flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18, v1: number, v2: undefined|null|Array<number>):
+    v3 = String string=""
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    Jump -> next b1(v4, v6)
+  b1(v7: undefined|null|string, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = PropGet v2 key="length"
+    v12 = Convert v11 declared={type=number} illTypedCause=Assertion
+    v13 = Less v10, v12
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v14):
+    v15 = Call v0 calleeName="make"
+    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v17 = PropGet v16 key="slice"
+    v18 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    v19 = ElemGet v2, v18
+    v20 = Convert v19 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v21 = Call v17, v16, v1, v20 calleeKey="slice" calleeName="s.slice"
+    v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v23 = String string="|"
+    v24 = Add v22, v23
+    v25 = Add v7, v24
+    v26 = Convert v25 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v27 = Increment v18
+    v28 = Convert v27 declared={type=number}
+    Jump -> next b1(v26, v28)
+  b3(v29):
+    v30 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v30
+}
+function f6 name="countedSlices" module=m0 position=2396 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = String string=""
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: undefined|null|string, v6: number):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Convert v8 declared={type=number} illTypedCause=Assertion
+    v10 = Less v6, v9
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v11):
+    v12 = PropGet v0 key="slice"
+    v13 = Integer integer=3
+    v14 = Add v11, v13
+    v15 = Call v12, v0, v11, v14 calleeKey="slice" calleeName="s.slice"
+    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v17 = String string=","
+    v18 = Add v16, v17
+    v19 = PropGet v0 key="substring"
+    v20 = Integer integer=3
+    v21 = Add v11, v20
+    v22 = Call v19, v0, v11, v21 calleeKey="substring" calleeName="s.substring"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v24 = Add v18, v23
+    v25 = String string=","
+    v26 = Add v24, v25
+    v27 = PropGet v0 key="slice"
+    v28 = Call v27, v0, v11 calleeKey="slice" calleeName="s.slice"
+    v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v30 = Add v26, v29
+    v31 = String string=","
+    v32 = Add v30, v31
+    v33 = PropGet v0 key="substring"
+    v34 = Integer
+    v35 = Call v33, v0, v34, v11 calleeKey="substring" calleeName="s.substring"
+    v36 = Convert v35 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v37 = Add v32, v36
+    v38 = String string="|"
+    v39 = Add v37, v38
+    v40 = Add v5, v39
+    v41 = Convert v40 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v42 = Increment v11
+    v43 = Convert v42 declared={type=number}
+    Jump -> next b1(v41, v43)
+  b3(v44):
+    v45 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v45
+}
+function f7 name="constants" module=m0 position=2609 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = PropGet v0 key="slice"
+    v2 = Integer
+    v3 = Integer integer=-1
+    v4 = Call v1, v0, v2, v3 calleeKey="slice" calleeName="s.slice"
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v6 = PropGet v0 key="slice"
+    v7 = Integer integer=-3
+    v8 = Call v6, v0, v7 calleeKey="slice" calleeName="s.slice"
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v10 = PropGet v0 key="slice"
+    v11 = Integer integer=1
+    v12 = Call v10, v0, v11 calleeKey="slice" calleeName="s.slice"
+    v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v14 = PropGet v0 key="slice"
+    v15 = Integer integer=-3
+    v16 = Integer integer=-1
+    v17 = Call v14, v0, v15, v16 calleeKey="slice" calleeName="s.slice"
+    v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v19 = PropGet v0 key="slice"
+    v20 = Integer integer=-1
+    v21 = Integer integer=-3
+    v22 = Call v19, v0, v20, v21 calleeKey="slice" calleeName="s.slice"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v24 = PropGet v0 key="slice"
+    v25 = Integer
+    v26 = Integer integer=100
+    v27 = Call v24, v0, v25, v26 calleeKey="slice" calleeName="s.slice"
+    v28 = Convert v27 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v29 = PropGet v0 key="slice"
+    v30 = Integer integer=100
+    v31 = Call v29, v0, v30 calleeKey="slice" calleeName="s.slice"
+    v32 = Convert v31 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v33 = PropGet v0 key="slice"
+    v34 = Integer integer=2
+    v35 = Integer integer=1
+    v36 = Call v33, v0, v34, v35 calleeKey="slice" calleeName="s.slice"
+    v37 = Convert v36 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v38 = PropGet v0 key="slice"
+    v39 = Integer integer=-100
+    v40 = Call v38, v0, v39 calleeKey="slice" calleeName="s.slice"
+    v41 = Convert v40 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v42 = PropGet v0 key="slice"
+    v43 = Integer integer=-100
+    v44 = Integer integer=-99
+    v45 = Call v42, v0, v43, v44 calleeKey="slice" calleeName="s.slice"
+    v46 = Convert v45 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v47 = PropGet v0 key="slice"
+    v48 = Integer
+    v49 = Integer
+    v50 = Call v47, v0, v48, v49 calleeKey="slice" calleeName="s.slice"
+    v51 = Convert v50 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v52 = PropGet v0 key="slice"
+    v53 = Integer
+    v54 = Integer integer=1
+    v55 = Call v52, v0, v53, v54 calleeKey="slice" calleeName="s.slice"
+    v56 = Convert v55 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v57 = PropGet v0 key="slice"
+    v58 = Integer
+    v59 = Integer integer=16
+    v60 = Call v57, v0, v58, v59 calleeKey="slice" calleeName="s.slice"
+    v61 = Convert v60 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v62 = PropGet v0 key="slice"
+    v63 = Integer integer=-16
+    v64 = Call v62, v0, v63 calleeKey="slice" calleeName="s.slice"
+    v65 = Convert v64 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v66 = PropGet v0 key="slice"
+    v67 = Integer integer=-17
+    v68 = Call v66, v0, v67 calleeKey="slice" calleeName="s.slice"
+    v69 = Convert v68 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v70 = PropGet v0 key="slice"
+    v71 = Integer integer=1
+    v72 = Integer integer=-1
+    v73 = Call v70, v0, v71, v72 calleeKey="slice" calleeName="s.slice"
+    v74 = Convert v73 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v75 = PropGet v0 key="slice"
+    v76 = Double number=0.5
+    v77 = Double number=-0.5
+    v78 = Call v75, v0, v76, v77 calleeKey="slice" calleeName="s.slice"
+    v79 = Convert v78 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v80 = PropGet v0 key="slice"
+    v81 = Double number=NaN
+    v82 = Double number=Infinity
+    v83 = Call v80, v0, v81, v82 calleeKey="slice" calleeName="s.slice"
+    v84 = Convert v83 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v85 = PropGet v0 key="slice"
+    v86 = Double number=-Infinity
+    v87 = Integer integer=3
+    v88 = Call v85, v0, v86, v87 calleeKey="slice" calleeName="s.slice"
+    v89 = Convert v88 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v90 = PropGet v0 key="substring"
+    v91 = Integer integer=2
+    v92 = Call v90, v0, v91 calleeKey="substring" calleeName="s.substring"
+    v93 = Convert v92 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v94 = PropGet v0 key="substring"
+    v95 = Integer
+    v96 = Integer integer=100
+    v97 = Call v94, v0, v95, v96 calleeKey="substring" calleeName="s.substring"
+    v98 = Convert v97 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v99 = PropGet v0 key="substring"
+    v100 = Integer integer=5
+    v101 = Integer integer=2
+    v102 = Call v99, v0, v100, v101 calleeKey="substring" calleeName="s.substring"
+    v103 = Convert v102 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v104 = PropGet v0 key="substring"
+    v105 = Integer integer=-1
+    v106 = Call v104, v0, v105 calleeKey="substring" calleeName="s.substring"
+    v107 = Convert v106 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v108 = PropGet v0 key="substring"
+    v109 = Integer integer=-5
+    v110 = Integer integer=-1
+    v111 = Call v108, v0, v109, v110 calleeKey="substring" calleeName="s.substring"
+    v112 = Convert v111 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v113 = PropGet v0 key="substring"
+    v114 = Integer integer=100
+    v115 = Call v113, v0, v114 calleeKey="substring" calleeName="s.substring"
+    v116 = Convert v115 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v117 = PropGet v0 key="substring"
+    v118 = Integer integer=100
+    v119 = Integer integer=3
+    v120 = Call v117, v0, v118, v119 calleeKey="substring" calleeName="s.substring"
+    v121 = Convert v120 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v122 = PropGet v0 key="substring"
+    v123 = Integer
+    v124 = Integer
+    v125 = Call v122, v0, v123, v124 calleeKey="substring" calleeName="s.substring"
+    v126 = Convert v125 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v127 = PropGet v0 key="substring"
+    v128 = Integer integer=1
+    v129 = Integer integer=2
+    v130 = Call v127, v0, v128, v129 calleeKey="substring" calleeName="s.substring"
+    v131 = Convert v130 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v132 = PropGet v0 key="substring"
+    v133 = Integer
+    v134 = Integer integer=16
+    v135 = Call v132, v0, v133, v134 calleeKey="substring" calleeName="s.substring"
+    v136 = Convert v135 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v137 = PropGet v0 key="substring"
+    v138 = Double number=NaN
+    v139 = Integer integer=4
+    v140 = Call v137, v0, v138, v139 calleeKey="substring" calleeName="s.substring"
+    v141 = Convert v140 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v142 = PropGet v0 key="substring"
+    v143 = Integer integer=3
+    v144 = Double number=NaN
+    v145 = Call v142, v0, v143, v144 calleeKey="substring" calleeName="s.substring"
+    v146 = Convert v145 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v147 = PropGet v0 key="substring"
+    v148 = Integer integer=2
+    v149 = Double number=Infinity
+    v150 = Call v147, v0, v148, v149 calleeKey="substring" calleeName="s.substring"
+    v151 = Convert v150 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v152 = PropGet v0 key="substring"
+    v153 = Double number=Infinity
+    v154 = Integer integer=2
+    v155 = Call v152, v0, v153, v154 calleeKey="substring" calleeName="s.substring"
+    v156 = Convert v155 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v157 = PropGet v0 key="substring"
+    v158 = Double number=1.9
+    v159 = Double number=3.9
+    v160 = Call v157, v0, v158, v159 calleeKey="substring" calleeName="s.substring"
+    v161 = Convert v160 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v162 = NewArray v5, v9, v13, v18, v23, v28, v32, v37, v41, v46, v51, v56, v61, v65, v69, v74, v79, v84, v89, v93, v98, v103, v107, v112, v116, v121, v126, v131, v136, v141, v146, v151, v156, v161 contents=undefined|null|string
+    v163 = PropGet v162 key="join"
+    v164 = String string="|"
+    v165 = Call v163, v162, v164 calleeKey="join" calleeName="join"
+    ReturnCall v165 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f8 module=m0 position=389 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=422 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 position=446 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=509 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=570 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=645 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 position=729 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 module=m0 position=783 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 module=m0 position=814 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 module=m0 position=847 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 module=m0 position=883 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="7fe"
+    v1 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v1
+}
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31, f32]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 countedSlices constants
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 485, patchpoints: 74, rare instructions: 464, polls: 6
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="countedSlices"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 257, patchpoints: 7, rare instructions: 29, polls: 1
+# CHECK-NEXT: end of function f6
+# CHECK-LABEL: function {{*}}name="constants"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 491, patchpoints: 101
+# CHECK-NEXT: end of function f7

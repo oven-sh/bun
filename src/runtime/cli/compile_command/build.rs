@@ -16,14 +16,14 @@ use bun_options_types::Format;
 use bun_paths::resolve_path::{self, platform};
 use bun_sema::util::FxHashSet;
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileResult, ExecutableRequest, Flags, GraphRequest, target_base_public_path, to_graph_bytes,
+    CompileResult, ExecutableRequest, GraphRequest, target_base_public_path, to_graph_bytes,
     write_executable,
 };
 use bun_standalone_graph::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledProgramInput, with_executable_image,
 };
 use bun_sys::Fd;
-use bun_trim::{Feature, TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
+use bun_trim::{TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
 
 use super::{
     AssetError, BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest,
@@ -40,6 +40,8 @@ struct ProductInputs<'p> {
     module_prefix: &'p [u8],
     outfile: Option<&'p [u8]>,
     plan: Option<&'p TrimPlan>,
+    /// `BUN_DEBUG_TEST_UNTRIMMED_OUTFILE`, and what that executable leaves out.
+    untrimmed: Option<(&'p [u8], Option<&'p TrimPlan>)>,
 }
 
 #[inline(never)]
@@ -82,10 +84,14 @@ pub(crate) fn compile_to_executable(
         add_used_features(&mut used, used_features(program));
     }
     used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code;
-    if (used.features.iter()).any(|used| used.feature == Feature::SystemCaCertificates) {
-        request.executable.flags |= Flags::NAMES_SYSTEM_CA_CERTIFICATES;
-    }
     let trimming = trimming::decide_trimming(request, &used)?;
+    let untrimmed_outfile = bun_core::env_var::BUN_DEBUG_TEST_UNTRIMMED_OUTFILE
+        .get_not_empty()
+        .filter(|_| options.trim.removes_unused);
+    let untrimmed = match untrimmed_outfile {
+        Some(outfile) => Some((outfile, trimming::plan_without_trim_flag(request, &used)?)),
+        None => None,
+    };
     let mut outcome = reports::collect_reports(&build, options, &used, &trimming);
 
     let outfile = match request.product {
@@ -98,6 +104,7 @@ pub(crate) fn compile_to_executable(
             module_prefix,
             outfile,
             plan: trimming.plan(),
+            untrimmed: (untrimmed.as_ref()).map(|(outfile, plan)| (*outfile, plan.as_ref())),
         };
         write_product(request, &mut build, product, &mut outcome)?;
         outcome.metafile = outfile.and_then(|outfile| reports::collect_metafile(&build, outfile));
@@ -204,6 +211,14 @@ fn write_product(
     if let CompileResult::Err(error) = written.result {
         return Err(CompileFailure::Executable(error));
     }
+    if let Some((untrimmed_outfile, plan)) = product.untrimmed {
+        executable_request.outfile = untrimmed_outfile;
+        executable_request.trim = plan;
+        let untrimmed = write_executable(&mut executable_request).map_err(CompileFailure::Graph)?;
+        if let CompileResult::Err(error) = untrimmed.result {
+            return Err(CompileFailure::Executable(error));
+        }
+    }
     if options.obfuscates {
         let (directory, path) = executable_location(settings.root_dir, outfile);
         let build_id = written.details.as_ref().and_then(|it| it.build_id.as_ref());
@@ -286,7 +301,8 @@ struct BuiltinModulesHeader {
 }
 
 unsafe extern "C" {
-    static bun_internal_modules_header: BuiltinModulesHeader;
+    /// The header of the section with the modules, which nothing writes.
+    safe static bun_internal_modules_header: BuiltinModulesHeader;
 }
 
 const OFFSET_OF_IMAGE_FORM_IN_DESCRIPTION: usize = 26;
@@ -346,8 +362,7 @@ fn find_difference(template: &Template) -> Option<Vec<u8>> {
         sentence.extend_from_slice(own_revision);
         return Some(sentence);
     }
-    // SAFETY: the header of the section with the modules, which nothing writes.
-    let own_stamp = unsafe { bun_internal_modules_header.source_stamp };
+    let own_stamp = bun_internal_modules_header.source_stamp;
     if template.stamp_of_builtin_modules != own_stamp {
         return Some(b"its built-in modules have another text".to_vec());
     }

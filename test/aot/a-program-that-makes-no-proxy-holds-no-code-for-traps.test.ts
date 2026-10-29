@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { built, slot, spawned } from "./run-programs";
+import { built, slot, spawned } from "./harness/commands";
 import { test } from "./supported";
 
 /** The names of the pieces of code that compiled code shares, up to the first dot. */

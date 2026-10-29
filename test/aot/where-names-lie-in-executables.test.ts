@@ -2,8 +2,9 @@ import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { built, spawned } from "./harness/commands";
 import { compileCommand } from "./harness/flags";
-import { built, spawned } from "./run-programs";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 import { beforeAll, describe, test } from "./supported";
 
 const python = Bun.which("python3");
@@ -67,7 +68,13 @@ describe.skipIf(!python || process.platform === "darwin")("compile/aot/where nam
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
   beforeAll(async () => {
-    built(await spawned([bunExe(), ...compileCommand, "./main.ts", "--outfile", executable], folder, bunEnv));
+    built(
+      await spawned(
+        [bunExe(), ...compileCommand, ...withoutDebugInformation, "./main.ts", "--outfile", executable],
+        folder,
+        bunEnv,
+      ),
+    );
     const bytes = readFileSync(executable);
     const hits: string[] = [];
     for (const name of [...rowsOfNames.map(([name]) => name), "localW10"]) {

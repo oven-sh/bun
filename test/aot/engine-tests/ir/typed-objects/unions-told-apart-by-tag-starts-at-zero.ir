@@ -1,0 +1,57 @@
+# The literal type 0 is the integer: a union of objects whose tags are 0, 1 and 2 is told apart by the tag alone, as one whose tags are 1, 2 and 3. A -0 where TypeScript lets it pass for 0 behaves as in plain Bun
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="unions-told-apart-by-tag-starts-at-zero.ts" displayPath="unions-told-apart-by-tag-starts-at-zero.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=1406 kind=Variable
+typesite w1 module=m0 position=972 kind=Parameter
+typesite w2 module=m0 position=958 kind=Result
+typesite w3 module=m0 position=1453 kind=Variable
+typesite w4 module=m0 position=1669 kind=Element
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w0}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w3}
+    v6 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    v7 = Builtin builtin=JSON
+    v8 = PropGet v7 key="parse"
+    v9 = Convert v8 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v10 = Builtin builtin=Process
+    v11 = PropGet v10 key="argv"
+    v12 = Convert v11 declared={type=builtin(ProcessArgv) flags=[IsExpected]}
+    v13 = Integer integer=2
+    v14 = ElemGet v12, v13
+    v15 = Convert v14 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v16 = String string="null"
+    v17 = Call v9, v7, v16 calleeKey="parse" calleeName="JSON.parse"
+    v18 = Integer
+    v19 = Call v1, -, v18 calleeName="pass"
+    v20 = Double number=-0
+    v21 = Call v1, -, v20 calleeName="pass"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="pass" module=m0 position=958 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=0 site=w1}] results=[{type=0 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: 0):
+    v1 = Convert v0 declared={type=0 site=w2}
+    Return v1
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f4 callPosition=958 parent=1 isTailCall=true module=m0}, {callee=f3 callPosition=958 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v1: anything ~ builtin(ProcessArgv) = Upcast v0 castType=anything
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: v3: anything = ElemGet v1, v2 accessSite=2 [keyIsIntegral]
+# CHECK-NEXT: v4: "null" = String string="null"
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: v6: null|boolean|number|string|object = CallBuiltin -, v4, v5 overload=JSONParse/0 accessSite=3
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }

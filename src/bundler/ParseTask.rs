@@ -227,24 +227,24 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl<'a> ParseTask<'a> {
-    /// Shared borrow of the owning `BundleV2`. `ctx` is a BACKREF
-    /// (LIFETIMES.tsv) into the arena-allocated bundle, set at `init` time and
-    /// valid until `BundleV2::deinit`. Prefer this over open-coded
-    /// `unsafe { &*task.ctx }`; sites that mutate the bundle (e.g.
-    /// `on_complete`) must continue to deref the raw `ctx` field directly.
+    /// Shared borrow of the owning `BundleV2`. Use a copy of `ctx` where a
+    /// function-local borrow is enough.
     ///
     /// # Safety
     ///
-    /// The returned lifetime `'r` is **decoupled** from `&self`: callers in
-    /// `get_code_for_parse_task_*` stash slices borrowed from `ctx` into
-    /// out-params whose lifetime is independent of `task`, so we cannot tie
+    /// The returned lifetime `'r` is **decoupled** from `&self`:
+    /// `get_code_for_parse_task_without_plugins` stores a path borrowed from `ctx`
+    /// in an out-param whose lifetime is independent of `task`, so we cannot tie
     /// `'r` to the `ParseTask` borrow. The caller must ensure the bundle
-    /// outlives `'r` — true for every site, since the bundle drives the parse
-    /// tasks and outlives all of them. Also requires `ctx` to be initialized
-    /// (`init()` was called); debug-asserted.
+    /// outlives `'r`. It does, since the bundle drives the parse tasks and
+    /// outlives all of them.
+    ///
+    /// # Panics
+    ///
+    /// If `ctx` is `None`.
     #[inline]
     pub(crate) unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
-        // SAFETY: caller upholds: bundle outlives `'r`. `expect` enforces init().
+        // SAFETY: caller upholds: bundle outlives `'r`.
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
@@ -383,8 +383,9 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
         unsafe { &mut *bun_core::from_field_ptr!(ParseTask<'static>, io_task, task) };
     // Read the pool first. `run_from_thread_pool` can reschedule `*parse_task` onto a worker
     // thread, which then owns it.
-    // SAFETY: teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
-    let pool: *const crate::ThreadPool = unsafe { parse_task.ctx() }.graph.pool();
+    // Teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
+    let ctx = parse_task.ctx.expect("ParseTask.ctx unset");
+    let pool: *const crate::ThreadPool = ctx.graph.pool();
     parse_worker::run_from_thread_pool(parse_task);
     // SAFETY: `pool` scheduled this task, and this is the last access to the bundle.
     unsafe { crate::ThreadPool::finish_io_task(pool) };
@@ -1450,18 +1451,12 @@ pub mod parse_worker {
     // getCodeForParseTaskWithoutPlugins
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `transpiler`/`resolver` are raw `*mut`.
-    // Callers pass `resolver = &mut (*transpiler).resolver`; taking
-    // `&mut Transpiler` + `&mut Resolver` would be aliased-`&mut` UB. We only
-    // touch the disjoint `(*transpiler).fs` and `(*resolver).caches.fs` fields.
     fn get_code_for_parse_task_without_plugins(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        transpiler: *mut Transpiler,
-        resolver: *mut Resolver,
+        fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
         file_path: &mut Fs::Path,
-        _loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1529,13 +1524,7 @@ pub mod parse_worker {
                 // `OutputFile`). This avoids churning the global allocator with
                 // one `Vec<u8>` per file.
                 let read_arena: Option<&Bump> = Some(bump);
-                // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
-                // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
-                let fs_ref = unsafe { &mut *(*transpiler).fs };
-                // SAFETY: `resolver` is a live `*mut Resolver`; `caches.fs` is
-                // disjoint from `(*transpiler).fs` (a backref pointer field).
-                break 'brk match unsafe { &mut (*resolver).caches.fs }.read_file_with_allocator(
-                    fs_ref,
+                break 'brk match fs_cache.read_file_with_allocator(
                     file_path.text,
                     contents_dir,
                     false,
@@ -1614,16 +1603,12 @@ pub mod parse_worker {
     // getCodeForParseTask
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `transpiler`/`resolver` are raw `*mut` — see
-    // `get_code_for_parse_task_without_plugins`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn get_code_for_parse_task<'b>(
+    pub(crate) fn get_code_for_parse_task(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        transpiler: *mut Transpiler<'b>,
-        resolver: *mut Resolver<'b>,
+        fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
-        file_path: &mut Fs::Path<'b>,
+        file_path: &mut Fs::Path,
         loader: &mut Loader,
         from_plugin: &mut bool,
     ) -> core::result::Result<CacheEntry, AnyError> {
@@ -1631,8 +1616,7 @@ pub mod parse_worker {
             if task.source_index.is_runtime() {
                 break 'brk false;
             }
-            // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-            let ctx = unsafe { task.ctx() };
+            let ctx = task.ctx.expect("ParseTask.ctx unset");
             let Some(plugin) = ctx.plugins_ref() else {
                 break 'brk false;
             };
@@ -1647,9 +1631,7 @@ pub mod parse_worker {
         };
 
         if !might_have_on_parse_plugins {
-            return get_code_for_parse_task_without_plugins(
-                task, log, transpiler, resolver, bump, file_path, *loader,
-            );
+            return get_code_for_parse_task_without_plugins(task, log, fs_cache, bump, file_path);
         }
 
         let should_continue_running = core::cell::Cell::new(1i32);
@@ -1657,8 +1639,7 @@ pub mod parse_worker {
         let mut ctx = OnBeforeParsePlugin {
             task,
             log,
-            transpiler,
-            resolver,
+            fs_cache,
             bump,
             file_path,
             loader,
@@ -1668,10 +1649,8 @@ pub mod parse_worker {
             original_contents: None,
         };
 
-        // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-        let plugins = unsafe { ctx.task.ctx() }
-            .plugins_ref()
-            .expect("unreachable");
+        let bundle = ctx.task.ctx.expect("ParseTask.ctx unset");
+        let plugins = bundle.plugins_ref().expect("unreachable");
         ctx.run(plugins, from_plugin)
     }
 
@@ -1682,12 +1661,7 @@ pub mod parse_worker {
     pub struct OnBeforeParsePlugin<'a, 'b: 'a> {
         task: &'a mut ParseTask<'static>,
         log: &'a mut Log,
-        // raw `*mut`. Callers pass
-        // `resolver = &mut (*transpiler).resolver`; storing `&'a mut Transpiler<'b>`
-        // alongside `&'a mut Resolver<'b>` would be aliased-`&mut` UB. The data
-        // lifetime `'b` is retained on the pointee for variance only.
-        transpiler: *mut Transpiler<'b>,
-        resolver: *mut Resolver<'b>,
+        fs_cache: &'a mut bun_resolver::cache::Fs,
         bump: &'a Bump,
         file_path: &'a mut Fs::Path<'b>,
         loader: &'a mut Loader,
@@ -1964,11 +1938,9 @@ pub mod parse_worker {
             let mut entry = match get_code_for_parse_task_without_plugins(
                 this.task,
                 this.log,
-                this.transpiler,
-                this.resolver,
+                this.fs_cache,
                 this.bump,
                 this.file_path,
-                result.loader,
             ) {
                 Ok(e) => e,
                 Err(e) => {
@@ -2230,11 +2202,9 @@ pub mod parse_worker {
             get_code_for_parse_task_without_plugins(
                 self.task,
                 self.log,
-                self.transpiler,
-                self.resolver,
+                self.fs_cache,
                 self.bump,
                 self.file_path,
-                *self.loader,
             )
         }
     }
@@ -2254,39 +2224,29 @@ pub mod parse_worker {
         let bump: &Bump = this.arena.get();
 
         // `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
-        let data = this.data.as_mut().expect("Worker.data set in create()");
-        // `resolver` is a field of
-        // `*transpiler`. Hold both as raw `*mut` and never materialize
-        // `&mut Transpiler` while `resolver` is live — the callee chain takes raw
-        // pointers and reborrows disjoint fields only.
-        // SAFETY: `data.transpiler` is initialized (see above) and pinned for the
-        // bundle pass.
-        let transpiler: *mut Transpiler<'static> = &raw mut data.transpiler;
-        // errdefer transpiler.reset_store() — reshaped: call on the err
-        // path explicitly (scopeguard would alias `transpiler` access below).
-        // SAFETY: `transpiler` is live; `resolver` projects a field of it.
-        let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
+        let transpiler = &mut this
+            .data
+            .as_mut()
+            .expect("Worker.data set in create()")
+            .transpiler;
         let mut file_path = task.path;
         let mut loader = task
             .loader
-            // SAFETY: `options` is a disjoint field of the live `*transpiler`.
-            .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
+            .or_else(|| file_path.loader(&transpiler.options.loaders))
             .unwrap_or(Loader::File);
 
         let mut contents_came_from_plugin: bool = false;
         let result = get_code_for_parse_task(
             task,
             log,
-            transpiler,
-            resolver,
+            &mut transpiler.resolver.caches.fs,
             bump,
             &mut file_path,
             &mut loader,
             &mut contents_came_from_plugin,
         );
         if result.is_err() {
-            // SAFETY: `transpiler` is live; no other borrow of it is held here.
-            unsafe { (*transpiler).reset_store() };
+            transpiler.reset_store();
         }
         result
     }
@@ -2634,11 +2594,7 @@ pub mod parse_worker {
                     }
                 }),
             };
-            // SAFETY: ARENA — `bump: &'static Bump` (worker arena pinned for the
-            // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow.
-            unsafe {
-                bun_collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected))
-            }
+            &*bump.alloc(projected)
         });
 
         // The browser copy of a page of a `clientPages` router drops the exports that its router
@@ -2691,8 +2647,7 @@ pub mod parse_worker {
             key: ast::StoreStr::EMPTY,
             content_hash: 0,
         };
-        // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
-        let task_ctx = unsafe { task.ctx() };
+        let task_ctx = task.ctx.expect("ParseTask.ctx unset");
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
@@ -2788,9 +2743,8 @@ pub mod parse_worker {
     }
 
     fn run_from_thread_pool_impl(this: &mut ParseTask<'static>) {
-        // SAFETY: ctx backref valid for the bundle pass (outlives this task).
-        let ctx = unsafe { this.ctx() };
-        let worker: &mut crate::Worker = crate::Worker::get(ctx);
+        let ctx = this.ctx.expect("ParseTask.ctx unset");
+        let worker: &mut crate::Worker = crate::Worker::get(ctx.get());
         // `defer worker.unget()` — handled at function exit (scopeguard
         // would alias the `&mut worker` borrows below).
         scoped_log!(
@@ -2888,7 +2842,7 @@ pub mod parse_worker {
         };
 
         let result = Box::new(Result {
-            ctx: this.ctx.expect("ParseTask.ctx unset"),
+            ctx,
             task: EventLoop::Task::default(),
             value,
             // `ExternalFreeFunction`

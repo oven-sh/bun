@@ -6,7 +6,7 @@
 // CHECK: Return
 
 // RUN(RECORD): link
-// RECORD: module [[entry]] path="{{*}}/empty-literal"
+// RECORD: module [[entry]] path="{{*}}/empty-literal.ts"
 // RECORD: function {{*}}name="create" module=[[entry]] position=
 // RECORD: = Data data=[[data]] @
 // RECORD: data [[data]] root=Object{layout=[[layout]]} module=[[entry]]

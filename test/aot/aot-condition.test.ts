@@ -2,7 +2,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { spawned } from "./run-programs";
+import { spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };

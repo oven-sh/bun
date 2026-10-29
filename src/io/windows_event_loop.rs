@@ -13,9 +13,9 @@ use crate::posix_event_loop as posix;
 pub use crate::posix_event_loop::{EventLoopCtx, OpaqueCallback, js_vm_ctx};
 
 // `Loop` here is the raw
-// `uv_loop_t`. (`WindowsLoop` is the uws wrapper that *owns* a `*mut uv::Loop`
-// in its `.uv_loop` field; callers that hold a `WindowsLoop*` project that
-// field themselves. See `VirtualMachine::event_loop_handle` /
+// `uv_loop_t`. (`WindowsLoop` is the uws wrapper that *owns* a `*mut uv::Loop`;
+// callers that hold a `WindowsLoop*` read it with `.uv_loop()`.
+// See `VirtualMachine::event_loop_handle` /
 // `SpawnSyncEventLoop` which store/compare the inner `uv::Loop` pointer.)
 pub type Loop = uv::Loop;
 

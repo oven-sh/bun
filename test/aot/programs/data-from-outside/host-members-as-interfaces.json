@@ -1,3 +1,0 @@
-{
-  "skipInShell": "uses Bun APIs that the jsc shell does not provide: URL, TextEncoder, TransformStream, node:fs, Response, FormData, EventTarget, AbortController, Blob, Request, MessageEvent"
-}

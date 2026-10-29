@@ -91,21 +91,22 @@ function f1 name="turn" module=m0 position=38 flags=[IsChecked, HasExplicitName]
     Rethrow v16
 }
 
-# for-of over a Buffer is the same counted loop: no iterator object and no call.
-# BODY-LABEL: steps by 8
-# BODY-COUNT-8: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:TypedArrayElements
-# BODY-NOT: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:TypedArrayElements
+# for-of over a Buffer is the same counted loop: no iterator object and no call. Eight bytes to a vector are added up in lanes of 32 bits. The sum is made a number behind the turns.
+# BODY-LABEL: steps by 64
+# BODY-COUNT-8: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
+# BODY-NOT: Reads:TypedArrayElements
 # BODY-LABEL: end of loop
-# BRANCHES-LABEL: steps by 8
+# BRANCHES-LABEL: steps by 64
 # BRANCHES-NOT: Branch(
 # BRANCHES: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of loop
-# HOT-LABEL: steps by 8
+# HOT-LABEL: steps by 64
 # HOT-NOT: isLoopPoll
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-NOT: IToD
-# HOT-NOT: Double
+# HOT-NOT: Double b@{{*}} = Add(
+# HOT-COUNT-8: V128 b@{{*}} = VectorAdd(b@{{*}}, b@{{*}}, i32x4
 # HOT-LABEL: end of loop
-# X64: instructions: 18, patchpoints: 8, {{*}} steps by 8
-# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8
+# X64: instructions: 34, patchpoints: 8, {{*}} steps by 64
+# ARM64: instructions: 35, patchpoints: 8, {{*}} steps by 64

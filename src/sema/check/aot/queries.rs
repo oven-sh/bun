@@ -46,6 +46,7 @@ pub struct Queries<'c, 'p, 's> {
     pub(super) kept: KeptMemo<'c>,
     statistics: QueryStatistics,
     closed_cycles_before: u32,
+    union_members_compared_before: u64,
     depth: u32,
     unstable_answers: u64,
     has_met_inferred_member: bool,
@@ -130,6 +131,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (memo_of_checker, arena) = self.aot_answers.take();
         let closed_cycles_before = self.closed_cycle_count();
+        let union_members_compared_before = self.union_members_compared();
         let flow_analysis_was_disabled = std::mem::take(&mut self.flow_analysis_disabled);
         let had_run_out_of_stack = self.ran_out_of_stack.get();
         let mut queries = Queries {
@@ -141,6 +143,7 @@ impl<'p, 's> Checker<'p, 's> {
             kept: memo_of_checker,
             statistics: QueryStatistics::default(),
             closed_cycles_before,
+            union_members_compared_before,
             depth: 0,
             unstable_answers: 0,
             has_met_inferred_member: false,
@@ -513,6 +516,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 .c
                 .closed_cycle_count()
                 .wrapping_sub(self.closed_cycles_before),
+            union_members_compared: self.c.union_members_compared()
+                - self.union_members_compared_before,
             ..self.statistics
         }
     }

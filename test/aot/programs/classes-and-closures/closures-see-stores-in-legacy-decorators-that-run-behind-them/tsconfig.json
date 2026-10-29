@@ -1,1 +1,0 @@
-{ "compilerOptions": { "experimentalDecorators": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "types": [] } }

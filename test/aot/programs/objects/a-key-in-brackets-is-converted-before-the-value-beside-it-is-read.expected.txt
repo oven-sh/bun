@@ -1,8 +1,0 @@
-{"a":1}
-{"b":2}
-{"c":3}
-{"before":3,"a":4,"between":4,"b":5,"after":5}
-{"a":6}
-{"a":[7],"c":{"inner":8}}
-key, value, key, second value {"d":4}
-8

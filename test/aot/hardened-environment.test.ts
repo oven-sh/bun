@@ -72,9 +72,9 @@ const optionsTaken = wordsOfTable(
   "};",
 );
 const wordsOfAllocatorTaken = wordsOfTable(
-  "patches/mimalloc/environment-sets-sizes-and-pace-only.patch",
-  "bool mi_is_read_from_environment(const char* name) {",
-  "};",
+  "scripts/build/deps/mimalloc.ts",
+  "const namesReadFromLockedEnvironment = [",
+  "];",
 );
 const namesNeverRead = wordsOfTable("src/bun_core/util.rs", "pub fn is_never_read(", "\n    ];");
 

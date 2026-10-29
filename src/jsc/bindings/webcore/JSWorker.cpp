@@ -783,6 +783,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         heapProfiler.clearSnapshots();
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         String snapshot = builder.json();
+        heapProfiler.clearSnapshots();
 
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind,
             [reqId, protectedProxy = WTF::move(protectedProxy), snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {

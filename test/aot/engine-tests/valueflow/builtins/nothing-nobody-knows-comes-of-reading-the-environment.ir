@@ -1,5 +1,7 @@
 # env = process.env; env.HOME.length; env.A = "text"; env.B = 1; env.C = true
 # A read of the environment, and a store of a string, a number or a boolean, bring in nothing that nobody knows: no value, and no row that speaks of a store into the object.
+# On Windows the environment is a Proxy that the library makes.
+# REQUIRES: not-windows
 # RUN: valueflow-why seeds
 # CHECK-NOT: UndescribedNativeResult
 # CHECK-NOT: ContentsOfEscapedObject

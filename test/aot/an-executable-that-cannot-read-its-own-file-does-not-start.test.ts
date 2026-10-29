@@ -6,13 +6,10 @@ import { refusesExecuteOnlyStart } from "./execute-only-start";
 import { beforeAll, describe, test } from "./supported";
 
 const program = `import { writeFileSync } from "node:fs";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 writeFileSync(process.argv[2], "");
-const server = createServer((request, response) => response.end("served"));
-await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-const answer = await (await fetch("http://127.0.0.1:" + (server.address() as AddressInfo).port)).text();
-server.close();
+const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("served") });
+const answer = await (await fetch(server.url)).text();
+await server.stop(true);
 const worker = new Worker("./worker.ts");
 worker.onmessage = event => {
   console.log(answer, event.data);

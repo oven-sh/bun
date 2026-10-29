@@ -1,1 +1,0 @@
-Bun.plugin: refused: Cannot use Bun.plugin: this executable only runs code that was compiled into it.

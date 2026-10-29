@@ -3201,9 +3201,7 @@ pub mod formatter {
             colors: bool,
         ) -> JSValue;
 
-        /// C++ helper (`UtilInspect.cpp`): `callback` gets what a Map or Set
-        /// iterator has left, as `next()` would yield it. The iterator is not
-        /// run and does not move.
+        /// C++ helper (`UtilInspect.cpp`): `callback` gets what a Map or Set iterator has left. The iterator is not run.
         safe fn Bun__inspect__forEachRemainingEntry(
             iterator: JSValue,
             global: &JSGlobalObject,
@@ -3227,8 +3225,7 @@ pub mod formatter {
         matches!(js_type, jsc::JSType::MapIterator | jsc::JSType::SetIterator)
     }
 
-    /// `JSValue::for_each` for a printer: printing a Map or Set iterator must
-    /// not use it up, so that one is read and every other value is iterated.
+    /// `JSValue::for_each` for a printer: a Map or Set iterator is read, not run, so the print does not use it up.
     pub(crate) fn for_each_listed(
         value: JSValue,
         global: &JSGlobalObject,

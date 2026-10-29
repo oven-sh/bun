@@ -226,8 +226,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPreviewEntries, (JSGlobalObject * globalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), result)));
 }
 
-// JSC__JSValue__forEach for a printer that was given a Map or Set iterator: `callback` gets what the iterator has left, and the iterator is not run.
-// Every entry is read before the first call, because the callback can run user code that changes the collection.
+// JSC__JSValue__forEach for a printer given a Map or Set iterator: `callback` gets what it has left, all read before the first call because formatting can run user code.
 extern "C" void Bun__inspect__forEachRemainingEntry(JSC::EncodedJSValue encodedIterator, JSC::JSGlobalObject* globalObject, void* ctx, void (*callback)(JSC::VM*, JSC::JSGlobalObject*, void*, JSC::EncodedJSValue))
 {
     auto& vm = JSC::getVM(globalObject);

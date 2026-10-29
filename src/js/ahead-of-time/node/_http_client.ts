@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_client.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 b8e7fdc0a588c2421598683b4f021d9563d5094d61082c4141a3d2e68f495eaf.
+// Written against that file with the SHA-256 6b79463e51471bf7c58d7e1b3c8d031859676bcbc5439af2edf8b485f5a3e516.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_client"
@@ -309,7 +309,8 @@ function ClientRequest(
   let agent = options.agent;
   const defaultAgent = options._defaultAgent || Agent.globalAgent;
   if (agent === false) {
-    agent = new defaultAgent.constructor() as $Node.Agent;
+    // Not `new defaultAgent.constructor()` as in Node: the compiler cannot tell that read from `Function` (#47155).
+    agent = defaultAgent === Agent.globalAgent ? new Agent.Agent() : defaultAgent;
   } else if (agent === null || agent === undefined) {
     if (typeof options.createConnection !== "function") {
       agent = defaultAgent;

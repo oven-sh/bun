@@ -195,7 +195,8 @@ function ClientRequest(input?, options?, cb?): void {
   let agent = options.agent;
   const defaultAgent = options._defaultAgent || Agent.globalAgent;
   if (agent === false) {
-    agent = new defaultAgent.constructor();
+    // Not `new defaultAgent.constructor()` as in Node: the compiler cannot tell that read from `Function` (#47155).
+    agent = defaultAgent === Agent.globalAgent ? new Agent.Agent() : defaultAgent;
   } else if (agent === null || agent === undefined) {
     if (typeof options.createConnection !== "function") {
       agent = defaultAgent;

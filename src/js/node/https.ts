@@ -48,6 +48,8 @@ function request(...args: [input?: unknown, options?: unknown, cb?: unknown]) {
   }
 
   options._defaultAgent = https.globalAgent;
+  // `agent: false` is resolved here, where the class is this module's: ClientRequest makes an http.Agent (see there, #47155).
+  if (options.agent === false) options.agent = new Agent();
   ArrayPrototypeUnshift.$call(args, options);
 
   return new http.ClientRequest(...args);
@@ -377,7 +379,7 @@ function onSocketClose(agentKey, err) {
   if (err) this._evictSession(agentKey);
 }
 
-function Agent(options): void {
+function Agent(options?): void {
   if (!(this instanceof Agent)) return new Agent(options);
 
   options = { __proto__: null, ...options };

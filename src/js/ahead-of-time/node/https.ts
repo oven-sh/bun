@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/https.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0371a4de7a30005d724a619bf5d17767c9129f70317b0886790d29f1401b8a9b.
+// Written against that file with the SHA-256 79fda0a3fde221461651b16f8249afe096feb25a4852f26a9c2de63447b96dab.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:https"
@@ -52,6 +52,8 @@ function request(...args: [input?: unknown, options?: unknown, cb?: unknown]) {
   }
 
   options._defaultAgent = https.globalAgent;
+  // `agent: false` is resolved here, where the class is this module's: ClientRequest makes an http.Agent (see there, #47155).
+  if (options.agent === false) options.agent = new Agent();
   ArrayPrototypeUnshift.$call(args, options);
 
   return new http.ClientRequest(...(args as any));
@@ -381,7 +383,7 @@ function onSocketClose(agentKey, err) {
   if (err) this._evictSession(agentKey);
 }
 
-function Agent(options): void {
+function Agent(options?): void {
   if (!(this instanceof Agent)) return new Agent(options) as any;
 
   options = { __proto__: null, ...options };

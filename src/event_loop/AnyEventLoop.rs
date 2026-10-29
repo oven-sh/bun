@@ -377,7 +377,7 @@ impl EventLoopHandle {
     /// (the trait) and the `*mut Loop` deref dance in scope. `uws_loop` is the
     /// process-global loop returned by `AnyEventLoop::r#loop()` — never null.
     #[inline]
-    pub fn set_as_parent_of(self, uws_loop: &mut UwsLoop) {
+    pub fn set_as_parent_of(self, uws_loop: &UwsLoop) {
         let (tag, ptr) = self.into_tag_ptr();
         uws_loop.internal_loop_data.set_parent_raw(tag, ptr);
     }

@@ -314,12 +314,17 @@ function escapeSeq(code) {
   let seq = escapeSeqs[code];
   if (seq === undefined) {
     seq = kEscape + code + kEscapeEnd;
-    if (escapeSeqCount < kEscapeSeqCacheMax) {
-      escapeSeqCount++;
-      escapeSeqs[code] = seq;
-    }
+    if (escapeSeqCount === kEscapeSeqCacheMax) emptyEscapeSeqs();
+    escapeSeqCount++;
+    escapeSeqs[code] = seq;
   }
   return seq;
+}
+
+// A full table starts again. If it stopped, a code that comes late would never be kept.
+function emptyEscapeSeqs() {
+  for (const code in escapeSeqs) delete escapeSeqs[code];
+  escapeSeqCount = 0;
 }
 
 function codesToStyle(codes): TextStyle {

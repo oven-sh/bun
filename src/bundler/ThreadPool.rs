@@ -43,12 +43,7 @@ pub struct ThreadPool {
     /// On Linux, this was a performance regression.
     /// In some benchmarks on macOS, this yielded up to a 60% performance improvement in microbenchmarks that load ~10,000 files.
     // `None` when `!uses_io_pool()`.
-    // `ParentRef` (not raw `NonNull`) because the pointee is the
-    // module-static `io_thread_pool::THREAD_POOL`, live while `ref_count > 0`,
-    // and all `ThreadPoolLib` driver methods (`schedule`, `warm`,
-    // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
-    // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
-    pub(crate) io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
+    pub(crate) io_pool: Option<&'static ThreadPoolLib::ThreadPool>,
     /// Tracks the `io_pool` tasks whose callbacks haven't returned. A callback's
     /// last step schedules a parse on `worker_pool`, and that parse can finish
     /// before the callback returns.
@@ -128,7 +123,7 @@ impl ThreadPool {
         ThreadPool {
             worker_pool,
             io_pool: if Self::uses_io_pool() {
-                Some(io_thread_pool::acquire().into())
+                Some(io_thread_pool::get())
             } else {
                 None
             },
@@ -165,9 +160,6 @@ impl ThreadPool {
             unsafe { drop(bun_core::heap::take(self.worker_pool)) };
             self.worker_pool = ptr::null_mut();
         }
-        if Self::uses_io_pool() {
-            io_thread_pool::release();
-        }
     }
 
     /// Safe accessor for the underlying `bun_threading::ThreadPool`. The
@@ -181,25 +173,17 @@ impl ThreadPool {
         unsafe { &*self.worker_pool }
     }
 
-    /// Safe accessor for the IO pool. `Some` only when `uses_io_pool()`; the
-    /// pointee is the module-static `io_thread_pool::THREAD_POOL`, live while
-    /// `ref_count > 0` (i.e. while any bundler `ThreadPool` exists).
-    #[inline]
-    pub(crate) fn io_pool_ref(&self) -> Option<&ThreadPoolLib::ThreadPool> {
-        self.io_pool.as_deref()
-    }
-
     /// Sends every thread that may hold a [`Worker`] through its idle queue.
     pub(crate) fn wake_for_idle_events(&self) {
         self.worker_pool().wake_for_idle_events();
-        if let Some(io) = self.io_pool_ref() {
+        if let Some(io) = self.io_pool {
             io.wake_for_idle_events();
         }
     }
 
     pub(crate) fn start(&self) {
         self.worker_pool().warm(8);
-        if let Some(io) = self.io_pool_ref() {
+        if let Some(io) = self.io_pool {
             io.warm(1);
         }
     }
@@ -276,7 +260,7 @@ impl ThreadPool {
                     }
                     ParseTaskStage::NeedsSourceCode => {
                         // io_pool is Some when uses_io_pool().
-                        let io = self.io_pool_ref().unwrap();
+                        let io = self.io_pool.unwrap();
                         self.io_tasks_in_flight.add_one();
                         schedule_fn(
                             io,

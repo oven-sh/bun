@@ -2508,12 +2508,15 @@ pub(crate) mod IPCHandlers {
             match inc {
                 IncomingBuffer::Json(json_buf) => {
                     // SAFETY: libuv writes into this region before notify_written reads.
-                    let spare = unsafe { json_buf.data.uv_alloc_spare_u8(suggested_size) };
+                    let spare = unsafe {
+                        bun_core::vec::reserve_spare_bytes(&mut json_buf.data, suggested_size)
+                    };
                     &mut spare[..suggested_size]
                 }
                 IncomingBuffer::Advanced(adv_buf) => {
                     // SAFETY: libuv writes into this region before on_read commits.
-                    let spare = unsafe { adv_buf.uv_alloc_spare_u8(suggested_size) };
+                    let spare =
+                        unsafe { bun_core::vec::reserve_spare_bytes(adv_buf, suggested_size) };
                     &mut spare[..suggested_size]
                 }
             }
@@ -2566,7 +2569,7 @@ pub(crate) mod IPCHandlers {
                             unreachable!()
                         };
                         // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
-                        unsafe { adv_buf.uv_commit(nread) };
+                        unsafe { bun_core::vec::commit_spare(adv_buf, nread) };
                     });
                     let mut slice_start: usize = 0;
                     loop {

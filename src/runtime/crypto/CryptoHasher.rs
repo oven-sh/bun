@@ -170,15 +170,10 @@ impl CryptoHasher {
         }
     }
 
-    /// # Safety
-    /// `handle` must be a `Box<CryptoHasher>` raw pointer previously returned by
-    /// `Bun__CryptoHasherExtern__getByName` / `getFromOther`, with ownership
-    /// being returned to Rust (not yet destroyed).
+    /// C++ gives back a `Box` it got from `getByName` / `getFromOther`, never null.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
-        // SAFETY: caller transfers ownership of a valid `Box<CryptoHasher>` raw
-        // pointer previously returned to C++ (see `# Safety` above).
-        drop(unsafe { Box::from_raw(handle) });
+    pub(crate) extern "C" fn Bun__CryptoHasherExtern__destroy(handle: Box<CryptoHasher>) {
+        drop(handle);
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]

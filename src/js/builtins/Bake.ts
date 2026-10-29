@@ -129,18 +129,18 @@ export async function renderRoutesForProdStatic(
       if (ownerRoute === i && owner !== page && Bun.deepEquals(pageParams[owner], params)) continue;
 
       const output = JSON.stringify(pathRelative(outBase, file));
+      // The two pages can arrive in either order, and route indexes follow the order of the directory scan.
       if (ownerRoute === i) {
+        let pages = "";
+        if (owner !== page) {
+          const [a, b] = [JSON.stringify(pageParams[owner]), JSON.stringify(params)].sort();
+          pages = `: for the params ${a} and ${b}`;
+        }
         throw new Error(
-          `Route ${JSON.stringify(sourceRouteFiles[i])} generates the output file ${output} more than once.`,
+          `Route ${JSON.stringify(sourceRouteFiles[i])} generates the output file ${output} more than once${pages}.`,
         );
       }
-      // The two pages can arrive in either order, and route indexes follow the order of the directory scan.
-      let a = sourceRouteFiles[ownerRoute];
-      let b = sourceRouteFiles[i];
-      if (a > b) {
-        a = b;
-        b = sourceRouteFiles[ownerRoute];
-      }
+      const [a, b] = [sourceRouteFiles[ownerRoute], sourceRouteFiles[i]].sort();
       throw new Error(`Routes ${JSON.stringify(a)} and ${JSON.stringify(b)} both generate the output file ${output}.`);
     }
     entries.length = kept;

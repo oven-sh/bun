@@ -147,14 +147,14 @@ impl Drop for QuicStream {
 }
 
 impl QuicStream {
-    pub(super) fn create(
-        global: &JSGlobalObject,
+    pub(super) fn create<'a>(
+        global: &'a JSGlobalObject,
         vtable: *const lsquic::NqVtable,
         session: *mut QuicSession,
         key: Key,
         session_handle: JSValue,
         raw: *mut lsquic::lsquic_stream,
-    ) -> JsResult<(*mut QuicStream, JSValue)> {
+    ) -> JsResult<(&'a QuicStream, JSValue)> {
         // `bind_raw` sets `raw` after the allocations below succeed.
         let stream = QuicStream {
             vtable,
@@ -198,7 +198,7 @@ impl QuicStream {
         handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
         handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
 
-        // SAFETY: the payload of `handle`.
+        // SAFETY: the payload of `handle`, which roots itself below until `teardown` or `release_close_root`.
         let this = unsafe { &*raw_ptr };
         #[expect(
             clippy::cast_ptr_alignment,
@@ -220,7 +220,7 @@ impl QuicStream {
         if !raw.is_null() {
             this.bind_raw(raw);
         }
-        Ok((raw_ptr, handle))
+        Ok((this, handle))
     }
 
     fn bind_raw(&self, raw: *mut lsquic::lsquic_stream) {

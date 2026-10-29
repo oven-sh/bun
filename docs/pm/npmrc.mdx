@@ -13,13 +13,36 @@ Configuration is loaded in this order, with later sources overriding earlier one
 4. `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY` and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` environment variables
 5. Command-line flags such as `--registry`
 
-Credentials in `.npmrc` (`//<registry>/:_authToken`, etc.) are matched to registries by host and path, even if the registry URL itself was set in `bunfig.toml`.
+Credentials in `.npmrc` (`//<registry>/:_authToken`, etc.) apply no matter where you set the registry URL itself. See [how credentials are matched](#how-credentials-are-matched).
 
-Values may reference environment variables: `${NAME}` is replaced with the variable's value (left as-is if unset), and `${NAME?}` becomes an empty string if unset.
+Values may reference environment variables. Bun replaces `${NAME}` with the variable's value, or leaves it as-is if the variable is unset. `${NAME?}` becomes an empty string if unset.
+
+As in npm, an unquoted value ends at the first `;` or `#` (write `\;` or `\#` to keep the character), and whitespace around keys and values is dropped.
+
+[Auto-install](/runtime/auto-install#registries) reads the default registry, the scoped registries, and the registry credentials from `.npmrc`. The other options on this page apply to `bun install` and the other package manager commands only.
 
 <Note>
   We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, which supports more
   options, including Bun-specific ones.
+</Note>
+
+---
+
+## Which files are read
+
+Bun reads up to two `.npmrc` files. Options in the later file override the earlier one:
+
+1. The user-level file. This is the file `NPM_CONFIG_USERCONFIG` (npm's `userconfig` option) points at when that variable is set; otherwise `$XDG_CONFIG_HOME/.npmrc` if it exists, otherwise `$HOME/.npmrc`.
+2. The `.npmrc` next to your project's root `package.json`.
+
+Like npm, Bun skips any of these files that it can't read.
+
+A relative `cache` or `cafile` is relative to the `.npmrc` it is written in. A relative `NPM_CONFIG_USERCONFIG` is relative to the directory you run `bun` in. In all three, a leading `~/` is your home directory.
+
+<Note>
+  `actions/setup-node` with `registry-url` writes an `.npmrc` to `$RUNNER_TEMP` and exports `NPM_CONFIG_USERCONFIG`
+  pointing at it, so `bun publish` reads the token from `NODE_AUTH_TOKEN` in that workflow the same way `npm publish`
+  does.
 </Note>
 
 ---
@@ -50,12 +73,14 @@ install.registry = "http://localhost:4873/"
 @myorg:registry=http://localhost:4873/
 ```
 
-The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-registry):
+The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-scopes):
 
 ```toml bunfig.toml icon="settings"
 [install.scopes]
 myorg = "http://localhost:4873/"
 ```
+
+A scope whose registry is empty uses the default registry. If `--registry` or an environment variable points to a different host than the config files, a scope that has its own credentials keeps using the registry from the config files.
 
 ### Configure options for a specific registry
 
@@ -64,38 +89,58 @@ myorg = "http://localhost:4873/"
 ```ini .npmrc icon="npm"
 # set an auth token for the registry
 # ${...} is a placeholder for environment variables
-//http://localhost:4873/:_authToken=${NPM_TOKEN}
+//localhost:4873/:_authToken=${NPM_TOKEN}
 
 
 # or you could set a username and password
 # note that the password is base64 encoded
-//http://localhost:4873/:username=myusername
+//localhost:4873/:username=myusername
 
-//http://localhost:4873/:_password=${NPM_PASSWORD}
+//localhost:4873/:_password=${NPM_PASSWORD}
 
 # or use _auth, which is your username and password
 # combined into a single string, which is then base 64 encoded
-//http://localhost:4873/:_auth=${NPM_AUTH}
+//localhost:4873/:_auth=${NPM_AUTH}
 ```
 
-The following options are supported:
+Bun supports the following options:
 
 - `_authToken`
 - `username`
 - `_password` (base64 encoded password)
-- `_auth` (base64 encoded username:password, for example `btoa(username + ":" + password)`)
-- `email`
+- `_auth` (sent as written in a `Basic` header; npm's form is base64 encoded username:password, for example `btoa(username + ":" + password)`)
+- `email` (accepted and ignored, as npm does)
 
-The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-registry):
+The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-scopes):
 
 ```toml bunfig.toml icon="settings"
 [install.scopes]
+# unlike _password in .npmrc, password is not base64 encoded; Bun encodes it for you
 myorg = { url = "http://localhost:4873/", username = "myusername", password = "$NPM_PASSWORD" }
 ```
 
+#### How credentials are matched
+
+Bun looks credentials up the way npm does. It takes the URL of the registry, without the scheme, and drops one path segment at a time until a key matches:
+
+```ini .npmrc icon="npm"
+# for https://npm.example.com/team/a/ Bun tries, in this order:
+//npm.example.com/team/a/:_authToken=...
+//npm.example.com/team/:_authToken=...
+//npm.example.com/:_authToken=...
+```
+
+- All `.npmrc` files count as one: a key in `./.npmrc` replaces the same key in `~/.npmrc`.
+- `:443` on an `https` URL and `:80` on an `http` URL are the same as no port.
+- A credential you set next to the registry URL wins over these lines: `token`, `username` and `password` in `bunfig.toml`, `user:password@` in a URL, and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN`. The one exception is a credential inside a `registry=` line of `.npmrc`, which a matching `//host/` line replaces, as in npm.
+- A tarball on the same origin as its registry gets the registry's credentials. A tarball anywhere else gets a credential only if `.npmrc` has a line for that URL and the URL is `https`. Bun never sends a registry's credentials to another host.
+- `publishConfig.registry` in `package.json` follows the tarball rule: it gets a `.npmrc` line only over `https`, and environment variables are not expanded in it.
+- Bun sends credentials to `http` and `https` URLs only. A registry URL with another scheme, or without one, fails before any request.
+- A credential that contains a newline or a NUL byte is an error, wherever it comes from.
+
 ### `link-workspace-packages`: Control workspace package installation
 
-Controls how workspace packages are installed when available locally:
+Controls how Bun installs workspace packages when they are available locally:
 
 ```ini .npmrc icon="npm"
 link-workspace-packages=true
@@ -131,11 +176,13 @@ Prevents running lifecycle scripts during installation:
 ignore-scripts=true
 ```
 
-This is equivalent to using the `--ignore-scripts` flag with `bun install`.
+This is equivalent to using the `--ignore-scripts` flag with `bun install`. The environment variable `NPM_CONFIG_IGNORE_SCRIPTS` (or `npm_config_ignore_scripts`) also turns scripts off. See [Lifecycle scripts](/pm/lifecycle#ignore-scripts).
+
+Bun reads boolean options the way npm does: `false`, `null`, `undefined` and `0` turn an option off. Every other value turns it on, including an empty one, `1` and `True`.
 
 ### `dry-run`: Preview changes without installing
 
-Shows what would be installed without installing anything:
+Shows what Bun would install without installing anything:
 
 ```ini .npmrc icon="npm"
 dry-run=true
@@ -187,9 +234,11 @@ ca[]="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 cafile=/path/to/ca-bundle.crt
 ```
 
+If both are set, only `cafile` is used. A `ca` or `cafile` in a later `.npmrc` or in `bunfig.toml`, or `--ca` / `--cafile` on the command line, replaces both.
+
 ### `omit` and `include`: Control dependency types
 
-Control which dependency types are installed:
+Control which dependency types Bun installs:
 
 ```ini .npmrc icon="npm"
 # omit dev dependencies
@@ -207,7 +256,7 @@ Valid values: `dev`, `peer`, `optional`
 
 ### `install-strategy` and `node-linker`: Installation strategy
 
-Control how packages are laid out in `node_modules`. For compatibility with other package managers, Bun accepts both npm's `install-strategy` and pnpm/yarn's `node-linker`. See [isolated installs](/pm/isolated-installs) for how the hoisted and isolated layouts differ.
+Control how Bun lays out packages in `node_modules`. For compatibility with other package managers, Bun accepts both npm's `install-strategy` and pnpm/yarn's `node-linker`. See [isolated installs](/pm/isolated-installs) for how the hoisted and isolated layouts differ.
 
 **npm's `install-strategy`:**
 
@@ -242,7 +291,7 @@ node-linker=node-modules
 
 ### `public-hoist-pattern` and `hoist-pattern`: Control hoisting
 
-Control which packages are hoisted to the root `node_modules`:
+Control which packages Bun hoists to the root `node_modules`:
 
 ```ini .npmrc icon="npm"
 # packages matching this pattern will be hoisted to the root

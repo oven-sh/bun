@@ -5,13 +5,8 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
-// `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
-// eight `const bool` slots; assoc-const projection on a *type*
-// param works under `generic_const_exprs`.
-#![feature(adt_const_params, generic_const_exprs)]
-#![allow(incomplete_features)]
-
 pub mod error;
+pub mod function_identities;
 pub use error::Error;
 pub use error::Result as CrateResult;
 
@@ -81,8 +76,8 @@ pub mod Macro {
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
         /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/env/macros/remap/bump). Allocated by `init` and leaked
-        /// (process lifetime); `bun_js_parser` never dereferences it.
+        /// (resolver/env/macros/remap/bump). Allocated by `init`, freed by
+        /// `deinit`; `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }
     impl Default for MacroContext {
@@ -147,7 +142,7 @@ pub mod Macro {
     }
     impl MacroContext {
         #[inline]
-        pub(crate) fn call(
+        pub fn call(
             &mut self,
             import_record_path: &[u8],
             source_dir: &[u8],
@@ -185,10 +180,9 @@ pub mod Macro {
                 )
             }
         }
-        /// Free the boxed higher-tier state behind `data`. Only call when the
-        /// owning `Transpiler` is a short-lived bytewise clone (e.g. the
-        /// off-thread `RuntimeTranspilerStore` worker) — the long-lived
-        /// `vm.transpiler` instance leaks it intentionally (process-lifetime).
+        /// Free the boxed higher-tier state behind `data`. Its arena backs the
+        /// strings of every `Expr` its macros returned, so only call once the
+        /// ASTs that hold them are printed.
         #[inline]
         pub fn deinit(self) {
             // SAFETY: `self.data` is either null (callee no-ops) or the exact
@@ -453,7 +447,7 @@ pub mod defines {
             self.flags.method_call_must_be_replaced_with_undefined()
         }
         #[inline]
-        pub(crate) fn valueless(&self) -> bool {
+        pub fn valueless(&self) -> bool {
             self.flags.valueless()
         }
 
@@ -498,10 +492,153 @@ pub mod defines {
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
+        /// Which `DotFilter::bit`s the keys of `dots` set. The visitor asks
+        /// about every property access; nearly all miss, and this says so
+        /// without hashing the name.
+        pub dots_filter: DotFilter,
         pub drop_debugger: bool,
+        /// `hash_user_inputs` of this table's inputs, for the runtime transpiler cache key.
+        pub user_hash: Option<u64>,
+    }
+
+    #[derive(Clone)]
+    pub struct DotFilter([u64; 64]);
+
+    impl Default for DotFilter {
+        fn default() -> Self {
+            DotFilter([0; 64])
+        }
+    }
+
+    impl DotFilter {
+        #[inline]
+        fn bit(name: &[u8]) -> usize {
+            let (first, last) = match name {
+                [] => (0, 0),
+                [first, .., last] | [first @ last] => (*first as usize, *last as usize),
+            };
+            (name.len().wrapping_mul(131) ^ first.wrapping_mul(31) ^ last.wrapping_mul(7)) & 4095
+        }
+
+        #[inline]
+        pub fn insert(&mut self, name: &[u8]) {
+            let bit = Self::bit(name);
+            self.0[bit / 64] |= 1 << (bit % 64);
+        }
+
+        #[inline]
+        pub fn may_contain(&self, name: &[u8]) -> bool {
+            let bit = Self::bit(name);
+            self.0[bit / 64] & (1 << (bit % 64)) != 0
+        }
     }
 
     impl Define {
+        /// A table with only the globals that are known to have no side effects.
+        pub fn with_pure_globals(
+            drop_debugger: bool,
+            omit_unused_global_calls: bool,
+        ) -> Box<Define> {
+            use crate::defines_table::{
+                GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
+                GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
+            };
+            let mut define = Box::new(Define {
+                drop_debugger,
+                ..Default::default()
+            });
+            define.dots.reserve(124);
+
+            let value_define = DefineData::init(Options {
+                value: ExprData::EUndefined(E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            });
+            for global in GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES.iter() {
+                define.insert_global(global, &value_define);
+            }
+
+            let to_string_safe = DefineData::init(Options {
+                value: ExprData::EUndefined(E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                call_can_be_unwrapped_if_unused: E::CallUnwrap::IfUnusedAndToStringSafe,
+                ..Default::default()
+            });
+            let call_define = if omit_unused_global_calls {
+                &to_string_safe
+            } else {
+                &value_define
+            };
+            for global in GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING.iter() {
+                define.insert_global(global, call_define);
+            }
+            define
+        }
+
+        fn insert_global(&mut self, global: &[&[u8]], value_define: &DefineData) {
+            let key = global[global.len() - 1];
+            let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
+            self.dots_filter.insert(key);
+            let dot_define = DotDefine {
+                parts,
+                data: value_define.clone(),
+            };
+            if let Some(existing) = self.dots.get_mut(key) {
+                existing.push(dot_define);
+            } else {
+                self.dots.put_assume_capacity(key, vec![dot_define]);
+            }
+        }
+
+        /// The dot defines whose last part is `name` (`NODE_ENV` for
+        /// `process.env.NODE_ENV`).
+        #[inline]
+        pub fn dots_for(&self, name: &[u8]) -> Option<&Vec<DotDefine>> {
+            if !self.dots_filter.may_contain(name) {
+                return None;
+            }
+            self.dots.get(name)
+        }
+
+        /// Order-independent, length-prefixed hash of the three inputs. `None` when all are empty.
+        pub fn hash_user_inputs<'i>(
+            defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            drop: impl IntoIterator<Item = &'i [u8]>,
+        ) -> Option<u64> {
+            let mut defines: Vec<(&[u8], &[u8])> = defines.into_iter().collect();
+            let mut env_defines: Vec<(&[u8], &[u8])> = env_defines.into_iter().collect();
+            let mut drop: Vec<&[u8]> = drop.into_iter().filter(|item| !item.is_empty()).collect();
+            if defines.is_empty() && env_defines.is_empty() && drop.is_empty() {
+                return None;
+            }
+            defines.sort_unstable();
+            env_defines.sort_unstable();
+            drop.sort_unstable();
+            drop.dedup();
+
+            let mut hasher = bun_wyhash::Wyhash::init(0);
+            let mut update = |bytes: &[u8]| {
+                hasher.update(&(bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+            };
+            // Separate sections: `init` lets a later env pair override a user pair.
+            for pairs in [defines, env_defines] {
+                update(&(pairs.len() as u64).to_le_bytes());
+                for (key, value) in pairs {
+                    update(key);
+                    update(value);
+                }
+            }
+            update(&(drop.len() as u64).to_le_bytes());
+            for item in drop {
+                update(item);
+            }
+            Some(hasher.final_())
+        }
+
         pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
@@ -535,6 +672,7 @@ pub mod defines {
                 }
                 parts.push(Box::from(tail));
 
+                self.dots_filter.insert(tail);
                 if let Some(existing) = self.dots.get_mut(tail) {
                     for part in existing.iter_mut() {
                         if are_parts_equal(&part.parts, &parts) {

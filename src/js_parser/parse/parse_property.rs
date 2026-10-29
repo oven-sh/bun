@@ -390,7 +390,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && !p.lexer.has_newline_before
                                         {
                                             opts.is_async = true;
-                                            opts.async_range = name_range;
 
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
 
@@ -496,6 +495,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && p.lexer.token == T::TOpenBrace
                             && name == b"static"
                         {
+                            if let Some(decorator) = opts.ts_decorators.slice().first() {
+                                p.log().add_error(
+                                    Some(p.source),
+                                    decorator.loc,
+                                    b"Decorators are not valid here",
+                                );
+                                return Err(crate::Error::SyntaxError);
+                            }
                             let loc = p.lexer.loc();
                             p.lexer.next()?;
 

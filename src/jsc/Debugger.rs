@@ -11,12 +11,12 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
-use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
+use crate::{self as jsc, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);
@@ -156,15 +156,15 @@ impl Default for Debugger {
 }
 
 // SAFETY (safe fn): `JSGlobalObject` is an opaque `UnsafeCell`-backed handle
-// (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]` POD
-// out-param. Remaining args are by-value scalars.
+// (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]`
+// in-param C++ only reads. Remaining args are by-value scalars.
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
-        url: &mut BunString,
+        url: &BunString,
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
@@ -174,7 +174,8 @@ unsafe extern "C" {
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
-/// What the debugger thread takes from the debuggee VM's thread.
+/// What [`Debugger::start`] takes from the debuggee VM's thread. The copy of
+/// the debuggee's environment travels next to it and is used up by the VM setup.
 struct DebuggerThreadInit {
     debuggee: crate::VmHandle,
     ctx_id: u32,
@@ -196,13 +197,22 @@ impl Debugger {
     /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
     /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            Debugger::wait_for_debugger,
+            this
+        )
+    }
+
+    #[inline(never)]
+    fn wait_for_debugger(this: *mut VirtualMachine) {
         // `this` is the live per-thread VM; same allocation as
         // `VirtualMachine::get()` — route through the safe thread-local
         // accessor instead of open-coding the backref deref. All subsequent
         // accesses form short-lived `&mut`s under the single-JS-thread
         // invariant via safe `&VirtualMachine` accessors.
         debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
-        let _ = this; // release: param otherwise unused
         let this: &VirtualMachine = VirtualMachine::get();
         let Some(dbg) = this.debugger_mut() else {
             return;
@@ -371,6 +381,20 @@ impl Debugger {
         this: *mut VirtualMachine,
         global_object: &JSGlobalObject,
     ) -> crate::CrateResult<()> {
+        bun_removable_features::call_removable!(
+            Inspector,
+            Abort,
+            Debugger::create_debugger,
+            this,
+            global_object
+        )
+    }
+
+    #[inline(never)]
+    fn create_debugger(
+        this: *mut VirtualMachine,
+        global_object: &JSGlobalObject,
+    ) -> crate::CrateResult<()> {
         bun_core::scoped_log!(debugger, "create");
         jsc::mark_binding();
         if HAS_CREATED_DEBUGGER.swap(true, Ordering::Relaxed) {
@@ -395,6 +419,9 @@ impl Debugger {
             this_ref.as_mut().has_started_debugger = true;
             // Everything the debugger thread needs from this VM, copied here;
             // it reaches back only through the (uncounted) handle to wake us.
+            // That includes the environment: the debugger VM builds its
+            // `process.env` from this copy, not from this thread's loader.
+            let env_map = this_ref.env_loader().map.clone_with_allocator()?;
             let init = DebuggerThreadInit {
                 debuggee: this_ref.handle(),
                 ctx_id: dbg.script_execution_context_id,
@@ -409,7 +436,7 @@ impl Debugger {
             std::thread::Builder::new()
                 .name("Debugger".to_string())
                 .stack_size(16 * 1024 * 1024)
-                .spawn(move || Debugger::start_js_debugger_thread(init))
+                .spawn(move || Debugger::start_js_debugger_thread(env_map, init))
                 .map_err(|_| crate::CrateError::ThreadSpawnFailed)?;
             // The `JoinHandle` is dropped here, detaching the thread.
         }
@@ -424,17 +451,27 @@ impl Debugger {
         Ok(())
     }
 
-    /// Debugger-thread entry: build a second `VirtualMachine`, hold the API
-    /// lock, and run [`Debugger::start`] inside it.
-    fn start_js_debugger_thread(init: DebuggerThreadInit) {
-        // The global allocator is mimalloc and `InitOptions` does not carry
-        // `allocator`/`env_loader` (those are wired by
-        // `RuntimeHooks::init_runtime_state`).
+    /// Debugger-thread entry: build a second `VirtualMachine` on the
+    /// debuggee's copied environment, hold the API lock, and run
+    /// [`Debugger::start`] inside it.
+    ///
+    /// The VM only evaluates built-in modules, so `env_map` is the whole of
+    /// its environment setup: `Transpiler::configure_defines` is not run here.
+    /// It would reload the `.env` files and JSON-parse `NODE_ENV`, and its
+    /// failure (say a stray `\r` in `NODE_ENV`) would abort the debuggee.
+    fn start_js_debugger_thread(env_map: bun_dotenv::Map, init: DebuggerThreadInit) {
+        // This thread serves the inspector up to (and during) `process.exit()`,
+        // so it's never joined and its VM is never torn down.
+        bun_core::asan::disable_leak_checks_on_current_thread();
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
         let vm_ptr = VirtualMachine::init(crate::virtual_machine::InitOptions {
+            // Lives as long as the VM, which this thread never tears down.
+            env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init_with_map(
+                env_map,
+            ))),
             is_main_thread: false,
             ..Default::default()
         })
@@ -442,10 +479,6 @@ impl Debugger {
         let _ = vm_ptr;
         // `init` installs the freshly-boxed VM as this thread's singleton.
         let vm = VirtualMachine::get().as_mut();
-
-        vm.transpiler
-            .configure_defines()
-            .unwrap_or_else(|_| panic!("Failed to configure defines"));
         vm.is_main_thread = false;
         vm.event_loop_mut().ensure_waker();
 
@@ -480,18 +513,18 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let mut url = BunString::clone_utf8(from_env);
+            let url = StringView::borrow_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
+            Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let mut url = BunString::clone_utf8(path_or_port);
+            let url = StringView::borrow_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
+            Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }
 
-        this.global().handle_rejected_promises();
+        let _ = this.global().handle_rejected_promises();
 
         if let Some(log) = this.log_ref() {
             if !log.msgs.is_empty() {
@@ -547,7 +580,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
 
     // The URL outlives the process: the debugger struct stores `'static` slices
     // (CLI-arena lifetimes), so leak the runtime-provided URL the same way.
-    let url_bytes: &'static [u8] = Box::leak(url.to_utf8_bytes().into_boxed_slice());
+    let url_bytes: &'static [u8] = Box::leak(url.to_owned_slice().into_boxed_slice());
     this.as_mut().debugger = Some(Box::new(Debugger {
         path_or_port: Some(url_bytes),
         wait_for_connection: if wait_for_connection {
@@ -792,26 +825,25 @@ pub enum TestType {
 
 bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 
-// SAFETY (safe fn): `TestReporterHandle` and `CallFrame` are `opaque_ffi!`
-// ZST handles (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
+// SAFETY (safe fn): `TestReporterHandle` is an `opaque_ffi!`
+// ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
 // in/out-param the C++ side reads/consumes in-place. Remaining args are
 // by-value scalars.
 unsafe extern "C" {
     safe fn Bun__TestReporterAgentReportTestFound(
         agent: &mut TestReporterHandle,
-        call_frame: &CallFrame,
         test_id: c_int,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
         agent: &mut TestReporterHandle,
         test_id: c_int,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: c_int,
-        source_url: &mut BunString,
+        source_url: &BunString,
         line: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestStart(agent: &mut TestReporterHandle, test_id: c_int);
@@ -826,24 +858,21 @@ unsafe extern "C" {
 impl TestReporterHandle {
     pub(crate) fn report_test_found(
         &mut self,
-        call_frame: &CallFrame,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {
-        Bun__TestReporterAgentReportTestFound(
-            self, call_frame, test_id, name, item_type, parent_id,
-        );
+        Bun__TestReporterAgentReportTestFound(self, test_id, name, item_type, parent_id);
     }
 
     pub fn report_test_found_with_location(
         &mut self,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
-        source_url: &mut BunString,
+        source_url: &BunString,
         line: i32,
     ) {
         Bun__TestReporterAgentReportTestFoundWithLocation(
@@ -906,7 +935,6 @@ impl TestReporterAgent {
     /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
     /// ensure `is_enabled()` (handle != null).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> &mut TestReporterHandle {
         debug_assert!(!self.handle.is_null());
         // Caller contract — `is_enabled()` checked; handle is a live C++ heap
@@ -918,17 +946,18 @@ impl TestReporterAgent {
     /// Caller must ensure that it is enabled first.
     ///
     /// Since we may have to call .deinit on the name string.
+    ///
+    /// The test's location is that of the caller of the host function that is running.
     pub fn report_test_found(
         &self,
-        call_frame: &CallFrame,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
         self.handle_mut()
-            .report_test_found(call_frame, test_id, name, item_type, parent_id);
+            .report_test_found(test_id, name, item_type, parent_id);
     }
 
     /// Caller must ensure that it is enabled first.
@@ -964,12 +993,23 @@ bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 unsafe extern "C" {
     safe fn Bun__LifecycleAgentReportError(
         agent: &mut LifecycleHandle,
-        exception: &mut ZigException,
+        exception: &mut ZigException<'_>,
     );
 }
 
 impl LifecycleHandle {
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            LifecycleHandle::report_error_to_agent,
+            self,
+            exception
+        )
+    }
+
+    #[inline(never)]
+    fn report_error_to_agent(&mut self, exception: &mut ZigException<'_>) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }
@@ -1005,7 +1045,7 @@ impl LifecycleAgent {
         core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
     }
 
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
         if let Some(h) = self.handle_mut() {
             h.report_error(exception);
         }

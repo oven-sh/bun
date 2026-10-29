@@ -5,7 +5,7 @@ description: "Select packages by pattern in a monorepo using the --filter flag"
 
 The `--filter` (or `-F`) flag selects packages in a monorepo by pattern. A pattern is a package name glob, a `./path` glob, a `{dir}` directory selector, or a `...` dependency relation.
 
-It is supported by `bun run`, `bun install`, `bun add`, `bun remove`, `bun update`, `bun outdated`, `bun prune`, and `bun pm licenses`. For package-manager commands, put the flag after the subcommand (`bun install --filter api`), since `bun --filter <pattern> <word>` runs `<word>` as a script.
+The flag works with `bun run`, `bun install`, `bun add`, `bun remove`, `bun update`, `bun outdated`, `bun prune`, and `bun pm licenses`. For package-manager commands, put the flag after the subcommand (`bun install --filter api`), since `bun --filter <pattern> <word>` runs `<word>` as a script.
 
 ---
 
@@ -124,7 +124,7 @@ bun --filter '{./packages/apps}' dev
 bun --filter '*' --filter '!docs' lint
 ```
 
-A `package.json` without a `name` can only be selected by a `./path` pattern. If no selected package has the script, `bun run` exits with an error (pass `--if-present` to exit 0 instead).
+Only a `./path` pattern can select a `package.json` without a `name`. If no selected package has the script, `bun run` exits with an error (pass `--if-present` to exit 0 instead).
 
 ### Running scripts in workspaces
 
@@ -161,7 +161,7 @@ bun run --parallel --no-exit-on-error --filter '*' test
 bun run --parallel --filter '*' build lint
 ```
 
-Each line of output is prefixed with the package and script name (`pkg-a:build | ...`). Without `--filter`/`--workspaces`, the prefix is just the script name (`build | ...`). When a package's `package.json` has no `name` field, Bun uses the relative path from the workspace root instead.
+Bun prefixes each line of output with the package and script name (`pkg-a:build | ...`). Without `--filter`/`--workspaces`, the prefix is only the script name (`build | ...`). When a package's `package.json` has no `name` field, Bun uses the relative path from the workspace root instead.
 
 Use `--if-present` with `--workspaces` to skip packages that don't have the requested script instead of erroring.
 

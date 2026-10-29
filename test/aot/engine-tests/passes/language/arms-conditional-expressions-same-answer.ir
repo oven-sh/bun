@@ -1,0 +1,407 @@
+# -- source: arms-conditional-expressions-same-answer.js
+# // The arms of conditional expressions do the same and answer different fractions.
+# const o = { a: 0, b: 0, c: 0, d: 0, e: 0, f: "", g: "" };
+# function read() {
+#   return o.a + o.b + o.c + o.d + o.e + o.f + o.g;
+# }
+# const k = Date.now() > 0 ? 1 : 0;
+# const x = k === 1 ? (o.a = 1, o.b = 2, o.c = 3, o.d = 4, o.e = 5, o.f = "f", o.g = "g", 3.5) : (o.a = 1, o.b = 2, o.c = 3, o.d = 4, o.e = 5, o.f = "f", o.g = "g", 21.5);
+# const y = k === 0 ? (o.a = 1, o.b = 2, o.c = 3, o.d = 4, o.e = 5, o.f = "f", o.g = "g", 3.5) : (o.a = 1, o.b = 2, o.c = 3, o.d = 4, o.e = 5, o.f = "f", o.g = "g", 24.5);
+# const z = k === 0 ? (o.a = 1, o.b = 2, o.c = 3, o.d = 4, o.e = 5, o.f = "f", o.g = "g", NaN) : (o.a = 1, o.b = 2, o.c = 3, o.d = 4, o.e = 5, o.f = "f", o.g = "g", -0.5);
+# console.log(x, y, z, read());
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="arms-conditional-expressions-same-answer.js" displayPath="arms-conditional-expressions-same-answer.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=93 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="c" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="d" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="e" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="f" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="g" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=7
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{}}, {key="b" value=Number{}}, {key="c" value=Number{}}, {key="d" value=Number{}}, {key="e" value=Number{}}, {key="f" value=String{value=""}}, {key="g" value=String{value=""}}]} module=m0
+variable g0 name="o" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]}
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Date" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(Date) flags=[IsExpected]}
+    v8 = PropGet v7 key="now"
+    v9 = Convert v8 declared={type=builtin(DateNow) flags=[IsExpected]}
+    v10 = Call v9, v7 calleeKey="now" calleeName="Date.now"
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    v12 = Integer
+    v13 = Greater v11, v12
+    Branch v13 -> taken b2(), notTaken b3()
+  b2():
+    v14 = Integer integer=1
+    Jump -> next b4(v14)
+  b3():
+    v15 = Integer
+    Jump -> next b4(v15)
+  b4(v16):
+    v17 = Convert v16 declared={type=int[0, 1] flags=[IsExpected]}
+    v18 = Integer integer=1
+    v19 = StrictEq v17, v18
+    Branch v19 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v20):
+    Jump -> next b6()
+  b6():
+    v21 = Integer integer=1
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    PropSet v3, v22 key="a"
+    v24 = Integer integer=2
+    v25 = Convert v24 declared={type=number flags=[IsExpected]}
+    PropSet v3, v25 key="b"
+    v27 = Integer integer=3
+    v28 = Convert v27 declared={type=number flags=[IsExpected]}
+    PropSet v3, v28 key="c"
+    v30 = Integer integer=4
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    PropSet v3, v31 key="d"
+    v33 = Integer integer=5
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    PropSet v3, v34 key="e"
+    v36 = String string="f"
+    v37 = Convert v36 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v37 key="f"
+    v39 = String string="g"
+    v40 = Convert v39 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v40 key="g"
+    v42 = Double number=3.5
+    Jump -> next b9(v42, v20)
+  b7(v43):
+    Jump -> next b8()
+  b8():
+    v44 = Integer integer=1
+    v45 = Convert v44 declared={type=number flags=[IsExpected]}
+    PropSet v3, v45 key="a"
+    v47 = Integer integer=2
+    v48 = Convert v47 declared={type=number flags=[IsExpected]}
+    PropSet v3, v48 key="b"
+    v50 = Integer integer=3
+    v51 = Convert v50 declared={type=number flags=[IsExpected]}
+    PropSet v3, v51 key="c"
+    v53 = Integer integer=4
+    v54 = Convert v53 declared={type=number flags=[IsExpected]}
+    PropSet v3, v54 key="d"
+    v56 = Integer integer=5
+    v57 = Convert v56 declared={type=number flags=[IsExpected]}
+    PropSet v3, v57 key="e"
+    v59 = String string="f"
+    v60 = Convert v59 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v60 key="f"
+    v62 = String string="g"
+    v63 = Convert v62 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v63 key="g"
+    v65 = Double number=21.5
+    Jump -> next b9(v65, v43)
+  b9(v66, v67):
+    v68 = Convert v66 declared={type=number flags=[IsExpected]}
+    v69 = Integer
+    v70 = StrictEq v67, v69
+    Branch v70 -> taken b10(| 0), notTaken b12(| 0)
+  b10(v71):
+    Jump -> next b11()
+  b11():
+    v72 = Integer integer=1
+    v73 = Convert v72 declared={type=number flags=[IsExpected]}
+    PropSet v3, v73 key="a"
+    v75 = Integer integer=2
+    v76 = Convert v75 declared={type=number flags=[IsExpected]}
+    PropSet v3, v76 key="b"
+    v78 = Integer integer=3
+    v79 = Convert v78 declared={type=number flags=[IsExpected]}
+    PropSet v3, v79 key="c"
+    v81 = Integer integer=4
+    v82 = Convert v81 declared={type=number flags=[IsExpected]}
+    PropSet v3, v82 key="d"
+    v84 = Integer integer=5
+    v85 = Convert v84 declared={type=number flags=[IsExpected]}
+    PropSet v3, v85 key="e"
+    v87 = String string="f"
+    v88 = Convert v87 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v88 key="f"
+    v90 = String string="g"
+    v91 = Convert v90 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v91 key="g"
+    v93 = Double number=3.5
+    Jump -> next b14(v93, v71)
+  b12(v94):
+    Jump -> next b13()
+  b13():
+    v95 = Integer integer=1
+    v96 = Convert v95 declared={type=number flags=[IsExpected]}
+    PropSet v3, v96 key="a"
+    v98 = Integer integer=2
+    v99 = Convert v98 declared={type=number flags=[IsExpected]}
+    PropSet v3, v99 key="b"
+    v101 = Integer integer=3
+    v102 = Convert v101 declared={type=number flags=[IsExpected]}
+    PropSet v3, v102 key="c"
+    v104 = Integer integer=4
+    v105 = Convert v104 declared={type=number flags=[IsExpected]}
+    PropSet v3, v105 key="d"
+    v107 = Integer integer=5
+    v108 = Convert v107 declared={type=number flags=[IsExpected]}
+    PropSet v3, v108 key="e"
+    v110 = String string="f"
+    v111 = Convert v110 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v111 key="f"
+    v113 = String string="g"
+    v114 = Convert v113 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v114 key="g"
+    v116 = Double number=24.5
+    Jump -> next b14(v116, v94)
+  b14(v117, v118):
+    v119 = Convert v117 declared={type=number flags=[IsExpected]}
+    v120 = Integer
+    v121 = StrictEq v118, v120
+    Branch v121 -> taken b15(| 0), notTaken b17(| 0)
+  b15(v122):
+    Jump -> next b16()
+  b16():
+    v123 = Integer integer=1
+    v124 = Convert v123 declared={type=number flags=[IsExpected]}
+    PropSet v3, v124 key="a"
+    v126 = Integer integer=2
+    v127 = Convert v126 declared={type=number flags=[IsExpected]}
+    PropSet v3, v127 key="b"
+    v129 = Integer integer=3
+    v130 = Convert v129 declared={type=number flags=[IsExpected]}
+    PropSet v3, v130 key="c"
+    v132 = Integer integer=4
+    v133 = Convert v132 declared={type=number flags=[IsExpected]}
+    PropSet v3, v133 key="d"
+    v135 = Integer integer=5
+    v136 = Convert v135 declared={type=number flags=[IsExpected]}
+    PropSet v3, v136 key="e"
+    v138 = String string="f"
+    v139 = Convert v138 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v139 key="f"
+    v141 = String string="g"
+    v142 = Convert v141 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v142 key="g"
+    v144 = Double number=NaN
+    Jump -> next b19(v144)
+  b17(v145):
+    Jump -> next b18()
+  b18():
+    v146 = Integer integer=1
+    v147 = Convert v146 declared={type=number flags=[IsExpected]}
+    PropSet v3, v147 key="a"
+    v149 = Integer integer=2
+    v150 = Convert v149 declared={type=number flags=[IsExpected]}
+    PropSet v3, v150 key="b"
+    v152 = Integer integer=3
+    v153 = Convert v152 declared={type=number flags=[IsExpected]}
+    PropSet v3, v153 key="c"
+    v155 = Integer integer=4
+    v156 = Convert v155 declared={type=number flags=[IsExpected]}
+    PropSet v3, v156 key="d"
+    v158 = Integer integer=5
+    v159 = Convert v158 declared={type=number flags=[IsExpected]}
+    PropSet v3, v159 key="e"
+    v161 = String string="f"
+    v162 = Convert v161 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v162 key="f"
+    v164 = String string="g"
+    v165 = Convert v164 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v3, v165 key="g"
+    v167 = Double number=-0.5
+    Jump -> next b19(v167)
+  b19(v168):
+    v169 = Convert v168 declared={type=number flags=[IsExpected]}
+    v170 = Builtin builtin=GlobalThis
+    v171 = PropGet v170 key="console" [isFreeName]
+    v172 = Convert v171 declared={type=builtin(Console) flags=[IsExpected]}
+    v173 = PropGet v172 key="log"
+    v174 = Convert v173 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v175 = Call v1 calleeName="read"
+    v176 = Convert v175 declared={type=undefined|null|string flags=[IsExpected]}
+    v177 = Call v174, v172, v68, v119, v169, v176 calleeKey="log" calleeName="console.log"
+    v178 = Undefined
+    Return v178
+}
+function f1 name="read" module=m0 position=141 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="o"
+    v2 = PropGet v1 key="a"
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = GetModuleVariable variable=g0
+    v5 = CheckInitialized v4 name="o"
+    v6 = PropGet v5 key="b"
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = Add v3, v7
+    v9 = GetModuleVariable variable=g0
+    v10 = CheckInitialized v9 name="o"
+    v11 = PropGet v10 key="c"
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = Add v8, v12
+    v14 = GetModuleVariable variable=g0
+    v15 = CheckInitialized v14 name="o"
+    v16 = PropGet v15 key="d"
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Add v13, v17
+    v19 = GetModuleVariable variable=g0
+    v20 = CheckInitialized v19 name="o"
+    v21 = PropGet v20 key="e"
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = Add v18, v22
+    v24 = GetModuleVariable variable=g0
+    v25 = CheckInitialized v24 name="o"
+    v26 = PropGet v25 key="f"
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]}
+    v28 = Add v23, v27
+    v29 = GetModuleVariable variable=g0
+    v30 = CheckInitialized v29 name="o"
+    v31 = PropGet v30 key="g"
+    v32 = Convert v31 declared={type=undefined|null|string flags=[IsExpected]}
+    v33 = Add v28, v32
+    v34 = Convert v33 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v34
+}
+# -- generated: f0 read
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v5: "" = String string=""
+# CHECK-NEXT: v6: "" = String string=""
+# CHECK-NEXT: v7: L0 = NewObject -, v0, v1, v2, v3, v4, v5, v6 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6] allocationSite=1 allocationClass=0
+# CHECK-NEXT: PutModuleVariable v7 variable=g0
+# CHECK-NEXT: v9: number = CallBuiltin overload=DateNow/0 accessSite=2
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: boolean = Greater v9, v10
+# CHECK-NEXT: Branch v11 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v7, -, v12 key="a" receivers=[L0] level=Proven accessSite=3
+# CHECK-NEXT: v14: 2 = Integer integer=2
+# CHECK-NEXT: PutSlot v7, -, v14 key="b" receivers=[L0] level=Proven accessSite=4
+# CHECK-NEXT: v16: 3 = Integer integer=3
+# CHECK-NEXT: PutSlot v7, -, v16 key="c" receivers=[L0] level=Proven accessSite=5
+# CHECK-NEXT: v18: 4 = Integer integer=4
+# CHECK-NEXT: PutSlot v7, -, v18 key="d" receivers=[L0] level=Proven accessSite=6
+# CHECK-NEXT: v20: 5 = Integer integer=5
+# CHECK-NEXT: PutSlot v7, -, v20 key="e" receivers=[L0] level=Proven accessSite=7
+# CHECK-NEXT: v22: "f" = String string="f"
+# CHECK-NEXT: PutSlot v7, -, v22 key="f" receivers=[L0] level=Proven accessSite=8
+# CHECK-NEXT: v24: "g" = String string="g"
+# CHECK-NEXT: PutSlot v7, -, v24 key="g" receivers=[L0] level=Proven accessSite=9
+# CHECK-NEXT: v26: fractional = Double number=3.5
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v7, -, v27 key="a" receivers=[L0] level=Proven accessSite=24
+# CHECK-NEXT: v29: 2 = Integer integer=2
+# CHECK-NEXT: PutSlot v7, -, v29 key="b" receivers=[L0] level=Proven accessSite=25
+# CHECK-NEXT: v31: 3 = Integer integer=3
+# CHECK-NEXT: PutSlot v7, -, v31 key="c" receivers=[L0] level=Proven accessSite=26
+# CHECK-NEXT: v33: 4 = Integer integer=4
+# CHECK-NEXT: PutSlot v7, -, v33 key="d" receivers=[L0] level=Proven accessSite=27
+# CHECK-NEXT: v35: 5 = Integer integer=5
+# CHECK-NEXT: PutSlot v7, -, v35 key="e" receivers=[L0] level=Proven accessSite=28
+# CHECK-NEXT: v37: "f" = String string="f"
+# CHECK-NEXT: PutSlot v7, -, v37 key="f" receivers=[L0] level=Proven accessSite=29
+# CHECK-NEXT: v39: "g" = String string="g"
+# CHECK-NEXT: PutSlot v7, -, v39 key="g" receivers=[L0] level=Proven accessSite=30
+# CHECK-NEXT: v41: fractional = Double number=24.5
+# CHECK-NEXT: v42: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v7, -, v42 key="a" receivers=[L0] level=Proven accessSite=38
+# CHECK-NEXT: v44: 2 = Integer integer=2
+# CHECK-NEXT: PutSlot v7, -, v44 key="b" receivers=[L0] level=Proven accessSite=39
+# CHECK-NEXT: v46: 3 = Integer integer=3
+# CHECK-NEXT: PutSlot v7, -, v46 key="c" receivers=[L0] level=Proven accessSite=40
+# CHECK-NEXT: v48: 4 = Integer integer=4
+# CHECK-NEXT: PutSlot v7, -, v48 key="d" receivers=[L0] level=Proven accessSite=41
+# CHECK-NEXT: v50: 5 = Integer integer=5
+# CHECK-NEXT: PutSlot v7, -, v50 key="e" receivers=[L0] level=Proven accessSite=42
+# CHECK-NEXT: v52: "f" = String string="f"
+# CHECK-NEXT: PutSlot v7, -, v52 key="f" receivers=[L0] level=Proven accessSite=43
+# CHECK-NEXT: v54: "g" = String string="g"
+# CHECK-NEXT: PutSlot v7, -, v54 key="g" receivers=[L0] level=Proven accessSite=44
+# CHECK-NEXT: v56: fractional = Double number=-0.5
+# CHECK-NEXT: Jump -> next b3(v56, v41, v26)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v57: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v7, -, v57 key="a" receivers=[L0] level=Proven accessSite=10
+# CHECK-NEXT: v59: 2 = Integer integer=2
+# CHECK-NEXT: PutSlot v7, -, v59 key="b" receivers=[L0] level=Proven accessSite=11
+# CHECK-NEXT: v61: 3 = Integer integer=3
+# CHECK-NEXT: PutSlot v7, -, v61 key="c" receivers=[L0] level=Proven accessSite=12
+# CHECK-NEXT: v63: 4 = Integer integer=4
+# CHECK-NEXT: PutSlot v7, -, v63 key="d" receivers=[L0] level=Proven accessSite=13
+# CHECK-NEXT: v65: 5 = Integer integer=5
+# CHECK-NEXT: PutSlot v7, -, v65 key="e" receivers=[L0] level=Proven accessSite=14
+# CHECK-NEXT: v67: "f" = String string="f"
+# CHECK-NEXT: PutSlot v7, -, v67 key="f" receivers=[L0] level=Proven accessSite=15
+# CHECK-NEXT: v69: "g" = String string="g"
+# CHECK-NEXT: PutSlot v7, -, v69 key="g" receivers=[L0] level=Proven accessSite=16
+# CHECK-NEXT: v71: fractional = Double number=21.5
+# CHECK-NEXT: v72: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v7, -, v72 key="a" receivers=[L0] level=Proven accessSite=17
+# CHECK-NEXT: v74: 2 = Integer integer=2
+# CHECK-NEXT: PutSlot v7, -, v74 key="b" receivers=[L0] level=Proven accessSite=18
+# CHECK-NEXT: v76: 3 = Integer integer=3
+# CHECK-NEXT: PutSlot v7, -, v76 key="c" receivers=[L0] level=Proven accessSite=19
+# CHECK-NEXT: v78: 4 = Integer integer=4
+# CHECK-NEXT: PutSlot v7, -, v78 key="d" receivers=[L0] level=Proven accessSite=20
+# CHECK-NEXT: v80: 5 = Integer integer=5
+# CHECK-NEXT: PutSlot v7, -, v80 key="e" receivers=[L0] level=Proven accessSite=21
+# CHECK-NEXT: v82: "f" = String string="f"
+# CHECK-NEXT: PutSlot v7, -, v82 key="f" receivers=[L0] level=Proven accessSite=22
+# CHECK-NEXT: v84: "g" = String string="g"
+# CHECK-NEXT: PutSlot v7, -, v84 key="g" receivers=[L0] level=Proven accessSite=23
+# CHECK-NEXT: v86: fractional = Double number=3.5
+# CHECK-NEXT: v87: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v7, -, v87 key="a" receivers=[L0] level=Proven accessSite=31
+# CHECK-NEXT: v89: 2 = Integer integer=2
+# CHECK-NEXT: PutSlot v7, -, v89 key="b" receivers=[L0] level=Proven accessSite=32
+# CHECK-NEXT: v91: 3 = Integer integer=3
+# CHECK-NEXT: PutSlot v7, -, v91 key="c" receivers=[L0] level=Proven accessSite=33
+# CHECK-NEXT: v93: 4 = Integer integer=4
+# CHECK-NEXT: PutSlot v7, -, v93 key="d" receivers=[L0] level=Proven accessSite=34
+# CHECK-NEXT: v95: 5 = Integer integer=5
+# CHECK-NEXT: PutSlot v7, -, v95 key="e" receivers=[L0] level=Proven accessSite=35
+# CHECK-NEXT: v97: "f" = String string="f"
+# CHECK-NEXT: PutSlot v7, -, v97 key="f" receivers=[L0] level=Proven accessSite=36
+# CHECK-NEXT: v99: "g" = String string="g"
+# CHECK-NEXT: PutSlot v7, -, v99 key="g" receivers=[L0] level=Proven accessSite=37
+# CHECK-NEXT: v101: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b3(v101, v86, v71)
+# CHECK-NEXT: b3(v102: double, v103: fractional, v104: fractional):
+# CHECK-NEXT: v105: string = CallDirect function=f1 accessSite=47
+# CHECK-NEXT: v106: undefined = CallBuiltin -, v104, v103, v102, v105 overload=ConsoleLog/0 accessSite=48
+# CHECK-NEXT: v107: undefined = Undefined
+# CHECK-NEXT: Return v107
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="read"
+# CHECK: module=m0 position=141 flags=[HasExplicitName] thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L0 = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: int[-2147483643, 2147483647] = GetSlot v0 key="a" receivers=[L0] level=Proven accessSite=49
+# CHECK-NEXT: v2: int[-2147483643, 2147483647] = GetSlot v0 key="b" receivers=[L0] level=Proven accessSite=50
+# CHECK-NEXT: v3: int[-4294967286, 4294967294] = Add v1, v2
+# CHECK-NEXT: v4: int[-2147483643, 2147483647] = GetSlot v0 key="c" receivers=[L0] level=Proven accessSite=51
+# CHECK-NEXT: v5: int[-6442450929, 6442450941] = Add v3, v4
+# CHECK-NEXT: v6: int[-2147483643, 2147483647] = GetSlot v0 key="d" receivers=[L0] level=Proven accessSite=52
+# CHECK-NEXT: v7: int[-8589934572, 8589934588] = Add v5, v6
+# CHECK-NEXT: v8: int[-2147483643, 2147483647] = GetSlot v0 key="e" receivers=[L0] level=Proven accessSite=53
+# CHECK-NEXT: v9: int[-10737418215, 10737418235] = Add v7, v8
+# CHECK-NEXT: v10: string = GetSlot v0 key="f" receivers=[L0] level=Proven accessSite=54
+# CHECK-NEXT: v11: string = GetSlot v0 key="g" receivers=[L0] level=Proven accessSite=55
+# CHECK-NEXT: v12: string = Strcat v9, v10, v11
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: }

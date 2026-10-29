@@ -171,31 +171,6 @@ impl<'a> CssModule<'a> {
         Some(the_hash)
     }
 
-    pub(crate) fn handle_composes(
-        &mut self,
-        _dest: &mut css::Printer,
-        selectors: &css::selector::parser::SelectorList,
-        _composes: &css::css_properties::css_modules::Composes,
-        _source_index: u32,
-    ) -> css::Maybe<(), css::PrinterErrorKind> {
-        // let bump = dest.arena;
-        for sel in selectors.v.slice() {
-            if sel.len() == 1
-                && matches!(
-                    sel.components[0],
-                    css::selector::parser::Component::Class(_)
-                )
-            {
-                continue;
-            }
-
-            // The composes property can only be used within a simple class selector.
-            return Err(css::PrinterErrorKind::invalid_composes_selector);
-        }
-
-        Ok(())
-    }
-
     pub(crate) fn add_dashed(&mut self, bump: &'a Bump, local: &'a [u8], source_index: u32) {
         use bun_collections::array_hash_map::MapEntry;
         if let MapEntry::Vacant(v) =
@@ -411,16 +386,6 @@ pub struct CssModuleExport<'a> {
 ///
 /// See [CssModuleExport](CssModuleExport).
 pub enum CssModuleReference<'a> {
-    /// A local reference.
-    Local {
-        /// The local (compiled) name for the reference.
-        name: &'a [u8],
-    },
-    /// A global reference.
-    Global {
-        /// The referenced global name.
-        name: &'a [u8],
-    },
     /// A reference to an export in a different file.
     Dependency {
         /// The name to reference within the dependency.
@@ -430,27 +395,6 @@ pub enum CssModuleReference<'a> {
         /// import record idx
         specifier: &'a [u8],
     },
-}
-
-impl<'a> CssModuleReference<'a> {
-    pub fn eql(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Local { name: a }, Self::Local { name: b }) => a == b,
-            (Self::Global { name: a }, Self::Global { name: b }) => a == b,
-            // .dependency => |v| bun.strings.eql(v.name, other.dependency.name) and bun.strings.eql(v.specifier, other.dependency.specifier),
-            (
-                Self::Dependency {
-                    name: an,
-                    specifier: asp,
-                },
-                Self::Dependency {
-                    name: bn,
-                    specifier: bsp,
-                },
-            ) => an == bn && asp == bsp,
-            _ => false,
-        }
-    }
 }
 
 /// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`

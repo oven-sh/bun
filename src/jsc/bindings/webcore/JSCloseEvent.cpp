@@ -145,7 +145,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSCloseEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSCloseEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSCloseEventPrototype>(vm)) JSCloseEventPrototype(vm, globalObject, structure);
+        JSCloseEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCloseEventPrototype))) JSCloseEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -159,7 +159,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -176,6 +176,7 @@ using JSCloseEventDOMConstructor = JSDOMConstructor<JSCloseEvent>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCloseEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Events, JSCloseEventDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSCloseEventDOMConstructor>(callFrame->jsCallee());
@@ -188,15 +189,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCloseEventDOMConstruct
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<CloseEvent::Init>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto* structure = structureForNewTarget<CloseEvent>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = CloseEvent::create(WTF::move(type), WTF::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<CloseEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<CloseEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<CloseEvent>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSCloseEventDOMConstructorConstruct, JSCloseEventDOMConstructor::construct);
@@ -210,11 +211,7 @@ template<> JSValue JSCloseEventDOMConstructor::prototypeForStructure(JSC::VM& vm
 
 template<> void JSCloseEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "CloseEvent"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSCloseEvent::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "CloseEvent"_s, JSCloseEvent::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -231,8 +228,8 @@ const ClassInfo JSCloseEventPrototype::s_info = { "CloseEvent"_s, &Base::s_info,
 void JSCloseEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSCloseEvent::info(), JSCloseEventPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSCloseEvent::info(), JSCloseEventPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSCloseEvent::s_info = { "CloseEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCloseEvent) };
@@ -316,12 +313,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCloseEvent_reason, (JSGlobalObject * lexicalGlobalObj
 
 JSC::GCClient::IsoSubspace* JSCloseEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCloseEvent, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCloseEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCloseEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCloseEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCloseEvent = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSCloseEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCloseEvent, m_subspaceForCloseEvent));
 }
 
 void JSCloseEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

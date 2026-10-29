@@ -6,7 +6,6 @@
 //!
 //! Run tests with `cargo test -p bun_runtime myers_diff`
 
-use core::fmt;
 use core::marker::PhantomData;
 
 // By limiting maximum string and buffer lengths, we can store u32s in the
@@ -29,7 +28,7 @@ type int = i64; // must be large enough to hold all valid values of `uint` w/o o
 /// `u8`/`u16`, string-line equality for slice types) and a way to detect
 /// "is this a pointer/slice" inside `backtrack`. Both are expressed via this
 /// trait — implement it for any new line type.
-pub trait Line: Copy {
+pub(crate) trait Line: Copy {
     /// Whether this line type is a pointer/slice type.
     const IS_POINTER: bool;
     /// Equality with optional trailing-comma tolerance.
@@ -370,41 +369,19 @@ pub enum Error {
     DiffTooLarge,
     #[error("InputsTooLarge")]
     InputsTooLarge,
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
 
-bun_core::oom_from_alloc!(Error);
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DiffKind {
+pub(crate) enum DiffKind {
     Insert,
     Delete,
     Equal,
 }
 
-impl fmt::Display for DiffKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DiffKind::Insert => f.write_str("+"),
-            DiffKind::Delete => f.write_str("-"),
-            DiffKind::Equal => f.write_str(" "),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
-pub struct Diff<T> {
+pub(crate) struct Diff<T> {
     pub(crate) kind: DiffKind,
     pub value: T,
-}
-
-impl<T: fmt::Display> fmt::Display for Diff<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // For `&[u8]` callers, wrap `value` in `bstr::BStr::new` at the call
-        // site to get string (rather than byte-array) output.
-        write!(f, "{} {}", self.kind, self.value)
-    }
 }
 
 pub(crate) type DiffList<T> = Vec<Diff<T>>;

@@ -20,11 +20,16 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <JavaScriptCore/Interpreter.h>
+#include <JavaScriptCore/VMEntryRecord.h>
 #include <wtf/IterationStatus.h>
+#include <wtf/ScopedLambda.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 
 #include "ErrorStackFrame.h"
+
+#include <array>
+#include <bit>
 
 using namespace JSC;
 using namespace WebCore;
@@ -77,6 +82,12 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
             return ImplementationVisibility::Public;
 #endif
 
+#if ENABLE(AOT)
+        // The walk over compiled code lists the frames that are shown. The function object that names such a frame enters compiled code through an executable that is shown nowhere.
+        if (frame.isCompiledFrame())
+            return ImplementationVisibility::Public;
+#endif
+
         if (auto* callee = frame.callee()) {
             if (auto* jsFunction = dynamicDowncast<JSFunction>(callee)) {
                 if (auto* executable = jsFunction->executable())
@@ -113,94 +124,144 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     return JSCStackTrace(newFrames);
 }
 
+// Which entry into the VM the frames of suspended async functions follow is decided
+// among all entries that resumed one. A walk that ends early decides alike if there
+// is no second one.
+static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
+{
+    bool hasFoundOne = false;
+    for (JSC::EntryFrame* entryFrame = vm.topEntryFrame; entryFrame; entryFrame = vmEntryRecord(entryFrame)->prevTopEntryFrame()) {
+        if (!JSC::Interpreter::asyncFunctionIn(vmEntryRecord(entryFrame)->m_context))
+            continue;
+        if (hasFoundOne)
+            return true;
+        hasFoundOne = true;
+    }
+    return false;
+}
+
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
     UNUSED_PARAM(callFrame);
 
-    // Delegate to Interpreter::getStackTrace which includes async stack frames
-    // (from the await chain via getAsyncStackTrace). The previous hand-rolled
-    // StackVisitor::visit walk only collected synchronous frames.
-    //
-    // We always collect with framesToSkip=1 (to drop Error.captureStackTrace
-    // itself) and without the caller argument, because Interpreter::getStackTrace's
-    // built-in caller filtering skips entry-frame tracking during the skip phase,
-    // which loses async frames when the caller is the innermost sync frame.
-    // Instead we filter out frames up to and including the caller afterwards.
-    //
-    // Collect without a limit: stackTraceLimit must apply to visible frames
-    // AFTER Bun's post-filter and AFTER caller removal, not to raw frames from
-    // JSC. If the caller is deep, capping at stackTraceLimit here would collect
-    // only frames that get removed, leaving an empty trace. Stack depth is
-    // bounded by native stack size so this walk is still O(actual depth).
-    WTF::Vector<JSC::StackFrame> rawFrames;
-    vm.interpreter.getStackTrace(owner, rawFrames, 1, std::numeric_limits<size_t>::max());
-
-    // JSC's getStackTrace uses StackVisitor::isImplementationVisibilityPrivate
-    // which differs from Bun's helper — post-filter to keep behavior consistent
-    // with new Error() stack formatting.
-    stackTrace.reserveInitialCapacity(rawFrames.size());
-    for (auto& frame : rawFrames) {
-        if (!isImplementationVisibilityPrivate(frame))
-            stackTrace.append(WTF::move(frame));
-    }
-
-    if (!caller.isObject()) {
-        if (stackTrace.size() > stackTraceLimit)
-            stackTrace.shrink(stackTraceLimit);
-        return;
-    }
-
     JSC::JSObject* callerObject = caller.getObject();
-    auto* globalObject = callerObject->globalObject();
-    WTF::String callerName = Zig::functionName(vm, globalObject, callerObject);
+    // Made at the first frame that is not the caller's by identity.
+    std::optional<WTF::String> nameOfCaller;
 
-    // Match V8: remove all frames up to and including the caller. If the caller
-    // is not found anywhere in the sync portion of the stack, remove everything.
+    // A deep stack holds the same few functions over and over, and their names take
+    // longer to make than to compare.
+    struct FunctionOfFrame {
+        const void* callee { nullptr };
+        uintptr_t code { 0 };
+        bool operator==(const FunctionOfFrame&) const = default;
+    };
+    std::array<FunctionOfFrame, 8> functionsWithOtherNames;
+
     // We match by cell identity first, then by name — name matching is needed
     // because a resumed async function's frame callee is the generator's `next`
     // function (a different cell) but Zig::functionName still reports the
     // original async function's name.
-    size_t removeCount = stackTrace.size();
-    for (size_t i = 0; i < stackTrace.size(); i++) {
-        const auto& frame = stackTrace.at(i);
-        if (frame.isAsyncFrame())
-            break;
-        if (frame.callee() == callerObject) {
-            removeCount = i + 1;
-            break;
+    auto isFrameOfCaller = [&](const JSC::StackFrame& frame) {
+        if (frame.callee() == callerObject)
+            return true;
+        FunctionOfFrame function { frame.callee(), std::bit_cast<uintptr_t>(frame.codeBlock()) };
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame()) {
+            const auto& compiledFrame = frame.compiledFrame();
+            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | (compiledFrame.calleeLiesInFrame ? 2 : 0) | 1;
         }
-        if (!callerName.isEmpty() && Zig::functionName(vm, globalObject, frame, FinalizerSafety::NotInFinalizer, nullptr) == callerName) {
-            removeCount = i + 1;
-            break;
+#endif
+        auto& functionWithOtherName = functionsWithOtherNames[((std::bit_cast<uintptr_t>(function.callee) >> 4) + (function.code >> 2)) % functionsWithOtherNames.size()];
+        if (functionWithOtherName == function)
+            return false;
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame() && JSC::AOT::isClosureOf(callerObject, frame.compiledFrame().function))
+            return true;
+#endif
+        if (!nameOfCaller)
+            nameOfCaller = Zig::functionName(vm, callerObject);
+        const WTF::String& callerName = *nameOfCaller;
+        if (callerName.isEmpty())
+            return false;
+        if (Zig::functionName(vm, frame, nullptr) == callerName)
+            return true;
+        functionWithOtherName = function;
+        return false;
+    };
+
+    // stackTraceLimit must apply to visible frames AFTER Bun's filter and AFTER
+    // caller removal, not to raw frames from JSC, so both are decided while JSC
+    // walks: the walk ends at the last frame that is shown, however deep the stack is.
+    //
+    // JSC's getStackTrace uses StackVisitor::isImplementationVisibilityPrivate
+    // which differs from Bun's helper — filter to keep behavior consistent
+    // with new Error() stack formatting.
+    //
+    // The frame of the caller is kept until the walk is over. It tells whether the
+    // frames of suspended async functions come in front of the caller or behind it.
+    bool hasFoundCaller = false;
+    auto isWanted = [&](const JSC::StackFrame& frame) {
+        if (isImplementationVisibilityPrivate(frame))
+            return false;
+        if (!hasFoundCaller)
+            hasFoundCaller = isFrameOfCaller(frame);
+        return hasFoundCaller;
+    };
+    JSC::Interpreter::StackFrameFilter filter = isWanted;
+
+    constexpr size_t everyFrame = std::numeric_limits<size_t>::max();
+    size_t framesToCollect = stackTraceLimit == everyFrame || !callerObject ? stackTraceLimit : stackTraceLimit + 1;
+    for (;; framesToCollect = everyFrame) {
+        // Delegate to Interpreter::getStackTrace which includes async stack frames
+        // (from the await chain via getAsyncStackTrace). The previous hand-rolled
+        // StackVisitor::visit walk only collected synchronous frames.
+        //
+        // We always collect with framesToSkip=1 (to drop Error.captureStackTrace
+        // itself) and without the caller argument, because Interpreter::getStackTrace's
+        // built-in caller filtering skips entry-frame tracking during the skip phase,
+        // which loses async frames when the caller is the innermost sync frame.
+        hasFoundCaller = !callerObject;
+        stackTrace.shrink(0);
+        vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect, nullptr, nullptr, nullptr, &filter);
+
+        // Match V8: if the caller is not found anywhere in the sync portion of the
+        // stack, remove everything.
+        if (!hasFoundCaller) {
+            stackTrace.shrink(0);
+            return;
         }
+
+        bool hasEveryFrame = stackTrace.size() < framesToCollect;
+        if (hasEveryFrame)
+            break;
+        stackTrace.shrink(framesToCollect);
+        bool hasAsyncFrame = false;
+        bool hasPrivateAsyncFrame = false;
+        for (const auto& frame : stackTrace) {
+            if (!frame.isAsyncFrame())
+                continue;
+            hasAsyncFrame = true;
+            hasPrivateAsyncFrame |= isImplementationVisibilityPrivate(frame);
+        }
+        if (!hasPrivateAsyncFrame && !(hasAsyncFrame && severalEntriesResumedAsyncFunctions(vm)))
+            break;
     }
 
-    if (removeCount > 0)
-        stackTrace.removeAt(0, removeCount);
+    stackTrace.removeAllMatching([](const JSC::StackFrame& frame) {
+        return frame.isAsyncFrame() && isImplementationVisibilityPrivate(frame);
+    });
+
+    // Match V8: remove all frames up to and including the caller.
+    if (callerObject) {
+        if (stackTrace.first().isAsyncFrame()) {
+            stackTrace.shrink(0);
+            return;
+        }
+        stackTrace.removeAt(0);
+    }
 
     if (stackTrace.size() > stackTraceLimit)
         stackTrace.shrink(stackTraceLimit);
-}
-
-JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue)
-{
-    const WTF::Vector<JSC::StackFrame>* jscStackTrace = nullptr;
-
-    JSC::Exception* currentException = DECLARE_TOP_EXCEPTION_SCOPE(vm).exception();
-    if (currentException && currentException->value() == thrownValue) {
-        jscStackTrace = &currentException->stack();
-    } else {
-        JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(thrownValue);
-        if (error) {
-            jscStackTrace = error->stackTrace();
-        }
-    }
-
-    if (!jscStackTrace) {
-        return JSCStackTrace();
-    }
-
-    return fromExisting(vm, *jscStackTrace);
 }
 
 static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
@@ -213,57 +274,9 @@ static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
     return !Zig::sourceURL(source).isEmpty();
 }
 
-JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
-    : m_vm(vm)
-    , m_codeBlock(nullptr)
-    , m_bytecodeIndex(JSC::BytecodeIndex())
-    , m_sourceURL()
-    , m_functionName()
-    , m_isWasmFrame(false)
-    , m_isAsync(false)
-    , m_sourcePositionsState(SourcePositionsState::NotCalculated)
-{
-    m_callee = visitor->callee().asCell();
-    m_callFrame = visitor->callFrame();
-
-    if (auto* codeBlock = visitor->codeBlock()) {
-        auto codeType = codeBlock->codeType();
-        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
-            m_isFunctionOrEval = true;
-        }
-    }
-
-    // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
-    if (visitor->isNativeCalleeFrame()) {
-        auto* nativeCallee = visitor->callee().asNativeCallee();
-        switch (nativeCallee->category()) {
-        case NativeCallee::Category::Wasm: {
-            m_wasmFunctionIndexOrName = visitor->wasmFunctionIndexOrName();
-            m_isWasmFrame = true;
-            break;
-        }
-        case NativeCallee::Category::InlineCache: {
-            break;
-        }
-        }
-    } else if (auto* codeBlock = visitor->codeBlock()) {
-        auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
-        if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
-            m_codeBlock = codeBlock;
-            m_bytecodeIndex = visitor->bytecodeIndex();
-        }
-    }
-
-    if (!m_bytecodeIndex && visitor->hasLineAndColumnInfo()) {
-        auto lineColumn = visitor->computeLineAndColumn();
-        m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
-        m_sourcePositionsState = SourcePositionsState::Calculated;
-    }
-}
-
 JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     : m_vm(vm)
-    , m_callFrame(nullptr)
+    , m_stackFrame(&frame)
     , m_codeBlock(nullptr)
     , m_bytecodeIndex(JSC::BytecodeIndex())
     , m_sourceURL()
@@ -289,6 +302,16 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
         }
+#if ENABLE(AOT)
+    } else if (frame.isCompiledFrame()) {
+        m_isAOTCompiled = true;
+        if (auto position = frame.compiledPosition(); position && frame.hasLineAndColumnInfo()) {
+            m_sourcePositions = { OrdinalNumber::fromOneBasedInt(position->startOfExpression().line), OrdinalNumber::fromOneBasedInt(position->startOfExpression().column) };
+            m_sourcePositionsState = SourcePositionsState::Calculated;
+            m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode || frame.codeType() == JSC::EvalCode;
+        }
+        return;
+#endif
     }
 
     if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
@@ -325,15 +348,6 @@ JSC::JSString* JSCStackFrame::functionName()
     return jsString(this->m_vm, m_functionName);
 }
 
-JSC::JSString* JSCStackFrame::typeName()
-{
-    if (!m_typeName) {
-        m_typeName = retrieveTypeName();
-    }
-
-    return jsString(this->m_vm, m_typeName);
-}
-
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
 {
     if (SourcePositionsState::NotCalculated == m_sourcePositionsState) {
@@ -351,7 +365,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
-    auto url = Zig::sourceURL(m_codeBlock);
+    auto url = m_isAOTCompiled ? Zig::sourceURL(m_vm, *m_stackFrame) : Zig::sourceURL(m_codeBlock);
     if (!url.isEmpty()) {
         return url;
     }
@@ -393,7 +407,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
     if (m_callee) {
         auto* calleeObject = m_callee->getObject();
         if (calleeObject) {
-            return Zig::functionName(m_vm, calleeObject->globalObject(), calleeObject);
+            return Zig::functionName(m_vm, calleeObject);
         }
     }
 
@@ -404,13 +418,10 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
         }
     }
 
-    return emptyString();
-}
+    if (m_isAOTCompiled)
+        return Zig::functionName(m_vm, *m_stackFrame, nullptr);
 
-ALWAYS_INLINE String JSCStackFrame::retrieveTypeName()
-{
-    JSC::JSObject* calleeObject = uncheckedDowncast<JSC::JSObject>(m_callee);
-    return calleeObject->className();
+    return emptyString();
 }
 
 // General flow here is based on JSC's appendSourceToError (ErrorInstance.cpp)
@@ -483,6 +494,25 @@ String sourceURL(JSC::CodeBlock* codeBlock)
     return Zig::sourceURL(*codeBlock);
 }
 
+#if ENABLE(AOT)
+String externalSourceMapFileURL()
+{
+#if OS(WINDOWS)
+    static const auto url = MAKE_STATIC_STRING_IMPL("B:\\~BUN\\root\\compiled.js");
+#else
+    static const auto url = MAKE_STATIC_STRING_IMPL("/$bunfs/root/compiled.js");
+#endif
+    return String(url);
+}
+
+String sourceURL(const JSC::AOT::SourcePosition& position)
+{
+    if (position.source)
+        return JSC::AOT::sourceURLOf(position.source);
+    return hasExternalSourceMap() ? externalSourceMapFileURL() : String();
+}
+#endif
+
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 {
     if (frame.isWasmFrame()) {
@@ -492,6 +522,13 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
     if (!frame.hasLineAndColumnInfo()) [[unlikely]] {
         return "[native code]"_s;
     }
+
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]] {
+        auto position = frame.compiledPosition();
+        return position ? sourceURL(*position) : String();
+    }
+#endif
 
     return sourceURL(frame.codeBlock());
 }
@@ -503,6 +540,10 @@ String sourceURL(JSC::StackVisitor& visitor)
     case JSC::StackVisitor::Frame::Module:
     case JSC::StackVisitor::Frame::Function:
     case JSC::StackVisitor::Frame::Global: {
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame())
+            return hasExternalSourceMap() ? externalSourceMapFileURL() : visitor->compiledFrame().sourceURL();
+#endif
         return sourceURL(visitor->codeBlock());
     }
     case JSC::StackVisitor::Frame::Native:
@@ -534,36 +575,31 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string();
+        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaNameWithoutGC();
     }
 
     return String();
 }
 
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* object)
+String functionName(JSC::VM& vm, JSC::JSObject* object)
 {
     WTF::String functionName;
     auto jstype = object->type();
     if (jstype == JSC::ProxyObjectType) return {};
 
-    // First try the "name" property.
+    // First try the "name" property, if it is a plain data property. This also names frames at the
+    // end of a collection, where nothing may be allocated in the heap and no script may run, and a
+    // stack must read the same whenever it is formatted, so nothing here or below does either.
     {
-        WTF::String name;
-        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        if (object->getOwnNonIndexPropertySlot(vm, object->structure(), vm.propertyNames->name, slot)) {
-            if (!slot.isAccessor()) {
-                JSValue functionNameValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->name);
-                if (functionNameValue && functionNameValue.isString()) {
-                    name = functionNameValue.toWTFString(lexicalGlobalObject);
-                    if (!name.isEmpty()) {
-                        return name;
-                    }
-                }
+        unsigned attributes;
+        PropertyOffset offset = object->structure()->getConcurrently(vm.propertyNames->name.impl(), attributes);
+        if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+            JSValue functionNameValue = object->getDirect(offset);
+            if (functionNameValue && functionNameValue.isString()) {
+                auto name = asString(functionNameValue)->tryGetValueWithoutGC();
+                if (!name->isEmpty())
+                    return name;
             }
-        }
-        if (topExceptionScope.exception()) [[unlikely]] {
-            (void)topExceptionScope.tryClearException();
         }
     }
 
@@ -582,7 +618,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                 auto* function = uncheckedDowncast<JSC::JSFunction>(object);
                 functionName = function->nameWithoutGC(vm);
                 if (functionName.isEmpty() && !function->isHostFunction()) {
-                    functionName = function->jsExecutable()->ecmaName().string();
+                    functionName = function->jsExecutable()->ecmaNameWithoutGC();
                 }
             } else if (jstype == JSC::InternalFunctionType) {
                 functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
@@ -593,126 +629,86 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     return functionName;
 }
 
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety finalizerSafety, unsigned int* flags)
+#if ENABLE(AOT)
+static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
 {
-    bool isConstructor = false;
-    if (finalizerSafety == FinalizerSafety::MustNotTriggerGC) {
+    JSC::AOT::FunctionDescription description(frame.compiledFrame().function);
+    return frame.isAsyncFrame() ? description.name(vm) : description.nameInFrames(vm, frame.callee(), frame.compiledFrame().calleeLiesInFrame);
+}
 
-        if (auto* callee = frame.callee()) {
-            if (auto* object = callee->getObject()) {
-                auto jstype = object->type();
-                Structure* structure = object->structure();
+static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
+{
+    if (!frame.hasLineAndColumnInfo())
+        return compiledFunctionName(vm, frame);
 
-                auto setTypeFlagsIfNecessary = [&]() {
-                    if (flags) {
-                        if (jstype == JSC::JSFunctionType || jstype == JSC::InternalFunctionType) {
-                            *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
-                        }
-                    }
-                };
-
-                // First try the "name" property.
-                {
-                    unsigned attributes;
-                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->name.impl(), attributes);
-                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-                        JSValue name = object->getDirect(offset);
-                        if (name && name.isString()) {
-                            auto str = asString(name)->tryGetValueWithoutGC();
-                            if (!str->isEmpty()) {
-                                setTypeFlagsIfNecessary();
-                                return str;
-                            }
-                        }
-                    }
-                }
-
-                // Then try the "displayName" property.
-                {
-                    unsigned attributes;
-                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->displayName.impl(), attributes);
-                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-                        JSValue name = object->getDirect(offset);
-                        if (name && name.isString()) {
-                            auto str = asString(name)->tryGetValueWithoutGC();
-                            if (!str->isEmpty()) {
-                                setTypeFlagsIfNecessary();
-                                return str;
-                            }
-                        }
-                    }
-                }
-
-                // Lastly, try type-specific properties.
-                if (jstype == JSC::JSFunctionType) {
-                    auto* function = uncheckedDowncast<JSC::JSFunction>(object);
-                    auto str = function->nameWithoutGC(vm);
-                    if (str.isEmpty() && !function->isHostFunction()) {
-                        setTypeFlagsIfNecessary();
-                        return function->jsExecutable()->ecmaName().string();
-                    }
-                    setTypeFlagsIfNecessary();
-                    return str;
-                } else if (jstype == JSC::InternalFunctionType) {
-                    auto str = uncheckedDowncast<JSC::InternalFunction>(object)->name();
-                    setTypeFlagsIfNecessary();
-                    return str;
-                }
-            }
-        }
-
-        return emptyString();
+    auto codeType = frame.codeType();
+    if (flags && (codeType == JSC::CodeType::FunctionCode || codeType == JSC::CodeType::EvalCode)) {
+        *flags |= static_cast<unsigned int>(codeType == JSC::CodeType::EvalCode ? FunctionNameFlags::Eval : FunctionNameFlags::Function);
+        if (frame.isBuiltinFunction())
+            *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
     }
 
     WTF::String functionName;
+    if (codeType == JSC::CodeType::FunctionCode && !(frame.isAsyncFrame() && JSC::AOT::FunctionDescription(frame.compiledFrame().function).isNamedByOwner()))
+        functionName = compiledFunctionName(vm, frame);
+    // `bun run` evaluates a module of the library as a function that has the name of the module.
+    else if (codeType == JSC::CodeType::ModuleCode && JSC::AOT::FunctionDescription(frame.compiledFrame().function).isInRuntimeModule())
+        functionName = sourceURL(vm, frame);
+
+    if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && frame.isConstructor() && !functionName.isEmpty())
+        return makeString("new "_s, functionName);
+
+    return functionName;
+}
+#endif
+
+String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
+{
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]]
+        return functionNameOfCompiledFrame(vm, frame, flags);
+#endif
+
+    bool isConstructor = false;
+    WTF::String functionName;
+    JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;
+
     if (frame.hasLineAndColumnInfo()) {
         auto* codeblock = frame.codeBlock();
         if (codeblock->isConstructor()) {
             isConstructor = true;
         }
 
-        if (finalizerSafety == FinalizerSafety::NotInFinalizer) {
-            auto codeType = codeblock->codeType();
-            switch (codeType) {
-            case JSC::CodeType::FunctionCode:
-            case JSC::CodeType::EvalCode: {
-                if (flags) {
-                    if (codeType == JSC::CodeType::EvalCode) {
-                        *flags |= static_cast<unsigned int>(FunctionNameFlags::Eval);
-                    } else if (codeType == JSC::CodeType::FunctionCode) {
-                        *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
-                    }
+        auto codeType = codeblock->codeType();
+        switch (codeType) {
+        case JSC::CodeType::FunctionCode:
+        case JSC::CodeType::EvalCode: {
+            if (flags) {
+                if (codeType == JSC::CodeType::EvalCode) {
+                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Eval);
+                } else {
+                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
                 }
-                if (auto* callee = frame.callee()) {
-                    if (auto* object = callee->getObject()) {
-                        functionName = Zig::functionName(vm, lexicalGlobalObject, object);
+            }
+            if (callee) {
+                functionName = Zig::functionName(vm, callee);
 
-                        if (flags) {
-                            if (auto* unlinkedCodeBlock = codeblock->unlinkedCodeBlock()) {
-                                if (unlinkedCodeBlock->isBuiltinFunction()) {
-                                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
-                                }
-                            }
-                        }
-                    }
+                if (flags && codeblock->unlinkedCodeBlock()->isBuiltinFunction()) {
+                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
                 }
-                break;
             }
-            default: {
-                break;
-            }
-            }
+            break;
+        }
+        default: {
+            break;
+        }
+        }
 
-            if (functionName.isEmpty()) {
-                functionName = Zig::functionName(vm, codeblock);
-            }
+        if (functionName.isEmpty()) {
+            functionName = Zig::functionName(vm, codeblock);
         }
-    } else {
-        if (auto* callee = frame.callee()) {
-            if (auto* object = callee->getObject()) {
-                functionName = Zig::functionName(vm, lexicalGlobalObject, object);
-            }
-        }
+    } else if (callee) {
+        functionName = Zig::functionName(vm, callee);
     }
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {
@@ -721,10 +717,4 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 
     return functionName;
 }
-}
-
-// Weak-referenced by JSC::ErrorInstance::finalizeUnconditionally in vendor/WebKit.
-extern "C" void Bun__errorInstance__finalize(void* bunErrorData)
-{
-    UNUSED_PARAM(bunErrorData);
 }

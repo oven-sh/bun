@@ -71,7 +71,6 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
     use bun_collections::HashMap;
-    use bun_core::slice_as_bytes;
 
     /// Every record kind carries one trailing bitcast-`FetchParameters` slot
     /// after its `StringID` payload.
@@ -100,7 +99,8 @@ pub mod analyze_transpiled_module {
         ImportInfoNamespaceDefer,
     }
     impl RecordKind {
-        pub(crate) fn len(self) -> usize {
+        /// `StringID` slots the record occupies in `ModuleInfo::buffer` (part of the serialized format).
+        pub fn len(self) -> usize {
             match self {
                 Self::ImportInfoSingle => 4,
                 Self::ImportInfoSingleTypeScript => 4,
@@ -131,19 +131,12 @@ pub mod analyze_transpiled_module {
         }
     }
 
-    // SAFETY: `#[repr(u8)]` enum with no fields → single initialized byte, no padding.
-    unsafe impl bytemuck::NoUninit for RecordKind {}
-
     /// Index into `ModuleInfo`'s interned-string table. Two reserved sentinels.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     pub struct StringID(pub u32);
-    // SAFETY: `#[repr(transparent)]` over `u32`.
-    unsafe impl bytemuck::Zeroable for StringID {}
-    // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
-    unsafe impl bytemuck::Pod for StringID {}
     impl StringID {
-        pub(crate) const STAR_DEFAULT: Self = Self(u32::MAX);
+        pub const STAR_DEFAULT: Self = Self(u32::MAX);
         pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
     }
 
@@ -151,10 +144,6 @@ pub mod analyze_transpiled_module {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct FetchParameters(pub u32);
-    // SAFETY: `#[repr(transparent)]` over `u32`.
-    unsafe impl bytemuck::Zeroable for FetchParameters {}
-    // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
-    unsafe impl bytemuck::Pod for FetchParameters {}
     #[allow(non_upper_case_globals)]
     impl FetchParameters {
         pub const None: Self = Self(u32::MAX);
@@ -166,14 +155,17 @@ pub mod analyze_transpiled_module {
             Self(value.0)
         }
         /// JSC `ScriptFetchParameters::Type` value. `None` maps to `JavaScript`
-        /// (NodesAnalyzeModule's no-attribute default).
+        /// (NodesAnalyzeModule's no-attribute default). JSC's `Text` (4) is never
+        /// produced: with BUN_JSC_ADDITIONS `type: "text"` is host-defined like
+        /// every other non-json/wasm type. Pinned by the static_asserts in
+        /// BunAnalyzeTranspiledModule.cpp.
         #[inline]
         pub fn to_script_fetch_parameters_type(self) -> u8 {
             match self {
                 Self::None | Self::Javascript => 1,
                 Self::Webassembly => 2,
                 Self::Json => 3,
-                _ => 4,
+                _ => 5,
             }
         }
     }
@@ -187,8 +179,6 @@ pub mod analyze_transpiled_module {
         Evaluation = 0,
         Defer = 1,
     }
-    // SAFETY: `#[repr(u8)]` enum with no fields → single initialized byte, no padding.
-    unsafe impl bytemuck::NoUninit for ModulePhase {}
 
     /// Borrowing view over a finalized/serialized `ModuleInfo`.
     /// Built on demand
@@ -204,42 +194,222 @@ pub mod analyze_transpiled_module {
         pub record_kinds: &'a [RecordKind],
         pub flags: Flags,
     }
+    /// Width in bytes of a run of integers: the smallest of 1, 2, 4 that holds
+    /// the largest value.
+    #[inline]
+    pub fn int_width(max_value: u32) -> u8 {
+        if max_value <= u8::MAX as u32 {
+            1
+        } else if max_value <= u16::MAX as u32 {
+            2
+        } else {
+            4
+        }
+    }
+    #[inline]
+    fn put<W: std::io::Write>(w: &mut W, width: u8, v: u32) -> std::io::Result<()> {
+        match width {
+            1 => w.write_all(&[v as u8]),
+            2 => w.write_all(&(v as u16).to_le_bytes()),
+            _ => w.write_all(&v.to_le_bytes()),
+        }
+    }
+
+    /// A self-contained record's strings, as `WTF::StringImpl` bodies:
+    ///
+    /// ```text
+    /// u8   offset width W ∈ {1,2,4}; u8 0, 0, 0
+    /// u32  count
+    /// uW   × (count + 1): byte offset of each string's record within the blob, then the blob length
+    /// u8   0 if needed to start the blob at an even offset
+    /// blob: per string, u8 is8Bit then the characters: Latin-1 bytes, or UTF-16LE units starting at
+    ///       the next even blob offset
+    /// ```
+    fn serialize_string_table<'a, W: std::io::Write>(
+        w: &mut W,
+        strings: impl ExactSizeIterator<Item = &'a [u8]>,
+    ) -> std::io::Result<()> {
+        let count = strings.len();
+        let mut offsets: Vec<u32> = Vec::with_capacity(count + 1);
+        let mut blob: Vec<u8> = Vec::new();
+        for wtf8 in strings {
+            offsets.push(blob.len() as u32);
+            match bun_core::strings::first_non_ascii(wtf8) {
+                None => {
+                    blob.push(1);
+                    blob.extend_from_slice(wtf8);
+                }
+                Some(first_non_ascii) => {
+                    blob.push(0);
+                    if !blob.len().is_multiple_of(2) {
+                        blob.push(0);
+                    }
+                    blob.reserve(2 * wtf8.len());
+                    // SAFETY: `2 * wtf8.len()` spare bytes reserved, the bound `write_wtf8_as_utf16le` requires.
+                    unsafe {
+                        let n = bun_core::strings::write_wtf8_as_utf16le(
+                            wtf8,
+                            first_non_ascii as usize,
+                            blob.as_mut_ptr().add(blob.len()),
+                        );
+                        blob.set_len(blob.len() + n);
+                    }
+                }
+            }
+        }
+        offsets.push(blob.len() as u32);
+        let width = int_width(blob.len() as u32);
+        w.write_all(&[width, 0, 0, 0])?;
+        w.write_all(&(count as u32).to_le_bytes())?;
+        for offset in offsets {
+            put(w, width, offset)?;
+        }
+        if !((count + 1) * width as usize).is_multiple_of(2) {
+            w.write_all(&[0])?;
+        }
+        w.write_all(&blob)
+    }
+
     impl<'a> ModuleInfoDeserialized<'a> {
+        /// Self-contained form: this module's own string table, then its body.
         pub(crate) fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-            w.write_all(
-                &u32::try_from(self.record_kinds.len())
-                    .unwrap()
-                    .to_le_bytes(),
-            )?;
-            // `RecordKind: NoUninit` (#[repr(u8)]) → safe byte view.
-            w.write_all(slice_as_bytes(self.record_kinds))?;
-            let pad = (4 - (self.record_kinds.len() % 4)) % 4;
-            w.write_all(&[0u8; 4][..pad])?; // alignment padding
+            let mut offset = 0usize;
+            let strings: Vec<&[u8]> = self
+                .strings_lens
+                .iter()
+                .map(|&len| {
+                    let s = &self.strings_buf[offset..offset + len as usize];
+                    offset += len as usize;
+                    s
+                })
+                .collect();
+            serialize_string_table(w, strings.into_iter())?;
+            self.serialize_body(w, self.strings_lens.len() as u32, |id| id)
+        }
 
-            w.write_all(&u32::try_from(self.buffer.len()).unwrap().to_le_bytes())?;
-            w.write_all(slice_as_bytes(self.buffer))?;
+        /// Body wire format (little-endian), ids index a string table
+        /// of `table_count` strings through `table_id`:
+        ///
+        /// ```text
+        /// u8   flags
+        /// u8   id width W ∈ {1,2,4}, sized for table_count + 2 sentinels
+        /// u8   0, 0
+        /// u32  requested-module count, u32 record count
+        /// u8   × records:    kind | fetch-kind << 3 | same-name << 6
+        /// u8   × requested:  phase | fetch-kind << 1
+        /// uW…  per requested module: specifier [, host-defined type]
+        /// uW…  per record: its string ids [, host-defined type]
+        /// ```
+        ///
+        /// fetch-kind 0..=3 is None / JavaScript / WebAssembly / JSON and 4 means
+        /// a host-defined type id follows. `STAR_NAMESPACE` / `STAR_DEFAULT` are
+        /// written as `table_count` / `table_count + 1`. Slots the kind implies
+        /// (`*` for a namespace import, `ExportInfoLocal`'s padding, the fetch
+        /// parameter itself) are not written; `same-name` elides an import's
+        /// local name when it equals the import name.
+        /// `bun_bundler::analyze_transpiled_module` (`Body` / `IdCursor`) reads
+        /// this in place when building the `JSModuleRecord`.
+        pub fn serialize_body<W: std::io::Write>(
+            &self,
+            w: &mut W,
+            table_count: u32,
+            table_id: impl Fn(u32) -> u32,
+        ) -> std::io::Result<()> {
+            let id_width = int_width(table_count + 1);
+            let id = |w: &mut W, s: StringID| {
+                put(
+                    w,
+                    id_width,
+                    match s {
+                        StringID::STAR_NAMESPACE => table_count,
+                        StringID::STAR_DEFAULT => table_count + 1,
+                        s => table_id(s.0),
+                    },
+                )
+            };
+            let fetch_kind = |fp: FetchParameters| match fp {
+                FetchParameters::None => 0u8,
+                FetchParameters::Javascript => 1,
+                FetchParameters::Webassembly => 2,
+                FetchParameters::Json => 3,
+                _ => 4,
+            };
+            // (ids written, fetch parameters, elide slot 1, elide slot 2)
+            let shape = |kind: RecordKind, data: &'a [StringID]| match kind {
+                RecordKind::ImportInfoSingle | RecordKind::ImportInfoSingleTypeScript => (
+                    &data[..3],
+                    FetchParameters(data[3].0),
+                    false,
+                    data[1] == data[2],
+                ),
+                RecordKind::ImportInfoNamespace | RecordKind::ImportInfoNamespaceDefer => {
+                    debug_assert!(data[1] == StringID::STAR_NAMESPACE);
+                    (&data[..3], FetchParameters(data[3].0), true, false)
+                }
+                RecordKind::ExportInfoIndirect => {
+                    (&data[..3], FetchParameters(data[3].0), false, false)
+                }
+                RecordKind::ExportInfoLocal => (&data[..2], FetchParameters::None, false, false),
+                RecordKind::ExportInfoNamespace => {
+                    (&data[..2], FetchParameters(data[2].0), false, false)
+                }
+                RecordKind::ExportInfoStar => {
+                    (&data[..1], FetchParameters(data[1].0), false, false)
+                }
+            };
+            let records = || {
+                let mut i = 0usize;
+                self.record_kinds.iter().map(move |&kind| {
+                    let data = &self.buffer[i..i + kind.len()];
+                    i += kind.len();
+                    (kind, data)
+                })
+            };
 
+            w.write_all(&[self.flags.to_byte(), id_width, 0, 0])?;
             w.write_all(
                 &u32::try_from(self.requested_modules_keys.len())
                     .unwrap()
                     .to_le_bytes(),
             )?;
-            w.write_all(slice_as_bytes(self.requested_modules_keys))?;
-            w.write_all(slice_as_bytes(self.requested_modules_values))?;
-            w.write_all(slice_as_bytes(self.requested_modules_phases))?;
-            let pad = (4 - (self.requested_modules_phases.len() % 4)) % 4;
-            w.write_all(&[0u8; 4][..pad])?; // alignment padding
-
-            w.write_all(&[self.flags.to_byte()])?;
-            w.write_all(&[0u8; 3])?; // alignment padding
-
             w.write_all(
-                &u32::try_from(self.strings_lens.len())
+                &u32::try_from(self.record_kinds.len())
                     .unwrap()
                     .to_le_bytes(),
             )?;
-            w.write_all(slice_as_bytes(self.strings_lens))?;
-            w.write_all(self.strings_buf)?;
+            for (kind, data) in records() {
+                let (_, fetch, _, same_name) = shape(kind, data);
+                w.write_all(&[(kind as u8) | (fetch_kind(fetch) << 3) | ((same_name as u8) << 6)])?;
+            }
+            for (&value, &phase) in self
+                .requested_modules_values
+                .iter()
+                .zip(self.requested_modules_phases)
+            {
+                w.write_all(&[(phase as u8) | (fetch_kind(value) << 1)])?;
+            }
+            for (&key, &value) in self
+                .requested_modules_keys
+                .iter()
+                .zip(self.requested_modules_values)
+            {
+                id(w, key)?;
+                if fetch_kind(value) == 4 {
+                    id(w, StringID(value.0))?;
+                }
+            }
+            for (kind, data) in records() {
+                let (ids, fetch, skip1, skip2) = shape(kind, data);
+                for (slot, &s) in ids.iter().enumerate() {
+                    if (skip1 && slot == 1) || (skip2 && slot == 2) {
+                        continue;
+                    }
+                    id(w, s)?;
+                }
+                if fetch_kind(fetch) == 4 {
+                    id(w, StringID(fetch.0))?;
+                }
+            }
             Ok(())
         }
     }
@@ -281,30 +451,6 @@ pub mod analyze_transpiled_module {
             self.values.push(value);
             self.phases.push(phase);
             false
-        }
-        /// Replace every occurrence of `old` with `new` **in place**,
-        /// preserving insertion order.
-        fn rename_key(&mut self, old: StringID, new: StringID) {
-            let mut touched = false;
-            for k in self.keys.iter_mut() {
-                if *k == old {
-                    *k = new;
-                    touched = true;
-                }
-            }
-            if touched {
-                self.index.clear();
-                for (i, ((&k, &v), &p)) in self
-                    .keys
-                    .iter()
-                    .zip(self.values.iter())
-                    .zip(self.phases.iter())
-                    .enumerate()
-                {
-                    self.index
-                        .insert((k, v.to_script_fetch_parameters_type(), p), i);
-                }
-            }
         }
     }
 
@@ -485,13 +631,48 @@ pub mod analyze_transpiled_module {
             self.exported_names.insert(name, ()).is_some()
         }
 
-        /// Read-only view of the interned string table — `(buf, lens)` —
-        /// safe to call before `finalize()`. Unlike `as_deserialized()` this
-        /// does not assert `finalized`; it exists so the bundler can rewrite
-        /// cross-chunk specifier StringIDs (which must happen pre-finalize
-        /// because `replace_string_id` debug-asserts `!finalized`).
+        /// The interned string table, `(buf, lens)`; usable before `finalize()`.
         pub fn strings(&self) -> (&[u8], &[u32]) {
             (&self.strings_buf, &self.strings_lens)
+        }
+
+        /// Rewrites interned strings in place (`None` keeps one); ids, and so every record, stay valid.
+        pub fn rewrite_strings<'r>(&mut self, mut replace: impl FnMut(&[u8]) -> Option<&'r [u8]>) {
+            debug_assert!(!self.finalized);
+            let mut buf: Vec<u8> = Vec::new();
+            let mut rewritten: Vec<(u32, &'r [u8])> = Vec::new();
+            let mut offset = 0usize;
+            for (index, len) in self.strings_lens.iter_mut().enumerate() {
+                let start = offset;
+                offset += *len as usize;
+                let old = &self.strings_buf[start..offset];
+                let Some(new) = replace(old) else {
+                    if !rewritten.is_empty() {
+                        buf.extend_from_slice(old);
+                    }
+                    continue;
+                };
+                if rewritten.is_empty() {
+                    buf.reserve(self.strings_buf.len() + new.len());
+                    buf.extend_from_slice(&self.strings_buf[..start]);
+                }
+                self.strings_map.remove(old);
+                rewritten.push((index as u32, new));
+                buf.extend_from_slice(new);
+                *len = u32::try_from(new.len()).unwrap();
+            }
+            if rewritten.is_empty() {
+                return;
+            }
+            self.strings_buf = buf;
+            for (index, new) in rewritten {
+                let previous = self.strings_map.insert(new.to_vec(), index);
+                debug_assert!(
+                    previous.is_none(),
+                    "rewrite_strings: two ids now hold {:?}",
+                    bstr::BStr::new(new)
+                );
+            }
         }
 
         pub fn str(&mut self, value: &[u8]) -> StringID {
@@ -589,20 +770,6 @@ pub mod analyze_transpiled_module {
 
             self.flags.contains_import_meta |= other.flags.contains_import_meta;
             self.flags.has_tla |= other.flags.has_tla;
-        }
-
-        /// Replace all occurrences of `old_id` with `new_id` in records and requested_modules.
-        /// Used to fix up cross-chunk import specifiers after final paths are computed.
-        pub fn replace_string_id(&mut self, old_id: StringID, new_id: StringID) {
-            debug_assert!(!self.finalized);
-            for item in self.buffer.iter_mut() {
-                if *item == old_id {
-                    *item = new_id;
-                }
-            }
-            // Must preserve
-            // insertion order (serialized verbatim into ModuleInfo for JSC).
-            self.requested_modules.rename_key(old_id, new_id);
         }
 
         /// find any exports marked as 'local' that are actually 'indirect' and fix them
@@ -1101,6 +1268,17 @@ pub trait OnSourceMapChunk {
     ) -> crate::Result<()>;
 }
 
+impl OnSourceMapChunk for Option<SourceMap::Chunk> {
+    fn on_source_map_chunk(
+        &mut self,
+        chunk: SourceMap::Chunk,
+        _: &bun_ast::Source,
+    ) -> crate::Result<()> {
+        *self = Some(chunk);
+        Ok(())
+    }
+}
+
 impl<'a> SourceMapHandler<'a> {
     pub(crate) fn on_source_map_chunk(
         &self,
@@ -1140,6 +1318,8 @@ pub struct Options<'a> {
     pub bundling: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
+    /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
+    pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
@@ -1150,7 +1330,7 @@ pub struct Options<'a> {
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
-    pub input_files_for_dev_server: Option<&'a [bun_ast::Source]>,
+    pub input_files_for_dev_server: Option<&'a [bun_ast::Source<'a>]>,
 
     /// Borrowed from `BundledAst.commonjs_named_exports`; the printer only
     /// reads from it.
@@ -1164,15 +1344,18 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
+    /// Marks the braces of object literals in the source map, see `mark_object_brace`.
+    pub code_coverage: bool,
 
-    pub transform_only: bool,
     pub inline_require_and_import_errors: bool,
+    /// A bundler renamer named every symbol. Those renamers reserve `NaN`,
+    /// `Infinity` and `undefined`, so the printer may emit those globals as
+    /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
-    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
+    pub require_or_import_meta_for_source_callback: Option<RequireOrImportMetaCallback<'a>>,
 
-    /// The module type of the importing file (after linking), used to determine interop helper behavior.
-    /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
+    /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 
@@ -1181,6 +1364,12 @@ pub struct Options<'a> {
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
+    /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
+    /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).
+    pub import_member_bindings: Option<&'a js_ast::ast_result::ImportMemberBindings>,
+    /// Some `import()` / `require()` in this file reads through import items,
+    /// so a pattern may bind one (see `Symbol::is_bound_import_item`).
+    pub has_dynamic_import_items: bool,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1199,15 +1388,10 @@ impl<'a> Options<'a> {
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta {
-        if self
-            .require_or_import_meta_for_source_callback
-            .ctx
-            .is_none()
-        {
-            return RequireOrImportMeta::default();
+        match &self.require_or_import_meta_for_source_callback {
+            Some(callback) => callback.call(id, was_unwrapped_require),
+            None => RequireOrImportMeta::default(),
         }
-        self.require_or_import_meta_for_source_callback
-            .call(id, was_unwrapped_require)
     }
 }
 
@@ -1217,6 +1401,7 @@ impl<'a> Default for Options<'a> {
             bundling: false,
             to_commonjs_ref: Ref::NONE,
             to_esm_ref: Ref::NONE,
+            module_preload_ref: Ref::NONE,
             require_ref: None,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
@@ -1235,13 +1420,15 @@ impl<'a> Default for Options<'a> {
             minify_identifiers: false,
             minify_syntax: false,
             print_dce_annotations: true,
-            transform_only: false,
+            code_coverage: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
-            require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
+            require_or_import_meta_for_source_callback: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
+            import_member_bindings: None,
+            has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
         }
@@ -1284,56 +1471,44 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
-// Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
-// keeps alive for the print pass; `callback` is POD.
+/// A type-erased `&'a T`, and the `T` method to call on it.
 #[derive(Clone, Copy)]
-pub struct RequireOrImportMetaCallback {
-    pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
-}
-
-impl Default for RequireOrImportMetaCallback {
-    fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
-            RequireOrImportMeta::default()
-        }
-        Self {
-            ctx: None,
-            callback: noop,
-        }
-    }
+pub struct RequireOrImportMetaCallback<'a> {
+    ctx: NonNull<()>,
+    callback: fn(NonNull<()>, u32, bool) -> RequireOrImportMeta,
+    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 /// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
 /// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta;
 }
 
-impl RequireOrImportMetaCallback {
-    pub(crate) fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
+impl<'a> RequireOrImportMetaCallback<'a> {
+    fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
+        (self.callback)(self.ctx, id, was_unwrapped_require)
     }
 
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
+    pub fn init<T: RequireOrImportMetaSource>(ctx: &'a T) -> Self {
         fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
+            p: NonNull<()>,
             id: u32,
             was_unwrapped_require: bool,
         ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
-            // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
-            // deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
+            // SAFETY: only `call` calls this, with the `&'a T` that `init` erased beside it, and
+            // `call` needs a `RequireOrImportMetaCallback<'a>`, so `'a` has not ended.
+            unsafe { p.cast::<T>().as_ref() }
+                .require_or_import_meta_for_source(id, was_unwrapped_require)
         }
         Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
-            ctx: Some(NonNull::from(ctx).cast::<()>()),
+            ctx: NonNull::from(ctx).cast::<()>(),
             callback: thunk::<T>,
+            _marker: core::marker::PhantomData,
         }
     }
 }
@@ -1460,7 +1635,7 @@ pub(crate) mod __gated_printer {
         const IS_JSON: bool,
         const GENERATE_SOURCE_MAP: bool,
     > {
-        pub(crate) import_records: &'a [ImportRecord],
+        pub(crate) import_records: &'a [ImportRecord<'a>],
 
         pub(crate) needs_semicolon: bool,
         pub(crate) stmt_start: i32,
@@ -1475,7 +1650,7 @@ pub(crate) mod __gated_printer {
         pub(crate) call_target: Option<ExprData>,
         pub(crate) writer: W,
 
-        pub(crate) renamer: rename::Renamer<'a, 'a>,
+        pub(crate) renamer: rename::Renamer<'a>,
         pub(crate) prev_stmt_tag: StmtTag,
         pub(crate) source_map_builder: SourceMap::chunk::Builder<'a>,
 
@@ -1543,7 +1718,7 @@ pub(crate) mod __gated_printer {
         // `core::convert::Infallible` directly.
 
         /// Reborrow the optional `ModuleInfo` for the duration of `&mut self`.
-        /// Callers that need to interleave other `&mut self` calls (e.g.
+        /// Callers that need to interleave other calls on `self` (e.g.
         /// `name_for_symbol`) must fetch those values *before* calling this, then
         /// re-call `module_info()` — see PORTING.md §Forbidden re: lifetime-extend.
         #[inline]
@@ -1695,25 +1870,18 @@ pub(crate) mod __gated_printer {
             // formatting twice.
             struct FmtAdapter<'w, W: WriterTrait> {
                 writer: &'w mut W,
-                err: Option<crate::Error>,
             }
             impl<W: WriterTrait> core::fmt::Write for FmtAdapter<'_, W> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    match self.writer.write_reserved(s.as_bytes()) {
-                        Ok(()) => Ok(()),
-                        Err(e) => {
-                            self.err = Some(e);
-                            Err(core::fmt::Error)
-                        }
-                    }
+                    self.writer.write_reserved(s.as_bytes());
+                    Ok(())
                 }
             }
             let mut adapter = FmtAdapter {
                 writer: &mut self.writer,
-                err: None,
             };
             if core::fmt::write(&mut adapter, args).is_err() {
-                return Err(adapter.err.unwrap_or(crate::Error::WriteFailed));
+                return Err(crate::Error::WriteFailed);
             }
             Ok(())
         }
@@ -1751,7 +1919,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn mangled_prop_name(&mut self, ref_: Ref) -> &'a [u8] {
+        pub(crate) fn mangled_prop_name(&self, ref_: Ref) -> &'a [u8] {
             let ref_ = self.symbols().follow(ref_);
             // TODO: we don't support that
             if let Some(mangled_props) = self.options.mangled_props {
@@ -1913,10 +2081,7 @@ pub(crate) mod __gated_printer {
 
         #[inline]
         pub(crate) fn print_space_before_identifier(&mut self) {
-            // `writer.written()` starts at -1, so `>= 0` means "at least one byte has
-            // been written". Using `> 0` here would skip the space when exactly one
-            // byte precedes a keyword (e.g. `x instanceof y` minified to `xinstanceof y`).
-            if self.writer.written() >= 0
+            if self.writer.written() > 0
                 && (lexer::is_identifier_continue(self.writer.prev_char() as i32)
                     || self.writer.written() == self.prev_reg_exp_end)
             {
@@ -2004,11 +2169,18 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_decls(
             &mut self,
-            keyword: &'static [u8],
+            kind: S::Kind,
             decls_: &[G::Decl],
             flags: ExprFlagSet,
             tlm: TopLevelAndIsExport,
         ) {
+            let keyword: &'static [u8] = match kind {
+                S::Kind::KVar => b"var",
+                S::Kind::KLet => b"let",
+                S::Kind::KConst => b"const",
+                S::Kind::KUsing => b"using",
+                S::Kind::KAwaitUsing => b"await using",
+            };
             self.print(keyword);
             self.print_space();
             let mut decls = decls_;
@@ -2019,169 +2191,221 @@ pub(crate) mod __gated_printer {
                 unreachable!();
             }
 
-            if bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING {
-                // Minify
-                //
-                //    var a = obj.foo, b = obj.bar, c = obj.baz;
-                //
-                // to
-                //
-                //    var {a, b, c} = obj;
-                //
-                // Caveats:
-                //   - Same consecutive target
-                //   - No optional chaining
-                //   - No computed property access
-                //   - Identifier bindings only
-                'brk: {
-                    if decls.len() <= 1 {
-                        break 'brk;
-                    }
-                    let first_decl = &decls[0];
-                    let second_decl = &decls[1];
+            // A `using` or `await using` declaration admits only identifier
+            // bindings, never a binding pattern.
+            let allow_destructuring =
+                bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING && !kind.is_using();
 
-                    if !matches!(first_decl.binding.data, BindingData::BIdentifier(_))
-                        || !matches!(second_decl.binding.data, BindingData::BIdentifier(_))
-                    {
-                        break 'brk;
-                    }
-
-                    let Some(target_value) = &first_decl.value else {
-                        break 'brk;
-                    };
-                    let ExprData::EDot(target_e_dot) = &target_value.data else {
-                        break 'brk;
-                    };
-                    let ExprData::EIdentifier(target_id) = &target_e_dot.target.data else {
-                        break 'brk;
-                    };
-                    if target_e_dot.optional_chain.is_some() {
-                        break 'brk;
-                    }
-                    let target_ref = target_id.ref_;
-
-                    let Some(second_value) = &second_decl.value else {
-                        break 'brk;
-                    };
-                    let ExprData::EDot(second_e_dot) = &second_value.data else {
-                        break 'brk;
-                    };
-                    let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
-                        break 'brk;
-                    };
-                    if second_e_dot.optional_chain.is_some() || !second_id.ref_.eql(target_ref) {
-                        break 'brk;
-                    }
-
-                    {
-                        // Reset the temporary bindings array early on
-                        let mut temp_bindings = core::mem::take(&mut self.temporary_bindings);
-                        temp_bindings.reserve(2);
-                        temp_bindings.push(B::Property {
-                            flags: Default::default(),
-                            key: Expr::init(
-                                E::String::init(&target_e_dot.name),
-                                target_e_dot.name_loc,
-                            ),
-                            value: decls[0].binding,
-                            default_value: None,
-                        });
-                        temp_bindings.push(B::Property {
-                            flags: Default::default(),
-                            key: Expr::init(
-                                E::String::init(&second_e_dot.name),
-                                second_e_dot.name_loc,
-                            ),
-                            value: decls[1].binding,
-                            default_value: None,
-                        });
-
-                        decls = &decls[2..];
-                        while !decls.is_empty() {
-                            let decl = &decls[0];
-
-                            if !matches!(decl.binding.data, BindingData::BIdentifier(_)) {
-                                break;
-                            }
-                            let Some(value) = &decl.value else {
-                                break;
-                            };
-                            let ExprData::EDot(e_dot) = &value.data else {
-                                break;
-                            };
-                            let ExprData::EIdentifier(id) = &e_dot.target.data else {
-                                break;
-                            };
-                            if e_dot.optional_chain.is_some() || !id.ref_.eql(target_ref) {
-                                break;
-                            }
-
-                            temp_bindings.push(B::Property {
-                                flags: Default::default(),
-                                key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
-                                value: decl.binding,
-                                default_value: None,
-                            });
-                            decls = &decls[1..];
-                        }
-                        let mut b_object = B::Object {
-                            // SAFETY: `temp_bindings`' heap buffer is stable until the
-                            // matching clear()/drop below; `print_binding` only reads it.
-                            properties: js_ast::StoreSlice::new_mut(temp_bindings.as_mut_slice()),
-                            is_single_line: true,
-                        };
-                        // `Binding::init(*B.Object, loc)` is gated upstream;
-                        // inline its body — it just tags the union and copies `loc`.
-                        // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
-                        // pointee is a stack local but `print_binding` only reads it and
-                        // returns before `b_object` is dropped (same as the prior `&raw mut`).
-                        let binding = Binding {
-                            loc: target_e_dot.target.loc,
-                            data: BindingData::BObject(js_ast::StoreRef::from_bump(&mut b_object)),
-                        };
-                        self.print_binding(binding, tlm);
-                        // If recursion replaced
-                        // `self.temporary_bindings`, drop our local; else clear+restore.
-                        if self.temporary_bindings.capacity() > 0 {
-                            drop(temp_bindings);
-                        } else {
-                            temp_bindings.clear();
-                            self.temporary_bindings = temp_bindings;
-                        }
-                    }
-
-                    self.print_whitespacer(ws!(b" = "));
-                    self.print_expr(second_e_dot.target, Level::Comma, flags);
-
-                    if decls.is_empty() {
-                        return;
-                    }
-
+            let mut needs_comma = false;
+            'decls: while !decls.is_empty() {
+                if needs_comma {
                     self.print(b",");
                     self.print_space();
                 }
-            }
+                needs_comma = true;
 
-            {
+                if allow_destructuring {
+                    // Minify each run of
+                    //
+                    //    a = obj.foo, b = obj.bar, c = obj.baz
+                    //
+                    // to
+                    //
+                    //    {foo: a, bar: b, baz: c} = obj
+                    //
+                    // Caveats:
+                    //   - Same consecutive target
+                    //   - A stable target (`is_stable_destructuring_target`)
+                    //   - No optional chaining
+                    //   - No computed property access
+                    //   - Identifier bindings only
+                    'brk: {
+                        if decls.len() <= 1 {
+                            break 'brk;
+                        }
+                        let first_decl = &decls[0];
+                        let second_decl = &decls[1];
+
+                        let BindingData::BIdentifier(first_binding) = &first_decl.binding.data
+                        else {
+                            break 'brk;
+                        };
+                        let BindingData::BIdentifier(second_binding) = &second_decl.binding.data
+                        else {
+                            break 'brk;
+                        };
+
+                        let Some(target_value) = &first_decl.value else {
+                            break 'brk;
+                        };
+                        let ExprData::EDot(target_e_dot) = &target_value.data else {
+                            break 'brk;
+                        };
+                        let ExprData::EIdentifier(target_id) = &target_e_dot.target.data else {
+                            break 'brk;
+                        };
+                        if target_e_dot.optional_chain.is_some() {
+                            break 'brk;
+                        }
+                        // Compare symbols, not raw refs. A `var` that re-declares
+                        // a parameter or an earlier `var` gets its own ref, linked
+                        // to the existing symbol, so `n` in `var n = n.next` and
+                        // the `n` it reads are two refs for one variable.
+                        let symbols = self.renamer.symbols();
+                        let target_ref = symbols.follow(target_id.ref_);
+
+                        if !self.is_stable_destructuring_target(*target_id, target_ref)
+                            // A local bound like an import: its reads print as exports.
+                            || self.import_ref(target_e_dot.target).is_some()
+                        {
+                            break 'brk;
+                        }
+
+                        // A group evaluates its target once, before any
+                        // assignment, but the original declarators execute in
+                        // order. A declarator that binds the target itself can
+                        // only be the last member of a group: a later member
+                        // would read the rebound target.
+                        if symbols.follow(first_binding.get().r#ref).eql(target_ref) {
+                            break 'brk;
+                        }
+
+                        let Some(second_value) = &second_decl.value else {
+                            break 'brk;
+                        };
+                        let ExprData::EDot(second_e_dot) = &second_value.data else {
+                            break 'brk;
+                        };
+                        let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
+                            break 'brk;
+                        };
+                        if second_e_dot.optional_chain.is_some()
+                            || !symbols.follow(second_id.ref_).eql(target_ref)
+                        {
+                            break 'brk;
+                        }
+                        let mut target_rebound =
+                            symbols.follow(second_binding.get().r#ref).eql(target_ref);
+
+                        {
+                            // Reset the temporary bindings array early on
+                            let mut temp_bindings = core::mem::take(&mut self.temporary_bindings);
+                            temp_bindings.reserve(2);
+                            temp_bindings.push(B::Property {
+                                flags: Default::default(),
+                                key: Expr::init(
+                                    E::String::init(&target_e_dot.name),
+                                    target_e_dot.name_loc,
+                                ),
+                                value: decls[0].binding,
+                                default_value: None,
+                            });
+                            temp_bindings.push(B::Property {
+                                flags: Default::default(),
+                                key: Expr::init(
+                                    E::String::init(&second_e_dot.name),
+                                    second_e_dot.name_loc,
+                                ),
+                                value: decls[1].binding,
+                                default_value: None,
+                            });
+
+                            decls = &decls[2..];
+                            while !decls.is_empty() && !target_rebound {
+                                let decl = &decls[0];
+
+                                let BindingData::BIdentifier(binding) = &decl.binding.data else {
+                                    break;
+                                };
+                                let Some(value) = &decl.value else {
+                                    break;
+                                };
+                                let ExprData::EDot(e_dot) = &value.data else {
+                                    break;
+                                };
+                                let ExprData::EIdentifier(id) = &e_dot.target.data else {
+                                    break;
+                                };
+                                if e_dot.optional_chain.is_some()
+                                    || !symbols.follow(id.ref_).eql(target_ref)
+                                {
+                                    break;
+                                }
+                                target_rebound =
+                                    symbols.follow(binding.get().r#ref).eql(target_ref);
+
+                                temp_bindings.push(B::Property {
+                                    flags: Default::default(),
+                                    key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
+                                    value: decl.binding,
+                                    default_value: None,
+                                });
+                                decls = &decls[1..];
+                            }
+                            let mut b_object = B::Object {
+                                // SAFETY: `temp_bindings`' heap buffer is stable until the
+                                // matching clear()/drop below; `print_binding` only reads it.
+                                properties: js_ast::StoreSlice::new_mut(
+                                    temp_bindings.as_mut_slice(),
+                                ),
+                                is_single_line: true,
+                                close_brace_loc: bun_ast::Loc::EMPTY,
+                            };
+                            // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
+                            // pointee is a stack local but `print_binding` only reads it and
+                            // returns before `b_object` is dropped (same as the prior `&raw mut`).
+                            let binding = Binding {
+                                loc: target_e_dot.target.loc,
+                                data: BindingData::BObject(js_ast::StoreRef::from_bump(
+                                    &mut b_object,
+                                )),
+                            };
+                            self.print_binding(binding, tlm);
+                            // If recursion replaced
+                            // `self.temporary_bindings`, drop our local; else clear+restore.
+                            if self.temporary_bindings.capacity() > 0 {
+                                drop(temp_bindings);
+                            } else {
+                                temp_bindings.clear();
+                                self.temporary_bindings = temp_bindings;
+                            }
+                        }
+
+                        self.print_whitespacer(ws!(b" = "));
+                        self.print_expr(second_e_dot.target, Level::Comma, flags);
+
+                        continue 'decls;
+                    }
+                }
+
                 self.print_binding(decls[0].binding, tlm);
 
                 if let Some(value) = &decls[0].value {
                     self.print_whitespacer(ws!(b" = "));
                     self.print_expr(*value, Level::Comma, flags);
                 }
+                decls = &decls[1..];
             }
+        }
 
-            for decl in &decls[1..] {
-                self.print(b",");
-                self.print_space();
-
-                self.print_binding(decl.binding, tlm);
-
-                if let Some(value) = &decl.value {
-                    self.print_whitespacer(ws!(b" = "));
-                    self.print_expr(*value, Level::Comma, flags);
-                }
+        /// The group reads its target once where the declarators read it once
+        /// each, and a getter on the first property runs in between. The
+        /// target must be a declared symbol that nothing assigns, outside
+        /// `with` and direct `eval`, or a known pure global such as `Math`.
+        fn is_stable_destructuring_target(&self, id: E::Identifier, target_ref: Ref) -> bool {
+            if id.must_keep_due_to_with_stmt() {
+                return false;
             }
+            let Some(symbol) = self.symbols().get_const(target_ref) else {
+                return false;
+            };
+            if symbol.has_been_assigned_to() || symbol.namespace_alias.is_some() {
+                return false;
+            }
+            if symbol.kind == js_ast::symbol::Kind::Unbound {
+                return id.can_be_removed_if_unused();
+            }
+            !symbol.must_not_be_renamed()
         }
 
         #[inline]
@@ -2191,6 +2415,14 @@ pub(crate) mod __gated_printer {
             }
             self.source_map_builder
                 .add_source_mapping(location, self.writer.slice());
+        }
+
+        #[inline]
+        pub(crate) fn mark_object_brace(&mut self) {
+            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
+                return;
+            }
+            self.source_map_builder.mark_object_brace();
         }
 
         #[inline]
@@ -2348,10 +2580,13 @@ pub(crate) mod __gated_printer {
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
                 let val = float as u64;
-                if let Some(e) = bun_core::fmt::pow10_exp_1e4_to_1e9(val) {
-                    self.print(b"1e");
-                    self.print(&[b'0' + e]);
-                    return;
+                // JSON.stringify prints every integer below 1e21 as plain digits.
+                if !IS_JSON {
+                    if let Some(e) = bun_core::fmt::pow10_exp_1e4_to_1e9(val) {
+                        self.print(b"1e");
+                        self.print(&[b'0' + e]);
+                        return;
+                    }
                 }
                 let mut buf = bun_core::fmt::ItoaBuf::new();
                 self.print(bun_core::fmt::itoa(&mut buf, val));
@@ -2371,20 +2606,20 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
         pub(crate) fn print_string_characters_utf16(&mut self, text: &[u16], quote: u8) {
             debug_assert!(matches!(quote, b'\'' | b'"' | b'`'));
-            let slice: &[u8] = bytemuck::cast_slice(text);
+            let slice = bun_core::slice_as_bytes(text);
             let mut writer = self.writer.std_writer();
             let _ = write_pre_quoted_string_inner::<_, { Encoding::Utf16 }>(
                 slice,
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -2410,19 +2645,9 @@ pub(crate) mod __gated_printer {
             self.renamer.symbols()
         }
 
-        /// Borrowck-reshape helper: `Renamer::name_for_symbol` returns a slice
-        /// borrowing `&mut self.renamer`, which conflicts with the immediately
-        /// following `self.print_*` call. The returned bytes always point into
-        /// either the AST arena (`Symbol::original_name: *const [u8]`) or the
-        /// `Source::contents` buffer — both are kept alive for `'a` by the
-        /// caller of `Printer::init`. Detach the borrow to a raw ptr per the
-        /// parser's ARENA convention (matching `slice_of` for AST fields).
-        /// Reshaped for borrowck — a future refactor could thread `'bump` through Renamer.
         #[inline]
-        fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {
-            let p = std::ptr::from_ref::<[u8]>(self.renamer.name_for_symbol(ref_));
-            // SAFETY: arena/source-backed; outlives 'a (see renamer.rs SAFETY notes).
-            unsafe { &*p }
+        fn name_for_symbol(&self, ref_: Ref) -> &'a [u8] {
+            self.renamer.name_for_symbol(ref_)
         }
 
         // Emitting a `throw` shim is a diagnostic/error path — keep it out of the
@@ -2436,7 +2661,7 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord {
+        pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord<'a> {
             // detached from `&self` so callers can interleave `&mut self` printing.
             &self.import_records[import_record_index]
         }
@@ -2487,6 +2712,7 @@ pub(crate) mod __gated_printer {
                 //
                 if record.tag == ImportRecordTag::Bun {
                     if record.kind == ImportKind::Dynamic {
+                        self.print_space_before_identifier();
                         self.print(b"Promise.resolve(globalThis.Bun)");
                         if wrap {
                             self.print(b")");
@@ -2494,6 +2720,7 @@ pub(crate) mod __gated_printer {
                         return;
                     } else if record.kind == ImportKind::Require || record.kind == ImportKind::Stmt
                     {
+                        self.print_space_before_identifier();
                         self.print(b"globalThis.Bun");
                         if wrap {
                             self.print(b")");
@@ -2514,6 +2741,12 @@ pub(crate) mod __gated_printer {
                     meta.exports_ref = Ref::NONE;
                 }
 
+                // Wrap this with a call to "__toESM()" if this is a CommonJS file
+                let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                // The linker bound every name read off the result, so the
+                // namespace object may not exist: the result is `{}`.
+                let namespace_unused = record.flags.contains(ImportRecordFlags::NAMESPACE_UNUSED);
+
                 // Internal "import()" of async ESM
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
                     self.print_space_before_identifier();
@@ -2522,7 +2755,18 @@ pub(crate) mod __gated_printer {
                     if meta.exports_ref.is_valid() {
                         let _ = self.print_dot_then_prefix();
                         self.print_space_before_identifier();
-                        self.print_symbol(meta.exports_ref);
+                        if namespace_unused {
+                            self.print(b"({})");
+                        } else {
+                            if wrap_with_to_esm {
+                                self.print_symbol(self.options.to_esm_ref);
+                                self.print(b"(");
+                            }
+                            self.print_symbol(meta.exports_ref);
+                            if wrap_with_to_esm {
+                                self.print_to_esm_suffix();
+                            }
+                        }
                         self.print_dot_then_suffix();
                     }
                     if wrap {
@@ -2544,19 +2788,18 @@ pub(crate) mod __gated_printer {
                     }
                 }
 
-                // Make sure the comma operator is properly wrapped
-                let wrap_comma_operator = meta.exports_ref.is_valid()
-                    && meta.wrapper_ref.is_valid()
-                    && level.gte(Level::Comma);
-                if wrap_comma_operator {
-                    self.print(b"(");
-                }
-
-                // Wrap this with a call to "__toESM()" if this is a CommonJS file
-                let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
                 if wrap_with_to_esm {
                     self.print_space_before_identifier();
                     self.print_symbol(self.options.to_esm_ref);
+                    self.print(b"(");
+                }
+
+                // Make sure the comma operator is properly wrapped, always as a
+                // call argument: `__toESM((init_foo(), exports_foo), 1)`.
+                let wrap_comma_operator = meta.exports_ref.is_valid()
+                    && meta.wrapper_ref.is_valid()
+                    && (level.gte(Level::Comma) || wrap_with_to_esm);
+                if wrap_comma_operator {
                     self.print(b"(");
                 }
 
@@ -2582,11 +2825,21 @@ pub(crate) mod __gated_printer {
                     }
 
                     // Return the namespace object if this is an ESM file
-                    if meta.exports_ref.is_valid() {
+                    if meta.exports_ref.is_valid() && namespace_unused {
+                        // Without `init_x(), ` before it, `{}` could start an
+                        // arrow body or a statement.
+                        self.print(if meta.wrapper_ref.is_valid() {
+                            b"{}".as_slice()
+                        } else {
+                            b"({})".as_slice()
+                        });
+                    } else if meta.exports_ref.is_valid() {
                         // Wrap this with a call to "__toCommonJS()" if this is an ESM file
                         let wrap_with_to_cjs = record
                             .flags
                             .contains(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
+                        // With no `init_x(), ` before it, this is the first token.
+                        self.print_space_before_identifier();
                         if wrap_with_to_cjs {
                             self.print_symbol(self.options.to_commonjs_ref);
                             self.print(b"(");
@@ -2602,17 +2855,11 @@ pub(crate) mod __gated_printer {
                     }
                 }
 
-                if wrap_with_to_esm {
-                    if self.options.input_module_type == bundle_opts::ModuleType::Esm {
-                        self.print(b",");
-                        self.print_space();
-                        self.print(b"1");
-                    }
-                    self.print(b")");
-                }
-
                 if wrap_comma_operator {
                     self.print(b")");
+                }
+                if wrap_with_to_esm {
+                    self.print_to_esm_suffix();
                 }
                 if record.kind == ImportKind::Dynamic && has_side_effects {
                     self.print_dot_then_suffix();
@@ -2656,7 +2903,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.print_symbol(self.options.hmr_ref);
                     if record.tag == ImportRecordTag::Builtin {
-                        self.print(b".builtin(");
+                        self.print(b".requireBuiltin(");
                     } else {
                         self.print(b".require(");
                     }
@@ -2673,7 +2920,19 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                 }
 
-                if let Some(ref_) = self.options.require_ref {
+                if record
+                    .flags
+                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+                {
+                    // A split `require()`: the path is a sibling chunk, resolved
+                    // relative to this chunk — not through the runtime's
+                    // `__require`, which would resolve it relative to the
+                    // runtime's chunk.
+                    if let Some(mi) = self.module_info() {
+                        mi.flags.contains_import_meta = true;
+                    }
+                    self.print(b"import.meta.require");
+                } else if let Some(ref_) = self.options.require_ref {
                     self.print_symbol(ref_);
                 } else {
                     self.print(b"require");
@@ -2683,8 +2942,17 @@ pub(crate) mod __gated_printer {
                 self.print_import_record_path(record);
                 self.print(b")");
 
+                // A split `require()` of a module that is CommonJS at link
+                // time: the chunk's only export is `default: module.exports`.
+                if record
+                    .flags
+                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE_DEFAULT)
+                {
+                    self.print(b".default");
+                }
+
                 if wrap_with_to_esm {
-                    self.print(b")");
+                    self.print_to_esm_suffix();
                 }
                 if wrap {
                     self.print(b")");
@@ -2693,9 +2961,21 @@ pub(crate) mod __gated_printer {
             }
 
             // External import()
-            self.add_source_mapping(record.range.loc);
-
             self.print_space_before_identifier();
+
+            let preload = record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
+                && self.options.module_preload_ref.is_valid();
+            let wrap_preload = preload && !wrap && level.gte(Level::Comma);
+            if preload {
+                if wrap_preload {
+                    self.print(b"(");
+                }
+                self.print_symbol(self.options.module_preload_ref);
+                self.print(b"(");
+                self.print_string_literal_utf8(record.path.pretty, false);
+                self.print(b"),");
+                self.print_space();
+            }
 
             // Wrap with __toESM if importing a CommonJS module
             let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
@@ -2711,7 +2991,11 @@ pub(crate) mod __gated_printer {
                 self.print_string_literal_utf8(path.pretty, false);
             }
 
-            if !import_options.is_missing() {
+            // A bundled target is now a JavaScript chunk: attributes such as
+            // `with { type: "json" }` described the source file, not the chunk.
+            if !import_options.is_missing()
+                && !record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
+            {
                 self.print_whitespacer(ws!(b", "));
                 self.print_expr(import_options, Level::Comma, ExprFlagSet::empty());
             }
@@ -2729,9 +3013,20 @@ pub(crate) mod __gated_printer {
                 self.print(b"))");
             }
 
-            if wrap {
+            if wrap || wrap_preload {
                 self.print(b")");
             }
+        }
+
+        /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) for an ES module by
+        /// type, then `)`.
+        fn print_to_esm_suffix(&mut self) {
+            if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+                self.print(b",");
+                self.print_space();
+                self.print(b"1");
+            }
+            self.print(b")");
         }
 
         #[inline]
@@ -2996,6 +3291,10 @@ pub(crate) mod __gated_printer {
                     {
                         // Node.js doesn't support import.meta.main
                         // Most of the time, leave it in there
+                        let wrap = data.inverted && level.gte(Level::Prefix);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         if data.inverted {
                             self.add_source_mapping(expr.loc);
                             self.print(b"!");
@@ -3007,11 +3306,18 @@ pub(crate) mod __gated_printer {
                             mi.flags.contains_import_meta = true;
                         }
                         self.print(b"import.meta.main");
+                        if wrap {
+                            self.print(b")");
+                        }
                     } else {
                         debug_assert!(
                             self.options.module_type != bundle_opts::Format::InternalBakeDev
                         );
 
+                        let wrap = level.gte(Level::Equals);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
 
@@ -3039,6 +3345,9 @@ pub(crate) mod __gated_printer {
                             self.print_symbol(self.options.commonjs_module_ref);
                         } else {
                             self.print(b"module");
+                        }
+                        if wrap {
+                            self.print(b")");
                         }
                     }
                 }
@@ -3110,60 +3419,7 @@ pub(crate) mod __gated_printer {
                     }
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {
-                    self.print_space_before_identifier();
-                    self.add_source_mapping(expr.loc);
-
-                    // reshaped for borrowck — find the matching index first,
-                    // then drop the immutable iter borrow before printing.
-                    let mut found: Option<usize> = None;
-                    if let Some(exports) = self.options.commonjs_named_exports {
-                        for (idx, value) in exports.values().iter().enumerate() {
-                            if value.loc_ref.ref_.eql(id.ref_) {
-                                found = Some(idx);
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(idx) = found {
-                        let exports = self.options.commonjs_named_exports.unwrap();
-                        // `commonjs_named_exports` keys borrow `'a` (Options<'a>); capture
-                        // as `BackRef<[u8]>` so the `&self` borrow is dropped before the
-                        // `&mut self` print calls below.
-                        let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
-                        let value_loc_ref = exports.values()[idx].loc_ref;
-                        let value_needs_decl = exports.values()[idx].needs_decl;
-                        struct V {
-                            loc_ref: js_ast::LocRef,
-                            needs_decl: bool,
-                        }
-                        let value = V {
-                            loc_ref: value_loc_ref,
-                            needs_decl: value_needs_decl,
-                        };
-                        if self.options.commonjs_named_exports_deoptimized || value.needs_decl {
-                            if self.options.commonjs_module_exports_assigned_deoptimized
-                                && id.base() == E::CommonJSExportIdentifierBase::ModuleDotExports
-                                && self.options.commonjs_module_ref.is_valid()
-                            {
-                                self.print_symbol(self.options.commonjs_module_ref);
-                                self.print(b".exports");
-                            } else {
-                                self.print_symbol(self.options.commonjs_named_exports_ref);
-                            }
-
-                            let key: &[u8] = key.get();
-                            if lexer::is_identifier(key) {
-                                self.print(b".");
-                                self.print(key);
-                            } else {
-                                self.print(b"[");
-                                self.print_string_literal_utf8(key, false);
-                                self.print(b"]");
-                            }
-                        } else {
-                            self.print_symbol(value.loc_ref.ref_);
-                        }
-                    }
+                    self.print_commonjs_export_identifier(*id, expr.loc, false);
                 }
                 ExprData::ENew(e) => {
                     let has_pure_comment = e.can_be_unwrapped_if_unused == E::CallUnwrap::IfUnused
@@ -3246,6 +3502,8 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                         self.print_expr(e.target, Level::Postfix, ExprFlag::none());
                         self.print(b")");
+                    } else if let ExprData::ECommonjsExportIdentifier(id) = e.target.data {
+                        self.print_commonjs_export_identifier(id, e.target.loc, true);
                     } else {
                         self.print_expr(e.target, Level::Postfix, target_flags);
                     }
@@ -3313,9 +3571,10 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::ERequireString(e) => {
+                    self.add_source_mapping(expr.loc);
                     self.print_require_or_import_expr(
                         e.import_record_index,
-                        e.unwrapped_id != u32::MAX,
+                        e.unwrapped_id.is_some(),
                         &[],
                         Expr::EMPTY,
                         level,
@@ -3329,6 +3588,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_space_before_identifier();
+                    self.add_source_mapping(expr.loc);
 
                     if let Some(require_ref) = self.options.require_ref {
                         self.print_symbol(require_ref);
@@ -3381,6 +3641,7 @@ pub(crate) mod __gated_printer {
                             self.print(b")");
                         }
                     } else {
+                        self.add_source_mapping(expr.loc);
                         self.print_require_or_import_expr(
                             e.import_record_index,
                             false,
@@ -3403,6 +3664,12 @@ pub(crate) mod __gated_printer {
                             self.try_to_get_imported_enum_value(e.target, &e.name)
                         {
                             self.print_inlined_enum(inlined, &e.name, level);
+                            return;
+                        }
+                        if e.is_import_property_use
+                            && let Some(binding) = self.import_member_binding(e.target, &e.name)
+                        {
+                            self.print_expr(binding, level, flags);
                             return;
                         }
                     } else {
@@ -3448,8 +3715,8 @@ pub(crate) mod __gated_printer {
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
-                        if let Some(mut str) = e.index.data.as_e_string() {
-                            str.resolve_rope_if_needed(self.bump);
+                        if let Some(str) = e.index.data.as_e_string() {
+                            let str = str.flattened(self.bump);
                             if str.is_utf8() {
                                 if let Some(value) =
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
@@ -3458,6 +3725,16 @@ pub(crate) mod __gated_printer {
                                     return;
                                 }
                             }
+                        }
+                        if e.is_import_property_use
+                            && let Some(str) = e.index.unwrap_inlined().data.as_e_string()
+                            && let str = str.flattened(self.bump)
+                            && str.is_utf8()
+                            && let Some(binding) =
+                                self.import_member_binding(e.target, str.slice8())
+                        {
+                            self.print_expr(binding, level, flags);
+                            return;
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
@@ -3661,6 +3938,7 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                     }
                     self.add_source_mapping(expr.loc);
+                    self.mark_object_brace();
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
@@ -3699,6 +3977,7 @@ pub(crate) mod __gated_printer {
                     }
                     if e.close_brace_loc.start > expr.loc.start {
                         self.add_source_mapping(e.close_brace_loc);
+                        self.mark_object_brace();
                     }
                     self.print(b"}");
                     if wrap {
@@ -3740,8 +4019,28 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EString(e) => {
-                    let mut e = *e;
-                    e.resolve_rope_if_needed(self.bump);
+                    // The `--no-bundle` data-loader path prints the TOML AST
+                    // as-is; the bundler lowers these to a real call first.
+                    if let Some(kind) = e.toml_datetime {
+                        let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
+                        if wrap {
+                            self.print(b"(");
+                        }
+                        self.print_space_before_identifier();
+                        self.add_source_mapping(expr.loc);
+                        self.print(b"Temporal.");
+                        self.print(kind.temporal_class());
+                        self.print(b".from(\"");
+                        // Always ASCII (validated by the TOML scanner); no escaping.
+                        self.print(e.slice8());
+                        self.print(b"\")");
+                        if wrap {
+                            self.print(b")");
+                        }
+                        return;
+                    }
+
+                    let e = e.flattened(self.bump);
                     self.add_source_mapping(expr.loc);
 
                     // If this was originally a template literal, print it as one as long as we're not minifying
@@ -3896,6 +4195,8 @@ pub(crate) mod __gated_printer {
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                             self.print(b")");
+                        } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
+                            self.print_commonjs_export_identifier(id, tag.loc, true);
                         } else {
                             self.print_expr(*tag, Level::Postfix, ExprFlag::none());
                         }
@@ -3904,12 +4205,12 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b"`");
-                    match &mut e.head {
+                    match &e.head {
                         E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
                         E::TemplateContents::Cooked(cooked) => {
                             if cooked.is_present() {
-                                cooked.resolve_rope_if_needed(self.bump);
-                                self.print_string_characters_e_string(cooked, b'`');
+                                let cooked = cooked.flattened(self.bump);
+                                self.print_string_characters_e_string(&cooked, b'`');
                             }
                         }
                     }
@@ -3922,12 +4223,7 @@ pub(crate) mod __gated_printer {
                             E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
                             E::TemplateContents::Cooked(cooked) => {
                                 if cooked.is_present() {
-                                    // `parts` is `*mut [TemplatePart]` but accessed `&[T]`
-                                    // here. We resolve a local copy of the
-                                    // EString header (the rope chain is StoreRef-linked and Copy) and
-                                    // prints from that — the arena node stays roped.
-                                    let mut local = E::EString { ..*cooked };
-                                    local.resolve_rope_if_needed(self.bump);
+                                    let local = cooked.flattened(self.bump);
                                     self.print_string_characters_e_string(&local, b'`');
                                 }
                             }
@@ -4316,6 +4612,63 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// `exports.name`: the binding `$name`, or a property for a call that reads `this`.
+        fn print_commonjs_export_identifier(
+            &mut self,
+            id: E::CommonJSExportIdentifier,
+            loc: bun_ast::Loc,
+            is_call_target: bool,
+        ) {
+            self.print_space_before_identifier();
+            self.add_source_mapping(loc);
+
+            let Some(exports) = self.options.commonjs_named_exports else {
+                return;
+            };
+            let Some(idx) = exports
+                .values()
+                .iter()
+                .position(|value| value.loc_ref.ref_.eql(id.ref_))
+            else {
+                return;
+            };
+            // `commonjs_named_exports` keys borrow `'a` (Options<'a>); capture
+            // as `BackRef<[u8]>` so the `&self` borrow is dropped before the
+            // `&mut self` print calls below.
+            let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
+            let value = &exports.values()[idx];
+            let (binding, needs_decl) = (value.loc_ref.ref_, value.needs_decl);
+            let call_needs_this = is_call_target
+                && self
+                    .symbols()
+                    .get_const(id.ref_)
+                    .is_some_and(|symbol| symbol.called_as_method() && !symbol.call_ignores_this());
+
+            if !(self.options.commonjs_named_exports_deoptimized || needs_decl || call_needs_this) {
+                self.print_symbol(binding);
+                return;
+            }
+            if self.options.commonjs_module_exports_assigned_deoptimized
+                && id.base() == E::CommonJSExportIdentifierBase::ModuleDotExports
+                && self.options.commonjs_module_ref.is_valid()
+            {
+                self.print_symbol(self.options.commonjs_module_ref);
+                self.print(b".exports");
+            } else {
+                self.print_symbol(self.options.commonjs_named_exports_ref);
+            }
+
+            let key: &[u8] = key.get();
+            if lexer::is_identifier(key) {
+                self.print(b".");
+                self.print(key);
+            } else {
+                self.print(b"[");
+                self.print_string_literal_utf8(key, false);
+                self.print(b"]");
+            }
+        }
+
         pub(crate) fn print_reg_exp_literal(&mut self, e: &E::RegExp) {
             let n = self.writer.written();
 
@@ -4371,6 +4724,17 @@ pub(crate) mod __gated_printer {
             value.is_sign_negative()
                 || (value == f64::INFINITY
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+        }
+
+        /// Returns true if `key` must be printed as `[key]`. YAML and JSON5 keys can be any value.
+        /// A bare array or object key is a syntax error, and `minify_syntax` prints a boolean as `!0`.
+        pub(crate) fn property_key_must_be_computed(&self, key: &Expr) -> bool {
+            match &key.data {
+                ExprData::ENumber(e) => self.number_property_key_must_be_computed(e.value()),
+                ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => self.options.minify_syntax,
+                ExprData::EArray(_) | ExprData::EObject(_) => true,
+                _ => false,
+            }
         }
 
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
@@ -4588,13 +4952,14 @@ pub(crate) mod __gated_printer {
 
             let key = item.key.expect("infallible: prop has key");
 
-            // Automatically print numbers that would cause a syntax error as computed properties
+            // Automatically print keys that would cause a syntax error as computed properties
             if !IS_JSON
                 && !item.flags.contains(js_ast::flags::Property::IsComputed)
-                && matches!(&key.data, ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value()))
+                && self.property_key_must_be_computed(&key)
             {
                 // "{ -1: 0 }" must be printed as "{ [-1]: 0 }"
                 // "{ 1/0: 0 }" must be printed as "{ [1/0]: 0 }"
+                // "{ {x: 1}: 0 }" must be printed as "{ [{x: 1}]: 0 }"
                 set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
             }
 
@@ -4630,11 +4995,10 @@ pub(crate) mod __gated_printer {
                     self.print_symbol(priv_.ref_);
                 }
                 ExprData::EString(key_str) => {
-                    let mut key_str = *key_str;
-                    self.add_source_mapping(key.loc);
+                    let key_str = key_str.flattened(self.bump);
                     if key_str.is_utf8() {
-                        key_str.resolve_rope_if_needed(self.bump);
                         self.print_space_before_identifier();
+                        self.add_source_mapping(key.loc);
                         let mut allow_shorthand = true;
                         if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
                             self.print_identifier(key_str.slice8());
@@ -4679,6 +5043,7 @@ pub(crate) mod __gated_printer {
                         }
                     } else if !IS_JSON && self.can_print_identifier_utf16(key_str.slice16()) {
                         self.print_space_before_identifier();
+                        self.add_source_mapping(key.loc);
                         self.print_identifier_utf16(key_str.slice16())
                             .expect("unreachable");
 
@@ -4718,7 +5083,8 @@ pub(crate) mod __gated_printer {
                             }
                         }
                     } else {
-                        let c = best_quote_char_for_string(key_str.slice16(), false);
+                        self.add_source_mapping(key.loc);
+                        let c = Self::best_quote_char_for_e_string(&key_str, false);
                         self.print(c);
                         self.print_string_characters_utf16(key_str.slice16(), c);
                         self.print(c);
@@ -4844,16 +5210,32 @@ pub(crate) mod __gated_printer {
                 BindingData::BObject(b) => {
                     let b = b.get();
                     let properties = slice_of(b.properties);
+                    // A local the linker bound to an export (`const { a } =
+                    // await import(…)`) is that export, so it is not declared.
+                    let is_bound = |printer: &Self, property: &B::Property| {
+                        printer.options.has_dynamic_import_items
+                            && matches!(&property.value.data, BindingData::BIdentifier(id)
+                                if printer.symbols().get_const(id.get().r#ref)
+                                    .is_some_and(|symbol| symbol.is_bound_import_item()))
+                    };
                     self.print(b"{");
-                    if !properties.is_empty() {
+                    if !properties.is_empty()
+                        && (!self.options.has_dynamic_import_items
+                            || properties.iter().any(|property| !is_bound(self, property)))
+                    {
                         if !b.is_single_line {
                             self.indent();
                         }
 
-                        for (i, property) in properties.iter().enumerate() {
-                            if i != 0 {
+                        let mut printed = 0usize;
+                        for property in properties.iter() {
+                            if is_bound(self, property) {
+                                continue;
+                            }
+                            if printed != 0 {
                                 self.print(b",");
                             }
+                            printed += 1;
 
                             if b.is_single_line {
                                 self.print_space();
@@ -4886,8 +5268,7 @@ pub(crate) mod __gated_printer {
 
                                 match &property.key.data {
                                     ExprData::EString(str) => {
-                                        let mut str = *str;
-                                        str.resolve_rope_if_needed(self.bump);
+                                        let str = str.flattened(self.bump);
                                         self.add_source_mapping(property.key.loc);
 
                                         if str.is_utf8() {
@@ -4938,7 +5319,9 @@ pub(crate) mod __gated_printer {
                                                 ) {
                                                     if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                                                         // reshaped for borrowck — bump access first.
-                                                        let str8 = str.slice(self.bump);
+                                                        let str8 = bun_core::handle_oom(
+                                                            str.string(self.bump),
+                                                        );
                                                         if let Some(mi) = self.module_info() {
                                                             let name_id = mi.str(str8);
                                                             mi.add_export_info_local(
@@ -5023,7 +5406,6 @@ pub(crate) mod __gated_printer {
                 StmtData::SFunction(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
                     let name = s.func.name.as_ref().unwrap_or_else(|| {
                         Output::panic(format_args!(
                             "Internal error: expected func to have a name ref"
@@ -5031,9 +5413,11 @@ pub(crate) mod __gated_printer {
                     });
                     let name_ref = name.ref_;
 
+                    // `stmt.loc` is what follows `export`.
                     if s.func.flags.contains(G::FnFlags::IsExport) {
                         self.print(b"export ");
                     }
+                    self.add_source_mapping(stmt.loc);
                     if s.func.flags.contains(G::FnFlags::IsAsync) {
                         self.print(b"async ");
                     }
@@ -5067,12 +5451,12 @@ pub(crate) mod __gated_printer {
 
                     self.print_indent();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
                     let name_ref = s.class.class_name.as_ref().unwrap().ref_;
                     if s.is_export {
                         self.print(b"export ");
                     }
 
+                    self.add_source_mapping(stmt.loc);
                     self.print(b"class ");
                     self.add_source_mapping(s.class.class_name.as_ref().unwrap().loc);
                     let name_str = self.name_for_symbol(name_ref);
@@ -5101,7 +5485,9 @@ pub(crate) mod __gated_printer {
                 StmtData::SExportDefault(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
+                    if let js_ast::StmtOrExpr::Expr(_) = s.value {
+                        self.add_source_mapping(stmt.loc);
+                    }
                     self.print(b"export default ");
 
                     match s.value {
@@ -5124,6 +5510,7 @@ pub(crate) mod __gated_printer {
                             return Ok(());
                         }
                         js_ast::StmtOrExpr::Stmt(s2) => {
+                            self.add_source_mapping(s2.loc);
                             match &s2.data {
                                 StmtData::SFunction(func) => {
                                     self.print_space_before_identifier();
@@ -5227,15 +5614,13 @@ pub(crate) mod __gated_printer {
                         self.print_whitespacer(ws!(b"from "));
                     }
 
-                    let irp = &self.import_record(s.import_record_index as usize).path.text;
-                    self.print_import_record_path(
-                        self.import_record(s.import_record_index as usize),
-                    );
+                    let import_record = self.import_record(s.import_record_index as usize);
+                    self.print_import_record_path(import_record);
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let irp_id = mi.str(irp);
+                            let irp_id = mi.str(import_record.path.text);
                             mi.request_module(
                                 irp_id,
                                 analyze_transpiled_module::FetchParameters::None,
@@ -5275,7 +5660,7 @@ pub(crate) mod __gated_printer {
                         return Ok(());
                     }
 
-                    // `ClauseItem` isn't `Clone`, so build a Vec of arena
+                    // No need to copy the items: build a Vec of arena
                     // borrows instead and swap-remove the borrows; the printer is
                     // the only consumer of the filtered list, and a re-print
                     // recomputes the identical filtering, so the AST write-back
@@ -5411,16 +5796,15 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_whitespacer(ws!(b"} from "));
-                    let irp = &import_record.path.text;
                     self.print_import_record_path(import_record);
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
                         // reshaped for borrowck — re-borrow module_info per item so
-                        // `name_for_symbol` (which needs `&mut self`) can run between uses.
+                        // `name_for_symbol` (which borrows `self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let id = mi.str(irp);
+                            let id = mi.str(import_record.path.text);
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
@@ -5439,21 +5823,32 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 StmtData::SLocal(s) => {
-                    self.print_indent();
-                    self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
-                    match s.kind {
-                        S::Kind::KConst => {
-                            self.print_decl_stmt(s.is_export, b"const", s.decls.slice())
+                    // `const { a } = await import(…)` whose names are all bound
+                    // to exports declares nothing: only the load is left. The
+                    // other declarators keep their order around it.
+                    let decls = s.decls.slice();
+                    let mut run_start = 0;
+                    if self.options.has_dynamic_import_items && !s.is_export {
+                        for (i, decl) in decls.iter().enumerate() {
+                            if !self.binds_only_bound_imports(decl) {
+                                continue;
+                            }
+                            if run_start < i {
+                                self.print_local_stmt(
+                                    stmt.loc,
+                                    false,
+                                    s.kind,
+                                    &decls[run_start..i],
+                                );
+                            }
+                            run_start = i + 1;
+                            if let Some(value) = decl.value {
+                                self.print_unused_load(stmt.loc, value);
+                            }
                         }
-                        S::Kind::KLet => self.print_decl_stmt(s.is_export, b"let", s.decls.slice()),
-                        S::Kind::KVar => self.print_decl_stmt(s.is_export, b"var", s.decls.slice()),
-                        S::Kind::KUsing => {
-                            self.print_decl_stmt(s.is_export, b"using", s.decls.slice())
-                        }
-                        S::Kind::KAwaitUsing => {
-                            self.print_decl_stmt(s.is_export, b"await using", s.decls.slice())
-                        }
+                    }
+                    if run_start == 0 || run_start < decls.len() {
+                        self.print_local_stmt(stmt.loc, s.is_export, s.kind, &decls[run_start..]);
                     }
                 }
                 StmtData::SIf(s) => {
@@ -5584,9 +5979,10 @@ pub(crate) mod __gated_printer {
 
                     if let Some(finally) = &s.finally {
                         self.print_space();
+                        self.add_source_mapping(finally.loc);
                         self.print(b"finally");
                         self.print_space();
-                        self.print_block(finally.loc, slice_of(finally.stmts), None);
+                        self.print_block(finally.body_loc, slice_of(finally.stmts), None);
                     }
 
                     self.print_newline();
@@ -5636,6 +6032,7 @@ pub(crate) mod __gated_printer {
                     for c in slice_of(s.cases).iter() {
                         self.print_semicolon_if_needed();
                         self.print_indent();
+                        self.add_source_mapping(c.loc);
 
                         if let Some(val) = &c.value {
                             self.print(b"case");
@@ -5933,11 +6330,10 @@ pub(crate) mod __gated_printer {
                         // reshaped for borrowck — `module_info()` borrows `&mut self`,
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
-                        let import_record_path = &record.path.text;
                         use analyze_transpiled_module::FetchParameters as FP;
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let irp_id = mi.str(import_record_path);
+                            let irp_id = mi.str(record.path.text);
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -6119,21 +6515,9 @@ pub(crate) mod __gated_printer {
             }
 
             let quote = best_quote_char_for_string(import_record.path.text, false);
-            if import_record
-                .flags
-                .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
-                && !import_record.path.is_file()
-            {
-                self.print(quote);
-                self.print_string_characters_utf8(import_record.path.namespace, quote);
-                self.print(b":");
-                self.print_string_characters_utf8(import_record.path.text, quote);
-                self.print(quote);
-            } else {
-                self.print(quote);
-                self.print_string_characters_utf8(import_record.path.text, quote);
-                self.print(quote);
-            }
+            self.print(quote);
+            self.print_string_characters_utf8(import_record.path.text, quote);
+            self.print(quote);
         }
 
         #[inline]
@@ -6152,38 +6536,12 @@ pub(crate) mod __gated_printer {
                 }
                 StmtData::SLocal(s) => {
                     let flags = ExprFlag::ForbidIn.into();
-                    match s.kind {
-                        S::Kind::KVar => self.print_decls(
-                            b"var",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KLet => self.print_decls(
-                            b"let",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KConst => self.print_decls(
-                            b"const",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KUsing => self.print_decls(
-                            b"using",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KAwaitUsing => self.print_decls(
-                            b"await using",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                    }
+                    self.print_decls(
+                        s.kind,
+                        s.decls.slice(),
+                        flags,
+                        TopLevelAndIsExport::default(),
+                    );
                 }
                 // for(;)
                 StmtData::SEmpty(_) => {}
@@ -6256,7 +6614,7 @@ pub(crate) mod __gated_printer {
             if let Some(no_block) = &s.no {
                 self.print_semicolon_if_needed();
                 self.print_space_before_identifier();
-                self.add_source_mapping(no_block.loc);
+                self.add_source_mapping(s.else_loc.to_nullable().unwrap_or(no_block.loc));
                 self.print(b"else");
 
                 match &no_block.data {
@@ -6300,13 +6658,105 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// A declarator whose pattern binds only names the linker bound to
+        /// exports, so it declares nothing.
+        fn binds_only_bound_imports(&self, decl: &G::Decl) -> bool {
+            let BindingData::BObject(object) = &decl.binding.data else {
+                return false;
+            };
+            let properties = slice_of(object.get().properties);
+            !properties.is_empty()
+                && properties.iter().all(|property| {
+                    matches!(&property.value.data, BindingData::BIdentifier(id)
+                        if self.symbols().get_const(id.get().r#ref)
+                            .is_some_and(|symbol| symbol.is_bound_import_item()))
+                })
+        }
+
+        fn print_local_stmt(
+            &mut self,
+            loc: bun_ast::Loc,
+            is_export: bool,
+            kind: S::Kind,
+            decls: &[G::Decl],
+        ) {
+            self.print_semicolon_if_needed();
+            self.print_indent();
+            self.print_space_before_identifier();
+            self.print_decl_stmt(loc, is_export, kind, decls);
+        }
+
+        /// The initializer of such a declarator, as a statement. Its value is
+        /// `{}`, so an `await` of it is unused too.
+        fn print_unused_load(&mut self, loc: bun_ast::Loc, value: Expr) {
+            if matches!(value.data, ExprData::EIdentifier(_)) {
+                return;
+            }
+            self.print_semicolon_if_needed();
+            if !self.options.minify_whitespace && self.options.indent.count > 0 {
+                self.print_indent();
+            }
+            self.stmt_start = self.writer.written();
+            self.add_source_mapping(loc);
+            if let ExprData::EAwait(e) = value.data {
+                self.print_space_before_identifier();
+                self.print(b"await");
+                self.print_space();
+                self.print_expr(
+                    e.value,
+                    Level::Prefix.sub(1),
+                    ExprFlag::expr_result_is_unused(),
+                );
+            } else {
+                self.print_expr(value, Level::Lowest, ExprFlag::expr_result_is_unused());
+            }
+            self.print_semicolon_after_statement();
+        }
+
+        /// The import `target` names: an import identifier, or a local a
+        /// pattern binds that the linker bound like one (`const { X } = await
+        /// import(…)`).
+        #[inline]
+        fn import_ref(&self, target: Expr) -> Option<Ref> {
+            match &target.data {
+                ExprData::EImportIdentifier(id) => Some(id.ref_),
+                ExprData::EIdentifier(id)
+                    if self.options.has_dynamic_import_items
+                        && self
+                            .symbols()
+                            .get_const(id.ref_)
+                            .is_some_and(|symbol| symbol.is_bound_import_item()) =>
+                {
+                    Some(id.ref_)
+                }
+                _ => None,
+            }
+        }
+
+        /// `X.name` where the linker bound the access straight to an export
+        /// (`LinkerGraph::import_member_bindings`): the import identifier to
+        /// print in its place.
+        fn import_member_binding(&self, target: Expr, name: &[u8]) -> Option<Expr> {
+            let import_ref = self.import_ref(target)?;
+            let binding = *self
+                .options
+                .import_member_bindings?
+                .get(&import_ref)?
+                .get(name)?;
+            Some(Expr::init(
+                E::ImportIdentifier::new(binding, false),
+                target.loc,
+            ))
+        }
+
         pub(crate) fn try_to_get_imported_enum_value(
             &self,
             target: Expr,
             name: &[u8],
         ) -> Option<js_ast::InlinedEnumValueDecoded> {
-            if let ExprData::EImportIdentifier(id) = &target.data {
-                let ref_ = self.symbols().follow(id.ref_);
+            let base = self.import_ref(target)?;
+            {
+                let ref_ = self.symbols().follow(base);
                 if let Some(symbol) = self.symbols().get_const(ref_) {
                     if symbol.kind == js_ast::symbol::Kind::TsEnum {
                         if let Some(enum_value) = self.options.ts_enums.and_then(|m| m.get(&ref_)) {
@@ -6355,19 +6805,21 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_decl_stmt(
             &mut self,
+            loc: bun_ast::Loc,
             is_export: bool,
-            keyword: &'static [u8],
+            kind: S::Kind,
             decls: &[G::Decl],
         ) {
             if is_export {
                 self.print(b"export ");
             }
+            self.add_source_mapping(loc);
             let tlm: TopLevelAndIsExport = if Self::MAY_HAVE_MODULE_INFO {
                 TopLevelAndIsExport { is_export }
             } else {
                 TopLevelAndIsExport::default()
             };
-            self.print_decls(keyword, decls, ExprFlag::none(), tlm);
+            self.print_decls(kind, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
         }
 
@@ -6440,9 +6892,7 @@ pub(crate) mod __gated_printer {
                             self.print(b"\\u");
                             let mut tmp = [0u8; 4];
                             let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                            self.writer
-                                .write_reserved(&tmp[..len])
-                                .expect("unreachable");
+                            self.writer.write_reserved(&tmp[..len]);
                         }
                     }
                     continue;
@@ -6451,9 +6901,7 @@ pub(crate) mod __gated_printer {
                 {
                     let mut tmp = [0u8; 4];
                     let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                    self.writer
-                        .write_reserved(&tmp[..len])
-                        .expect("unreachable");
+                    self.writer.write_reserved(&tmp[..len]);
                 }
             }
             Ok(())
@@ -6461,7 +6909,11 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
-            if value.is_nan() {
+            if IS_JSON && !value.is_finite() {
+                // JSON has no token for these. As JSON.stringify.
+                self.print_space_before_identifier();
+                self.print(b"null");
+            } else if value.is_nan() {
                 self.print_space_before_identifier();
                 self.print(b"NaN");
             } else if value.is_infinite() {
@@ -6482,7 +6934,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 // If we are not running the symbol renamer, we must not print "Infinity".
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                if !self.options.minify_syntax && self.options.has_run_symbol_renamer {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");
@@ -6546,9 +6998,9 @@ pub(crate) mod __gated_printer {
         pub(crate) fn init(
             writer: W,
             bump: &'a bun_alloc::Arena,
-            import_records: &'a [ImportRecord],
+            import_records: &'a [ImportRecord<'a>],
             opts: Options<'a>,
-            renamer: rename::Renamer<'a, 'a>,
+            renamer: rename::Renamer<'a>,
             source_map_builder: SourceMap::chunk::Builder<'a>,
         ) -> Self {
             Self {
@@ -6804,20 +7256,15 @@ impl HasDefaultValue for js_ast::ArrayBinding {
 
 /// Backend operations a `Writer` context provides.
 pub trait WriterContext {
-    fn write_byte(&mut self, char: u8) -> crate::Result<usize>;
-    fn write_all(&mut self, buf: &[u8]) -> crate::Result<usize>;
+    fn write_byte(&mut self, char: u8);
+    fn write_all(&mut self, buf: &[u8]);
     fn get_last_byte(&self) -> u8;
     fn get_last_last_byte(&self) -> u8;
-    fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8>;
+    fn reserve_next(&mut self, count: u64) -> *mut u8;
     fn advance_by(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn take_buffer(&mut self) -> MutableString;
-    fn flush(&mut self) -> crate::Result<()> {
-        Ok(())
-    }
-    fn done(&mut self) -> crate::Result<()> {
-        Ok(())
-    }
+    fn done(&mut self) {}
 }
 
 /// Abstracted writer interface used by `Printer` (the methods Printer calls on `p.writer`).
@@ -6827,22 +7274,20 @@ pub trait WriterTrait {
     fn prev_prev_char(&self) -> u8;
     fn print_byte(&mut self, b: u8);
     fn print_slice(&mut self, s: &[u8]);
-    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8>;
+    fn reserve(&mut self, count: u64) -> *mut u8;
     fn advance(&mut self, count: u64);
     /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
     /// Centralizes the open-coded `reserve + copy_nonoverlapping + advance` triplet
     #[inline]
-    fn write_reserved(&mut self, bytes: &[u8]) -> crate::Result<()> {
-        let ptr = self.reserve(bytes.len() as u64)?;
+    fn write_reserved(&mut self, bytes: &[u8]) {
+        let ptr = self.reserve(bytes.len() as u64);
         // SAFETY: `reserve(n)` returns a writable region of >= n bytes owned by the
         // writer's internal buffer, which is disjoint from caller-provided `bytes`.
         unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
         self.advance(bytes.len() as u64);
-        Ok(())
     }
     fn slice(&self) -> &[u8];
-    fn get_error(&self) -> crate::Result<()>;
-    fn done(&mut self) -> crate::Result<()>;
+    fn done(&mut self);
     fn std_writer(&mut self) -> StdWriterAdapter<'_, Self>
     where
         Self: Sized,
@@ -6864,19 +7309,11 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
 
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
-    pub(crate) written: i32,
-    pub(crate) err: Option<crate::Error>,
-    pub(crate) orig_err: Option<crate::Error>,
 }
 
 impl<C: WriterContext> Writer<C> {
     pub fn init(ctx: C) -> Self {
-        Self {
-            ctx,
-            written: -1,
-            err: None,
-            orig_err: None,
-        }
+        Self { ctx }
     }
 
     pub(crate) fn take_buffer(&mut self) -> MutableString {
@@ -6884,16 +7321,6 @@ impl<C: WriterContext> Writer<C> {
     }
     pub(crate) fn slice(&self) -> &[u8] {
         self.ctx.slice()
-    }
-
-    pub(crate) fn get_error(&self) -> crate::Result<()> {
-        if let Some(e) = self.orig_err {
-            return Err(e);
-        }
-        if let Some(e) = self.err {
-            return Err(e);
-        }
-        Ok(())
     }
 
     #[inline]
@@ -6905,67 +7332,34 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.get_last_last_byte()
     }
 
-    pub(crate) fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
+    pub(crate) fn reserve(&mut self, count: u64) -> *mut u8 {
         self.ctx.reserve_next(count)
     }
 
     pub(crate) fn advance(&mut self, count: u64) {
         self.ctx.advance_by(count);
-        // PERF: output never approaches 2 GiB; the checked add of
-        // a u64→i32 here was a measurable branch in the per-token print path.
-        // Keep the debug-mode overflow check without paying for it in release.
-        debug_assert!(count <= i32::MAX as u64);
-        self.written = self.written.wrapping_add(count as i32);
     }
 
     #[inline]
     pub(crate) fn print_byte(&mut self, b: u8) {
-        match self.ctx.write_byte(b) {
-            Ok(n) => {
-                self.written = self.written.wrapping_add(n as i32);
-                if n == 0 {
-                    self.err = Some(crate::Error::WriteFailed);
-                }
-            }
-            Err(err) => {
-                self.orig_err = Some(err);
-                self.err = Some(crate::Error::WriteFailed);
-            }
-        }
+        self.ctx.write_byte(b);
     }
 
     #[inline]
     pub(crate) fn print_slice(&mut self, s: &[u8]) {
-        match self.ctx.write_all(s) {
-            Ok(n) => {
-                self.written = self.written.wrapping_add(n as i32);
-                if n < s.len() {
-                    self.err = Some(if n == 0 {
-                        crate::Error::WriteFailed
-                    } else {
-                        crate::Error::PartialWrite
-                    });
-                }
-            }
-            Err(err) => {
-                self.orig_err = Some(err);
-                self.err = Some(crate::Error::WriteFailed);
-            }
-        }
+        self.ctx.write_all(s);
     }
 
-    pub fn flush(&mut self) -> crate::Result<()> {
-        self.ctx.flush()
-    }
-    pub(crate) fn done(&mut self) -> crate::Result<()> {
+    pub(crate) fn done(&mut self) {
         self.ctx.done()
     }
 }
 
 impl<C: WriterContext> WriterTrait for Writer<C> {
+    /// Bytes in `ctx`'s buffer. The printer's position fields use -1 for "none".
     #[inline]
     fn written(&self) -> i32 {
-        self.written
+        self.ctx.slice().len() as i32
     }
     #[inline]
     fn prev_char(&self) -> u8 {
@@ -6984,7 +7378,7 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
+    fn reserve(&mut self, count: u64) -> *mut u8 {
         self.reserve(count)
     }
     #[inline]
@@ -6996,11 +7390,7 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.slice()
     }
     #[inline]
-    fn get_error(&self) -> crate::Result<()> {
-        self.get_error()
-    }
-    #[inline]
-    fn done(&mut self) -> crate::Result<()> {
+    fn done(&mut self) {
         self.done()
     }
     #[inline]
@@ -7032,7 +7422,7 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
+    fn reserve(&mut self, count: u64) -> *mut u8 {
         (**self).reserve(count)
     }
     #[inline]
@@ -7044,11 +7434,7 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).slice()
     }
     #[inline]
-    fn get_error(&self) -> crate::Result<()> {
-        (**self).get_error()
-    }
-    #[inline]
-    fn done(&mut self) -> crate::Result<()> {
+    fn done(&mut self) {
         (**self).done()
     }
     #[inline]
@@ -7068,8 +7454,6 @@ pub struct BufferWriter {
     /// reslice on read (`written()` / `written_without_trailing_zero()`). Avoids the O(n)
     /// `to_vec().into_boxed_slice()` copy the previous port did on every `done()`.
     pub(crate) written_len: usize,
-    // `done()` appends a NUL terminator when `append_null_byte` is true.
-    pub append_null_byte: bool,
     pub append_newline: bool,
 }
 
@@ -7091,7 +7475,6 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init_empty(),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
@@ -7105,21 +7488,18 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init(capacity).unwrap_or_else(|_| MutableString::init_empty()),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
 
     #[inline]
-    pub(crate) fn write_byte(&mut self, byte: u8) -> crate::Result<usize> {
-        self.buffer.append_char(byte)?;
-        Ok(1)
+    pub(crate) fn write_byte(&mut self, byte: u8) {
+        self.buffer.list.push(byte);
     }
 
     #[inline]
-    pub(crate) fn write_all(&mut self, bytes: &[u8]) -> crate::Result<usize> {
-        self.buffer.append(bytes)?;
-        Ok(bytes.len())
+    pub(crate) fn write_all(&mut self, bytes: &[u8]) {
+        self.buffer.list.extend_from_slice(bytes);
     }
 
     #[inline]
@@ -7143,10 +7523,10 @@ impl BufferWriter {
         if len >= 2 { list[len - 2] } else { 0 }
     }
 
-    pub(crate) fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
+    pub(crate) fn reserve_next(&mut self, count: u64) -> *mut u8 {
         let n = usize::try_from(count).expect("int cast");
         // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
-        Ok(unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr())
+        unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr()
     }
 
     pub(crate) fn advance_by(&mut self, count: u64) {
@@ -7168,38 +7548,22 @@ impl BufferWriter {
         written
     }
 
-    pub(crate) fn done(&mut self) -> crate::Result<()> {
+    pub(crate) fn done(&mut self) {
         if self.append_newline {
             self.append_newline = false;
-            self.buffer.append_char(b'\n')?;
-        }
-
-        if self.append_null_byte {
-            // Append a NUL unless the buffer already ends with one; the NUL is
-            // *included* in `written` (consumers strip it via
-            // `written_without_trailing_zero`).
-            //
-            // For an *empty* buffer we still append the NUL.
-            if self.buffer.list.last().copied() != Some(0) {
-                self.buffer.append_char(0)?;
-            }
+            self.buffer.list.push(b'\n');
         }
         self.written_len = self.buffer.list.len();
-        Ok(())
-    }
-
-    pub(crate) fn flush(&mut self) -> crate::Result<()> {
-        Ok(())
     }
 }
 
 impl WriterContext for BufferWriter {
     #[inline]
-    fn write_byte(&mut self, c: u8) -> crate::Result<usize> {
+    fn write_byte(&mut self, c: u8) {
         self.write_byte(c)
     }
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> crate::Result<usize> {
+    fn write_all(&mut self, buf: &[u8]) {
         self.write_all(buf)
     }
     #[inline]
@@ -7211,7 +7575,7 @@ impl WriterContext for BufferWriter {
         self.get_last_last_byte()
     }
     #[inline]
-    fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
+    fn reserve_next(&mut self, count: u64) -> *mut u8 {
         self.reserve_next(count)
     }
     #[inline]
@@ -7227,11 +7591,7 @@ impl WriterContext for BufferWriter {
         self.take_buffer()
     }
     #[inline]
-    fn flush(&mut self) -> crate::Result<()> {
-        self.flush()
-    }
-    #[inline]
-    fn done(&mut self) -> crate::Result<()> {
+    fn done(&mut self) {
         self.done()
     }
 }
@@ -7293,7 +7653,7 @@ use js_ast::Ast;
 pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
     opts: &mut Options<'a>,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     tree: &Ast,
 ) -> SourceMap::chunk::Builder<'a> {
     if generate_source_map == GenerateSourceMap::Disable {
@@ -7306,7 +7666,6 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
             IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
         ),
         cover_lines_without_mappings: true,
-        approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
         line_offset_tables: match opts.line_offset_tables.take() {
             Some(table) => LineOffsetTables::Borrowed(table),
@@ -7342,20 +7701,14 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     _writer: W,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
-    symbols: js_ast::symbol::Map,
-    source: &'a bun_ast::Source,
+    mut symbols: js_ast::symbol::Map,
+    source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
 ) -> crate::Result<usize> {
-    let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+    bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
 
-    // `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut`
-    // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
-    // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
-    // Renamer<'static,'static>`) lets inference unify it with the no-op arm.
-    let mut no_op_renamer;
-    // hoisted out of the `minify_identifiers` arm so the
-    // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
+    // Declared out here so that what `renamer` borrows outlives the branch that makes it.
+    let no_op_renamer;
     let mut minify_renamer;
     // `Scope` isn't `Copy` here and the only
     // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
@@ -7363,7 +7716,22 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // `tree.module_scope` instead (lives for `'a`).
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
-    let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
+    let renamer = if opts.minify_identifiers {
+        // Pinned before the reserved names are computed so no slot takes one of these names.
+        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref]
+            .into_iter()
+            .chain(tree.named_exports.values().iter().map(|export| export.ref_));
+        for mut ref_ in dont_break_the_code {
+            // `export var t; var t` exports a linked ref, and the renamer names the symbol it links to.
+            while let Some(symbol) = symbols.get_mut(ref_) {
+                symbol.set_must_not_be_renamed(true);
+                if !symbol.has_link() {
+                    break;
+                }
+                ref_ = symbol.link.get();
+            }
+        }
+
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
         for child in module_scope.children.slice() {
             // `StoreRef<Scope>` has safe `DerefMut`; copy the handle to a mut
@@ -7386,21 +7754,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let exports_ref = tree.exports_ref;
         let module_ref = tree.module_ref;
         let parts = &tree.parts;
-
-        // `symbols` was moved into `minify_renamer`; reach it through
-        // the renamer for the post-init `must_not_be_renamed` pass.
-        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
-        for ref_ in dont_break_the_code {
-            if let Some(symbol) = minify_renamer.symbols.get_mut(ref_) {
-                symbol.set_must_not_be_renamed(true);
-            }
-        }
-
-        for named_export in tree.named_exports.values() {
-            if let Some(symbol) = minify_renamer.symbols.get_mut(named_export.ref_) {
-                symbol.set_must_not_be_renamed(true);
-            }
-        }
 
         if uses_exports_ref {
             minify_renamer.accumulate_symbol_use_count(
@@ -7438,16 +7791,15 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         top_level_symbols.sort_unstable_by(rename::StableSymbolCount::less_than);
 
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols)?;
-        let minifier = tree.char_freq.as_ref().unwrap().compile();
-        minify_renamer.assign_names_by_frequency(&minifier)?;
+        // `None` if the JS parser did not build `tree`: an empty file, a data loader.
+        let char_freq = tree.char_freq.as_deref().copied().unwrap_or_default();
+        minify_renamer.assign_names_by_frequency(&char_freq.compile())?;
 
-        rename::Renamer::MinifyRenamer(&mut *minify_renamer)
+        rename::Renamer::MinifyRenamer(&minify_renamer)
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
         no_op_renamer.to_renamer()
     };
-
-    // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
 
     // `is_bun_platform = ascii_only` for printAst.
     type PrinterType<'a, W, const A: bool, const G: bool> =
@@ -7457,7 +7809,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // is almost always within a small factor of the input, so reserving up front
     // keeps the per-token appends below from repeatedly growing+memmoving the
     // backing `Vec`. Cheap no-op on a reused (already-grown) writer.
-    let _ = writer.reserve(source.contents().len() as u64);
+    writer.reserve(source.contents().len() as u64);
 
     let mut opts = opts;
     let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
@@ -7508,7 +7860,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     for part in tree.parts.iter() {
         for stmt in slice_of(part.stmts).iter() {
             printer.print_stmt(*stmt)?;
-            printer.writer.get_error()?;
             printer.print_semicolon_if_needed();
         }
     }
@@ -7539,7 +7890,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     } else {
         None
     };
-    // defer: if let Some(chunk) = &mut source_maps_chunk { chunk.deinit() } — Drop handles.
 
     if let Some(cache) = printer.options.runtime_transpiler_cache {
         let mut srlz_res: Vec<u8> = Vec::new();
@@ -7569,9 +7919,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         }
     }
 
-    printer.writer.done()?;
+    printer.writer.done();
 
-    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
+    Ok(printer.writer.slice().len())
 }
 
 pub fn print_json<W: WriterTrait>(
@@ -7586,8 +7936,7 @@ pub fn print_json<W: WriterTrait>(
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
     let bump = bun_alloc::Arena::new();
-    let mut no_op =
-        rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
+    let no_op = rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
 
     let full_opts = Options {
         indent: opts.indent,
@@ -7607,21 +7956,20 @@ pub fn print_json<W: WriterTrait>(
 
     printer.print_expr(expr, js_ast::op::Level::Lowest, ExprFlagSet::empty());
     printer.check_stack_overflow()?;
-    printer.writer.get_error()?;
-    printer.writer.done()?;
+    printer.writer.done();
 
-    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
+    Ok(printer.writer.slice().len())
 }
 
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
     ast: &Ast,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
-    renamer: rename::Renamer<'a, 'a>,
+    renamer: rename::Renamer<'a>,
 ) -> PrintResult {
     let _trace = bun_core::perf::trace("JSPrinter.print");
 
@@ -7648,11 +7996,11 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
     ast: &Ast,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
-    renamer: rename::Renamer<'a, 'a>,
+    renamer: rename::Renamer<'a>,
 ) -> PrintResult {
     if target.is_bun() {
         print_with_writer_and_platform::<W, true, GENERATE_SOURCE_MAPS>(
@@ -7689,17 +8037,16 @@ pub(crate) fn print_with_writer_and_platform<
     mut writer: W,
     bump: &'a bun_alloc::Arena,
     ast: &Ast,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
-    renamer: rename::Renamer<'a, 'a>,
+    renamer: rename::Renamer<'a>,
 ) -> PrintResult {
-    let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+    bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
 
     // See `print_ast`: pre-size the output buffer to avoid grow+memmove churn.
-    let _ = writer.reserve(source.contents().len() as u64);
+    writer.reserve(source.contents().len() as u64);
 
     type PrinterType<'a, W, const B: bool, const G: bool> =
         Printer<'a, W, /*ASCII_ONLY=*/ B, B, false, G>;
@@ -7727,7 +8074,6 @@ pub(crate) fn print_with_writer_and_platform<
         printer.module_info = printer.options.module_info.take();
     }
     printer.binary_expression_stack = Vec::new();
-    // defer: temporary_bindings.deinit / writer.* = printer.writer.* — handled by move-out below.
 
     // `Index::is_runtime` ⇔ `index.value == 0`.
     if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {
@@ -7744,9 +8090,6 @@ pub(crate) fn print_with_writer_and_platform<
                 if let Err(err) = printer.print_stmt(*stmt) {
                     return PrintResult::Err(err);
                 }
-                if let Err(err) = printer.writer.get_error() {
-                    return PrintResult::Err(err);
-                }
                 printer.print_semicolon_if_needed();
             }
         }
@@ -7756,11 +8099,7 @@ pub(crate) fn print_with_writer_and_platform<
         return PrintResult::Err(err);
     }
 
-    if let Err(err) = printer.writer.done() {
-        // In bundle_v2, this is backed by an arena, but incremental uses
-        // `dev.allocator` for this buffer, so it must be freed.
-        return PrintResult::Err(err);
-    }
+    printer.writer.done();
 
     // `slice()` exposes the written buffer.
     let written = printer.writer.slice();
@@ -7786,8 +8125,8 @@ pub(crate) fn print_with_writer_and_platform<
     })
 }
 
-/// Serializes ModuleInfo to an owned byte slice. Returns null on failure.
-/// The caller is responsible for freeing the returned slice.
+/// Serializes ModuleInfo (its own string table, then its body) to an owned
+/// byte slice. Returns `None` on failure.
 pub fn serialize_module_info(
     module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
 ) -> Option<Box<[u8]>> {
@@ -7803,4 +8142,20 @@ pub fn serialize_module_info(
         return None;
     }
     Some(buf.into_boxed_slice())
+}
+
+/// Serializes only ModuleInfo's body, with its strings referenced through
+/// `table_ids` (from `ModuleInfoSlotTableBuilder::intern_all`) into a table of
+/// `table_count` strings that is stored once for many modules.
+pub fn serialize_module_info_body(
+    mi: &analyze_transpiled_module::ModuleInfo,
+    table_count: u32,
+    table_ids: &[u32],
+) -> Box<[u8]> {
+    debug_assert!(mi.finalized);
+    let mut buf: Vec<u8> = Vec::new();
+    mi.as_deserialized()
+        .serialize_body(&mut buf, table_count, |id| table_ids[id as usize])
+        .expect("Vec<u8> write");
+    buf.into_boxed_slice()
 }

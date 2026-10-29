@@ -1,8 +1,6 @@
 use core::ffi::{c_int, c_void};
 
-// ─── MOVE-IN: Winsize (TYPE_ONLY from bun_sys → bun_core) ─────────────────
-// Used by output.rs::TERMINAL_SIZE. Field names
-// match the move-out forward-ref in output.rs (row/col, not ws_row/ws_col).
+/// Terminal size as reported by the tty (`struct winsize` on POSIX).
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Winsize {
@@ -11,10 +9,7 @@ pub struct Winsize {
     pub xpixel: u16,
     pub ypixel: u16,
 }
-// SAFETY: four `u16` fields; all-zero is a valid `Winsize`.
-unsafe impl crate::ffi::Zeroable for Winsize {}
-// SAFETY: `#[repr(C)]` over four `u16` — exactly 8 bytes, no padding.
-crate::unsafe_impl_atom!(Winsize);
+crate::impl_zeroable!(Winsize);
 
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -46,9 +41,7 @@ pub struct State {
     #[cfg(unix)]
     orig_termios: libc::termios,
 }
-// SAFETY: `c_int` + `libc::termios` (C POD). All-zero is mode Normal, and the
-// termios is only read after the first non-Normal transition has written it.
-unsafe impl crate::ffi::Zeroable for State {}
+crate::impl_zeroable!(State);
 
 impl State {
     #[inline]

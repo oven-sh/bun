@@ -317,6 +317,34 @@ async function main() {
     }
   })();
 
+  // In an AppContainer, any call on a closed handle kills the process (exit 0xC0000008). When a socket
+  // is closed in its own data() handler, its libuv poll has to be closed before the socket.
+  r.closeInHandler = await (async () => {
+    let server;
+    try {
+      server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data(socket) { socket.terminate(); } } });
+    } catch (e) {
+      return "listen:" + (e.code || e);
+    }
+    try {
+      const closed = new Promise(resolve => {
+        const timer = setTimeout(() => resolve("timeout waiting for the reset"), 15000);
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open(socket) { socket.write("x"); },
+            data() {},
+            close() { clearTimeout(timer); resolve("OK"); },
+          },
+        }).catch(e => { clearTimeout(timer); resolve("connect:" + (e.code || e)); });
+      });
+      return await closed;
+    } finally {
+      server.stop(true);
+    }
+  })();
+
   fs.writeFileSync("results.json", JSON.stringify(r));
 }
 main().then(
@@ -350,6 +378,9 @@ main().then(
       // classified outcome; this guards only an unset key, an unclassified
       // crash, or a served wrong body. Pin the value once container CI reports it.
       expect(String(r.serveFetch)).toMatch(/^(OK$|listen:|fetch:)/);
+      // Same loopback caveat as serveFetch. The exit code above is the real check,
+      // because touching a closed handle on the way out of data() kills the child.
+      expect(String(r.closeInHandler)).toMatch(/^(OK$|listen:|connect:)/);
     },
     90_000,
   );

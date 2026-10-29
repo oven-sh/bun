@@ -2,13 +2,10 @@ use crate::lockfile::package::PackageColumns as _;
 use bun_collections::HashMap;
 use bun_core::Output;
 
-use crate::Dependency;
 use crate::DependencyID;
-use crate::ManifestLoad;
 use crate::NetworkTask;
 use crate::PackageID;
 use crate::Resolution;
-use crate::dependency::Behavior;
 use crate::invalid_package_id;
 // Import the
 // *module* under the `Task` name so `Task::Id` resolves as a path (matches
@@ -44,21 +41,19 @@ impl From<StartManifestTaskError> for crate::Error {
     }
 }
 
+/// `is_required`: a failed fetch is logged as an error rather than a warning.
 fn start_manifest_task(
     manager: &mut PackageManager,
     pkg_name: &[u8],
-    dep: &Dependency,
+    is_required: bool,
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
+    // best-effort metadata backfill: nothing to do without the network
+    if manager.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        return Ok(());
+    }
     let task_id = Task::Id::for_manifest(pkg_name);
-    // Read the *raw* OPTIONAL bit
-    // — not `Behavior.isOptional()` (which is `optional && !peer`). For
-    // optional-peer deps the raw bit is `true` but `is_optional()` is `false`,
-    // which would flip both the dedupe-map `is_required` bookkeeping and
-    // `for_manifest`'s error-suppression branch. Mirror runTasks.rs and read
-    // the raw flag.
-    let is_optional = dep.behavior.contains(Behavior::OPTIONAL);
-    if run_tasks::has_created_network_task(manager, task_id, is_optional) {
+    if manager.has_created_network_task(task_id, is_required) {
         return Ok(());
     }
     if manager.options.log_level.show_progress() {
@@ -81,7 +76,7 @@ fn start_manifest_task(
     // stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we hand it to `enqueue_network_task`.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref, None) };
+    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref) };
     // SAFETY: `write_init` populated every field with a drop-safe value;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_manifest`.
     let task = unsafe { &mut *net_ptr };
@@ -91,7 +86,7 @@ fn start_manifest_task(
         pkg_name,
         scope.get(),
         None,
-        is_optional,
+        !is_required,
         needs_extended_manifest,
     )?;
 
@@ -101,9 +96,11 @@ fn start_manifest_task(
 
 #[derive(Clone, Copy)]
 pub enum Packages<'a> {
+    /// Every npm package in the lockfile; best-effort (the post-migration backfill), so failures are warnings.
     All,
+    /// The direct dependencies of these workspace packages; a required one failing is an error, see [`print_fetch_failures`].
     Ids(&'a [PackageID]),
-    /// The manifests of these packages themselves (by name), not of their dependencies.
+    /// The manifests of these packages themselves (by name), not of their dependencies; best-effort, so failures are warnings.
     Exact(&'a [PackageID]),
 }
 
@@ -119,6 +116,7 @@ impl RunTasksCallbacks for ManifestsOnlyCallbacks {
 /// Populate the manifest cache for packages included from `root_pkg_ids`. Only manifests of
 /// direct dependencies of the `root_pkg_ids` are populated. If `root_pkg_ids` has length 0
 /// all packages in the lockfile will have their manifests fetched if necessary.
+/// A dependency that is queued before or during the call resolves inside it.
 pub fn populate_manifest_cache(
     manager: &mut PackageManager,
     packages: Packages<'_>,
@@ -157,7 +155,7 @@ pub fn populate_manifest_cache(
         Packages::All => {
             let mut seen_pkg_ids: HashMap<PackageID, ()> = HashMap::new();
 
-            for (_dep_id, dep) in dependencies.iter().enumerate() {
+            for _dep_id in 0..dependencies.len() {
                 let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
 
                 let pkg_id = resolutions[dep_id as usize];
@@ -188,25 +186,31 @@ pub fn populate_manifest_cache(
                 // holds only `&mut manifests`.
                 let scope =
                     bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(pkg_name_slice));
+                let mut expired = false;
                 // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
                 // `manager_ptr` is the SRW root.
-                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name_allow_expired(
                     cache_ctx,
                     scope.get(),
                     pkg_name_slice,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    Some(&mut expired),
                     needs_extended_manifest,
                 );
-                if cached.is_none() {
+                // A published version's metadata never changes, so an expired manifest is still
+                // good enough if it lists the resolved version.
+                let has_version = cached.is_some_and(|manifest| {
+                    !expired || manifest.find_by_version(res.npm().version).is_some()
+                });
+                if !has_version {
                     start_manifest_task(
                         // SAFETY: `manager_ptr` is the SRW provenance root;
                         // `start_manifest_task` only touches the network-task
                         // pool / progress bar / log, never `lockfile.buffers`
                         // or `lockfile.packages`, so the outstanding shared
-                        // slices (`pkg_name_slice`, `dep`) stay valid.
+                        // slice (`pkg_name_slice`) stays valid.
                         unsafe { &mut *manager_ptr },
                         pkg_name_slice,
-                        dep,
+                        false,
                         needs_extended_manifest,
                     )?;
                 }
@@ -249,7 +253,6 @@ pub fn populate_manifest_cache(
                         cache_ctx,
                         scope.get(),
                         package_name,
-                        ManifestLoad::LoadFromMemoryFallbackToDisk,
                         needs_extended_manifest,
                     );
                     if cached.is_none() {
@@ -258,10 +261,10 @@ pub fn populate_manifest_cache(
                             // root; `start_manifest_task` only touches the
                             // network-task pool / progress bar / log, never
                             // `lockfile.buffers` or `lockfile.packages`, so
-                            // `package_name` / `dep` stay valid.
+                            // `package_name` stays valid.
                             unsafe { &mut *manager_ptr },
                             package_name,
-                            dep,
+                            dep.behavior.is_required(),
                             needs_extended_manifest,
                         )?;
 
@@ -274,7 +277,6 @@ pub fn populate_manifest_cache(
             }
         }
         Packages::Exact(ids) => {
-            let placeholder = Dependency::default();
             for &pkg_id in ids {
                 if pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Npm {
                     continue;
@@ -288,7 +290,6 @@ pub fn populate_manifest_cache(
                     cache_ctx,
                     scope.get(),
                     package_name,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended_manifest,
                 );
                 if cached.is_none() {
@@ -296,7 +297,7 @@ pub fn populate_manifest_cache(
                         // SAFETY: SRW root; `start_manifest_task` never mutates `lockfile`, so `package_name` stays valid.
                         unsafe { &mut *manager_ptr },
                         package_name,
-                        &placeholder,
+                        false,
                         needs_extended_manifest,
                     )?;
                     // SAFETY: SRW root; network-queue flush does not mutate `lockfile`.
@@ -313,7 +314,7 @@ pub fn populate_manifest_cache(
     run_tasks::flush_network_queue(manager);
     let _ = run_tasks::schedule_tasks(manager);
 
-    if run_tasks::pending_task_count(manager) > 0 {
+    if manager.pending_task_count() > 0 {
         struct RunClosure {
             // `sleep_until` also receives this raw pointer, so storing
             // `&mut PackageManager` here would alias under Stacked Borrows.
@@ -340,8 +341,13 @@ pub fn populate_manifest_cache(
                     return true;
                 }
 
-                run_tasks::pending_task_count(manager) == 0
+                manager.pending_task_count() == 0
             }
+        }
+
+        // `run_tasks` names the bar when a manifest download completes, and `start_manifest_task` starts none when every name is cached or already requested by a queued row.
+        if log_level.show_progress() {
+            manager.start_progress_bar_if_none();
         }
 
         // Derive the raw provenance root first so both `sleep_until` and the
@@ -370,4 +376,16 @@ pub fn populate_manifest_cache(
     }
 
     Ok(())
+}
+
+/// Prints the fetch failures a [`Packages::Ids`] pass logged; true when one of them is a required dependency's.
+pub fn print_fetch_failures(manager: &PackageManager) -> crate::Result<bool> {
+    let log = manager.log_mut();
+    let failed_required = log.has_errors();
+    if !log.msgs.is_empty() {
+        Output::flush();
+        log.print(core::ptr::from_mut(Output::error_writer()))?;
+        log.reset();
+    }
+    Ok(failed_required)
 }

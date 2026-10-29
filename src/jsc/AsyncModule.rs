@@ -2,16 +2,16 @@ use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
-use bun_core::{OwnedString, String as BunString, ZigString};
-use bun_install::dependency::Dependency;
-use bun_install::{DependencyID, Resolution};
+use bun_core::{EncodedSlice, String as BunString, StringView};
+use bun_install::Resolution;
 use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
 
+use crate::bun_string_jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorCode, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
-    JsError, JsResult, ResolvedSource, StrongOptional, ZigStringJsc as _,
+    self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
+    JSValue, JsError, JsResult, ResolvedSource, StringJsc as _, StrongOptional,
 };
 
 bun_core::declare_scope!(AsyncModule, hidden);
@@ -26,6 +26,8 @@ pub struct InitOpts<'a> {
     /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
     /// alive alongside `arena` until the module finishes loading.
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// `ResolvedSource::is_static` of what `parse_result` is printed as.
+    pub is_static: bool,
 }
 
 pub struct AsyncModule {
@@ -45,6 +47,8 @@ pub struct AsyncModule {
     pub(crate) arena: Box<ArenaAllocator>,
     /// See [`InitOpts::ast_alloc_state`].
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// See [`InitOpts::is_static`].
+    is_static: bool,
 
     // This is the specific state for making it async
     pub(crate) poll_ref: KeepAlive,
@@ -72,11 +76,7 @@ pub struct Queue {
     pub(crate) scheduled: u32,
 }
 
-/// What the resolver's `WakeHandler` carries as its opaque context: the
-/// module queue (for the JS-thread dependency-error callback) and the VM's
-/// weak handle (for wake-ups from the process-wide install / HTTP threads,
-/// which outlive any one VM). Allocated once per VM at registration and kept
-/// for the VM's lifetime.
+/// The `WakeHandler`'s context, kept for the VM's lifetime; the waking threads outlive any one VM.
 pub struct WakeContext {
     pub queue: *mut Queue,
     pub handle: crate::VmHandle,
@@ -113,6 +113,10 @@ impl bun_event_loop::Taskable for Queue {
     /// A "poll your pending modules" ping from an install thread: `this` is
     /// the VM's own queue; nothing is owned.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// A ping to the VM's own module queue.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl bun_event_loop::Taskable for AsyncModule {
@@ -126,6 +130,10 @@ impl bun_event_loop::Taskable for AsyncModule {
         let vm = VirtualMachine::get().as_mut();
         this.poll_ref.unref(bun_io::js_vm_ctx());
         vm.modules.scheduled -= 1;
+    }
+    /// Fulfils a module fetch of a loader; calls no script of its own.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -148,96 +156,43 @@ impl AsyncModule {
     }
 
     /// Dispatch the (possibly errored) transpile
-    /// result back into JSC via `Bun__onFulfillAsyncModule`. This is the entry
-    /// point `RuntimeTranspilerStore::run_from_js_thread` calls when a
+    /// result back into JSC via `Bun__onFulfillAsyncModule`. Called from
+    /// `RuntimeTranspilerStore::run_from_js_thread` and `on_done` when a
     /// concurrent transpile job finishes.
+    /// `module_loader`: the `JSModuleLoader` that fetched, or empty for the global object's.
     pub(crate) fn fulfill(
         global_this: &JSGlobalObject,
         promise: JSValue,
-        resolved_source: &mut ResolvedSource,
-        err: Option<crate::CrateError>,
-        specifier_: BunString,
-        referrer_: BunString,
+        module_loader: JSValue,
+        result: Result<ResolvedSource, crate::CrateError>,
+        specifier: &BunString,
+        referrer: &BunString,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
-        let mut specifier = specifier_;
-        let mut referrer = referrer_;
-        // BunString is `Copy` (no Drop), so deref the held
-        // refcounts explicitly via scopeguard. The `TopExceptionScope` is
-        // omitted: `from_js_host_call_generic` already checks the VM for a
-        // pending exception after the FFI call (host_fn.rs).
-        //
-        // The guard captures raw pointers to the locals (not by-value copies)
-        // so the deref observes the *post-FFI* value of the variable —
-        // `Bun__onFulfillAsyncModule` receives
-        // `&mut specifier`/`&mut referrer` and is free to overwrite them.
-        // Safety: `specifier`/`referrer` are declared above this guard, so
-        // they outlive it (locals drop in reverse order); the `&mut` reborrow
-        // passed to FFI below is dead by the time the guard runs.
-        let sp: *mut BunString = &raw mut specifier;
-        let rp: *mut BunString = &raw mut referrer;
-        let _strings_guard = scopeguard::guard((), move |()| {
-            // SAFETY: `sp`/`rp` point at `specifier`/`referrer` declared above
-            // this guard; locals drop in reverse order so they outlive it, and
-            // the `&mut` reborrows passed to FFI are dead by the time this runs.
-            unsafe {
-                (*sp).deref();
-                (*rp).deref();
-            }
-        });
-
-        let mut errorable: ErrorableResolvedSource;
-        if let Some(e) = err {
-            // `OwnedString` derefs on Drop at the end
-            // of this `if` arm; `None` is the no-op path.
-            let _source_code_guard = if resolved_source.source_code_needs_deref {
-                resolved_source.source_code_needs_deref = false;
-                Some(OwnedString::new(resolved_source.source_code))
-            } else {
-                None
-            };
-
-            if e == crate::CrateError::JSError {
-                errorable = ErrorableResolvedSource::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    global_this.take_error(JsError::Thrown),
-                );
-            } else {
-                // `process_fetch_log` synthesizes a JS
-                // Error/AggregateError from the parser log and writes it into
-                // `errorable.result.err.value`. Without this the import promise
-                // would reject with `undefined` (ModuleLoader.cpp:473).
-                // call the `virtual_machine` impl directly (takes
-                // `&JSGlobalObject`) instead of the `module_loader` shim that
-                // takes `*mut` — avoids a `&T as *const T as *mut T` cast,
-                // which is UB-adjacent under Stacked Borrows even when the
-                // callee never writes through it.
-                errorable = ErrorableResolvedSource::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    JSValue::UNDEFINED,
-                );
-                crate::virtual_machine::process_fetch_log(
-                    global_this,
-                    specifier,
-                    referrer,
-                    log,
-                    &mut errorable,
-                    e,
-                );
-            }
-        } else {
-            errorable = ErrorableResolvedSource::ok(*resolved_source);
-        }
+        let mut errorable = match result {
+            Ok(resolved_source) => ErrorableResolvedSource::ok(resolved_source),
+            Err(
+                crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_)),
+            ) => ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown)),
+            Err(e) => ErrorableResolvedSource::err(crate::virtual_machine::process_fetch_log(
+                global_this,
+                specifier,
+                referrer,
+                log,
+                e,
+            )),
+        };
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
         jsc::from_js_host_call_generic(global_this, || {
             Bun__onFulfillAsyncModule(
                 global_this,
                 promise,
+                module_loader,
                 &mut errorable,
-                &mut specifier,
-                &mut referrer,
+                specifier,
+                referrer,
             )
         })
     }
@@ -250,16 +205,17 @@ impl AsyncModule {
 // bun.default_allocator.free(this.expr_blocks);
 
 // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-// ABI-identical to non-null `*const`); `ErrorableResolvedSource`/`BunString`
-// are `#[repr(C)]` payloads whose `&mut` is exclusive for the call. C++ reads
-// from / writes through these in-place; no caller-side raw-pointer precondition.
+// ABI-identical to non-null `*const`); `res` stays owned by this frame — C++
+// takes the fields it keeps by transfer (zeroing them) and the rest drops here.
 unsafe extern "C" {
+    #[allow(improper_ctypes)]
     safe fn Bun__onFulfillAsyncModule(
         global_object: &JSGlobalObject,
         promise_value: JSValue,
+        module_loader: JSValue,
         res: &mut ErrorableResolvedSource,
-        specifier: &mut BunString,
-        referrer: &mut BunString,
+        specifier: &BunString,
+        referrer: &BunString,
     );
 }
 
@@ -311,7 +267,9 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
 }
 
 impl Queue {
+    #[inline(never)]
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
+        bun_removable_features::removable_definition!(Install, Self::enqueue);
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
         module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
@@ -321,59 +279,6 @@ impl Queue {
         // allocator arg dropped (Vec uses global mimalloc).
         self.map.push(module);
         self.vm().package_manager().drain_dependency_list();
-    }
-
-    /// # Safety
-    /// `ctx` must point to a live [`Queue`] (the `WakeHandler::context`
-    /// registered in `runtime::jsc_hooks`).
-    pub unsafe fn on_dependency_error(
-        ctx: *mut c_void,
-        dependency: &Dependency,
-        root_dependency_id: DependencyID,
-        err: &'static str,
-    ) {
-        // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
-        bun_core::scoped_log!(
-            AsyncModule,
-            "onDependencyError: {}",
-            bstr::BStr::new(this.vm().package_manager().lockfile.str(&dependency.name))
-        );
-
-        // retain_mut lets Drop free removed modules.
-        this.map.retain_mut(|module| {
-            for pending in module.parse_result.pending_imports.iter() {
-                if pending.root_dependency_id != root_dependency_id {
-                    continue;
-                }
-                let import_record_id = pending.import_record_id;
-                // S017: per-thread VM singleton (safe accessor) instead of
-                // `container_of`-derived `*mut`; provenance is the original
-                // allocation, disjoint from the `&mut module` borrow above.
-                let vm = VirtualMachine::get().as_mut();
-                // reshaped for borrowck — `lockfile.str()` ties the
-                // returned slice to `&vm`, which conflicts with passing
-                // `&mut vm` to `resolve_error`. The lockfile string buffer is
-                // stable across `resolve_error` (no realloc on the error
-                // path); detach the borrow via raw ptr.
-                let name =
-                    bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
-                module
-                    .resolve_error(
-                        vm,
-                        import_record_id,
-                        &PackageResolveError {
-                            name: name.slice(),
-                            err,
-                            url: b"",
-                            version: dependency.version.clone(),
-                        },
-                    )
-                    .expect("unreachable");
-                return false; // continue :outer — drop this module
-            }
-            true
-        });
     }
 
     /// `WakeHandler::handler` — runs on install / HTTP-callback threads
@@ -391,17 +296,14 @@ impl Queue {
         }
     }
 
-    /// `WakeHandler::on_dependency_error` context accessor — JS thread.
-    ///
-    /// # Safety
-    /// `ctx` is the leaked `WakeContext` registered in `runtime/jsc_hooks.rs`.
-    pub unsafe fn queue_from_wake_context(ctx: *mut c_void) -> *mut Queue {
-        // SAFETY: fn contract.
-        unsafe { (*ctx.cast::<WakeContext>()).queue }
-    }
-
+    #[inline(never)]
     pub fn on_poll(&mut self) {
+        bun_removable_features::removable_definition!(Install, Self::on_poll);
         bun_core::scoped_log!(AsyncModule, "onPoll");
+        if self.map.is_empty() {
+            // A synchronous auto-install drains its own tasks; here their failures would be lost.
+            return;
+        }
         self.run_tasks();
         self.poll_modules();
     }
@@ -450,18 +352,16 @@ impl Queue {
 
                     // S017: per-thread VM singleton (safe accessor).
                     let vm = VirtualMachine::get().as_mut();
-                    module
-                        .resolve_error(
-                            vm,
-                            import_record_id,
-                            &PackageResolveError {
-                                name,
-                                err,
-                                url,
-                                version,
-                            },
-                        )
-                        .expect("unreachable");
+                    module.resolve_error(
+                        vm,
+                        import_record_id,
+                        &PackageResolveError {
+                            name,
+                            err,
+                            url,
+                            version,
+                        },
+                    );
                     return false; // continue :outer
                 }
             }
@@ -507,18 +407,16 @@ impl Queue {
                 let import_record_id = pending.import_record_id;
                 // S017: per-thread VM singleton (safe accessor).
                 let vm = VirtualMachine::get().as_mut();
-                module
-                    .download_error(
-                        vm,
-                        import_record_id,
-                        &PackageDownloadError {
-                            name,
-                            resolution: *resolution,
-                            err,
-                            url,
-                        },
-                    )
-                    .expect("unreachable");
+                module.download_error(
+                    vm,
+                    import_record_id,
+                    &PackageDownloadError {
+                        name,
+                        resolution: *resolution,
+                        err,
+                        url,
+                    },
+                );
                 return false; // continue :outer
             }
             true
@@ -581,6 +479,7 @@ impl Queue {
 
                     let package = pm.lockfile.packages.get(package_id as usize);
                     debug_assert!(package.resolution.tag != install::resolution::Tag::Root);
+                    let dependency = pm.lockfile.buffers.dependencies[root_id as usize].behavior;
 
                     let mut name_and_version_hash: Option<u64> = None;
                     let mut patchfile_hash: Option<u64> = None;
@@ -589,6 +488,7 @@ impl Queue {
                     // `&mut self`/`&self.lockfile` aliasing borrowck rejects.
                     match pm.determine_preinstall_state(
                         &package,
+                        dependency,
                         &mut name_and_version_hash,
                         &mut patchfile_hash,
                     ) {
@@ -677,6 +577,7 @@ impl AsyncModule {
             global_this: crate::GlobalRef::new(global_object),
             arena: opts.arena,
             ast_alloc_state: opts.ast_alloc_state,
+            is_static: opts.is_static,
             poll_ref: KeepAlive::default(),
         })
     }
@@ -709,58 +610,27 @@ impl AsyncModule {
         this.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
-            Ok(rs) => ErrorableResolvedSource::ok(rs),
-            Err(
-                crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_)),
-            ) => ErrorableResolvedSource::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                global_this.take_error(JsError::Thrown),
-            ),
-            Err(err) => {
-                // Pre-seed the
-                // err so the `&mut` borrow is definitely-initialized;
-                // `process_fetch_log` overwrites `result.err.value`.
-                let mut errorable = ErrorableResolvedSource::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    JSValue::UNDEFINED,
-                );
-                crate::virtual_machine::process_fetch_log(
-                    global_this,
-                    BunString::init(ZigString::init(this.specifier())),
-                    BunString::init(ZigString::init(this.referrer())),
-                    &mut log,
-                    &mut errorable,
-                    err,
-                );
-                errorable
-            }
-        };
-        let mut errorable = errorable;
-        // log dropped at scope exit (defer log.deinit()).
-
-        let mut spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
-        let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
-        jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(
-                global_this,
-                this.promise.get().unwrap(),
-                &mut errorable,
-                &mut spec,
-                &mut ref_,
-            )
-        })
+        let result = this.resume_loading_module(&mut log);
+        let spec = StringView::borrow_utf8(this.specifier());
+        let referrer = StringView::borrow_utf8(this.referrer());
+        Self::fulfill(
+            global_this,
+            this.promise.get().unwrap(),
+            // Only the global object's loader resolves packages asynchronously (`Bun__transpileFile`).
+            JSValue::ZERO,
+            result,
+            &spec,
+            &referrer,
+            &mut log,
+        )
     }
 
-    // Never returns Err: the `write!`s below go into a `Vec<u8>` and their
-    // results are discarded with `let _ =`. The `Result` return type is kept
-    // for call-site uniformity with `download_error`.
     fn resolve_error(
         &mut self,
         vm: &mut VirtualMachine,
         import_record_id: u32,
         result: &PackageResolveError<'_>,
-    ) -> crate::CrateResult<()> {
+    ) {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut self` reborrows below; `GlobalRef::deref` is the safe
         // JSC_BORROW accessor.
@@ -846,7 +716,6 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             );
         }
-        // msg dropped at scope exit (defer bun.default_allocator.free(msg)).
 
         let name: &[u8] = match e {
             "NoMatchingVersion" => b"PackageVersionNotFound",
@@ -856,87 +725,81 @@ impl AsyncModule {
             _ => b"PackageResolveError",
         };
 
-        let error_instance = ZigString::from_bytes(&msg)
-            .with_encoding()
-            .to_error_instance(global_this);
-        if !result.url.is_empty() {
+        let error_instance = EncodedSlice::utf8(&msg).to_error_instance(global_this);
+        let put_properties = || -> JsResult<()> {
+            if !result.url.is_empty() {
+                error_instance.put(
+                    global_this,
+                    b"url",
+                    bun_string_jsc::create_utf8_for_js(global_this, result.url)?,
+                );
+            }
             error_instance.put(
                 global_this,
-                b"url",
-                ZigString::from_bytes(result.url)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"name",
+                BunString::static_(name).to_js(global_this)?,
             );
-        }
-        error_instance.put(
-            global_this,
-            b"name",
-            ZigString::from_bytes(name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"pkg",
-            ZigString::from_bytes(result.name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"specifier",
-            ZigString::from_bytes(self.specifier())
-                .with_encoding()
-                .to_js(global_this),
-        );
-        let location = bun_ast::range_data(
-            Some(&self.parse_result.source),
-            self.parse_result.ast.import_records[import_record_id as usize].range,
-            b"",
-        )
-        .location
-        .unwrap();
-        error_instance.put(
-            global_this,
-            b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"line",
-            JSValue::js_number(location.line as f64),
-        );
-        if let Some(line_text) = location.line_text.as_deref() {
             error_instance.put(
                 global_this,
-                b"lineText",
-                ZigString::from_bytes(line_text)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"pkg",
+                bun_string_jsc::create_utf8_for_js(global_this, result.name)?,
             );
-        }
-        error_instance.put(
-            global_this,
-            b"column",
-            JSValue::js_number(location.column as f64),
-        );
-        let referrer = self.referrer();
-        if !referrer.is_empty() && referrer != b"undefined" {
             error_instance.put(
                 global_this,
-                b"referrer",
-                ZigString::from_bytes(referrer)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"specifier",
+                bun_string_jsc::create_utf8_for_js(global_this, self.specifier())?,
             );
+            let location = bun_ast::range_data(
+                Some(&self.parse_result.source),
+                self.parse_result.ast.import_records[import_record_id as usize].range,
+                b"",
+            )
+            .location
+            .unwrap();
+            error_instance.put(
+                global_this,
+                b"sourceURL",
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    self.parse_result.source.path.text,
+                )?,
+            );
+            error_instance.put(
+                global_this,
+                b"line",
+                JSValue::js_number(location.line as f64),
+            );
+            if let Some(line_text) = location.line_text.as_deref() {
+                error_instance.put(
+                    global_this,
+                    b"lineText",
+                    bun_string_jsc::create_utf8_for_js(global_this, line_text)?,
+                );
+            }
+            error_instance.put(
+                global_this,
+                b"column",
+                JSValue::js_number(location.column as f64),
+            );
+            let referrer = self.referrer();
+            if !referrer.is_empty() && referrer != b"undefined" {
+                error_instance.put(
+                    global_this,
+                    b"referrer",
+                    bun_string_jsc::create_utf8_for_js(global_this, referrer)?,
+                );
+            }
+            Ok(())
+        };
+        // Building a property value threw (e.g. STRING_TOO_LONG): reject with
+        // the error as built so far rather than an error about the error.
+        if put_properties().is_err() {
+            let _ = global_this.clear_exception_except_termination();
         }
 
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
-        let _ = vm;
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
@@ -946,7 +809,6 @@ impl AsyncModule {
         // the centralised non-null deref proof.
         let _ =
             JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
-        Ok(())
     }
 
     fn download_error(
@@ -954,7 +816,7 @@ impl AsyncModule {
         vm: &mut VirtualMachine,
         import_record_id: u32,
         result: &PackageDownloadError<'_>,
-    ) -> crate::CrateResult<()> {
+    ) {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut vm` / `&mut self` reborrows below; `GlobalRef::deref` is the
         // safe JSC_BORROW accessor.
@@ -963,8 +825,7 @@ impl AsyncModule {
 
         // `string_bytes` borrows the per-VM lockfile arena which outlives this
         // stack frame; capture as `RawSlice` so `Resolution::fmt` doesn't
-        // extend the `&mut vm` borrow across the `match e` body (the `else`
-        // arm calls `vm.package_manager()` again).
+        // extend the `&mut vm` borrow across the `match e` body.
         let string_bytes = bun_ptr::RawSlice::new(
             vm.package_manager()
                 .lockfile
@@ -972,9 +833,11 @@ impl AsyncModule {
                 .string_bytes
                 .as_slice(),
         );
-        let resolution_fmt = result
-            .resolution
-            .fmt(string_bytes.slice(), bun_core::fmt::PathSep::Any);
+        let resolution_fmt = bun_core::fmt::redacted(
+            result
+                .resolution
+                .fmt(string_bytes.slice(), bun_core::fmt::PathSep::Any),
+        );
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
@@ -1040,17 +903,9 @@ impl AsyncModule {
                 "{} downloading package '{}@{}'",
                 e,
                 bstr::BStr::new(result.name),
-                result.resolution.fmt(
-                    vm.package_manager()
-                        .lockfile
-                        .buffers
-                        .string_bytes
-                        .as_slice(),
-                    bun_core::fmt::PathSep::Any,
-                )
+                resolution_fmt
             );
         }
-        // msg dropped at scope exit.
 
         let name: &[u8] = match e {
             "TarballFailedToExtract" => b"PackageExtractionError",
@@ -1059,92 +914,87 @@ impl AsyncModule {
             _ => b"TarballDownloadError",
         };
 
-        let error_instance = ZigString::from_bytes(&msg)
-            .with_encoding()
-            .to_error_instance(global_this);
-        if !result.url.is_empty() {
+        let error_instance = EncodedSlice::utf8(&msg).to_error_instance(global_this);
+        let put_properties = || -> JsResult<()> {
+            if !result.url.is_empty() {
+                error_instance.put(
+                    global_this,
+                    b"url",
+                    bun_string_jsc::create_utf8_for_js(global_this, result.url)?,
+                );
+            }
             error_instance.put(
                 global_this,
-                b"url",
-                ZigString::from_bytes(result.url)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"name",
+                BunString::static_(name).to_js(global_this)?,
             );
-        }
-        error_instance.put(
-            global_this,
-            b"name",
-            ZigString::from_bytes(name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"pkg",
-            ZigString::from_bytes(result.name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        let specifier = self.specifier();
-        if !specifier.is_empty() && specifier != b"undefined" {
             error_instance.put(
                 global_this,
-                b"referrer",
-                ZigString::from_bytes(specifier)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"pkg",
+                bun_string_jsc::create_utf8_for_js(global_this, result.name)?,
             );
-        }
+            let specifier = self.specifier();
+            if !specifier.is_empty() && specifier != b"undefined" {
+                error_instance.put(
+                    global_this,
+                    b"referrer",
+                    bun_string_jsc::create_utf8_for_js(global_this, specifier)?,
+                );
+            }
 
-        let location = bun_ast::range_data(
-            Some(&self.parse_result.source),
-            self.parse_result.ast.import_records[import_record_id as usize].range,
-            b"",
-        )
-        .location
-        .unwrap();
-        error_instance.put(
-            global_this,
-            b"specifier",
-            ZigString::from_bytes(
-                self.parse_result.ast.import_records[import_record_id as usize]
-                    .path
-                    .text,
+            let location = bun_ast::range_data(
+                Some(&self.parse_result.source),
+                self.parse_result.ast.import_records[import_record_id as usize].range,
+                b"",
             )
-            .with_encoding()
-            .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"line",
-            JSValue::js_number(location.line as f64),
-        );
-        if let Some(line_text) = location.line_text.as_deref() {
+            .location
+            .unwrap();
             error_instance.put(
                 global_this,
-                b"lineText",
-                ZigString::from_bytes(line_text)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"specifier",
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    self.parse_result.ast.import_records[import_record_id as usize]
+                        .path
+                        .text,
+                )?,
             );
+            error_instance.put(
+                global_this,
+                b"sourceURL",
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    self.parse_result.source.path.text,
+                )?,
+            );
+            error_instance.put(
+                global_this,
+                b"line",
+                JSValue::js_number(location.line as f64),
+            );
+            if let Some(line_text) = location.line_text.as_deref() {
+                error_instance.put(
+                    global_this,
+                    b"lineText",
+                    bun_string_jsc::create_utf8_for_js(global_this, line_text)?,
+                );
+            }
+            error_instance.put(
+                global_this,
+                b"column",
+                JSValue::js_number(location.column as f64),
+            );
+            Ok(())
+        };
+        // Building a property value threw (e.g. STRING_TOO_LONG): reject with
+        // the error as built so far rather than an error about the error.
+        if put_properties().is_err() {
+            let _ = global_this.clear_exception_except_termination();
         }
-        error_instance.put(
-            global_this,
-            b"column",
-            JSValue::js_number(location.column as f64),
-        );
 
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
-        let _ = vm;
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
@@ -1153,7 +1003,6 @@ impl AsyncModule {
         // the centralised non-null deref proof.
         let _ =
             JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
-        Ok(())
     }
 
     pub(crate) fn resume_loading_module(
@@ -1165,22 +1014,12 @@ impl AsyncModule {
             "resumeLoadingModule: {}",
             bstr::BStr::new(self.specifier())
         );
-        // Take `parse_result` by value via `mem::take`, then restore below, to
-        // satisfy borrowck around `linker.link(&mut parse_result)` while
-        // `self` is also borrowed.
+        // `print_with_source_map` consumes the `ParseResult`, so take it by value.
         let arena = *self.parse_result.ast.parts.allocator();
         let mut parse_result =
             core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
-        // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
-        // stable for the lifetime of `*self`; this fn never replaces it, so
-        // slices into it remain valid across the `&mut self` reborrows below
-        // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
-        // tie `path`/`specifier` to `&self`.
-        let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
-        // SAFETY: same `string_buf` stability invariant as `specifier` above —
-        // the backing `Box<[u8]>` is never replaced in this fn.
-        let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
-        let path = Fs::Path::init(path_text);
+        let specifier = self.specifier();
+        let path = Fs::Path::init(self.path_text());
         let jsc_vm = VirtualMachine::get_mut_ptr();
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread)
         // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
@@ -1222,15 +1061,9 @@ impl AsyncModule {
                 bun_bundler::options::ImportPathFormat::AbsolutePath,
             )?;
         }
-        self.parse_result = parse_result;
-        // `print_with_source_map` consumes `ParseResult` by
-        // value (it moves `ast` into `print_ast`). Hoist the post-print
-        // read (`is_commonjs_module`) above the move so we
-        // can `mem::take` instead of cloning.
-        let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
-            || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-        let arena = *self.parse_result.ast.parts.allocator();
-        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
+        // Read before `print_with_source_map` moves `ast` into `print_ast`.
+        let is_commonjs_module = parse_result.ast.has_commonjs_export_names
+            || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
 
         // `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so
@@ -1303,28 +1136,11 @@ impl AsyncModule {
         // the enqueue, and the fd the parse opened may have been closed (and
         // the number recycled) by the transpile frame's fd guard.
 
-        // SAFETY: per-thread VM.
-        if unsafe { (*jsc_vm).is_watcher_enabled() } {
-            // SAFETY: per-thread VM.
-            let mut resolved_source = unsafe {
-                (*jsc_vm).ref_counted_resolved_source::<false>(
-                    printer.ctx.get_written(),
-                    BunString::init(specifier),
-                    path.text,
-                    None,
-                )
-            };
-
-            resolved_source.is_commonjs_module = is_commonjs_module;
-
-            return Ok(resolved_source);
-        }
-
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
-            specifier: BunString::init(specifier),
-            source_url: BunString::init(path.text),
+            source_url: BunString::clone_utf8(path.text),
             is_commonjs_module,
+            is_static: self.is_static,
             ..Default::default()
         })
     }

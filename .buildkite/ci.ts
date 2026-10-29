@@ -540,10 +540,6 @@ function getTestAgent(platform: Platform): Agent {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
-    // The mac agents are a fixed pool that serves the oldest build first. A
-    // job that no agent takes in 60 minutes expires, and its fourth expiry
-    // fails the build (#47389).
-    //
     // `release-tier` is emitted by scripts/agent.ts based on the box's macOS
     // major version. arm64 splits into `latest` (current macOS) + `previous`
     // (anything older). x64 is NOT tier-targeted — single entry, any Intel
@@ -1881,10 +1877,9 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   // The asan and hardened profiles are PR-only (see includeEveryProfile above),
   // so their test lanes are dropped on main along with their builds.
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
-  // PR builds get no x64 lane until the Intel pool can take PR volume: its
-  // jobs expired unrun and failed their builds (#47389). `[macos tests]` in
-  // the commit subject runs the x64 tests on a PR. The merge queue has few
-  // builds and keeps the lane.
+  // No x64 lane on PR builds: the Intel pool cannot keep up with PR volume
+  // (#47389). x64 tests run where darwinTestsEnabled is true (main, manual
+  // builds, `[macos tests]`) and on the merge queue, which has few builds.
   const prDarwinTestPlatforms: Platform[] = [{ os: "darwin", arch: "aarch64", release: "any" }];
   if (isMergeQueue()) {
     prDarwinTestPlatforms.push({ os: "darwin", arch: "x64", release: "any" });

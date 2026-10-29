@@ -1,7 +1,7 @@
 //! Huffman decoding of progressive scans (jdphuff.c).
 
 use super::bits::{BitReader, DerivedTable, TableKind, Tables, huff_extend};
-use super::coef::{CoefBits, McuBlocks};
+use super::coef::{CoefBits, McuBlocks, SAVED_COEFS};
 use super::input::{Input, Restarts};
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
 use crate::error::{Error, Result};
@@ -36,6 +36,9 @@ pub(crate) struct PHuffDecoder {
     blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
 }
 
+/// libjpeg's limit. The standard has none.
+const MAX_AL: u8 = 13;
+
 /// Checks the parameters of a progressive scan and records it in `coef_bits`.
 pub(crate) fn start_progressive_scan(decoder: &Decoder, coef_bits: &mut CoefBits) -> Result<Pass> {
     let &Decoder { ss, se, ah, al, .. } = decoder;
@@ -45,7 +48,7 @@ pub(crate) fn start_progressive_scan(decoder: &Decoder, coef_bits: &mut CoefBits
         ss > se || se >= 64 || decoder.components_in_scan != 1
     };
     // A refinement scan adds exactly one bit.
-    let bad_approximation = (ah != 0 && al != ah - 1) || al > 13;
+    let bad_approximation = (ah != 0 && al != ah - 1) || al > MAX_AL;
     if bad_band || bad_approximation {
         return Err(Error::BadProgression(ss, se, ah, al));
     }
@@ -55,7 +58,8 @@ pub(crate) fn start_progressive_scan(decoder: &Decoder, coef_bits: &mut CoefBits
         let ci = decoder.scan_component_index(i)?;
         let current = coef_bits.current.get_mut(ci).ok_or(Error::Internal)?;
         let previous = coef_bits.previous.get_mut(ci).ok_or(Error::Internal)?;
-        let saved = first.min(1)..=last.max(9);
+        // The band, and whatever the band is, the AC coefficients that block smoothing looks at.
+        let saved = first.min(1)..=last.max(SAVED_COEFS - 1);
         let previous = previous.get_mut(saved.clone()).ok_or(Error::Internal)?;
         if decoder.input_scan_number > 1 {
             previous.copy_from_slice(current.get(saved).ok_or(Error::Internal)?);

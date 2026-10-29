@@ -288,9 +288,11 @@ impl Decoder<'_> {
             if read >= APP0_DATA_LEN && data.starts_with(b"JFIF\0") {
                 self.saw_jfif = true;
             }
-        } else if read >= APP14_DATA_LEN && data.starts_with(b"Adobe") {
-            let [.., transform, _, _] = data;
-            self.adobe_transform = Some(transform);
+        } else if read >= APP14_DATA_LEN
+            // The version and two words of flags come first.
+            && let Some([_, _, _, _, _, _, transform, ..]) = data.strip_prefix(b"Adobe")
+        {
+            self.adobe_transform = Some(*transform);
         }
         self.input.skip(length - read);
     }

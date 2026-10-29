@@ -35,8 +35,23 @@ const ARITAB: [u32; 114] = [
     0x55976d6e, 0x504f6b6f, 0x5a106fee, 0x55226d70, 0x59eb6ff0, 0x5a1d7171,
 ];
 
+/// The state of `ARITAB` with a fixed probability of one half.
+const FIXED_STATE: u8 = 113;
+
 const DC_STAT_BINS: usize = 64;
 const AC_STAT_BINS: usize = 256;
+
+/// Table F.4 of the standard: a context for DC differences has the bins S0 (zero?), SS (the sign), SP and SN (over 1?).
+const DC_CONTEXT_BINS: usize = 4;
+/// Table F.4: X1, the first bin for the magnitude category of a DC difference.
+const DC_X1: usize = 20;
+/// Table F.5: an AC coefficient has the bins SE (end of block?), S0 (zero?), and SP = SN = X1 (over 1? over 2?).
+const AC_COEF_BINS: usize = 3;
+/// Table F.5: X2, the next bin for the magnitude category, of a coefficient up to Kx and of a later one.
+const AC_X2_LOW: usize = 189;
+const AC_X2_HIGH: usize = 217;
+/// Tables F.4 and F.5: from the last bin X of the magnitude category to the bin M for the bits of the magnitude.
+const X_TO_M: usize = 14;
 
 /// The registers of the decoding procedure.
 struct Core {
@@ -191,7 +206,7 @@ impl ArithDecoder {
             restarts: Restarts::default(),
             dc_stats: try_box([[0; DC_STAT_BINS]; NUM_ARITH_TABLES])?,
             ac_stats: try_box([[0; AC_STAT_BINS]; NUM_ARITH_TABLES])?,
-            fixed_bin: 113,
+            fixed_bin: FIXED_STATE,
             coef_bits: decoder
                 .progressive
                 .then(|| CoefBits::new(decoder.components.len()))
@@ -333,7 +348,7 @@ impl ArithDecoder {
             bin += 2 + usize::from(sign);
             let mut magnitude = i32::from(core.decode_at(input, stats, bin)?);
             if magnitude != 0 {
-                bin = 20;
+                bin = DC_X1;
                 while core.decode_at(input, stats, bin)? {
                     magnitude <<= 1;
                     if magnitude == 0x8000 {
@@ -348,11 +363,11 @@ impl ArithDecoder {
             *context = if magnitude < small {
                 0
             } else if magnitude > large {
-                12 + usize::from(sign) * 4
+                (3 + usize::from(sign)) * DC_CONTEXT_BINS
             } else {
-                4 + usize::from(sign) * 4
+                (1 + usize::from(sign)) * DC_CONTEXT_BINS
             };
-            let value = core.decode_magnitude(input, stats, bin + 14, magnitude, sign)?;
+            let value = core.decode_magnitude(input, stats, bin + X_TO_M, magnitude, sign)?;
             *last_dc = (*last_dc + value) & 0xffff;
         }
         let [dc, ..] = block;
@@ -369,13 +384,13 @@ impl ArithDecoder {
 
         let mut k = self.ss;
         while k <= self.se {
-            let mut bin = 3 * (k - 1);
+            let mut bin = AC_COEF_BINS * (k - 1);
             if core.decode_at(input, stats, bin)? {
                 // End of block.
                 break;
             }
             while !core.decode_at(input, stats, bin + 1)? {
-                bin += 3;
+                bin += AC_COEF_BINS;
                 k += 1;
                 if k > self.se {
                     core.fail();
@@ -387,7 +402,7 @@ impl ArithDecoder {
             let mut magnitude = i32::from(core.decode_at(input, stats, bin)?);
             if magnitude != 0 && core.decode_at(input, stats, bin)? {
                 magnitude <<= 1;
-                bin = if k <= kx { 189 } else { 217 };
+                bin = if k <= kx { AC_X2_LOW } else { AC_X2_HIGH };
                 while core.decode_at(input, stats, bin)? {
                     magnitude <<= 1;
                     if magnitude == 0x8000 {
@@ -397,7 +412,7 @@ impl ArithDecoder {
                     bin += 1;
                 }
             }
-            let value = core.decode_magnitude(input, stats, bin + 14, magnitude, sign)?;
+            let value = core.decode_magnitude(input, stats, bin + X_TO_M, magnitude, sign)?;
             *coef_at(block, k)? = value.wrapping_shl(self.al) as i16;
             k += 1;
         }
@@ -421,7 +436,7 @@ impl ArithDecoder {
 
         let mut k = self.ss;
         while k <= self.se {
-            let mut bin = 3 * (k - 1);
+            let mut bin = AC_COEF_BINS * (k - 1);
             if k > last_nonzero && core.decode_at(input, stats, bin)? {
                 break;
             }
@@ -441,7 +456,7 @@ impl ArithDecoder {
                     };
                     break;
                 }
-                bin += 3;
+                bin += AC_COEF_BINS;
                 k += 1;
                 if k > self.se {
                     core.fail();

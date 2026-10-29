@@ -247,7 +247,7 @@ impl<'a> Decoder<'a> {
             && all((1, 1), first);
         // 4:2:2 and 4:4:0 written with doubled factors.
         let doubled = first == (2, 2) && (all((1, 2), first) || all((2, 1), first));
-        // 4:4:4 written with factors other than 1.
+        // 4:4:4 written with factors other than 1, which TurboJPEG knows if three such components fit in an MCU.
         let same = first.0 * first.1 <= MAX_BLOCKS_IN_MCU as u32 / 3 && all(first, first);
         usual || doubled || same
     }

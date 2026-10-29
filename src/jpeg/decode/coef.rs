@@ -180,7 +180,7 @@ impl McuBlocks for McuInImage<'_> {
 }
 
 /// How many of `CoefBits`'s entries block smoothing looks at.
-const SAVED_COEFS: usize = 10;
+pub(crate) const SAVED_COEFS: usize = 10;
 
 /// The current and the previous precision of a component's first coefficients.
 type Latch = [[i32; SAVED_COEFS]; 2];

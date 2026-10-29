@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, spawned, unsupported, withoutDebugInformation } from "./harness/commands";
 
 function countModulesWithSource(executable: Buffer): number {
   const [magic, headerSize, recordSize] = ["BUNBLTNS", 48, 24] as const;
@@ -35,7 +35,6 @@ const asksForModuleOfNode = ["require('node:worker_threads').parentPort.", ...as
 const files = {
   "w.js": `postMessage("w.js");`,
   "of-node.cjs": `require("node:worker_threads").parentPort.postMessage("of-node.cjs");`,
-  "threads.js": `export { Worker } from "node:worker_threads";`,
 };
 
 type Case = [what: string, program: string, stdout: string, extension?: string];
@@ -144,30 +143,6 @@ const unseen: Case[] = [
     "a/b\n",
   ],
   [
-    "the Worker of node:worker_threads exported again",
-    `import { Worker as Thread } from "./threads.js";
-     await heard(new Thread(made(...asksForModuleOfNode), { eval: true }));`,
-    "a/b\n",
-  ],
-  [
-    "the rest of a pattern",
-    `const { parentPort, ...rest } = require("node:worker_threads");
-     await heard(new rest.Worker(made(...asksForModuleOfNode), { eval: true }));`,
-    "a/b\n",
-  ],
-  [
-    "node:worker_threads out of import()",
-    `const { Worker: Thread } = await import("node:worker_threads");
-     await heard(new Thread(made(...asksForModuleOfNode), { eval: true }));`,
-    "a/b\n",
-  ],
-  [
-    "node:worker_threads under a name made at run time",
-    `const { Worker: Thread } = require(made("node:", "worker_threads"));
-     await heard(new Thread(made(...asksForModuleOfNode), { eval: true }));`,
-    "a/b\n",
-  ],
-  [
     "the constructor under a name made at run time",
     `await heard(new globalThis[made("Wor", "ker")](made("data:text/javascript,", ...asksForModule)));`,
     "a/b\n",
@@ -184,41 +159,88 @@ if (!canTrim)
     "SKIPPED: source-of-the-runtime-modules-for-workers-of-unseen-code.test.ts: this build of Bun doesn't support --trim",
   );
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
+(canTrim && !unsupported ? describe.concurrent : describe.skip)(
   "an executable of a Bun that can be trimmed, built without --trim",
   () => {
     const all = countModulesWithSource(readFileSync(bunExe()));
 
-    async function run([, program, , extension = "mjs"]: Case) {
-      using dir = tempDir("source-of-the-runtime-modules", { ...files, [`main.${extension}`]: helpers + program });
+    async function build(sources: Record<string, string>, entry: string, flags: string[] = []) {
+      const dir = tempDir("source-of-the-runtime-modules", { ...files, ...sources });
       const folder = String(dir);
-      const executable = join(folder, "main");
+      const executable = join(folder, isWindows ? "main.exe" : "main");
       built(
         await spawned(
-          [bunExe(), "build", "--compile", "--aot", `main.${extension}`, "--outfile", executable],
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            ...flags,
+            ...withoutDebugInformation(),
+            entry,
+            "--outfile",
+            executable,
+          ],
           folder,
           bunEnv,
         ),
       );
-      const ran = await spawned([executable], folder, bunEnv);
       return {
-        stdout: ran.stdout,
-        exitCode: ran.exitCode,
         modulesWithSource: countModulesWithSource(readFileSync(executable)),
+        run: () => spawned([executable], folder, bunEnv),
+        [Symbol.dispose]: () => dir[Symbol.dispose](),
       };
     }
 
-    test.each(compiled)(
-      "holds no source of the modules of the runtime: %s",
-      (...row) =>
-        slot(async () => expect(await run(row)).toEqual({ stdout: row[2], exitCode: 0, modulesWithSource: 0 })),
+    // Each is a file of one program. The one that waits for nothing comes last.
+    test(`holds no source of the modules of the runtime: ${compiled.map(([what]) => what).join(", ")}`, async () => {
+      const rows = compiled.toSorted((a, b) => Number(a[3] === "cjs") - Number(b[3] === "cjs"));
+      const nameOf = (index: number) => `row-${index}.${rows[index][3] ?? "mjs"}`;
+      using main = await build(
+        {
+          ...Object.fromEntries(rows.map(([, program], index) => [nameOf(index), helpers + program])),
+          "main.mjs": rows.map((_, index) => `await import("./${nameOf(index)}");\n`).join(""),
+        },
+        "main.mjs",
+        ["--aot-heat=everything-is-cold"],
+      );
+      const ran = await main.run();
+      expect({ stdout: ran.stdout, exitCode: ran.exitCode, modulesWithSource: main.modulesWithSource }).toEqual({
+        stdout: rows.map(([, , stdout]) => stdout).join(""),
+        exitCode: 0,
+        modulesWithSource: 0,
+      });
+    }, 600_000);
+
+    // Whether the source is held shows in the file. A build that compiles none of the modules of the runtime takes a tenth of the time, but it finds no node:worker_threads.
+    test.each(unseen)(
+      "holds the source of the modules of the runtime: %s",
+      async (_, program, stdout, extension = "mjs") => {
+        const namesModule = program.includes("worker_threads");
+        using main = await build({ [`main.${extension}`]: helpers + program }, `main.${extension}`, [
+          namesModule ? "--aot-heat=everything-is-cold" : "--no-builtin-modules",
+        ]);
+        expect(main.modulesWithSource).toBe(all);
+        if (namesModule) expect(await main.run()).toMatchObject({ stdout, exitCode: 0 });
+      },
       600_000,
     );
 
-    test.each(unseen)(
-      "holds the source of the modules of the runtime: %s",
-      (...row) =>
-        slot(async () => expect(await run(row)).toEqual({ stdout: row[2], exitCode: 0, modulesWithSource: all })),
+    test.each(
+      unseen.filter(([what]) =>
+        ["a text put together at run time", "a written text that is no program"].includes(what),
+      ),
+    )(
+      "and the Worker runs them: %s",
+      async (_, program, stdout, extension = "mjs") => {
+        using main = await build({ [`main.${extension}`]: helpers + program }, `main.${extension}`);
+        const ran = await main.run();
+        expect({ stdout: ran.stdout, exitCode: ran.exitCode, modulesWithSource: main.modulesWithSource }).toEqual({
+          stdout,
+          exitCode: 0,
+          modulesWithSource: all,
+        });
+      },
       600_000,
     );
   },

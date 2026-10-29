@@ -1,3 +1,4 @@
+// Runs alone: it judges by the memory that a program holds.
 // The compiled JSON.stringify writes into a buffer that the program keeps between calls. A large buffer is released at the end of
 // every call, whichever way the call ends: an 8-bit result, a 16-bit result, or a fallback to the generic writer.
 import { expect } from "bun:test";

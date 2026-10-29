@@ -37,7 +37,7 @@ const holders: readonly {
     type: t => `{ v: ${t}; w: number }`,
     make: value => `{ v: ${value}, w: 0.5 }`,
   },
-  { name: "an instance", declares: "class Box { v$T; constructor(v$T) { this.v = v; } }", type: () => "Box", make: value => `new Box(${value})` }, // prettier-ignore
+  { name: "an instance", declares: "class Holder { v$T; constructor(v$T) { this.v = v; } }", type: () => "Holder", make: value => `new Holder(${value})` }, // prettier-ignore
 ];
 
 const values: readonly { text?: string; kind: Kind }[] = [

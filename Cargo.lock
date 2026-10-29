@@ -167,6 +167,7 @@ dependencies = [
  "bun_ast",
  "bun_base64",
  "bun_builtin_sources",
+ "bun_bundler",
  "bun_collections",
  "bun_core",
  "bun_glob",
@@ -221,6 +222,7 @@ dependencies = [
  "bstr",
  "bun_ast",
  "bun_core",
+ "bun_js_parser",
  "bun_options_types",
  "bun_paths",
  "bun_sema",
@@ -820,7 +822,6 @@ dependencies = [
  "bun_core",
  "bun_dotenv",
  "bun_install_types",
- "bun_js_parser",
  "bun_options_types",
  "bun_parsers",
  "bun_url",
@@ -1086,7 +1087,6 @@ dependencies = [
  "bun_core",
  "bun_windows_sys",
  "bun_wyhash",
- "libc",
  "strum",
 ]
 
@@ -1456,7 +1456,6 @@ dependencies = [
 name = "bun_platform"
 version = "0.0.0"
 dependencies = [
- "bun_core",
  "libc",
 ]
 
@@ -1476,7 +1475,6 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_core_macros",
- "scopeguard",
 ]
 
 [[package]]
@@ -1591,7 +1589,6 @@ dependencies = [
  "bun_boringssl",
  "bun_boringssl_sys",
  "bun_brotli",
- "bun_builtin_sources",
  "bun_bundler",
  "bun_bundler_jsc",
  "bun_bunfig",
@@ -1897,7 +1894,6 @@ dependencies = [
  "bun_alloc",
  "bun_analytics",
  "bun_core",
- "bun_crash_handler",
  "bun_dispatch",
  "bun_errno",
  "bun_event_loop",

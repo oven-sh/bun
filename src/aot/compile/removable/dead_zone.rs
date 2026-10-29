@@ -92,7 +92,7 @@ impl Removable<'_, '_> {
         false
     }
 
-    fn declaration_statement(&self, declaration: Decl) -> Option<(StmtId, u32)> {
+    pub(super) fn declaration_statement(&self, declaration: Decl) -> Option<(StmtId, u32)> {
         let (hir, bound) = (self.hir, self.bound);
         let statement = match declaration {
             Decl::Var(name) | Decl::Require(name) => {
@@ -115,11 +115,14 @@ impl Removable<'_, '_> {
     }
 
     pub(super) fn is_initialized_at(&self, read: ExprId, symbol: SymbolId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        match bound.initial_state(symbol) {
-            InitialState::Undefined | InitialState::Initialized => return true,
-            InitialState::Uninitialized => {}
+        match self.bound.initial_state(symbol) {
+            InitialState::Undefined | InitialState::Initialized => true,
+            InitialState::Uninitialized => self.has_initializer_run_at(read, symbol),
         }
+    }
+
+    pub(super) fn has_initializer_run_at(&self, read: ExprId, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
         if bound.binding_stability(symbol) == BindingStability::ContainerMember {
             return true;
         }

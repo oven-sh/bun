@@ -567,7 +567,7 @@ pub(crate) fn compute_chunks<'a>(
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(this)) };
     let kinds = this.graph.files.items_entry_point_kind();
     let output_paths = this.graph.entry_points.items_output_path();
-    // re-borrow after `find_all_imported_parts_in_js_order` released `&mut this`.
+    // re-borrow after `from_mut(this)` took `&mut *this`.
     let ast_targets = this.graph.ast.items_target();
     let mut compile_entry_point_pending =
         !bv2.transpiler().options.compile_entry_point_name.is_empty();

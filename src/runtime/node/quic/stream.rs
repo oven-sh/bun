@@ -113,7 +113,8 @@ pub(super) struct Inbound {
 pub(crate) struct QuicStream {
     /// MUST stay the first field — see `node_quic_shim.c`.
     vtable: *const lsquic::NqVtable,
-    raw: Cell<*mut lsquic::lsquic_stream>,
+    /// `None` while pending or closed: `on_stream_close` clears it before lsquic frees the stream.
+    raw: Cell<Option<lsquic::Stream>>,
     /// Owning session (raw pointer; the JS-side Strong keeps it alive).
     session: Cell<*mut QuicSession>,
     key: Key,
@@ -140,7 +141,7 @@ pub(crate) struct QuicStream {
 impl Drop for QuicStream {
     fn drop(&mut self) {
         if let Some(s) = self.ls() {
-            // SAFETY: a non-null `raw` is live (see `ls()`).
+            // SAFETY: null is always a valid stream ctx; the shim skips on null.
             unsafe { s.set_ctx(null_mut()) };
         }
     }
@@ -153,12 +154,12 @@ impl QuicStream {
         session: *mut QuicSession,
         key: Key,
         session_handle: JSValue,
-        raw: *mut lsquic::lsquic_stream,
+        raw: Option<lsquic::Stream>,
     ) -> JsResult<(&'a QuicStream, JSValue)> {
         // `bind_raw` sets `raw` after the allocations below succeed.
         let stream = QuicStream {
             vtable,
-            raw: Cell::new(null_mut()),
+            raw: Cell::new(None),
             session: Cell::new(session),
             key,
             session_js: JsCell::new(Some(Strong::create(session_handle, global))),
@@ -217,16 +218,14 @@ impl QuicStream {
             s.pending = 1;
             s.high_water_mark = DEFAULT_HIGH_WATER_MARK;
         });
-        if !raw.is_null() {
+        if let Some(raw) = raw {
             this.bind_raw(raw);
         }
         Ok((this, handle))
     }
 
-    fn bind_raw(&self, raw: *mut lsquic::lsquic_stream) {
-        self.raw.set(raw);
-        // SAFETY: `raw` is the live stream lsquic just handed us.
-        let s = unsafe { lsquic::Stream::from_raw(raw) }.expect("non-null stream");
+    fn bind_raw(&self, s: lsquic::Stream) {
+        self.raw.set(Some(s));
         let id = s.id() as i64;
         self.with_state(|st| {
             st.id = id;
@@ -312,10 +311,7 @@ impl QuicStream {
         (!p.is_null()).then(|| unsafe { &*p })
     }
     fn ls(&self) -> Option<lsquic::Stream> {
-        // SAFETY: `raw` is either null (pending/closed) or the live stream
-        // lsquic gave us; lsquic frees it only after `on_close` returns,
-        // where we null it first.
-        unsafe { lsquic::Stream::from_raw(self.raw.get()) }
+        self.raw.get()
     }
 
     fn state_mut(&self) -> *mut StreamState {
@@ -608,7 +604,7 @@ impl QuicStream {
             // SAFETY: null is always a valid stream ctx; the shim skips on null.
             unsafe { s.set_ctx(null_mut()) };
         }
-        self.raw.set(null_mut());
+        self.raw.set(None);
         // SAFETY: streams are kept alive by their wrapper Strong; the
         // session is alive (session_js Strong still held below).
         let session = self.session.replace(null_mut());
@@ -647,7 +643,7 @@ impl QuicStream {
         // SAFETY: `Drop` nulls the lsquic ctx, so a non-null ctx is live.
         // `session` may be freed, so only touch `raw`.
         if let Some(qs) = unsafe { super::ffi::ctx_ref::<QuicStream>(ctx) } {
-            qs.raw.set(null_mut());
+            qs.raw.set(None);
         }
     }
 
@@ -1025,7 +1021,8 @@ pub(super) unsafe extern "C" fn on_new_stream(
     _owner: *mut c_void,
     s: *mut lsquic::lsquic_stream,
 ) -> *mut c_void {
-    // SAFETY: `s` is the stream lsquic just created, live for this callback.
+    // SAFETY: `s` is the stream lsquic just created. The copy a `QuicStream` keeps is cleared
+    // before lsquic frees the stream (`on_stream_close`, `on_close_detached`, `teardown`).
     let Some(stream) = (unsafe { lsquic::Stream::from_raw(s) }) else {
         return null_mut();
     };
@@ -1047,7 +1044,7 @@ pub(super) unsafe extern "C" fn on_new_stream(
         if let Some(qs) = session.take_pending_local_stream(id & STREAM_ID_UNI_BIT as u64 != 0) {
             // SAFETY: pending streams are kept alive by their wrapper Strong.
             let pending = unsafe { &*qs };
-            pending.bind_raw(s);
+            pending.bind_raw(stream);
             session.push_event(SessionEvent::StreamReady {
                 stream: pending.key,
                 remote: false,
@@ -1057,7 +1054,7 @@ pub(super) unsafe extern "C" fn on_new_stream(
         stream.shutdown_internal();
         return null_mut();
     }
-    session.on_remote_stream(s).cast()
+    session.on_remote_stream(stream).cast()
 }
 
 pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic::lsquic_stream) {
@@ -1189,7 +1186,7 @@ lsquic_callback! {
 
     pub(super) fn on_stream_close(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
         // The lsquic_stream is freed immediately after this callback returns.
-        qs.raw.set(null_mut());
+        qs.raw.set(None);
         if let Some(session) = qs.session_ref() {
             session.push_event(SessionEvent::StreamClosed { stream: qs.key });
         }

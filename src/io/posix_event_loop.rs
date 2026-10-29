@@ -1449,10 +1449,7 @@ impl Pollable {
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
 /// was registered via `Pollable::init` in `register_with_fd`.
-unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
-    loop_: *mut Loop,
-    tagged_pointer: *mut c_void,
-) {
+unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
 
     if tag.tag() != Pollable::FILE_POLL_TAG {
@@ -1465,8 +1462,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
         return;
     }
 
-    // SAFETY: `loop_` is the live uws loop; the borrow only copies the POD event onto the stack.
-    let ev = unsafe { &*loop_ }.current_ready_event();
+    let ev = loop_.current_ready_event();
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     file_poll.on_kqueue_event(&ev);

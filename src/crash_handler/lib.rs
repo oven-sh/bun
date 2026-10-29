@@ -1332,8 +1332,10 @@ mod draft {
         use bun_core::{err_generic, pretty_error};
 
         #[cfg(unix)]
-        fn getrlimit_nofile() -> Option<bun_sys::posix::Rlimit> {
-            bun_sys::posix::getrlimit(bun_sys::posix::RlimitResource::NOFILE).ok()
+        fn nofile_limit() -> Option<u64> {
+            bun_sys::posix::getrlimit(bun_sys::posix::RlimitResource::NOFILE)
+                .ok()
+                .map(|l| l.cur)
         }
 
         let name: &[u8] = err.name();
@@ -1354,7 +1356,7 @@ mod draft {
         } else if name == b"SystemFdQuotaExceeded" {
             #[cfg(unix)]
             {
-                let limit = getrlimit_nofile().map(|l| l.cur);
+                let limit = nofile_limit();
                 #[cfg(target_os = "macos")]
                 {
                     pretty_error!(
@@ -1397,7 +1399,7 @@ mod draft {
         } else if name == b"ProcessFdQuotaExceeded" {
             #[cfg(unix)]
             {
-                let limit = getrlimit_nofile().map(|l| l.cur);
+                let limit = nofile_limit();
                 #[cfg(target_os = "macos")]
                 {
                     pretty_error!(
@@ -1441,13 +1443,12 @@ mod draft {
             // The file descriptor problem may show up as other errors
             #[cfg(unix)]
             {
-                // SAFETY: zeroed rlimit is valid POD (integers).
-                let limit = getrlimit_nofile().unwrap_or(bun_core::ffi::zeroed());
+                let limit = nofile_limit().unwrap_or(0);
 
-                if limit.cur > 0 && limit.cur < (8192 * 2) {
+                if limit > 0 && limit < (8192 * 2) {
                     pretty_error!(
                         "\n<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>ulimit -n 2147483646<r>\n",
-                        limit.cur,
+                        limit,
                     );
 
                     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3411,7 +3412,7 @@ mod draft {
             let Ok(mut existing_limit) = bun_sys::posix::getrlimit(resource) else {
                 return;
             };
-            if existing_limit.cur > 0 || existing_limit.cur == libc::RLIM_INFINITY as u64 {
+            if existing_limit.cur > 0 {
                 existing_limit.cur = 0;
                 let _ = bun_sys::posix::setrlimit(resource, existing_limit);
             }

@@ -525,9 +525,6 @@ impl Snapshots {
                     // (that macro is crate-local).
                     let mut __parser_slot =
                         core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
-                    // `P::init` writes a fully-initialized value on `Ok`. On `Err` we
-                    // `?`-return before arming the drop guard, so the slot stays
-                    // uninitialized and untouched.
                     let __parser = js_parser::TSXParser::init(
                         &mut __parser_slot,
                         &arena,
@@ -536,9 +533,10 @@ impl Snapshots {
                         &vm.transpiler.options.define,
                         lexer,
                         opts,
-                    )?;
-                    // SAFETY: `p` is the value `init` wrote into `__parser_slot`, which does not drop it. The
-                    // guard holds the only reference to it, so it is dropped once and not used afterwards.
+                    );
+                    // SAFETY: `p` refers to the value `init` wrote into `__parser_slot`, which
+                    // does not drop it. The guard holds the only reference to it, so it is
+                    // dropped once and not used afterwards.
                     let mut __parser_guard =
                         scopeguard::guard(__parser, |p| unsafe { core::ptr::drop_in_place(p) });
                     let parser: &mut js_parser::TSXParser<'_> = &mut __parser_guard;

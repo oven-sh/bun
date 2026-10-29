@@ -38,9 +38,9 @@ type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 macro_rules! init_p {
     (let $p:ident: $ty:ty = ($($arg:expr),* $(,)?)) => {
         let mut slot = MaybeUninit::<$ty>::uninit();
-        // SAFETY: `p` is the value `init` wrote into `slot`, which does not drop it. The guard
-        // holds the only reference to it, so it is dropped once and not used afterwards.
-        let mut guard = scopeguard::guard(<$ty>::init(&mut slot, $($arg),*)?, |p| unsafe {
+        // SAFETY: `p` refers to the value `init` wrote into `slot`, which does not drop it. The
+        // guard holds the only reference to it, so it is dropped once and not used afterwards.
+        let mut guard = scopeguard::guard(<$ty>::init(&mut slot, $($arg),*), |p| unsafe {
             core::ptr::drop_in_place(p)
         });
         let $p: &mut $ty = &mut guard;

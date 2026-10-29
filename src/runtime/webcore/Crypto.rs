@@ -97,11 +97,21 @@ pub(crate) fn timing_safe_equal<'a>(
     Ok(bun_boringssl::c::constant_time_eq(buf1, buf2))
 }
 
+/// `random_get` of `node:wasi`, whose memory can be shared or resizable.
+pub(crate) fn fill_random<'a>(heap: &JsHeap<'a>, view: JsLocal<'a, bindgen::BufferSource>) {
+    // SAFETY: `random_data` only takes the entropy cache of the VM from it.
+    let global = unsafe { heap.global() };
+    // SAFETY: nothing else borrows the bytes of the one argument.
+    unsafe { view.with_bytes_mut(heap, |bytes| random_data(global, bytes)) }
+}
+
+// With two callers LLVM no longer inlines it into `get_random_values` by itself.
+#[inline(always)]
 fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
     const ENTROPY_CACHE_FAST_PATH_MAX: usize = bun_jsc::RareData::EntropyCache::SIZE / 8;
     match slice.len() {
         0 => {}
-        // 512 bytes or less we reuse from the same cache as UUID generation.
+        // `ENTROPY_CACHE_FAST_PATH_MAX` bytes or less we reuse from the same cache as UUID generation.
         1..=ENTROPY_CACHE_FAST_PATH_MAX => {
             let src = global
                 .bun_vm()

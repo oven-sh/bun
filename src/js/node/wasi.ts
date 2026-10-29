@@ -7,6 +7,7 @@
 // Eventually we will implement this in native code, but this is just a quick hack to get WASI working.
 
 const nodeFsConstants: typeof $processBindingConstants.fs & { O_RSYNC?: number } = $processBindingConstants.fs;
+const fillRandom = $bindgen("CryptoInternals.bind.ts", "fillRandom");
 
 interface WASIBindings {
   hrtime: () => bigint;
@@ -554,7 +555,10 @@ function getDefaults() {
     kill: signal => {
       process.kill(process.pid, signal);
     },
-    randomFillSync: array => crypto.getRandomValues(array),
+    randomFillSync: array => {
+      fillRandom(array);
+      return array;
+    },
     isTTY: fd => require("node:tty").isatty(fd),
     fs: require("node:fs"),
     path: require("node:path"),
@@ -1639,10 +1643,8 @@ class WASI {
       },
       random_get: (bufPtr, bufLen) => {
         this.refreshMemory();
-        // getRandomValues takes one integer-typed view and ignores any further
-        // arguments, so a bare `buffer, bufPtr, bufLen` randomized all of linear
-        // memory rather than the requested window.
-        crypto.getRandomValues(new Uint8Array(this.memory.buffer, bufPtr, bufLen));
+        // Not `crypto.getRandomValues`: a system call does not take the argument rules of a Web API.
+        fillRandom(new Uint8Array(this.memory.buffer, bufPtr, bufLen));
         return WASI_ESUCCESS;
       },
       sched_yield() {

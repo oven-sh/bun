@@ -72,6 +72,92 @@ it("random_get fills only the requested window", () => {
   expect(after.subarray(bufPtr, bufPtr + bufLen).some(b => b !== 0)).toBe(true);
 });
 
+// A guest with threads has a shared memory, and toResizableBuffer() makes the buffer of a memory
+// resizable. random_get fills both, as it fills a plain memory.
+//
+// Without its fault signal handler, JavaScriptCore gives a shared memory a buffer that is not a
+// SharedArrayBuffer. A debug build whose ASAN_OPTIONS lack allow_user_segv_handler=1 is in that mode.
+const sharedMemoryHasASharedBuffer =
+  new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer instanceof SharedArrayBuffer;
+const memoriesThatAreNotPlain = [
+  [
+    "a shared memory",
+    sharedMemoryHasASharedBuffer,
+    () => new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true }),
+  ],
+  [
+    "a memory with a resizable buffer",
+    true,
+    () => {
+      const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+      memory.toResizableBuffer();
+      return memory;
+    },
+  ],
+  [
+    "a shared memory with a growable buffer",
+    sharedMemoryHasASharedBuffer,
+    () => {
+      const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+      memory.toResizableBuffer();
+      return memory;
+    },
+  ],
+];
+
+for (const [name, exists, makeMemory] of memoriesThatAreNotPlain) {
+  it.skipIf(!exists)(`random_get fills only the requested window of ${name}`, () => {
+    const wasi = new WASI({});
+    const memory = makeMemory();
+    wasi.setMemory(memory);
+
+    const WASI_ESUCCESS = 0;
+    const pageSize = 65536;
+    const bufPtr = 1024;
+    const bufLen = 16;
+
+    expect(wasi.wasiImport.random_get(bufPtr, bufLen)).toBe(WASI_ESUCCESS);
+    // A page that grow() adds is part of the memory as well.
+    memory.grow(1);
+    expect(wasi.wasiImport.random_get(pageSize + bufPtr, bufLen)).toBe(WASI_ESUCCESS);
+
+    const after = new Uint8Array(memory.buffer);
+    expect(after.length).toBe(2 * pageSize);
+    for (const start of [bufPtr, pageSize + bufPtr]) {
+      expect(after.subarray(start, start + bufLen).some(b => b !== 0)).toBe(true);
+      after.fill(0, start, start + bufLen);
+    }
+    // The memory was all zero, so with the two windows cleared it is all zero again.
+    expect(after.findIndex(b => b !== 0)).toBe(-1);
+  });
+}
+
+it("the default randomFillSync binding fills a view on a SharedArrayBuffer and returns it", () => {
+  const view = new Uint8Array(new SharedArrayBuffer(16));
+  expect(new WASI({}).bindings.randomFillSync(view)).toBe(view);
+  expect(view.some(b => b !== 0)).toBe(true);
+});
+
+it("random_get does not call crypto.getRandomValues", () => {
+  const wasi = new WASI({});
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+
+  const getRandomValues = Crypto.prototype.getRandomValues;
+  let calls = 0;
+  Crypto.prototype.getRandomValues = function (view) {
+    calls++;
+    return view.fill(7);
+  };
+  try {
+    expect(wasi.wasiImport.random_get(1024, 32)).toBe(0);
+  } finally {
+    Crypto.prototype.getRandomValues = getRandomValues;
+  }
+
+  expect(calls).toBe(0);
+  expect(new Uint8Array(wasi.memory.buffer, 1024, 32).every(b => b === 7)).toBe(false);
+});
+
 it("path_open reports the host errno to the guest when the open fails", () => {
   using dir = tempDir("wasi-path-open-errno", {
     "exists.txt": "x",

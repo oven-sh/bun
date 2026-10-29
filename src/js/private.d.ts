@@ -2456,9 +2456,6 @@ declare namespace $Node {
     readonly remoteAddress: SocketAddressInfo | null;
     readonly localAddress: SocketAddressInfo | null;
     readonly secureEstablished: boolean;
-    readonly servername: string | null;
-    readonly authorizationError: string | null;
-    readonly peerCertVerified: boolean;
     readonly hasQueuedTunnelReads: boolean;
     readonly closedWithUnsentData: boolean | undefined;
     readonly closeError: (Error & { errno: number; code: string }) | undefined;

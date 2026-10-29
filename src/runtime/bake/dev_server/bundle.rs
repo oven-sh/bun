@@ -384,25 +384,14 @@ impl DevServer {
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
         let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
-        // Note: split `&mut self` into disjoint field reborrows so
-        // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
-        // (NonNull) don't trip the single-`&mut self` rule.
-        let self_ptr = std::ptr::from_mut::<Self>(self);
+        let server_transpiler: *mut Transpiler<'static> = &raw mut *self.server_transpiler;
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
-            unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
+            unsafe { &mut *server_transpiler },
             Some(bundler::bundle_v2::BakeOptions {
                 framework: self.framework.as_bundler_view(),
-                // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
-                // raw pointers and never moves them.
-                client_transpiler: unsafe {
-                    ::core::ptr::NonNull::from((*self_ptr).client_transpiler.assume_init_mut())
-                },
-                // SAFETY: sibling field of `*self`; `BundleV2` stores it as a raw
-                // pointer and never moves it.
-                ssr_transpiler: unsafe {
-                    ::core::ptr::NonNull::from((*self_ptr).ssr_transpiler.assume_init_mut())
-                },
+                client_transpiler: ::core::ptr::NonNull::from(&mut *self.client_transpiler),
+                ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
                 plugins: self.bundler_options.plugin,
             }),
             &heap,

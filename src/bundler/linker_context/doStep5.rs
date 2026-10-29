@@ -183,10 +183,8 @@ impl LinkerContext<'_> {
                         } else {
                             ambig.data.import_ref
                         };
-                        if c.wrapped_lifted_read_target(
-                            main_data.source_index.get(),
-                            main_data.import_ref,
-                        ) != c.wrapped_lifted_read_target(_id, ambig_ref)
+                        if c.wrapped_lifted_read_target(main_data.import_ref)
+                            != c.wrapped_lifted_read_target(ambig_ref)
                         {
                             continue 'next_alias;
                         }

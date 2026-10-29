@@ -4227,12 +4227,13 @@ impl<'a> LinkerContext<'a> {
         result
     }
 
-    /// The export a match stands for, when it is a read made by step 3 of a
-    /// wrapped lifted CommonJS file's export.
-    pub(crate) fn wrapped_lifted_read_target(&self, source_index: u32, ref_: Ref) -> (u32, Ref) {
+    /// The export symbol a match stands for: the export a read made by step 3
+    /// reads, or the symbol itself. A `Ref` names its file, so two matches
+    /// with one target are one export.
+    pub(crate) fn wrapped_lifted_read_target(&self, ref_: Ref) -> Ref {
         match self.wrapped_lifted_reads.get(&ref_) {
-            Some(target) => (target.source_index.get(), target.import_ref),
-            None => (source_index, ref_),
+            Some(target) => target.import_ref,
+            None => ref_,
         }
     }
 
@@ -4241,8 +4242,7 @@ impl<'a> LinkerContext<'a> {
             && b.kind == MatchImportKind::Normal
             && (self.wrapped_lifted_reads.contains_key(&a.r#ref)
                 || self.wrapped_lifted_reads.contains_key(&b.r#ref))
-            && self.wrapped_lifted_read_target(a.source_index, a.r#ref)
-                == self.wrapped_lifted_read_target(b.source_index, b.r#ref)
+            && self.wrapped_lifted_read_target(a.r#ref) == self.wrapped_lifted_read_target(b.r#ref)
     }
 
     pub(crate) fn export_runtime_function(&self) -> &'static [u8] {

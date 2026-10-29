@@ -1741,6 +1741,68 @@ describe("bundler", () => {
       },
     });
   }
+  // The same two paths to a file with no wrapper, a lifted CommonJS file or an
+  // ES module, lead to one binding: the name stays.
+  for (const [name, lib, sibling] of [
+    ["ExportStarOfLiftedCommonJSWithSiblingReExport", "lib.cjs", `export { foo } from "./lib.cjs";`],
+    ["ExportStarOfLiftedCommonJSWithSiblingImportExport", "lib.cjs", `import { foo } from "./lib.cjs"; export { foo };`],
+    ["ExportStarOfESModuleWithSiblingReExport", "lib.mjs", `export { foo } from "./lib.mjs";`],
+    ["ExportStarOfESModuleWithSiblingImportExport", "lib.mjs", `import { foo } from "./lib.mjs"; export { foo };`],
+  ]) {
+    const isCommonJS = lib.endsWith(".cjs");
+    const barrel = /* js */ `
+      export * from "./${lib}";
+      export * from "./sibling.js";
+    `;
+    const files = {
+      "/sibling.js": sibling,
+      [`/${lib}`]: isCommonJS
+        ? /* js */ `
+          exports.foo = 1;
+          exports.bar = 2;
+        `
+        : /* js */ `
+          export const foo = 1;
+          export const bar = 2;
+        `,
+    };
+    itBundled(`cjs2esm/${name}Entry`, {
+      files: {
+        "/entry.js": barrel,
+        ...files,
+      },
+      format: "esm",
+      cjs2esm: true,
+      runtimeFiles: {
+        "/test.js": /* js */ `
+          import * as ns from './out.js';
+          console.log(Object.keys(ns).join(","), ns.foo);
+        `,
+      },
+      run: {
+        file: "/test.js",
+        stdout: "bar,foo 1",
+      },
+    });
+    // The namespace object of a barrel over a lifted file also gets the
+    // names at run time (`__reExport`), so only an ES module shows a loss there.
+    if (isCommonJS) continue;
+    itBundled(`cjs2esm/${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { foo } from "./barrel.js";
+          import * as ns from "./barrel.js";
+          console.log(foo, Object.keys(ns).join(","));
+        `,
+        "/barrel.js": barrel,
+        ...files,
+      },
+      format: "esm",
+      run: {
+        stdout: "1 bar,foo",
+      },
+    });
+  }
   // The named re-export can name a file that gets `foo` through its own
   // `export *` of the wrapped file.
   itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSWithSiblingReExportOverExportStar", {

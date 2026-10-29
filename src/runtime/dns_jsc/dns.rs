@@ -157,7 +157,7 @@ mod lib_c {
 
         // The backend result is filled in by the job's completion; until then
         // the request (which the pending cache points at) holds a placeholder.
-        let request = GetAddrInfoRequest::init(
+        let (request, promise_value) = GetAddrInfoRequest::init(
             cache,
             get_addr_info_request::Backend::CAres,
             this,
@@ -165,8 +165,6 @@ mod lib_c {
             context,
             PendingCacheField::PendingHostCacheNative,
         );
-        // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
-        let promise_value = unsafe { (*request).head.promise.value() };
 
         bun_jsc::Job::<get_addr_info_request::LibcLookup>::schedule(
             // The realm's: lookups of the same name from any context wait on the one in flight.
@@ -174,7 +172,7 @@ mod lib_c {
             get_addr_info_request::LibcLookup {
                 backend: get_addr_info_request::LibcBackend::Query(query),
             },
-            get_addr_info_request::LibcRequest(NonNull::new(request).expect("request")),
+            get_addr_info_request::LibcRequest(request),
         );
         this.request_sent(this.vm());
 
@@ -253,7 +251,7 @@ pub(crate) mod lib_uv_backend {
             return Ok(promise);
         }
 
-        let request = GetAddrInfoRequest::init(
+        let (request, promise) = GetAddrInfoRequest::init(
             cache,
             get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::uv_uninit()),
             this,
@@ -261,6 +259,7 @@ pub(crate) mod lib_uv_backend {
             context,
             PendingCacheField::PendingHostCacheNative,
         );
+        let request = request.as_ptr();
 
         let hints = query.options.to_libc();
         let mut port_buf = [0u8; 128];
@@ -281,9 +280,8 @@ pub(crate) mod lib_uv_backend {
         let host = ZStr::from_buf(&hostname[..], copied_len);
 
         // SAFETY: request lives until completion; backend.libc.uv is the embedded uv_getaddrinfo_t
-        let promise = unsafe {
+        unsafe {
             (*request).backend.as_libc_uv_mut().data = request.cast::<c_void>();
-            let promise = (*request).head.promise.value();
             let rc = libuv::uv_getaddrinfo(
                 this.vm().uv_loop(),
                 (*request).backend.as_libc_uv_mut(),
@@ -318,8 +316,7 @@ pub(crate) mod lib_uv_backend {
                 head.process_get_addr_info_native(rc.int());
                 return Ok(promise);
             }
-            promise
-        };
+        }
         Ok(promise)
     }
 }
@@ -459,10 +456,10 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
-    ) -> *mut Self {
+    ) -> (*mut Self, JSValue) {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        let request = bun_core::heap::into_raw(Box::new(Self {
+        let request = Box::new(Self {
             resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: CAresLookup {
@@ -477,7 +474,9 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             },
             // tail set to &head below
             tail: ptr::null_mut(),
-        }));
+        });
+        let promise = request.head.promise.value();
+        let request = bun_core::heap::into_raw(request);
         // SAFETY: request just allocated
         unsafe { (*request).tail = &raw mut (*request).head };
         if let LookupCacheHit::New(new) = cache {
@@ -488,7 +487,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
                 (*new).lookup = request;
             }
         }
-        request
+        (request, promise)
     }
 
     fn on_cares_complete(
@@ -588,10 +587,10 @@ impl GetHostByAddrInfoRequest {
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
-    ) -> *mut Self {
+    ) -> (*mut Self, JSValue) {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        let request = bun_core::heap::into_raw(Box::new(Self {
+        let request = Box::new(Self {
             resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: CAresReverse {
@@ -604,7 +603,9 @@ impl GetHostByAddrInfoRequest {
                 name: Box::<[u8]>::from(name),
             },
             tail: ptr::null_mut(),
-        }));
+        });
+        let promise = request.head.promise.value();
+        let request = bun_core::heap::into_raw(request);
         // SAFETY: request just allocated; head is an inline field.
         unsafe { (*request).tail = &raw mut (*request).head };
         if let LookupCacheHit::New(new) = cache {
@@ -619,7 +620,7 @@ impl GetHostByAddrInfoRequest {
                 (*new).lookup = request;
             }
         }
-        request
+        (request, promise)
     }
 
     fn on_cares_complete(
@@ -802,10 +803,10 @@ impl GetNameInfoRequest {
         name: Box<[u8]>,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
-    ) -> *mut Self {
+    ) -> (*mut Self, JSValue) {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        let request = bun_core::heap::into_raw(Box::new(Self {
+        let request = Box::new(Self {
             resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: CAresNameInfo {
@@ -817,7 +818,9 @@ impl GetNameInfoRequest {
                 name,
             },
             tail: ptr::null_mut(),
-        }));
+        });
+        let promise = request.head.promise.value();
+        let request = bun_core::heap::into_raw(request);
         // SAFETY: `request` was just heap-allocated above; `head` is an inline field.
         unsafe { (*request).tail = &raw mut (*request).head };
         if let LookupCacheHit::New(new) = cache {
@@ -832,7 +835,7 @@ impl GetNameInfoRequest {
                 (*new).lookup = request;
             }
         }
-        request
+        (request, promise)
     }
 
     fn on_cares_complete(
@@ -1126,11 +1129,11 @@ impl GetAddrInfoRequest {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
         cache_field: PendingCacheField,
-    ) -> *mut Self {
+    ) -> (NonNull<Self>, JSValue) {
         bun_output::scoped_log!(GetAddrInfoRequest, "init");
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        let request = bun_core::heap::into_raw(Box::new(Self {
+        let request = Box::new(Self {
             backend,
             resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
@@ -1143,7 +1146,10 @@ impl GetAddrInfoRequest {
                 context,
             },
             tail: ptr::null_mut(),
-        }));
+        });
+        let promise = request.head.promise.value();
+        let owned = bun_core::heap::into_raw_nn(request);
+        let request = owned.as_ptr();
         // SAFETY: request just allocated; head is an inline field.
         unsafe { (*request).tail = &raw mut (*request).head };
         if let CacheHit::New(new) = cache {
@@ -1157,7 +1163,7 @@ impl GetAddrInfoRequest {
                 (*new).lookup = request;
             }
         }
-        request
+        (owned, promise)
     }
 
     /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
@@ -4734,10 +4740,9 @@ impl Resolver {
             return Ok(promise);
         }
 
-        let request = GetHostByAddrInfoRequest::init(cache, self, ip, global_this, context);
+        let (request, promise) =
+            GetHostByAddrInfoRequest::init(cache, self, ip, global_this, context);
 
-        // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
-        let promise = unsafe { (*(*request).tail).promise.value() };
         // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
         // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
         unsafe {
@@ -5017,15 +5022,13 @@ impl Resolver {
             return Ok(promise);
         }
 
-        let request = ResolveInfoRequest::<T>::init(
+        let (request, promise) = ResolveInfoRequest::<T>::init(
             cache,
             self,
             name, // CAresLookup will have the ownership
             global_this,
             context,
         );
-        // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
-        let promise = unsafe { (*(*request).tail).promise.value() };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
@@ -5072,7 +5075,7 @@ impl Resolver {
         }
 
         let hints_buf = [query.to_cares()];
-        let request = GetAddrInfoRequest::init(
+        let (request, promise) = GetAddrInfoRequest::init(
             cache,
             get_addr_info_request::Backend::CAres,
             self,
@@ -5080,15 +5083,15 @@ impl Resolver {
             context,
             PendingCacheField::PendingHostCacheCares,
         );
-        // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
-        let promise = unsafe { (*(*request).tail).promise.value() };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated GetAddrInfoRequest. c-ares stores the ctx
         // pointer and calls `AddrInfo::callback_wrapper::<GetAddrInfoRequest>`
         // (→ `on_cares_complete`) which consumes the request, so the `&mut`
         // borrow is not held past this call.
-        unsafe { channel.get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
+        unsafe {
+            channel.get_addr_info(&query.name, query.port, &hints_buf, &mut *request.as_ptr())
+        };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -5504,7 +5507,7 @@ impl Resolver {
             return Ok(promise);
         }
 
-        let request = GetNameInfoRequest::init(
+        let (request, promise) = GetNameInfoRequest::init(
             cache,
             resolver,
             cache_name, // transfer ownership here
@@ -5512,8 +5515,6 @@ impl Resolver {
             context,
         );
 
-        // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
-        let promise = unsafe { (*(*request).tail).promise.value() };
         // SAFETY: `request` was just `heap::alloc`'d and is owned by c-ares
         // until the callback fires.
         channel.get_name_info(&sa, unsafe { &mut *request });

@@ -140,13 +140,13 @@ pub(super) fn stored_addr_from_sockaddr(ptr: *const c_void) -> StoredAddr {
     StoredAddr::from_raw(ptr.cast(), len)
 }
 
-fn conn_peer_addr(conn: *mut lsquic::lsquic_conn) -> Option<StoredAddr> {
+fn conn_peer_addr(conn: lsquic::Conn) -> Option<StoredAddr> {
     let mut local: *const c_void = null();
     let mut peer: *const c_void = null();
     // SAFETY: `conn` is live for the duration of the callback that passed it.
     if unsafe {
         lsquic::lsquic_conn_get_sockaddr(
-            conn,
+            conn.raw(),
             core::ptr::from_mut(&mut local),
             core::ptr::from_mut(&mut peer),
         )
@@ -1704,7 +1704,7 @@ impl QuicEndpoint {
             self.vtable_ptr,
             self,
             endpoint_handle,
-            null_mut(),
+            None,
             true,
             self.application(true),
         )?;
@@ -1780,21 +1780,16 @@ impl QuicEndpoint {
             .with_mut(|d| d.retain(|&(_, at)| now.saturating_sub(at) < PROVISIONAL_TIMEOUT_NS));
     }
 
-    pub(super) fn on_new_conn(&self, conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
+    /// lsquic promotes a server conn after its handshake and never calls `on_hsk_done` for it.
+    pub(super) fn on_new_conn(&self, handshaken: lsquic::Conn) -> *mut QuicSession {
         let global_ptr = self.global.get();
         if global_ptr.is_null() {
             return null_mut();
         }
         // SAFETY: as in `on_data`.
         let global = unsafe { &*global_ptr };
-        // lsquic promotes a server conn only after its handshake completes, and never
-        // calls `on_hsk_done` for it.
-        // SAFETY: `conn` is the live conn lsquic just created.
-        let Some(handshaken) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
-            return null_mut();
-        };
         let endpoint_handle = self.this_value.get().get();
-        let peer = conn_peer_addr(conn);
+        let peer = conn_peer_addr(handshaken);
         let provisional = self.provisional.with_mut(|v| {
             let idx = peer
                 .as_ref()
@@ -1803,7 +1798,7 @@ impl QuicEndpoint {
         });
         if let Some(session) = provisional {
             if let Some(live) = self.live_session(session) {
-                live.bind_conn(conn);
+                live.bind_conn(handshaken);
                 live.note_handshake_ok(handshaken);
                 return session;
             }
@@ -1847,7 +1842,7 @@ impl QuicEndpoint {
             self.vtable_ptr,
             self,
             endpoint_handle,
-            conn,
+            Some(handshaken),
             true,
             self.application(true),
         ) {
@@ -2342,7 +2337,7 @@ impl QuicEndpoint {
             self.vtable_ptr,
             self,
             this_value.to_js(),
-            null_mut(),
+            None,
             false,
             self.application(false),
         )?;
@@ -2368,7 +2363,7 @@ impl QuicEndpoint {
         // call (lsquic copies the resume blob); `session` is the
         // conn-ctx, at its final address in its wrapper.
         let conn = unsafe {
-            lsquic::lsquic_engine_connect(
+            let conn = lsquic::lsquic_engine_connect(
                 self.client_engine.get(),
                 lsquic::N_LSQVER,
                 local.as_ptr().cast(),
@@ -2384,16 +2379,21 @@ impl QuicEndpoint {
                 // tests, at the cost of the Retry RTT it would have saved.
                 null(),
                 0,
-            )
+            );
+            // SAFETY: lsquic returns a live conn or null. The session's copy is cleared as in
+            // `on_new_conn`. The local copy is used after `apply_options`, which reads
+            // `datagramDropPolicy`, `qlog`, `verifyPeer` and `application`: quic.ts passes an
+            // object it builds, with these as own data properties, so no script runs there.
+            lsquic::Conn::from_raw(conn)
         };
         self.send_scope_depth.set(self.send_scope_depth.get() - 1);
-        if conn.is_null() {
+        let Some(conn) = conn else {
             session.teardown(global);
             return Ok(JSValue::UNDEFINED);
-        }
+        };
         // SAFETY: `conn` is live.
-        unsafe { lsquic::lsquic_conn_set_ctx(conn, session_ptr.cast()) };
-        session.conn.set(conn);
+        unsafe { lsquic::lsquic_conn_set_ctx(conn.raw(), session_ptr.cast()) };
+        session.conn.set(Some(conn));
         session.cache_sockaddrs(conn);
         // `conn` is set above, so teardown clears its ctx and no late callback reaches the session.
         if let Err(e) = session.apply_options(global, options) {
@@ -2404,12 +2404,9 @@ impl QuicEndpoint {
             session.apply_peer_datagram_budget();
         }
         // keepAlive is per-session in Node.
-        // SAFETY: `conn` is live (checked above).
-        if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
-            c.set_ping_period_us(keepalive_us);
-            if use_preferred {
-                c.use_preferred_address(true);
-            }
+        conn.set_ping_period_us(keepalive_us);
+        if use_preferred {
+            conn.use_preferred_address(true);
         }
         self.sessions.with_mut(|v| v.push(session_ptr));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
@@ -2430,7 +2427,7 @@ impl QuicEndpoint {
             self.vtable_ptr,
             self,
             this_value,
-            null_mut(),
+            None,
             false,
             session::Application::None,
         )?;

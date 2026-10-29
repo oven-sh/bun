@@ -154,15 +154,11 @@ impl Specifier {
         Ok(Specifier::Global)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Specifier::Global => dest.write_str(b"global"),
             Specifier::ImportRecordIndex(import_record_index) => {
-                let (url, _) = dest.get_import_record_url(*import_record_index)?;
-                // SAFETY: `url` borrows printer-owned import-record storage
-                // which outlives the `serialize_string` call. Detach so `dest`
-                // is reborrowable as the `WriteAll` sink.
-                let url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
+                let (url, _) = dest.get_import_record_url(import_record_index)?;
                 dest.serialize_string(url)
             } // .source_index => {},
         }

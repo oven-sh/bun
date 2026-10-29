@@ -333,7 +333,7 @@ impl<'a> Printer<'a> {
     pub(crate) fn get_import_record_url(
         &mut self,
         import_record_idx: u32,
-    ) -> PrintResult<(&[u8], bool)> {
+    ) -> PrintResult<(&'a [u8], bool)> {
         let Some(import_info) = &self.import_info else {
             return Err(self.add_no_import_record_error());
         };

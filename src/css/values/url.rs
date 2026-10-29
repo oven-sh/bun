@@ -118,10 +118,6 @@ impl Url {
             .flags
             .contains(bun_ast::ImportRecordFlags::IS_INTERNAL);
         let (url, is_placeholder) = dest.get_import_record_url(self.import_record_idx)?;
-        // SAFETY: `url` borrows arena-backed `import_info` data valid for the
-        // printer's `'a`; detach so `dest` can be re-borrowed mutably below.
-        // Printer arena, not parser source — route to the raw primitive.
-        let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
 
         // The path that replaces a placeholder can hold a space or a parenthesis: keep the quotes.
         if dest.minify && !is_internal && !is_placeholder {

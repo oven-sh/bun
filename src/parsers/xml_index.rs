@@ -85,15 +85,11 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     #[inline(never)]
     fn seek_refill(&mut self, mut logical: usize, pos: usize) -> (usize, usize) {
         loop {
-            self.fill_to(logical);
-            let (base, win) = (self.base, self.win.as_slice());
-            while let Some(&p) = win.get(logical - base) {
-                let p = p as usize;
-                if p >= pos {
-                    return (logical, p);
-                }
-                logical += 1;
+            let p = self.at(logical);
+            if p >= pos {
+                return (logical, p);
             }
+            logical += 1;
         }
     }
 

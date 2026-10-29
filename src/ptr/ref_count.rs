@@ -198,10 +198,7 @@ impl<T: RefCounted> RefCount<T> {
         count.raw_count.set(count.raw_count.get() - 1);
         if count.raw_count.get() == 0 {
             #[cfg(debug_assertions)]
-            {
-                // SAFETY: `count` is not used again; we need &mut for deinit
-                unsafe { (*T::get_ref_count(self_)).debug.deinit() };
-            }
+            count.debug.deinit();
             // SAFETY: raw_count == 0, sole owner
             unsafe { T::destructor(self_) };
         }
@@ -325,10 +322,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         debug_assert!(old_count > 0);
         if old_count == 1 {
             #[cfg(debug_assertions)]
-            {
-                // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit() };
-            }
+            count.debug.deinit();
             // SAFETY: last ref dropped
             unsafe { T::destructor(self_) };
         }
@@ -359,10 +353,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         debug_assert!(old_count > 0);
         if old_count == 1 {
             #[cfg(debug_assertions)]
-            {
-                // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit() };
-            }
+            count.debug.deinit();
             true
         } else {
             false
@@ -660,25 +651,27 @@ const MAGIC_VALID: u32 = 0x2f84_e51d;
 /// pointer asserts instead of silently corrupting the count.
 #[cfg(debug_assertions)]
 struct DebugData {
-    magic: u32,
+    magic: AtomicU32,
 }
 
 #[cfg(debug_assertions)]
 impl DebugData {
     const fn empty() -> Self {
-        Self { magic: MAGIC_VALID }
+        Self {
+            magic: AtomicU32::new(MAGIC_VALID),
+        }
     }
 
     fn assert_valid(&self) {
         debug_assert!(
-            self.magic == MAGIC_VALID,
+            self.magic.load(Ordering::Relaxed) == MAGIC_VALID,
             "ref/deref on a destroyed refcount"
         );
     }
 
-    fn deinit(&mut self) {
+    fn deinit(&self) {
         self.assert_valid();
-        self.magic = 0;
+        self.magic.store(0, Ordering::Relaxed);
     }
 }
 

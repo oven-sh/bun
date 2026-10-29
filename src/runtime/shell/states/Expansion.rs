@@ -88,18 +88,13 @@ impl Expansion {
     pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Atom,
+        node: &ast::Atom,
         parent: NodeId,
         assign_ctx: bool,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
             base: Base::new(parent, shell),
-            // SAFETY: `node` is non-null and points into the AST arena
-            // (`ShellArgs::__arena`), which the interpreter holds for its
-            // entire lifetime — strictly outliving every state node (the
-            // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
+            node: bun_ptr::BackRef::new(node),
             state: ExpansionState::Idle,
             word_idx: 0,
             out: ExpansionOut::default(),
@@ -197,7 +192,6 @@ impl Expansion {
                     unreachable!()
                 };
                 let quoted = sub.quoted;
-                let script_ast: *const ast::Script = &raw const sub.script;
                 me.state = ExpansionState::CmdSubst;
                 me.cmd_subst_quoted = quoted;
 
@@ -218,7 +212,7 @@ impl Expansion {
                         return Yield::Failed(this);
                     }
                 };
-                let script = Script::init(interp, duped, script_ast, this, io);
+                let script = Script::init(interp, duped, &sub.script, this, io);
                 interp.as_expansion_mut(this).child_script = Some(script);
                 return Script::start(interp, script);
             }

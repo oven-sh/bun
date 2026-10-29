@@ -1204,7 +1204,7 @@ impl Interpreter {
         self.setup_io_before_run()?;
 
         let shell = self.root_shell.as_ptr();
-        let ast = &raw const self.args.get().script_ast;
+        let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);
@@ -1394,7 +1394,7 @@ impl Interpreter {
         );
 
         let shell = self.root_shell.as_ptr();
-        let ast = &raw const self.args.get().script_ast;
+        let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);

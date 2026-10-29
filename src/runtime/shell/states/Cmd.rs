@@ -264,7 +264,6 @@ impl Cmd {
                 CmdState::ExpandingRedirect { idx } => {
                     match &n.redirect_file {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
-                            let atom: *const ast::Atom = atom;
                             let child = Expansion::init(interp, shell, atom, this, false);
                             return Expansion::start(interp, child);
                         }
@@ -284,7 +283,7 @@ impl Cmd {
                     let assign_ctx = idx > 0
                         && is_declaration_utility(&args[0])
                         && is_assignment_word(&args[idx as usize]);
-                    let atom: *const ast::Atom = &raw const args[idx as usize];
+                    let atom = &args[idx as usize];
                     let child = Expansion::init(interp, shell, atom, this, assign_ctx);
                     return Expansion::start(interp, child);
                 }

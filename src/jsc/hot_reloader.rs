@@ -12,7 +12,8 @@ use bun_paths::strings;
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
-use bun_sys::{self, Fd};
+#[cfg(not(windows))]
+use bun_sys::Fd;
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
@@ -25,57 +26,6 @@ bun_core::declare_scope!(hot_reloader, visible);
 
 use bun_core::env::IS_KQUEUE;
 
-pub enum ImportWatcher {
-    Hot(Box<Watcher>),
-    Watch(Box<Watcher>),
-}
-
-impl ImportWatcher {
-    /// Look up the `package_json` column for `hash` under the watcher's
-    /// mutex.
-    ///
-    /// Deliberately does NOT hand out the stored fd: the watchlist owns it
-    /// and `flush_evictions` closes it concurrently, so a reader would hit
-    /// `EBADF`/`EISDIR` after the mutex is released (watch-many-dirs.test.ts)
-    /// or read the stale pre-rename inode after an atomic save. Reloads open
-    /// the file by path; `Watcher::add_file` adopts the fresh descriptor.
-    pub fn snapshot_package_json(
-        &self,
-        hash: bun_watcher::HashType,
-    ) -> Option<&'static bun_watcher::PackageJSON> {
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = self;
-        let _guard = w.mutex.lock_guard();
-        let index = w.index_of(hash)?;
-        w.watchlist
-            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
-    }
-
-    #[inline]
-    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
-        match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.add_file_by_path_slow(file_path),
-        }
-    }
-
-    #[inline]
-    pub fn add_file<const COPY_FILE_PATH: bool>(
-        &mut self,
-        fd: Fd,
-        file_path: &[u8],
-        hash: bun_watcher::HashType,
-        dir_fd: Fd,
-        // Note: bun_watcher::PackageJSON is an opaque forward-decl;
-        // callers cast from `&bun_resolver::PackageJSON`.
-        package_json: Option<&'static bun_watcher::PackageJSON>,
-    ) -> bun_sys::Result<bun_watcher::FdOwnership> {
-        match self {
-            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
-                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
-            }
-        }
-    }
-}
-
 pub type HotReloader = NewHotReloader<VirtualMachine, EventLoop, false>;
 pub type WatchReloader = NewHotReloader<VirtualMachine, EventLoop, true>;
 
@@ -87,16 +37,10 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
-        // `VirtualMachine.bun_watcher` is the
-        // `*mut ImportWatcher` (see the field comment in
-        // VirtualMachine.rs), and `get_context` only runs after
-        // `enable_hot_module_reloading` has populated it.
-        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
+        // SAFETY: `bun_watcher` is the `*mut Watcher` set by
         // `enable_hot_module_reloading`; non-null whenever the reloader is
-        // running. The cast recovers the concrete type the field was erased to.
-        match unsafe { &mut *self.bun_watcher.cast::<ImportWatcher>() } {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
-        }
+        // running.
+        unsafe { &mut *self.bun_watcher }
     }
 
     fn reload(&mut self) {
@@ -127,20 +71,9 @@ impl HotReloaderCtx for VirtualMachine {
         self.top_level_dir()
     }
 
-    fn install_bun_watcher(
-        &mut self,
-        watcher: Box<Watcher>,
-        reload_immediately: bool,
-    ) -> *mut Watcher {
-        let mut iw = Box::new(if reload_immediately {
-            ImportWatcher::Watch(watcher)
-        } else {
-            ImportWatcher::Hot(watcher)
-        });
-        let watcher_ptr: *mut Watcher = match &mut *iw {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &raw mut **w,
-        };
-        self.bun_watcher = bun_core::heap::into_raw(iw);
+    fn install_bun_watcher(&mut self, watcher: Box<Watcher>) -> *mut Watcher {
+        let watcher_ptr = bun_core::heap::into_raw(watcher);
+        self.bun_watcher = watcher_ptr;
 
         // Wire the resolver's directory-watch callback at the same time.
         // `Watcher::get_resolve_watcher` erases the `*mut Watcher` into the
@@ -204,11 +137,7 @@ pub trait HotReloaderCtx {
 
     /// Installs the watcher and wires the resolver's watch callback.
     /// Returns the now-installed `*mut Watcher` so the caller can `start()` it.
-    fn install_bun_watcher(
-        &mut self,
-        watcher: Box<Watcher>,
-        reload_immediately: bool,
-    ) -> *mut Watcher;
+    fn install_bun_watcher(&mut self, watcher: Box<Watcher>) -> *mut Watcher;
 
     fn compute_clear_screen(&self) -> bool;
 }
@@ -707,7 +636,7 @@ where
         };
 
         // SAFETY: see above.
-        let watcher_ptr = unsafe { (*this).install_bun_watcher(watcher, RELOAD_IMMEDIATELY) };
+        let watcher_ptr = unsafe { (*this).install_bun_watcher(watcher) };
 
         // SAFETY: single-threaded init; watcher thread not yet started.
         CLEAR_SCREEN.store(
@@ -1319,11 +1248,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         FileSystem::get().top_level_dir()
     }
 
-    fn install_bun_watcher(
-        &mut self,
-        watcher: Box<Watcher>,
-        _reload_immediately: bool,
-    ) -> *mut Watcher {
+    fn install_bun_watcher(&mut self, watcher: Box<Watcher>) -> *mut Watcher {
         // `watcher_nn` is a fresh non-null heap allocation; live for the
         // process (BundleV2 is leaked under --watch — see `generate_from_cli`).
         let watcher_nn = bun_core::heap::into_raw_nn(watcher);

@@ -1417,16 +1417,12 @@ impl Layers {
 
     /// Cow::Borrowed constructor.
     ///
-    /// Takes `NonNull` (not `&Vec`) because the sole caller in
-    /// `findImportedFilesInCSSOrder.rs` type-puns the lifetime-erased shadow
-    /// `crate::bun_css::LayerName` to the real `::bun_css::LayerName` via a
-    /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
     /// The pointee is arena-owned storage that outlives the chunk pipeline
     /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
     /// invariant so `inner()`/`to_owned()` deref sites are safe.
     #[inline]
-    pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
-        Layers::Borrowed(bun_ptr::BackRef::from(p))
+    pub(crate) fn borrow(p: &Vec<bun_css::LayerName>) -> Self {
+        Layers::Borrowed(bun_ptr::BackRef::new(p))
     }
 
     /// Drop owned (arena-backed, so no-op) and

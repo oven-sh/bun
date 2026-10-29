@@ -105,13 +105,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     let inner = layers.inner();
                     let len = inner.len();
                     let rules = if len > 0 {
-                        // The `Chunk::Layers` payload is the lifetime-erased shadow
-                        // `bun_css::LayerName { v: Vec<Box<[u8]>> }`,
-                        // not the real `css_parser::LayerName { v: SmallList<&'static [u8],1> }`,
-                        // so the layouts differ. Rebuild the real list element-by-element;
-                        // segments are arena-owned (`'bump`-laundered to `'static`) so the
-                        // `&[u8]` reborrows below are valid for the chunk lifetime.
-                        //
                         // Both `SmallList` levels go into the arena-backed rule list
                         // that `CssChunk::Drop` `set_len(0)`s without running element
                         // destructors, so any global heap spill would leak. Build them

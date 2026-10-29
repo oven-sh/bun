@@ -1212,7 +1212,7 @@ fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<PathLike<'st
     })))
 }
 
-fn path_like_from_working_directory(
+pub(crate) fn path_like_from_working_directory(
     global: &JSGlobalObject,
     str: bun_core::String,
     will_be_async: bool,

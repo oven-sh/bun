@@ -151,7 +151,7 @@ use super::time_like::TimeLike;
 use super::types::{
     ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
     NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects, StringOrBuffer,
-    ThreadIsolated, ThreadIsolatedArg, VectorArrayBuffer,
+    ThreadIsolated, ThreadIsolatedArg, VectorArrayBuffer, path_like_from_working_directory,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
@@ -483,6 +483,160 @@ fn stat_failure(err: sys::Error, path: &[u8], args: &args::Stat) -> Maybe<StatOr
         return Ok(StatOrNotFound::NotFound);
     }
     Err(err.with_path(written))
+}
+
+/// Which call [`NodeFS::cp_sync_stat`] makes: `lstat` for `Link`, `stat` for `LinkTarget`.
+#[derive(Clone, Copy)]
+enum StatOf {
+    Link,
+    LinkTarget,
+}
+
+/// Node's JavaScript `areIdentical`: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp.js#L125-L128
+fn is_same_file(src: &PosixStat, dest: &PosixStat) -> bool {
+    dest.ino != 0 && dest.dev != 0 && dest.ino == src.ino && dest.dev == src.dev
+}
+
+/// What [`NodeFS::cp_sync_check_paths`] found for two paths that `fs.cpSync` may copy.
+#[derive(Clone, Copy)]
+pub(crate) struct CpSyncPaths {
+    src_is_directory: bool,
+    src_is_file: bool,
+    dest_exists: bool,
+    dest_is_file: bool,
+}
+
+impl CpSyncPaths {
+    // `kSrcIsDirectory`, `kSrcIsFile`, `kDestExists` and `kDestIsFile` of src/js/internal/fs/cp-sync.ts.
+    const SRC_IS_DIRECTORY: i32 = 1 << 0;
+    const SRC_IS_FILE: i32 = 1 << 1;
+    const DEST_EXISTS: i32 = 1 << 2;
+    const DEST_IS_FILE: i32 = 1 << 3;
+
+    /// What `cpSyncFn` of src/js/internal/fs/cp-sync.ts reads.
+    pub(crate) fn bits(self) -> i32 {
+        let bit = |set: bool, bit: i32| if set { bit } else { 0 };
+        bit(self.src_is_directory, Self::SRC_IS_DIRECTORY)
+            | bit(self.src_is_file, Self::SRC_IS_FILE)
+            | bit(self.dest_exists, Self::DEST_EXISTS)
+            | bit(self.dest_is_file, Self::DEST_IS_FILE)
+    }
+}
+
+/// A pair of paths that `fs.cpSync` does not copy, in the order that node's `CpSyncCheckPaths` asks.
+#[derive(Clone, Copy)]
+enum CpSyncVerdict {
+    SameFile,
+    DirectoryOntoNonDirectory,
+    NonDirectoryOntoDirectory,
+    DestInsideSrc,
+    DirectoryWithoutRecursive,
+    Socket,
+    Fifo,
+    UnknownType,
+}
+
+/// Why [`NodeFS::cp_sync_check_paths`] lets nothing be copied.
+pub(crate) enum CpSyncRefusal {
+    /// A `stat` failed.
+    System(sys::Error),
+    /// Node throws these from C++: an `Error` whose one own property is `code`.
+    Verdict {
+        code: bun_jsc::ErrorCode,
+        message: Vec<u8>,
+    },
+}
+
+impl From<sys::Error> for CpSyncRefusal {
+    fn from(err: sys::Error) -> Self {
+        CpSyncRefusal::System(err)
+    }
+}
+
+impl CpSyncRefusal {
+    /// The code and the text of node's `CpSyncCheckPaths` for `verdict`.
+    fn of(verdict: CpSyncVerdict, src: &[u8], dest: &[u8]) -> Self {
+        use bun_jsc::ErrorCode as Code;
+        let (src, dest) = (as_node_shows(src), as_node_shows(dest));
+        let (src, dest): (&[u8], &[u8]) = (&src, &dest);
+        let separator = paths::SEP_STR.as_bytes();
+        let after_src: &[u8] = if src.ends_with(separator) {
+            b""
+        } else {
+            separator
+        };
+        let (code, message): (Code, &[&[u8]]) = match verdict {
+            CpSyncVerdict::SameFile => (
+                Code::ERR_FS_CP_EINVAL,
+                &[b"src and dest cannot be the same ", dest],
+            ),
+            CpSyncVerdict::DirectoryOntoNonDirectory => (
+                Code::ERR_FS_CP_DIR_TO_NON_DIR,
+                &[
+                    b"Cannot overwrite non-directory ",
+                    dest,
+                    b" with directory ",
+                    src,
+                ],
+            ),
+            CpSyncVerdict::NonDirectoryOntoDirectory => (
+                Code::ERR_FS_CP_NON_DIR_TO_DIR,
+                &[
+                    b"Cannot overwrite directory ",
+                    dest,
+                    b" with non-directory ",
+                    src,
+                ],
+            ),
+            CpSyncVerdict::DestInsideSrc => (
+                Code::ERR_FS_CP_EINVAL,
+                &[
+                    b"Cannot copy ",
+                    src,
+                    after_src,
+                    b" to a subdirectory of self ",
+                    dest,
+                ],
+            ),
+            CpSyncVerdict::DirectoryWithoutRecursive => (
+                Code::ERR_FS_EISDIR,
+                &[
+                    b"Recursive option not enabled, cannot copy a directory: ",
+                    src,
+                    after_src,
+                ],
+            ),
+            CpSyncVerdict::Socket => (
+                Code::ERR_FS_CP_SOCKET,
+                &[b"Cannot copy a socket file: ", dest],
+            ),
+            CpSyncVerdict::Fifo => (
+                Code::ERR_FS_CP_FIFO_PIPE,
+                &[b"Cannot copy a FIFO pipe: ", dest],
+            ),
+            CpSyncVerdict::UnknownType => (
+                Code::ERR_FS_CP_UNKNOWN,
+                &[b"Cannot copy an unknown file type: ", dest],
+            ),
+        };
+        CpSyncRefusal::Verdict {
+            code,
+            message: message.concat(),
+        }
+    }
+}
+
+/// A path after node's `ToNamespacedPath`, which changes it on Windows only: https://github.com/nodejs/node/blob/v26.12.1/src/path.cc#L282-L327
+fn as_node_shows(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if cfg!(windows) && !path.is_empty() {
+        let len = bun_node_path::to_namespaced_path_buf_len(path);
+        let mut buffers = vec![0u8; len * 2];
+        let (buf, scratch) = buffers.split_at_mut(len);
+        if let Ok(namespaced) = bun_node_path::to_namespaced_path_windows_t(path, buf, scratch) {
+            return std::borrow::Cow::Owned(namespaced.to_vec());
+        }
+    }
+    std::borrow::Cow::Borrowed(path)
 }
 
 /// `access` of what `graph` holds at `path`; `None` if it holds nothing there.
@@ -4874,6 +5028,44 @@ pub(crate) mod args {
         }
     }
 
+    /// `(src, dest, dereference, recursive)` of [`NodeFS::cp_sync_check_paths`].
+    pub(crate) struct CpSyncCheckPaths<'a> {
+        pub(crate) src: PathLike<'a>,
+        pub(crate) dest: PathLike<'a>,
+        pub(crate) dereference: bool,
+        pub(crate) recursive: bool,
+    }
+    impl CpSyncCheckPaths<'static> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
+            // The length of a string is not checked here: as in node, a path that is too long fails the `stat` that it is given to.
+            let mut path = |name: &str| match arguments.next() {
+                Some(path) if path.is_string() => {
+                    arguments.eat();
+                    path_like_from_working_directory(ctx, path.to_bun_string(ctx)?, false)
+                }
+                _ => PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
+                    ctx.throw_invalid_arguments(format_args!(
+                        "{name} must be a string or TypedArray"
+                    ))
+                }),
+            };
+            let src = path("src")?;
+            let dest = path("dest")?;
+            // Node's C++ asks `IsTrue()` of both.
+            let dereference = arguments.next_eat() == Some(JSValue::TRUE);
+            let recursive = arguments.next_eat() == Some(JSValue::TRUE);
+            Ok(CpSyncCheckPaths {
+                src,
+                dest,
+                dereference,
+                recursive,
+            })
+        }
+    }
+
     pub(crate) type Watch<'a> = super::Watcher::Arguments<'a>;
     // `StatWatcher::Arguments` owns its `PathLike` (no borrowed slice), so it
     // has no lifetime parameter — unlike `Watcher::Arguments<'a>` above.
@@ -8713,6 +8905,145 @@ impl NodeFS {
             PathInt::try_from(dest_len).expect("int cast"),
             args,
         )
+    }
+
+    /// What `fs.cpSync` asks of its two paths before it writes. The order, the text and the shape of the error are those of node's `CpSyncCheckPaths`: https://github.com/nodejs/node/blob/v26.12.1/src/node_file.cc#L4515-L4652
+    pub(crate) fn cp_sync_check_paths(
+        &mut self,
+        args: &args::CpSyncCheckPaths,
+    ) -> Result<CpSyncPaths, CpSyncRefusal> {
+        // Each check decides as node's JavaScript `checkPaths` does. Its C++ follows a link at `src` unless `dereference` (nodejs/node#60945) and ends the process for a dangling link at `dest`: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp.js#L76-L196
+        let of = if args.dereference {
+            StatOf::LinkTarget
+        } else {
+            StatOf::Link
+        };
+        let src = self.cp_sync_stat(&args.src, of)?;
+        // Node's check goes on without a `dest` that it cannot read, and the stat that follows the check throws.
+        let (dest, dest_error) = match self.cp_sync_stat(&args.dest, of) {
+            Ok(dest) => (Some(dest), None),
+            Err(err) if err.get_errno() == E::ENOENT => (None, None),
+            Err(err) => (None, Some(err)),
+        };
+        let src_mode = src.mode as Mode;
+        let src_is_directory = sys::S::ISDIR(src_mode);
+        let (src_path, dest_path) = (args.src.as_written(), args.dest.as_written());
+        let refuse = |verdict| Err(CpSyncRefusal::of(verdict, src_path, dest_path));
+
+        if let Some(dest) = &dest {
+            if is_same_file(&src, dest) {
+                return refuse(CpSyncVerdict::SameFile);
+            }
+            let dest_is_directory = sys::S::ISDIR(dest.mode as Mode);
+            if src_is_directory && !dest_is_directory {
+                return refuse(CpSyncVerdict::DirectoryOntoNonDirectory);
+            }
+            if !src_is_directory && dest_is_directory {
+                return refuse(CpSyncVerdict::NonDirectoryOntoDirectory);
+            }
+        }
+        if src_is_directory && self.cp_sync_dest_is_inside_src(&src, src_path, dest_path)? {
+            return refuse(CpSyncVerdict::DestInsideSrc);
+        }
+        if src_is_directory && !args.recursive {
+            return refuse(CpSyncVerdict::DirectoryWithoutRecursive);
+        }
+        match src_mode & sys::S::IFMT {
+            sys::S::IFSOCK => return refuse(CpSyncVerdict::Socket),
+            sys::S::IFIFO => return refuse(CpSyncVerdict::Fifo),
+            sys::S::IFDIR | sys::S::IFREG | sys::S::IFLNK | sys::S::IFCHR | sys::S::IFBLK => {}
+            _ => return refuse(CpSyncVerdict::UnknownType),
+        }
+        if let Some(err) = dest_error {
+            return Err(err.into());
+        }
+
+        Ok(CpSyncPaths {
+            src_is_directory,
+            src_is_file: sys::S::ISREG(src_mode),
+            dest_exists: dest.is_some(),
+            dest_is_file: dest.is_some_and(|dest| sys::S::ISREG(dest.mode as Mode)),
+        })
+    }
+
+    /// `lstat` or `stat` of `path`, with the error that `fs.lstatSync` or `fs.statSync` throws for it.
+    fn cp_sync_stat(&mut self, path: &PathLike<'_>, of: StatOf) -> Maybe<PosixStat> {
+        let syscall = match of {
+            StatOf::Link => sys::Tag::lstat,
+            StatOf::LinkTarget => sys::Tag::stat,
+        };
+        let failure = |errno: E| sys::Error::from_code(errno, syscall).with_path(path.as_written());
+        // No `PathBuffer` holds a path of this length: this is what the system call answers for it.
+        if path.slice().len() >= paths::MAX_PATH_BYTES {
+            return Err(failure(E::ENAMETOOLONG));
+        }
+        // In an executable, `error_for_caller` makes ENOTDIR of a path below an embedded file, so a path that is not there is an error here.
+        let args = args::Stat {
+            path: PathLike::borrowed(path.slice()),
+            big_int: false,
+            throw_if_no_entry: true,
+        };
+        let found = match of {
+            StatOf::Link => self.lstat(&args, Flavor::Sync),
+            StatOf::LinkTarget => self.stat(&args, Flavor::Sync),
+        };
+        match found {
+            Ok(StatOrNotFound::Stats(stats)) => Ok(*stats.posix()),
+            Ok(StatOrNotFound::NotFound) => Err(failure(E::ENOENT)),
+            Err(err) => Err(error_for_caller([Some(path), None], err)),
+        }
+    }
+
+    /// Whether `dest` is inside the directory `src`: by the text of the two resolved paths (node's JavaScript `isSrcSubdir`), or a folder above `dest` is `src` by device and inode, which sees through a link (its `checkParentPaths`).
+    fn cp_sync_dest_is_inside_src(
+        &mut self,
+        src: &PosixStat,
+        src_path: &[u8],
+        dest_path: &[u8],
+    ) -> Maybe<bool> {
+        use bun_node_path as node_path;
+        #[cfg(not(windows))]
+        use node_path::{
+            dirname_posix_t as dirname, parse_posix_t as parse, resolve_posix_t as resolve,
+        };
+        #[cfg(windows)]
+        use node_path::{
+            dirname_windows_t as dirname, parse_windows_t as parse, resolve_windows_t as resolve,
+        };
+
+        let len = node_path::resolve_buf_len(cfg!(windows), &[src_path])
+            .max(node_path::resolve_buf_len(cfg!(windows), &[dest_path]));
+        let mut buffers = vec![0u8; len * 3];
+        let (of_src, rest) = buffers.split_at_mut(len);
+        let (of_dest, scratch) = rest.split_at_mut(len);
+
+        {
+            let src_resolved = resolve(&[src_path], of_src, scratch)?;
+            let dest_resolved = resolve(&[dest_path], of_dest, scratch)?;
+            let separator = paths::SEP_STR.as_bytes();
+            let mut dest_parts = strings::tokenize(dest_resolved, separator);
+            if strings::tokenize(src_resolved, separator)
+                .all(|part| dest_parts.next() == Some(part))
+            {
+                return Ok(true);
+            }
+        }
+
+        let src_parent = resolve(&[dirname(src_path)], of_src, scratch)?;
+        // A resolved path's `dirname` is resolved too, so each folder further up is a prefix of this one.
+        let mut dest_parent = resolve(&[dirname(dest_path)], of_dest, scratch)?;
+        while dest_parent != src_parent && dest_parent != parse(dest_parent).root {
+            // Node's C++ stops at a folder that it cannot read.
+            let Ok(stat) = self.cp_sync_stat(&PathLike::borrowed(dest_parent), StatOf::LinkTarget)
+            else {
+                break;
+            };
+            if is_same_file(src, &stat) {
+                return Ok(true);
+            }
+            dest_parent = dirname(dest_parent);
+        }
+        Ok(false)
     }
 
     pub(crate) fn os_path_into_sync_error_buf(&mut self, slice: &[OSPathChar]) -> &[u8] {

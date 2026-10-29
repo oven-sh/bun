@@ -207,6 +207,14 @@ impl Stats {
         }
     }
 
+    /// What the system call read.
+    pub(crate) fn posix(&self) -> &PosixStat {
+        match self {
+            Stats::Big(v) => &v.value,
+            Stats::Small(v) => &v.value,
+        }
+    }
+
     // A `to_js` method is intentionally omitted to force callers toward
     // `to_js_newly_created` — misuse is a hard "no method named `to_js`"
     // compile error.

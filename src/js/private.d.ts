@@ -1974,6 +1974,13 @@ declare namespace $Node {
       force: boolean,
       mode: number,
     ): void;
+    /** The checks `fs.cpSync` makes of its two paths, which throw. The answer is read by `cpSyncFn` in internal/fs/cp-sync. */
+    cpSyncCheckPaths(
+      source: string | Uint8Array,
+      destination: string | Uint8Array,
+      dereference: boolean,
+      recursive: boolean,
+    ): number;
     existsSync(path: PathLike): boolean;
     fchmodSync(fd: number, mode: number | string): void;
     fchownSync(fd: number, uid: number, gid: number): void;

@@ -383,11 +383,6 @@ pub mod api {
         #[derive(Default)]
         pub struct SSLConfig(Option<NonNull<c_void>>);
 
-        // SAFETY: the boxed `bun_runtime::socket::SSLConfig` is `Send` (only
-        // `CString`/`Vec`/`AtomicU64` fields); the handle moves between
-        // construction and the connection struct on the same JS thread anyway.
-        unsafe impl Send for SSLConfig {}
-
         impl Drop for SSLConfig {
             fn drop(&mut self) {
                 if let Some(p) = self.0.take() {

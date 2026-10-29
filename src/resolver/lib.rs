@@ -270,12 +270,8 @@ pub mod fs {
         pub(crate) fn init_with_force<const FORCE: bool>(
             top_level_dir: Option<&[u8]>,
         ) -> crate::CrateResult<*mut FileSystem> {
-            // SAFETY: single-threaded startup; called from
-            // `Transpiler::init` before any worker spawn.
-            unsafe {
-                if INSTANCE_LOADED.load(Ordering::Acquire) && !FORCE {
-                    return Ok((*INSTANCE.get()).as_mut_ptr());
-                }
+            if INSTANCE_LOADED.load(Ordering::Acquire) && !FORCE {
+                return Ok(INSTANCE.get().cast::<FileSystem>());
             }
             let cwd: &'static [u8] = match top_level_dir {
                 // intern into the process-lifetime `DirnameStore` so
@@ -298,7 +294,8 @@ pub mod fs {
             // guaranteed UTF-8, and the lower tier stores/serves bytes.
             bun_paths::fs::FileSystem::init(cwd);
             bun_core::set_top_level_dir(cwd);
-            // SAFETY: see above.
+            // SAFETY: single-threaded startup; called from
+            // `Transpiler::init` before any worker spawn.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {
                     fs: Implementation::init(cwd),
@@ -1355,13 +1352,12 @@ pub mod fs {
                     // BOTH success and error paths — use scopeguard so close-or-store happens even if
                     // fstat()/get_fd_path() return early with `?`.
                     let need_to_close_files = self.need_to_close_files();
-                    let cache_ptr: *mut EntryCache = &raw mut cache;
+                    let cache_fd = &mut cache.fd;
                     let _guard = scopeguard::guard(file, move |file| {
                         if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
                             let _ = bun_sys::close(file);
                         } else if bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
-                            // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                            unsafe { (*cache_ptr).fd = file };
+                            *cache_fd = file;
                         }
                     });
 

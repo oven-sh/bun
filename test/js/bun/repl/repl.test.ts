@@ -575,6 +575,14 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("a rejection that nothing handles is reported, and the exit code stays 0", async () => {
+      // As in `node -i`: what a line of input does is not the session's failure.
+      const { outputs, stderr, exitCode } = await runRepl(["Promise.reject(new Error('floating'))", "1 + 1", ".exit"]);
+      expect(outputs).toEqual(["Promise { <rejected> }", "2"]);
+      expect(stderr).toMatch(/^error: floating\n +at /m);
+      expect(exitCode).toBe(0);
+    });
+
     test("a throwing inspect hook does not crash the loop", async () => {
       // format2 catches custom-inspect throws internally, but we verify no exception
       // leaks (BUN_JSC_validateExceptionChecks in CI) and the loop continues.
@@ -1191,6 +1199,19 @@ describe.concurrent("Bun REPL", () => {
       const args = ["--preload", "./floating.ts", "-e", "console.log('script ran')"];
       const { stdout, stderr, exitCode } = await replAndRun(String(dir), args);
       expect(stdout).toBe("script ran\n");
+      expect(stderr).toMatch(/^error: floating\n +at /m);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a rejection that nothing handles in a preload fails a session too, after it ran", async () => {
+      using dir = tempDir("repl-preload", {
+        "floating.ts": `Promise.reject(new Error("floating")); globalThis.PRE = "ran";`,
+      });
+      const { stderr, exitCode, outputs } = await runRepl(["globalThis.PRE", ".exit"], {
+        cwd: String(dir),
+        args: ["--preload", "./floating.ts"],
+      });
+      expect(outputs).toEqual(['"ran"']);
       expect(stderr).toMatch(/^error: floating\n +at /m);
       expect(exitCode).toBe(1);
     });

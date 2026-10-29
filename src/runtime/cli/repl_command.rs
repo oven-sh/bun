@@ -267,6 +267,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             Ok(rejected) if rejected.is_null() => {
                 // No entry point's promise takes the place of the last preload's here.
                 vm.set_pending_internal_promise(None);
+                report_unhandled_rejections(vm);
                 return true;
             }
             Ok(rejected) => {

@@ -4718,6 +4718,41 @@ pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
     }
 }
 
+/// `args[n]->IsUint32()` of V8, else `default`: https://github.com/nodejs/node/blob/v26.12.1/src/tcp_wrap.cc#L219-L225
+fn uint32_or(value: Option<f64>, default: u32) -> u32 {
+    match value {
+        Some(n) if n.is_sign_positive() && n <= f64::from(u32::MAX) && n.trunc() == n => n as u32,
+        _ => default,
+    }
+}
+
+/// node:net's `_handle.setKeepAlive()`, in the seconds of Node's `TCPWrap::SetKeepAlive`. False for a handle that is not ours.
+pub(crate) fn set_keep_alive_ex(
+    socket: SocketHandle<'_>,
+    enable: bool,
+    initial_delay: u32,
+    interval: Option<f64>,
+    count: Option<f64>,
+) -> bool {
+    let interval = uint32_or(interval, 1);
+    let count = uint32_or(count, 10);
+    // Node.js does not read what its handle returns, so neither does this.
+    match socket {
+        SocketHandle::Tcp(this) => {
+            this.socket
+                .get()
+                .set_keep_alive_ex(enable, initial_delay, interval, count);
+        }
+        SocketHandle::Tls(this) => {
+            this.socket
+                .get()
+                .set_keep_alive_ex(enable, initial_delay, interval, count);
+        }
+        SocketHandle::Ignored(_) => return false,
+    }
+    true
+}
+
 pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
     jsc::mark_binding!();
     let global = cx.global();

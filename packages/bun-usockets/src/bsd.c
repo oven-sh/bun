@@ -535,68 +535,75 @@ int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
     return bsd_socket_ttl_any(fd, ttl, IP_MULTICAST_TTL, IPV6_MULTICAST_HOPS);
 }
 
-int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay) {
-
-#ifndef _WIN32
-    if(setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on))) {
+/* Returns 0 or the platform's error: errno, or WSAGetLastError() on Windows. */
+static int bsd_socket_keepalive_option(LIBUS_SOCKET_DESCRIPTOR fd, int level, int option, unsigned int value) {
+#ifdef _WIN32
+    if (setsockopt(fd, level, option, (const char *) &value, sizeof(value)) == -1) {
+        return WSAGetLastError();
+    }
+#else
+    if (setsockopt(fd, level, option, &value, sizeof(value))) {
         return errno;
     }
+#endif
+    return 0;
+}
 
-    if (!on)
-        return 0;
-
-    /* delay == 0 means "enable SO_KEEPALIVE, keep the kernel-default idle". */
-    if (delay == 0)
-        return 0;
-
-
+static int bsd_socket_keepalive_idle(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int idle) {
 #ifdef TCP_KEEPIDLE
-  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &delay, sizeof(delay)))
-    return errno;
+    return bsd_socket_keepalive_option(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle);
 #elif defined(TCP_KEEPALIVE)
-  /* Darwin/macOS uses TCP_KEEPALIVE in place of TCP_KEEPIDLE. */
-  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &delay, sizeof(delay)))
-    return errno;
+    /* Darwin/macOS uses TCP_KEEPALIVE in place of TCP_KEEPIDLE. */
+    return bsd_socket_keepalive_option(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle);
+#else
+    return 0;
 #endif
+}
 
+/* Stops at the first option that the system refuses. */
+static int bsd_socket_keepalive_timing(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int idle, unsigned int intvl, unsigned int cnt) {
+    int err = bsd_socket_keepalive_idle(fd, idle);
 #ifdef TCP_KEEPINTVL
-  int intvl = 1;  /*  1 second; same as default on Win32 */
-  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl)))
-    return errno;
+    if (!err) err = bsd_socket_keepalive_option(fd, IPPROTO_TCP, TCP_KEEPINTVL, intvl);
 #endif
-
 #ifdef TCP_KEEPCNT
-  int cnt = 10;  /* 10 retries; same as hardcoded on Win32 */
-  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt)))
-    return errno;
+    if (!err) err = bsd_socket_keepalive_option(fd, IPPROTO_TCP, TCP_KEEPCNT, cnt);
 #endif
+    return err;
+}
 
-    return 0;
-    #else
-    if (setsockopt(fd,
-                    SOL_SOCKET,
-                    SO_KEEPALIVE,
-                    (const char*)&on,
-                    sizeof on) == -1) {
-        return WSAGetLastError();
+/* What libuv's uv_tcp_keepalive() gives: a probe every second, and 10 of them. */
+#define BSD_KEEPALIVE_INTERVAL 1
+#define BSD_KEEPALIVE_COUNT 10
+
+int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay) {
+    int err = bsd_socket_keepalive_option(fd, SOL_SOCKET, SO_KEEPALIVE, on);
+    /* delay == 0 means "enable SO_KEEPALIVE, keep the kernel-default idle". */
+    if (err || !on || delay == 0) {
+        return err;
     }
+#ifdef _WIN32
+    /* Windows probes every second and 10 times unless it is told otherwise. */
+    return bsd_socket_keepalive_idle(fd, delay);
+#else
+    return bsd_socket_keepalive_timing(fd, delay, BSD_KEEPALIVE_INTERVAL, BSD_KEEPALIVE_COUNT);
+#endif
+}
 
-    if (!on)
-        return 0;
-
-    if (delay == 0)
-        return 0;
-
-    if (setsockopt(fd,
-                    IPPROTO_TCP,
-                    TCP_KEEPALIVE,
-                    (const char*)&delay,
-                    sizeof delay) == -1) {
-        return WSAGetLastError();
+int bsd_socket_keepalive_ex(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay, unsigned int interval, unsigned int count) {
+    int err = bsd_socket_keepalive_option(fd, SOL_SOCKET, SO_KEEPALIVE, on);
+    if (err || !on) {
+        return err;
     }
-
-    return 0;
-    #endif
+    /* A zero leaves all three as they are: https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/unix/tcp.c#L479-L480 */
+    if (delay < 1 || interval < 1 || count < 1) {
+#ifdef _WIN32
+        return WSAEINVAL;
+#else
+        return EINVAL;
+#endif
+    }
+    return bsd_socket_keepalive_timing(fd, delay, interval, count);
 }
 
 /* IP type-of-service / traffic-class. The option level depends on the socket

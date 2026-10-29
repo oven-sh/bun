@@ -197,6 +197,16 @@ impl us_socket_t {
         c::us_socket_keepalive(self, enabled as c_int, delay)
     }
 
+    pub(crate) fn set_keepalive_ex(
+        &mut self,
+        enabled: bool,
+        delay: u32,
+        interval: u32,
+        count: u32,
+    ) -> i32 {
+        c::us_socket_keepalive_ex(self, enabled as c_int, delay, interval, count)
+    }
+
     /// Set the IP type-of-service / traffic class. Returns 0 on success or a
     /// negative platform errno.
     pub(crate) fn set_tos(&mut self, tos: i32) -> i32 {
@@ -539,6 +549,13 @@ mod c {
             s: &mut us_socket_t,
             enable: c_int,
             delay: c_uint,
+        ) -> c_int;
+        pub(super) safe fn us_socket_keepalive_ex(
+            s: &mut us_socket_t,
+            enable: c_int,
+            delay: c_uint,
+            interval: c_uint,
+            count: c_uint,
         ) -> c_int;
 
         pub(super) safe fn us_socket_ext(s: &mut us_socket_t) -> *mut c_void;

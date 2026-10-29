@@ -232,7 +232,8 @@ declare global {
       unref(): this;
       setTimeout(msecs: number, callback?: () => void): this;
       setNoDelay(enable?: boolean): this;
-      setKeepAlive(enable?: boolean, initialDelayMsecs?: number): this;
+      setKeepAlive(enable?: boolean, initialDelayMsecs?: number, intervalMsecs?: number, count?: number): this;
+      setKeepAlive(options?: { enable?: boolean; initialDelay?: number; interval?: number; count?: number }): this;
       setTypeOfService(tos: number): this;
       getTypeOfService(): number;
       resetAndDestroy(): this;
@@ -278,6 +279,8 @@ declare global {
       [kSetNoDelay]: boolean;
       [kSetKeepAlive]: boolean;
       [kSetKeepAliveInitialDelay]: number;
+      [kSetKeepAliveInterval]?: number;
+      [kSetKeepAliveCount]?: unknown;
       [kSetTOS]?: number;
       [khandlers]: InternalSocketHandler<ConnectData>;
       [kBytesWritten]: number | undefined;
@@ -506,6 +509,7 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const reportError = globalThis.reportError;
 
 interface UVErrnos {
@@ -621,6 +625,9 @@ const isNamedPipeSocket: (socket: SocketHandle | null) => boolean = $bindgen(
   "isNamedPipeSocket",
 );
 const getBufferedAmount: (socket: SocketHandle) => number = $bindgen("socket_body.bind.ts", "getBufferedAmount");
+let setKeepAliveEx:
+  | ((socket: SocketHandle, enable: boolean, initialDelay: number, interval: unknown, count: unknown) => boolean)
+  | undefined;
 
 const bunTlsSymbol: typeof netSymbols.bunTlsSymbol = netSymbols.bunTlsSymbol;
 const bunSocketServerOptions: typeof netSymbols.bunSocketServerOptions = netSymbols.bunSocketServerOptions;
@@ -645,6 +652,8 @@ const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
+const kSetKeepAliveInterval = Symbol("kSetKeepAliveInterval");
+const kSetKeepAliveCount = Symbol("kSetKeepAliveCount");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
@@ -1298,7 +1307,7 @@ const SocketHandlers = {
     }
 
     if (self[kSetKeepAlive]) {
-      socket.setKeepAlive!(true, self[kSetKeepAliveInitialDelay]);
+      setHandleKeepAlive(self, socket);
     }
 
     // A TOS value set before the connection existed (setTypeOfService before
@@ -2010,8 +2019,8 @@ function onconnection(this: ListenerHandle, err: number, clientHandle: $Node.Soc
   }
   if (self.keepAlive && clientHandle.setKeepAlive) {
     _socket[kSetKeepAlive] = true;
-    _socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
-    clientHandle.setKeepAlive(true, self.keepAliveInitialDelay);
+    _socket[kSetKeepAliveInitialDelay] = ~~(self.keepAliveInitialDelay / 1000);
+    setHandleKeepAlive(_socket, clientHandle);
   }
 
   self._connections++;
@@ -2345,9 +2354,11 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   if (options?.writableObjectMode)
     throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
 
+  let keepAliveInitialDelaySeconds = 0;
   if (keepAliveInitialDelay !== undefined) {
     validateNumber(keepAliveInitialDelay, "options.keepAliveInitialDelay");
     if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
+    keepAliveInitialDelaySeconds = ~~(keepAliveInitialDelay / 1000);
   }
 
   // Own properties only, as after node's `options = { ...options }`: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L410-L419
@@ -2375,9 +2386,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
-  // Bun's native _handle.setKeepAlive takes milliseconds (it is the public
-  // Bun.Socket), so store ms here. Node stores seconds because libuv does.
-  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay!);
+  this[kSetKeepAliveInitialDelay] = keepAliveInitialDelaySeconds;
 
   this[khandlers] = SocketHandlers2;
   this[kDestroyOnRead] = false;
@@ -2660,7 +2669,7 @@ Socket.prototype[kAttach] = function (
   }
 
   if (this[kSetKeepAlive]) {
-    socket.setKeepAlive!(true, this[kSetKeepAliveInitialDelay]);
+    setHandleKeepAlive(this, socket);
   }
 
   if (!this[kupgraded]) {
@@ -3254,25 +3263,64 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy(this: $Node.Socket) 
   return this;
 };
 
-Socket.prototype.setKeepAlive = function setKeepAlive(this: $Node.Socket, enable = false, initialDelayMsecs = 0) {
-  enable = Boolean(enable);
-  // Bun's native _handle.setKeepAlive takes milliseconds; the ms→seconds
-  // conversion for TCP_KEEPIDLE lives in the native binding. Clamp to 0 so
-  // negatives and ~~ overflow match Node's no-validate behavior.
-  const initialDelay = MathMax(0, ~~initialDelayMsecs);
+// Node's `_handle.setKeepAlive(enable, initialDelay, interval, count)`, in seconds, with what setKeepAlive() stored.
+function setHandleKeepAlive(self: $Node.Socket, handle: SocketHandle) {
+  const enable = self[kSetKeepAlive];
+  const initialDelay = self[kSetKeepAliveInitialDelay];
+  const interval = self[kSetKeepAliveInterval];
+  const count = self[kSetKeepAliveCount];
+  const method = handle.setKeepAlive!;
+  // The method of a socket of Bun takes milliseconds, so node:net does not call it. A function put over it gets the call first: it can pass it on.
+  const replaced = method !== ObjectGetPrototypeOf(handle)?.setKeepAlive;
+  if (replaced) method.$call(handle, enable, initialDelay, interval, count);
+  setKeepAliveEx ??= $bindgen("socket_body.bind.ts", "setKeepAliveEx");
+  if (!setKeepAliveEx(handle, enable, initialDelay, interval, count) && !replaced) {
+    method.$call(handle, enable, initialDelay, interval, count);
+  }
+}
 
-  if (!this._handle) {
+// https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L908-L951
+Socket.prototype.setKeepAlive = function setKeepAlive(
+  this: $Node.Socket,
+  enable,
+  initialDelayMsecs,
+  intervalMsecs,
+  count,
+) {
+  if (enable !== null && typeof enable === "object") {
+    const options = enable;
+    enable = options.enable;
+    initialDelayMsecs = options.initialDelay;
+    intervalMsecs = options.interval;
+    count = options.count;
+  }
+  enable = Boolean(enable);
+  const initialDelay = initialDelayMsecs === undefined ? 0 : ~~(initialDelayMsecs / 1000);
+  const interval = intervalMsecs === undefined ? undefined : ~~(intervalMsecs / 1000);
+
+  const handle = this._handle;
+  if (!handle) {
     this[kSetKeepAlive] = enable;
     this[kSetKeepAliveInitialDelay] = initialDelay;
+    this[kSetKeepAliveInterval] = interval;
+    this[kSetKeepAliveCount] = count;
     return this;
   }
-  if (!this._handle.setKeepAlive) {
+  if (!handle.setKeepAlive) {
     return this;
   }
-  if (enable !== this[kSetKeepAlive] || (enable && this[kSetKeepAliveInitialDelay] !== initialDelay)) {
+  if (
+    enable !== this[kSetKeepAlive] ||
+    (enable &&
+      (this[kSetKeepAliveInitialDelay] !== initialDelay ||
+        this[kSetKeepAliveInterval] !== interval ||
+        this[kSetKeepAliveCount] !== count))
+  ) {
     this[kSetKeepAlive] = enable;
     this[kSetKeepAliveInitialDelay] = initialDelay;
-    this._handle.setKeepAlive(enable, initialDelay);
+    this[kSetKeepAliveInterval] = interval;
+    this[kSetKeepAliveCount] = count;
+    setHandleKeepAlive(this, handle);
   }
   return this;
 };
@@ -4042,7 +4090,7 @@ function afterConnect(
     }
 
     if (self[kSetKeepAlive] && self._handle!.setKeepAlive) {
-      self._handle!.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
+      setHandleKeepAlive(self, self._handle!);
     }
 
     // Ours already reads, Node's starts at read(): stop a paused plain socket now, and after the listeners unless one asked for a read.
@@ -4900,7 +4948,7 @@ function onClusterConnection(this: ClusterFauxHandle, err: number, clientHandle:
   if (self.noDelay) socket[kSetNoDelay] = true;
   if (self.keepAlive) {
     socket[kSetKeepAlive] = true;
-    socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
+    socket[kSetKeepAliveInitialDelay] = ~~(self.keepAliveInitialDelay / 1000);
   }
   socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
   const blockList = self.blockList;

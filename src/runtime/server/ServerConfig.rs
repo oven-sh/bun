@@ -18,6 +18,7 @@ use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
+pub(crate) use bun_options_types::schema::api::AllowedHosts;
 
 pub(crate) use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
@@ -40,6 +41,9 @@ pub(crate) struct ServerConfig {
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,
     pub(crate) broadcast_console_log_from_browser_to_server_for_bake: bool,
+    /// Extra `Host` values the dev server's host check accepts. From
+    /// `development.allowedHosts`, else `[serve.static] allowedHosts` in bunfig.
+    pub(crate) allowed_hosts: AllowedHosts,
 
     /// Enable automatic workspace folders for Chrome DevTools
     /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -88,6 +92,7 @@ impl Default for ServerConfig {
             max_request_body_size: 1024 * 1024 * 128,
             development: DevelopmentOption::Development,
             broadcast_console_log_from_browser_to_server_for_bake: false,
+            allowed_hosts: AllowedHosts::BuiltIn,
             enable_chrome_devtools_automatic_workspace_folders: true,
             on_error: JSValue::ZERO,
             on_request: JSValue::ZERO,
@@ -155,6 +160,39 @@ impl DevelopmentOption {
     pub(crate) fn is_development(self) -> bool {
         self == DevelopmentOption::Development || self == DevelopmentOption::DevelopmentWithoutHmr
     }
+}
+
+/// `development.allowedHosts`: `true`, or an array of hostnames.
+fn allowed_hosts_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AllowedHosts> {
+    const EXPECTED: &str =
+        "Bun.serve() expects 'development.allowedHosts' to be an array of hostnames or true";
+    if value.is_boolean() {
+        return Ok(if value == JSValue::TRUE {
+            AllowedHosts::Any
+        } else {
+            AllowedHosts::BuiltIn
+        });
+    }
+    if !value.is_array() {
+        return Err(global.throw_invalid_arguments(format_args!("{EXPECTED}")));
+    }
+    let mut iter = value.array_iterator(global)?;
+    let mut hosts: Vec<Box<[u8]>> = Vec::new();
+    while let Some(item) = iter.next()? {
+        if !item.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!("{EXPECTED}")));
+        }
+        let host = item.to_utf8(global)?;
+        if !AllowedHosts::is_valid_entry(&host) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Bun.serve() expects each entry of 'development.allowedHosts' to be a hostname \
+                 without a scheme, port, or path (a leading \".\" allows subdomains), got {}",
+                bun_fmt::quote(&host),
+            )));
+        }
+        hosts.push(Box::<[u8]>::from(&*host));
+    }
+    Ok(AllowedHosts::List(hosts))
 }
 
 impl ServerConfig {
@@ -289,6 +327,7 @@ impl ServerConfig {
             development: self.development,
             broadcast_console_log_from_browser_to_server_for_bake: self
                 .broadcast_console_log_from_browser_to_server_for_bake,
+            allowed_hosts: core::mem::take(&mut self.allowed_hosts),
             enable_chrome_devtools_automatic_workspace_folders: self
                 .enable_chrome_devtools_automatic_workspace_folders,
             on_error: self.on_error,
@@ -645,6 +684,7 @@ impl ServerConfig {
         }
 
         // "development" impacts other settings like bake.
+        let mut allowed_hosts_set_from_js = false;
         if let Some(dev) = arg.get(global, "development")? {
             if dev.is_object() {
                 if let Some(hmr) = dev.get_boolean_strict(global, "hmr")? {
@@ -666,6 +706,13 @@ impl ServerConfig {
                 {
                     args.enable_chrome_devtools_automatic_workspace_folders = v;
                 }
+
+                if let Some(v) = dev.get(global, "allowedHosts")? {
+                    if !v.is_undefined_or_null() {
+                        args.allowed_hosts = allowed_hosts_from_js(global, v)?;
+                        allowed_hosts_set_from_js = true;
+                    }
+                }
             } else {
                 args.development = if dev.to_boolean() {
                     DevelopmentOption::Development
@@ -674,6 +721,17 @@ impl ServerConfig {
                 };
             }
             args.reuse_port = args.development == DevelopmentOption::Production;
+        }
+
+        // The bunfig list only matters to a dev server, and `development.allowedHosts` wins
+        // over it, so the clone is skipped on every other path.
+        if !allowed_hosts_set_from_js && args.development.is_development() {
+            args.allowed_hosts = vm
+                .transpiler
+                .options
+                .transform_options
+                .serve_allowed_hosts
+                .clone();
         }
 
         if let Some(static_) = get_routes_object(global, arg)? {

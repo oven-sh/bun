@@ -47,6 +47,29 @@ pub mod api {
             __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP(());
     }
 
+    /// `allowedHosts` for the dev server's `Host` header check, from
+    /// `[serve.static]` in bunfig.toml or `development` in `Bun.serve()`.
+    #[derive(Clone, Debug, Default)]
+    pub enum AllowedHosts {
+        /// Only `localhost`, `*.localhost`, IP literals, and the bound `hostname`.
+        #[default]
+        BuiltIn,
+        /// Hostnames without a port. A leading `.` also matches every subdomain.
+        List(Vec<Box<[u8]>>),
+        /// `allowedHosts = true`: every `Host` header is accepted.
+        Any,
+    }
+
+    impl AllowedHosts {
+        /// Rejects `""` and `"."`, which would match a malformed `Host`, and
+        /// entries with a scheme, port, path, or glob, which never match.
+        pub fn is_valid_entry(entry: &[u8]) -> bool {
+            !entry.is_empty()
+                && entry != b"."
+                && bun_core::strings::index_of_any(entry, b":/?#*\t\r\n ").is_none()
+        }
+    }
+
     /// The CLI/bunfig-populated option bag that `BundleOptions::from_api`
     /// projects into bundler options.
     ///
@@ -124,6 +147,8 @@ pub mod api {
         pub serve_splitting: bool,
         pub serve_public_path: Option<Box<[u8]>>,
         pub serve_hmr: Option<bool>,
+        /// `[serve.static] allowedHosts = ["mybox.local"]` or `= true`
+        pub serve_allowed_hosts: AllowedHosts,
         pub serve_define: Option<StringMap>,
         pub serve_sourcemap: Option<SourceMapMode>,
 

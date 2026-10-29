@@ -1,6 +1,9 @@
 // HTML tests are tests relating to HTML files themselves.
-import { expect } from "bun:test";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import type { Subprocess } from "bun";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import net from "node:net";
+import { type Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
@@ -412,6 +415,330 @@ devTest("error report endpoint rejects requests whose origin header does not mat
 
     await dev.fetch("/").expect.toInclude("<h1>Origin Check</h1>");
   },
+});
+
+/**
+ * Status line of a raw `/_bun/hmr` WebSocket handshake sent with the given
+ * `Host`. `Origin` defaults to the same host, the way a browser sends it for a
+ * page served by this dev server.
+ */
+function hmrHandshakeStatus(dev: Dev, host: string, origin = `http://${host}`): Promise<string> {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = net.connect(dev.port, "127.0.0.1", () => {
+    socket.write(
+      `GET /_bun/hmr HTTP/1.1\r\n` +
+        `Host: ${host}\r\n` +
+        `Origin: ${origin}\r\n` +
+        `Upgrade: websocket\r\n` +
+        `Connection: Upgrade\r\n` +
+        `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n` +
+        `Sec-WebSocket-Version: 13\r\n\r\n`,
+    );
+  });
+  let received = "";
+  socket.on("data", chunk => {
+    received += chunk;
+    if (received.includes("\r\n\r\n")) {
+      resolve(received.split("\r\n")[0]);
+      socket.destroy();
+    }
+  });
+  socket.on("error", reject);
+  socket.on("close", () => reject(new Error(`socket closed before the response ended: ${JSON.stringify(received)}`)));
+  return promise;
+}
+
+devTest("development.allowedHosts lets the dev server answer for extra hostnames", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["/style.css"],
+      scripts: ["/script.ts"],
+      body: "<h1>Allowed Hosts</h1>",
+    }),
+    "style.css": `
+      h1 { color: red; }
+    `,
+    "script.ts": `
+      console.log("hello");
+    `,
+    // The harness-generated bun.app.ts has no `development` object, so
+    // provide one directly. `htmlFiles: []` tells the harness not to
+    // generate its own config from index.html.
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        development: {
+          allowedHosts: ["mybox.local", ".tunnel.example"],
+        },
+        fetch(req) {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    // Hostnames match case-insensitively and without the port.
+    const page = await dev.fetch("/", { headers: { Host: "MYBOX.local:3000" } });
+    const pageText = await page.text();
+    expect(pageText).toContain("<h1>Allowed Hosts</h1>");
+    expect(page.status).toBe(200);
+
+    // The script and stylesheet the page references load under that host too,
+    // as do the HMR WebSocket and the /bun:info route.
+    const [, scriptUrl] = pageText.match(/src="(\/_bun\/client\/[^"]+)"/)!;
+    const [, styleUrl] = pageText.match(/href="(\/_bun\/asset\/[^"]+)"/)!;
+    const script = await dev.fetch(scriptUrl, { headers: { Host: "mybox.local" } });
+    expect(await script.text()).toContain('console.log("hello")');
+    expect(script.status).toBe(200);
+    const style = await dev.fetch(styleUrl, { headers: { Host: "mybox.local" } });
+    expect(await style.text()).toContain("color: red");
+    expect(style.status).toBe(200);
+    expect(await hmrHandshakeStatus(dev, "mybox.local")).toBe("HTTP/1.1 101 Switching Protocols");
+    const info = await dev.fetch("/bun:info", { headers: { Host: "mybox.local" } });
+    expect(await info.text()).toContain("bun_version");
+    expect(info.status).toBe(200);
+
+    // A leading "." allows the domain itself and every subdomain.
+    for (const host of ["tunnel.example", "a.b.tunnel.example"]) {
+      const res = await dev.fetch("/", { headers: { Host: host } });
+      expect(await res.text()).toContain("<h1>Allowed Hosts</h1>");
+      expect(res.status).toBe(200);
+      expect(await hmrHandshakeStatus(dev, host)).toBe("HTTP/1.1 101 Switching Protocols");
+    }
+
+    // The Origin check is separate: a page on another origin cannot open the
+    // HMR socket through an allowed host, not even one that the list allows.
+    expect(await hmrHandshakeStatus(dev, "mybox.local", "http://other-page.example")).toBe("HTTP/1.1 403 Forbidden");
+    expect(await hmrHandshakeStatus(dev, "mybox.local", "http://evil.tunnel.example")).toBe("HTTP/1.1 403 Forbidden");
+
+    // Every other hostname is still blocked, and the response says how to allow it.
+    for (const host of ["nottunnel.example", "mybox.local.example", "rebound-host.example"]) {
+      const res = await dev.fetch("/", { headers: { Host: host } });
+      const text = await res.text();
+      expect(text).not.toContain("/_bun/client/");
+      expect(text).toContain("development.allowedHosts");
+      expect(res.status).toBe(403);
+      const blockedScript = await dev.fetch(scriptUrl, { headers: { Host: host } });
+      expect(blockedScript.status).toBe(403);
+      const blockedInfo = await dev.fetch("/bun:info", { headers: { Host: host } });
+      expect(await blockedInfo.text()).not.toContain("bun_version");
+      expect(blockedInfo.status).toBe(404);
+    }
+    expect(await hmrHandshakeStatus(dev, "rebound-host.example")).toBe("HTTP/1.1 403 Forbidden");
+
+    // The built-in list still applies.
+    const local = await dev.fetch("/", { headers: { Host: "app.localhost" } });
+    expect(await local.text()).toContain("<h1>Allowed Hosts</h1>");
+    expect(local.status).toBe(200);
+  },
+});
+
+devTest("development.allowedHosts: true turns the host check off", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Any Host</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        development: {
+          allowedHosts: true,
+        },
+        fetch(req) {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    const page = await dev.fetch("/", { headers: { Host: "any-host.example" } });
+    const pageText = await page.text();
+    expect(pageText).toContain("<h1>Any Host</h1>");
+    expect(page.status).toBe(200);
+
+    const [, scriptUrl] = pageText.match(/src="(\/_bun\/client\/[^"]+)"/)!;
+    const script = await dev.fetch(scriptUrl, { headers: { Host: "any-host.example" } });
+    expect(script.status).toBe(200);
+    expect(await hmrHandshakeStatus(dev, "any-host.example")).toBe("HTTP/1.1 101 Switching Protocols");
+
+    // `true` only turns the Host check off. The Origin check still applies.
+    expect(await hmrHandshakeStatus(dev, "any-host.example", "http://other-page.example")).toBe(
+      "HTTP/1.1 403 Forbidden",
+    );
+  },
+});
+
+devTest("[serve.static] allowedHosts in bunfig.toml configures the dev server host check", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      allowedHosts = ["mybox.local", ".tunnel.example"]
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Bunfig Hosts</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    // The harness-generated bun.app.ts has no `development` object, so the
+    // bunfig value is what the server uses.
+    for (const host of ["mybox.local", "a.tunnel.example"]) {
+      const page = await dev.fetch("/", { headers: { Host: host } });
+      const pageText = await page.text();
+      expect(pageText).toContain("<h1>Bunfig Hosts</h1>");
+      expect(page.status).toBe(200);
+      const [, scriptUrl] = pageText.match(/src="(\/_bun\/client\/[^"]+)"/)!;
+      const script = await dev.fetch(scriptUrl, { headers: { Host: host } });
+      expect(script.status).toBe(200);
+      expect(await hmrHandshakeStatus(dev, host)).toBe("HTTP/1.1 101 Switching Protocols");
+    }
+
+    const blocked = await dev.fetch("/", { headers: { Host: "rebound-host.example" } });
+    expect(await blocked.text()).toContain("bunfig.toml");
+    expect(blocked.status).toBe(403);
+  },
+});
+
+devTest("development.allowedHosts in Bun.serve() replaces the bunfig.toml list", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      allowedHosts = ["bunfig.example"]
+    `,
+    "index.html": emptyHtmlFile({
+      body: "<h1>JS Hosts</h1>",
+    }),
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        development: {
+          allowedHosts: ["js.example"],
+        },
+        fetch(req) {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    const js = await dev.fetch("/", { headers: { Host: "js.example" } });
+    expect(await js.text()).toContain("<h1>JS Hosts</h1>");
+    expect(js.status).toBe(200);
+    const bunfig = await dev.fetch("/", { headers: { Host: "bunfig.example" } });
+    expect(await bunfig.text()).not.toContain("<h1>JS Hosts</h1>");
+    expect(bunfig.status).toBe(403);
+  },
+});
+
+async function readServerUrl(proc: Subprocess<any, "pipe", any>): Promise<string> {
+  let text = "";
+  for await (const chunk of proc.stdout) {
+    text += new TextDecoder().decode(chunk, { stream: true });
+    const match = text.match(/http:\/\/[^\s\x1b]+/);
+    if (match) return match[0];
+  }
+  throw new Error(`server url not printed: ${JSON.stringify(text)}`);
+}
+
+test("[serve.static] allowedHosts applies to `bun ./index.html`", async () => {
+  using dir = tempDir("allowed-hosts-html-cli", {
+    "bunfig.toml": `
+      [serve.static]
+      allowedHosts = ["mybox.local"]
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>CLI Hosts</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.html", "--port=0"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const url = await readServerUrl(proc);
+
+  const allowed = await fetch(url, { headers: { Host: "mybox.local" } });
+  expect(await allowed.text()).toContain("<h1>CLI Hosts</h1>");
+  expect(allowed.status).toBe(200);
+
+  const blocked = await fetch(url, { headers: { Host: "rebound-host.example" } });
+  expect(await blocked.text()).toContain("bunfig.toml");
+  expect(blocked.status).toBe(403);
+});
+
+test("[serve.static] allowedHosts rejects values that are not hostnames", async () => {
+  using dir = tempDir("allowed-hosts-bunfig", {
+    "bunfig.toml": `
+      [serve.static]
+      allowedHosts = ["http://mybox.local"]
+    `,
+    "index.ts": `
+      console.log("unreachable");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain(
+    'Expected allowedHosts entry to be a hostname without a scheme, port, or path (a leading "." allows subdomains)',
+  );
+  expect(exitCode).toBe(1);
+});
+
+test("development.allowedHosts rejects values that are not hostnames", () => {
+  const serve = (allowedHosts: unknown) => {
+    const server = Bun.serve({
+      port: 0,
+      development: { allowedHosts } as any,
+      fetch() {
+        return new Response("unreachable");
+      },
+    });
+    // Only reached when the option was accepted, which fails the assertion below.
+    server.stop(true);
+  };
+  expect(() => serve("mybox.local")).toThrow(
+    "Bun.serve() expects 'development.allowedHosts' to be an array of hostnames or true",
+  );
+  expect(() => serve([42])).toThrow(
+    "Bun.serve() expects 'development.allowedHosts' to be an array of hostnames or true",
+  );
+  for (const entry of ["", ".", "http://mybox.local", "mybox.local:3000", "mybox.local/app", "*.tunnel.example"]) {
+    expect(() => serve([entry])).toThrow(
+      `Bun.serve() expects each entry of 'development.allowedHosts' to be a hostname without a scheme, port, or path (a leading "." allows subdomains), got "${entry}"`,
+    );
+  }
 });
 
 devTest("error report endpoint blanks stray non-text bytes in reported frames", {

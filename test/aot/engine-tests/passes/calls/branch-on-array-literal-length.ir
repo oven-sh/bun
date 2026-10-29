@@ -1,0 +1,612 @@
+# A function that branches on the length of an array literal it was passed.
+# @ts-ignore
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f7
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="untyped.js" displayPath="untyped.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="main.ts" displayPath="main.ts" body=f14 requests=[{target=m0 completes=true isHoisted=true}, {target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.3" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.4" declared={type=f5 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.5" declared={type=f6 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.6" declared={type=f7 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.7" declared={type=f8 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.8" declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]}] ownFieldCount=9
+layout L1 module=m0 position=3239 fields=[{key="callers" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired]}, {key="kept" declared={type=undefined|null|Array flags=[IsExpected]} flags=[IsRequired]}, {key="literals" declared={type=undefined|null|function|f10 flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[0, 2, 1] ownFieldCount=3
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f2
+    v2 = Convert v1 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v2 layout=L0 field=1
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v5 layout=L0 field=2
+    v7 = NewClosure function=f4
+    v8 = Convert v7 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v8 layout=L0 field=3
+    v10 = NewClosure v0 function=f5
+    v11 = Convert v10 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v11 layout=L0 field=4
+    v13 = NewClosure v0 function=f6
+    v14 = Convert v13 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v14 layout=L0 field=5
+    v16 = NewClosure v0 function=f7
+    v17 = Convert v16 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v17 layout=L0 field=6
+    v19 = NewClosure function=f8
+    v20 = Convert v19 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v20 layout=L0 field=7
+    v22 = NewClosure v0 function=f9
+    v23 = Convert v22 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v24 = Convert v23 declared={type=undefined|null|function|f9 flags=[IsExpected]}
+    v25 = NewObject layout=L1
+    PropDefine v25, v24 key="callers"
+    v27 = FinishObject v25
+    PutModuleVariable v27 variable=g0
+    v29 = Undefined
+    Return v29
+}
+function f1 name="leak" module=m0 position=31 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="shrink" module=m0 position=101 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array):
+    v1 = Integer
+    PropSet v0, v1 key="length"
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Return v4
+}
+function f3 name="dispatch" module=m0 position=246 flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: Array):
+    v2 = PropGet v1 key="length"
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Switch v3 cases=[0, 1, 2] -> case b1(| 0), case b2(| 0), case b3(| 0), otherwise b4()
+  b1(v4):
+    v5 = Call v0 calleeName="f"
+    ReturnCall v5
+  b2(v6):
+    v7 = NarrowByField v1, v6 key="length"
+    v8 = Integer
+    v9 = ElemGet v7, v8
+    v10 = Call v0, -, v9 calleeName="f"
+    ReturnCall v10
+  b3(v11):
+    v12 = NarrowByField v1, v11 key="length"
+    v13 = Integer
+    v14 = ElemGet v12, v13
+    v15 = Integer integer=1
+    v16 = ElemGet v12, v15
+    v17 = Call v0, -, v14, v16 calleeName="f"
+    ReturnCall v17
+  b4():
+    v18 = PropGet v0 key="apply"
+    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]}
+    v20 = Undefined
+    v21 = Call v19, v0, v20, v1 calleeKey="apply" calleeName="f.apply"
+    ReturnCall v21
+}
+function f4 name="each" module=m0 position=450 flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|function> flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|function>, v1: Array):
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Less v7, v10
+    Branch v11 -> taken b2(| 0), notTaken b8(| 0)
+  b2(v12):
+    v13 = ElemGet v0, v12
+    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]}
+    v15 = PropGet v1 key="length"
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    Switch v16 cases=[0, 1, 2] -> case b3(| 0), case b4(| 0), case b5(| 0), otherwise b6()
+  b3(v17):
+    v18 = Call v14 calleeName="f"
+    v19 = Add v6, v18
+    v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b7(v20)
+  b4(v21):
+    v22 = NarrowByField v1, v21 key="length"
+    v23 = Integer
+    v24 = ElemGet v22, v23
+    v25 = Call v14, -, v24 calleeName="f"
+    v26 = Add v6, v25
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b7(v27)
+  b5(v28):
+    v29 = NarrowByField v1, v28 key="length"
+    v30 = Integer
+    v31 = ElemGet v29, v30
+    v32 = Integer integer=1
+    v33 = ElemGet v29, v32
+    v34 = Call v14, -, v31, v33 calleeName="f"
+    v35 = Add v6, v34
+    v36 = Convert v35 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b7(v36)
+  b6():
+    v37 = PropGet v14 key="apply"
+    v38 = Convert v37 declared={type=undefined|null|function flags=[IsExpected]}
+    v39 = Undefined
+    v40 = Call v38, v14, v39, v1 calleeKey="apply" calleeName="f.apply"
+    v41 = Add v6, v40
+    v42 = Convert v41 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b7(v42)
+  b7(v43):
+    v44 = Increment v12
+    v45 = Convert v44 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v43, v45)
+  b8(v46):
+    v47 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v47
+}
+function f5 name="leaksWhenLong" module=m0 position=773 flags=[HasRestParameter, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: Array):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    LoopHint
+    v7 = String string=":"
+    v8 = Add v3, v7
+    v9 = PropGet v1 key="length"
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Add v8, v10
+    v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v12
+}
+function f6 name="leaksWhenShort" module=m0 position=943 flags=[HasRestParameter, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: Array):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    LoopHint
+    v7 = String string=":"
+    v8 = Add v3, v7
+    v9 = PropGet v1 key="length"
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Add v8, v10
+    v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v12
+}
+function f7 name="shrinksWhenTwo" module=m0 position=1114 flags=[HasRestParameter, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: Array):
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Integer integer=3
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(| 0), notTaken b6(| 0)
+  b2(v11):
+    v12 = PropGet v1 key="length"
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Add v6, v13
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]}
+    v16 = PropGet v1 key="length"
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Integer integer=2
+    v19 = StrictEq v17, v18
+    Branch v19 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v20):
+    v21 = NarrowByField v1, v20 key="length"
+    v22 = GetEnvironmentField v0 layout=L0 field=1
+    v23 = Call v22, -, v21 calleeName="shrink"
+    Jump -> next b5()
+  b4(v24):
+    Jump -> next b5()
+  b5():
+    v25 = Increment v11
+    v26 = Convert v25 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v15, v26)
+  b6(v27):
+    v28 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v28
+}
+function f8 name="join" module=m0 position=1260 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = Builtin builtin=ArrayPrototypeJoin
+    v4 = PropGet v3 key="call"
+    v5 = Convert v4 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v6 = String string="+"
+    v7 = Call v5, v3, v2, v6 calleeKey="call" calleeName="Array.prototype.join.call"
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v9 = String string="/"
+    v10 = Add v8, v9
+    v11 = PropGet v2 key="length"
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = Add v10, v12
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v14
+}
+function f9 name="callers" module=m0 position=1355 flags=[HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=2
+    v2 = GetEnvironmentField v0 layout=L0 field=7
+    v3 = Call v1, -, v2 calleeName="dispatch"
+    v4 = GetEnvironmentField v0 layout=L0 field=2
+    v5 = GetEnvironmentField v0 layout=L0 field=7
+    v6 = Integer integer=1
+    v7 = Call v4, -, v5, v6 calleeName="dispatch"
+    v8 = GetEnvironmentField v0 layout=L0 field=2
+    v9 = GetEnvironmentField v0 layout=L0 field=7
+    v10 = Integer integer=1
+    v11 = Integer integer=2
+    v12 = Call v8, -, v9, v10, v11 calleeName="dispatch"
+    v13 = GetEnvironmentField v0 layout=L0 field=2
+    v14 = GetEnvironmentField v0 layout=L0 field=7
+    v15 = Integer integer=1
+    v16 = Integer integer=2
+    v17 = Integer integer=3
+    v18 = Call v13, -, v14, v15, v16, v17 calleeName="dispatch"
+    v19 = GetEnvironmentField v0 layout=L0 field=2
+    v20 = GetEnvironmentField v0 layout=L0 field=7
+    v21 = Integer integer=1
+    v22 = Integer integer=2
+    v23 = Integer integer=3
+    v24 = Integer integer=4
+    v25 = Integer integer=5
+    v26 = Call v19, -, v20, v21, v22, v23, v24, v25 calleeName="dispatch"
+    v27 = GetEnvironmentField v0 layout=L0 field=3
+    v28 = GetEnvironmentField v0 layout=L0 field=7
+    v29 = GetEnvironmentField v0 layout=L0 field=7
+    v30 = NewArray v28, v29 contents=anything
+    v31 = Convert v30 declared={type=undefined|null|Array<undefined|null|function|f8> flags=[IsExpected]}
+    v32 = Call v27, -, v31 calleeName="each"
+    v33 = Convert v32 declared={type=undefined|null|string flags=[IsExpected]}
+    v34 = GetEnvironmentField v0 layout=L0 field=3
+    v35 = GetEnvironmentField v0 layout=L0 field=7
+    v36 = GetEnvironmentField v0 layout=L0 field=7
+    v37 = NewArray v35, v36 contents=anything
+    v38 = Convert v37 declared={type=undefined|null|Array<undefined|null|function|f8> flags=[IsExpected]}
+    v39 = Integer integer=1
+    v40 = Call v34, -, v38, v39 calleeName="each"
+    v41 = Convert v40 declared={type=undefined|null|string flags=[IsExpected]}
+    v42 = GetEnvironmentField v0 layout=L0 field=3
+    v43 = GetEnvironmentField v0 layout=L0 field=7
+    v44 = GetEnvironmentField v0 layout=L0 field=7
+    v45 = NewArray v43, v44 contents=anything
+    v46 = Convert v45 declared={type=undefined|null|Array<undefined|null|function|f8> flags=[IsExpected]}
+    v47 = Integer integer=1
+    v48 = Integer integer=2
+    v49 = Call v42, -, v46, v47, v48 calleeName="each"
+    v50 = Convert v49 declared={type=undefined|null|string flags=[IsExpected]}
+    v51 = GetEnvironmentField v0 layout=L0 field=3
+    v52 = GetEnvironmentField v0 layout=L0 field=7
+    v53 = GetEnvironmentField v0 layout=L0 field=7
+    v54 = NewArray v52, v53 contents=anything
+    v55 = Convert v54 declared={type=undefined|null|Array<undefined|null|function|f8> flags=[IsExpected]}
+    v56 = Integer integer=1
+    v57 = Integer integer=2
+    v58 = Integer integer=3
+    v59 = Call v51, -, v55, v56, v57, v58 calleeName="each"
+    v60 = Convert v59 declared={type=undefined|null|string flags=[IsExpected]}
+    v61 = GetEnvironmentField v0 layout=L0 field=3
+    v62 = Data data=d0
+    v63 = Convert v62 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v64 = Integer integer=1
+    v65 = Integer integer=2
+    v66 = Integer integer=3
+    v67 = Call v61, -, v63, v64, v65, v66 calleeName="each"
+    v68 = Convert v67 declared={type=undefined|null|string flags=[IsExpected]}
+    v69 = GetEnvironmentField v0 layout=L0 field=4
+    v70 = Call v69 calleeName="leaksWhenLong"
+    v71 = Convert v70 declared={type=undefined|null|string flags=[IsExpected]}
+    v72 = GetEnvironmentField v0 layout=L0 field=4
+    v73 = Integer integer=1
+    v74 = Call v72, -, v73 calleeName="leaksWhenLong"
+    v75 = Convert v74 declared={type=undefined|null|string flags=[IsExpected]}
+    v76 = GetEnvironmentField v0 layout=L0 field=4
+    v77 = Integer integer=1
+    v78 = Integer integer=2
+    v79 = Call v76, -, v77, v78 calleeName="leaksWhenLong"
+    v80 = Convert v79 declared={type=undefined|null|string flags=[IsExpected]}
+    v81 = GetEnvironmentField v0 layout=L0 field=4
+    v82 = Integer integer=1
+    v83 = Integer integer=2
+    v84 = Integer integer=3
+    v85 = Call v81, -, v82, v83, v84 calleeName="leaksWhenLong"
+    v86 = Convert v85 declared={type=undefined|null|string flags=[IsExpected]}
+    v87 = GetEnvironmentField v0 layout=L0 field=5
+    v88 = Call v87 calleeName="leaksWhenShort"
+    v89 = Convert v88 declared={type=undefined|null|string flags=[IsExpected]}
+    v90 = GetEnvironmentField v0 layout=L0 field=5
+    v91 = Integer integer=1
+    v92 = Call v90, -, v91 calleeName="leaksWhenShort"
+    v93 = Convert v92 declared={type=undefined|null|string flags=[IsExpected]}
+    v94 = GetEnvironmentField v0 layout=L0 field=5
+    v95 = Integer integer=1
+    v96 = Integer integer=2
+    v97 = Call v94, -, v95, v96 calleeName="leaksWhenShort"
+    v98 = Convert v97 declared={type=undefined|null|string flags=[IsExpected]}
+    v99 = GetEnvironmentField v0 layout=L0 field=6
+    v100 = Integer integer=1
+    v101 = Call v99, -, v100 calleeName="shrinksWhenTwo"
+    v102 = Convert v101 declared={type=undefined|null|string flags=[IsExpected]}
+    v103 = GetEnvironmentField v0 layout=L0 field=6
+    v104 = Integer integer=1
+    v105 = Integer integer=2
+    v106 = Call v103, -, v104, v105 calleeName="shrinksWhenTwo"
+    v107 = Convert v106 declared={type=undefined|null|string flags=[IsExpected]}
+    v108 = GetEnvironmentField v0 layout=L0 field=6
+    v109 = Integer integer=1
+    v110 = Integer integer=2
+    v111 = Integer integer=3
+    v112 = Call v108, -, v109, v110, v111 calleeName="shrinksWhenTwo"
+    v113 = Convert v112 declared={type=undefined|null|string flags=[IsExpected]}
+    v114 = NewArray v3, v7, v12, v18, v26, v33, v41, v50, v60, v68, v71, v75, v80, v86, v89, v93, v98, v102, v107, v113 contents=anything
+    v115 = Convert v114 declared={type=undefined|null|Array flags=[IsExpected]}
+    v116 = PropGet v115 key="join"
+    v117 = Convert v116 declared={type=undefined|null|function flags=[IsExpected]}
+    v118 = String string=" | "
+    v119 = Call v117, v115, v118 calleeKey="join" calleeName="join"
+    ReturnCall v119 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f10 name="literals" module=m0 position=1840 flags=[HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Convert v0 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b1(v3)
+  b1(v4: number):
+    LoopHint
+    v6 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
+    v7 = PropGet v6 key="callers"
+    v8 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]}
+    v9 = Call v8, v6 calleeKey="callers" calleeName="m.callers"
+    v10 = Increment v4
+    v11 = Convert v10 declared={type=number}
+    Jump -> next b1(v11)
+}
+# -- generated: shrinksWhenTwo
+# CHECK-LABEL: function {{*}}name="shrinksWhenTwo"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int64 b@20 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v1:CallInline)
+# CHECK-NEXT: Int32 b@21 = Load(b@20, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v1:CallInline)
+# CHECK-NEXT: Int64 b@22 = ZExt32(b@21, v1:CallInline)
+# CHECK-NEXT: Int64 b@23 = Patchpoint(b@22:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v2:Strcat)
+# CHECK-NEXT: Int64 b@24 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v3:CallInline)
+# CHECK-NEXT: Int32 b@25 = Load(b@24, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v3:CallInline)
+# CHECK-NEXT: Int64 b@26 = ZExt32(b@25, v3:CallInline)
+# CHECK-NEXT: Int64 b@27 = Const64(2, v4:Integer)
+# CHECK-NEXT: Int32 b@28 = Equal(b@26, $2(b@27), v5:StrictEq)
+# CHECK-NEXT: Int32 b@33 = Const32(5, v7:CallInline)
+# CHECK-NEXT: Int32 b@35 = Const32(7, v7:CallInline)
+# CHECK-NEXT: Int64 b@52 = Const64(64, v7:CallInline)
+# CHECK-NEXT: Int32 b@17 = Const32(3, v7:CallInline)
+# CHECK-NEXT: Int64 b@71 = Const64(1, v7:CallInline)
+# CHECK-NEXT: Int32 b@38 = Const32(9, v7:CallInline)
+# CHECK-NEXT: Int64 b@8 = ArgumentReg(%r13)
+# CHECK-NEXT: Void b@29 = Branch(b@28, Terminal, v5:StrictEq)
+# CHECK-NEXT: Successors: Then:Unlikely:#1, Else:#3
+# CHECK-NEXT: BB#3: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #0, #12, #21
+# CHECK-NEXT: Int64 b@83 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v8:CallInline)
+# CHECK-NEXT: Int32 b@84 = Load(b@83, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v8:CallInline)
+# CHECK-NEXT: Int64 b@85 = ZExt32(b@84, v8:CallInline)
+# CHECK-NEXT: Int64 b@86 = Patchpoint(b@85:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v9:Add)
+# CHECK-NEXT: Int64 b@87 = Patchpoint(b@23:Register(%rax), b@86:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v9:Add)
+# CHECK-NEXT: Int64 b@88 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v10:CallInline)
+# CHECK-NEXT: Int32 b@89 = Load(b@88, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v10:CallInline)
+# CHECK-NEXT: Int64 b@90 = ZExt32(b@89, v10:CallInline)
+# CHECK-NEXT: Int32 b@91 = Equal(b@90, $2(b@27), v12:StrictEq)
+# CHECK-NEXT: Void b@92 = Branch(b@91, Terminal, v12:StrictEq)
+# CHECK-NEXT: Successors: Then:Unlikely:#4, Else:#6
+# CHECK-NEXT: BB#6: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #3, #28, #37
+# CHECK-NEXT: Int64 b@138 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v15:CallInline)
+# CHECK-NEXT: Int32 b@139 = Load(b@138, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v15:CallInline)
+# CHECK-NEXT: Int64 b@140 = ZExt32(b@139, v15:CallInline)
+# CHECK-NEXT: Int64 b@141 = Patchpoint(b@140:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v16:Add)
+# CHECK-NEXT: Int64 b@142 = Patchpoint(b@87:Register(%rax), b@141:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v16:Add)
+# CHECK-NEXT: Int64 b@143 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v17:CallInline)
+# CHECK-NEXT: Int32 b@144 = Load(b@143, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v17:CallInline)
+# CHECK-NEXT: Int64 b@145 = ZExt32(b@144, v17:CallInline)
+# CHECK-NEXT: Int32 b@146 = Equal(b@145, $2(b@27), v19:StrictEq)
+# CHECK-NEXT: Void b@147 = Branch(b@146, Terminal, v19:StrictEq)
+# CHECK-NEXT: Successors: Then:Unlikely:#7, Else:#9
+# CHECK-NEXT: BB#9: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #6, #44, #53
+# CHECK-NEXT: Void b@193 = Return(b@142, Terminal)
+# CHECK-NEXT: BB#7: ; frequency = 0.200000
+# CHECK-NEXT: Predecessors: #6
+# CHECK-NEXT: Int32 b@149 = Load8Z(b@18, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v21:CallInline)
+# CHECK-NEXT: Int32 b@150 = Equal(b@149, $5(b@33), v21:CallInline)
+# CHECK-NEXT: Int32 b@151 = Equal(b@149, $7(b@35), v21:CallInline)
+# CHECK-NEXT: Int32 b@152 = BitOr(b@150, b@151, v21:CallInline)
+# CHECK-NEXT: Void b@155 = Branch(b@152, Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: Then:#56, Else:#58
+# CHECK-NEXT: BB#56: ; frequency = 0.199902
+# CHECK-NEXT: Predecessors: #7, #58
+# CHECK-NEXT: Void b@160 = Branch(b@144, Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: Then:#45, Else:#53
+# CHECK-NEXT: BB#45: ; frequency = 0.099951
+# CHECK-NEXT: Predecessors: #56
+# CHECK-NEXT: Int32 b@167 = BelowEqual(b@145, $64(b@52), v21:CallInline)
+# CHECK-NEXT: Void b@168 = Branch(b@167, Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: Then:#57, Else:Rare:#44
+# CHECK-NEXT: BB#57: ; frequency = 0.099854
+# CHECK-NEXT: Predecessors: #45
+# CHECK-NEXT: Void b@177 = Branch(b@145, Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: Then:#66, Else:#53
+# CHECK-NEXT: BB#66: ; frequency = 0.049927
+# CHECK-NEXT: Predecessors: #57
+# CHECK-NEXT: Int64 b@78 = Const64(0, v7:CallInline)
+# CHECK-NEXT: Void b@204 = Upsilon($0(b@78), ^203, WritesLocalState, v21:CallInline)
+# CHECK-NEXT: Int64 b@7 = Load(b@8, offset = -48, ReadsImmutable, v21:CallInline)
+# CHECK-NEXT: Int64 b@172 = Select(b@151, b@7, $0(b@78), v21:CallInline)
+# CHECK-NEXT: Void b@82 = Jump(Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: #49
+# CHECK-NEXT: BB#49: ; frequency = 0.499268
+# CHECK-NEXT: Predecessors: #66, #48
+# CHECK-NEXT: Int64 b@203 = Phi(ReadsLocalState, v21:CallInline)
+# CHECK-NEXT: Int64 b@179 = Shl(b@203, $3(b@17), v21:CallInline)
+# CHECK-NEXT: Int64 b@180 = Add(b@143, b@179, v21:CallInline)
+# CHECK-NEXT: Void b@181 = Store(b@172, b@180, ControlDependent|Writes:Elements.1, v21:CallInline)
+# CHECK-NEXT: Int64 b@182 = Add(b@203, $1(b@71), v21:CallInline)
+# CHECK-NEXT: Int32 b@137 = Above(b@145, b@182, v21:CallInline)
+# CHECK-NEXT: Void b@110 = Branch(b@137, Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: Then:#48, Else:#53
+# CHECK-NEXT: BB#48: ; frequency = 0.449341
+# CHECK-NEXT: Predecessors: #49
+# CHECK-NEXT: Void b@205 = Upsilon(b@182, ^203, WritesLocalState, v21:CallInline)
+# CHECK-NEXT: Void b@199 = Jump(Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: #49
+# CHECK-NEXT: BB#53: ; frequency = 0.199805
+# CHECK-NEXT: Predecessors: #56, #57, #49
+# CHECK-NEXT: Int32 b@157 = Const32(0, v6:Integer)
+# CHECK-NEXT: Void b@186 = Store($0(b@157), b@143, offset = -8, ControlDependent|Writes:Butterfly_publicLength, v21:CallInline)
+# CHECK-NEXT: Void b@187 = Jump(Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#44: ; frequency = 0.000195
+# CHECK-NEXT: Predecessors: #58, #45
+# CHECK-NEXT: Int64 b@12 = Load(b@8, offset = 96, ReadsImmutable, v21:CallInline)
+# CHECK-NEXT: Void b@190 = Patchpoint(b@18:Register(%rax), b@12:Register(%rsi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v21:CallInline)
+# CHECK-NEXT: Void b@191 = Jump(Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#58: ; frequency = 0.100000
+# CHECK-NEXT: Predecessors: #7
+# CHECK-NEXT: Int32 b@153 = Equal(b@149, $9(b@38), v21:CallInline)
+# CHECK-NEXT: Void b@194 = Branch(b@153, Terminal, v21:CallInline)
+# CHECK-NEXT: Successors: Then:#56, Else:Rare:#44
+# CHECK-NEXT: BB#4: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #3
+# CHECK-NEXT: Int32 b@94 = Load8Z(b@18, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v14:CallInline)
+# CHECK-NEXT: Int32 b@95 = Equal(b@94, $5(b@33), v14:CallInline)
+# CHECK-NEXT: Int32 b@96 = Equal(b@94, $7(b@35), v14:CallInline)
+# CHECK-NEXT: Int32 b@97 = BitOr(b@95, b@96, v14:CallInline)
+# CHECK-NEXT: Void b@100 = Branch(b@97, Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: Then:#40, Else:#59
+# CHECK-NEXT: BB#40: ; frequency = 0.058795
+# CHECK-NEXT: Predecessors: #4, #59
+# CHECK-NEXT: Void b@105 = Branch(b@89, Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: Then:#29, Else:#37
+# CHECK-NEXT: BB#29: ; frequency = 0.029397
+# CHECK-NEXT: Predecessors: #40
+# CHECK-NEXT: Int32 b@112 = BelowEqual(b@90, $64(b@52), v14:CallInline)
+# CHECK-NEXT: Void b@113 = Branch(b@112, Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: Then:#41, Else:Rare:#28
+# CHECK-NEXT: BB#41: ; frequency = 0.029369
+# CHECK-NEXT: Predecessors: #29
+# CHECK-NEXT: Void b@122 = Branch(b@90, Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: Then:#64, Else:#37
+# CHECK-NEXT: BB#64: ; frequency = 0.014684
+# CHECK-NEXT: Predecessors: #41
+# CHECK-NEXT: Int64 b@111 = Const64(0, v7:CallInline)
+# CHECK-NEXT: Void b@173 = Upsilon($0(b@111), ^202, WritesLocalState, v14:CallInline)
+# CHECK-NEXT: Int64 b@166 = Load(b@8, offset = -48, ReadsImmutable, v14:CallInline)
+# CHECK-NEXT: Int64 b@117 = Select(b@96, b@166, $0(b@111), v14:CallInline)
+# CHECK-NEXT: Void b@2 = Jump(Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: #33
+# CHECK-NEXT: BB#33: ; frequency = 0.146843
+# CHECK-NEXT: Predecessors: #64, #32
+# CHECK-NEXT: Int64 b@202 = Phi(ReadsLocalState, v14:CallInline)
+# CHECK-NEXT: Int64 b@124 = Shl(b@202, $3(b@17), v14:CallInline)
+# CHECK-NEXT: Int64 b@125 = Add(b@88, b@124, v14:CallInline)
+# CHECK-NEXT: Void b@126 = Store(b@117, b@125, ControlDependent|Writes:Elements.1, v14:CallInline)
+# CHECK-NEXT: Int64 b@127 = Add(b@202, $1(b@71), v14:CallInline)
+# CHECK-NEXT: Int32 b@4 = Above(b@90, b@127, v14:CallInline)
+# CHECK-NEXT: Void b@3 = Branch(b@4, Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: Then:#32, Else:#37
+# CHECK-NEXT: BB#32: ; frequency = 0.132159
+# CHECK-NEXT: Predecessors: #33
+# CHECK-NEXT: Void b@67 = Upsilon(b@127, ^202, WritesLocalState, v14:CallInline)
+# CHECK-NEXT: Void b@197 = Jump(Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: #33
+# CHECK-NEXT: BB#37: ; frequency = 0.058766
+# CHECK-NEXT: Predecessors: #40, #41, #33
+# CHECK-NEXT: Int32 b@13 = Const32(0, v6:Integer)
+# CHECK-NEXT: Void b@131 = Store($0(b@13), b@88, offset = -8, ControlDependent|Writes:Butterfly_publicLength, v14:CallInline)
+# CHECK-NEXT: Void b@132 = Jump(Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: BB#28: ; frequency = 0.000057
+# CHECK-NEXT: Predecessors: #59, #29
+# CHECK-NEXT: Int64 b@40 = Load(b@8, offset = 96, ReadsImmutable, v14:CallInline)
+# CHECK-NEXT: Void b@135 = Patchpoint(b@18:Register(%rax), b@40:Register(%rsi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v14:CallInline)
+# CHECK-NEXT: Void b@136 = Jump(Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: BB#59: ; frequency = 0.029412
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Int32 b@98 = Equal(b@94, $9(b@38), v14:CallInline)
+# CHECK-NEXT: Void b@154 = Branch(b@98, Terminal, v14:CallInline)
+# CHECK-NEXT: Successors: Then:#40, Else:Rare:#28
+# CHECK-NEXT: BB#1: ; frequency = 0.058824
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int32 b@32 = Load8Z(b@18, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v7:CallInline)
+# CHECK-NEXT: Int32 b@34 = Equal(b@32, $5(b@33), v7:CallInline)
+# CHECK-NEXT: Int32 b@36 = Equal(b@32, $7(b@35), v7:CallInline)
+# CHECK-NEXT: Int32 b@37 = BitOr(b@34, b@36, v7:CallInline)
+# CHECK-NEXT: Void b@41 = Branch(b@37, Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: Then:#24, Else:#60
+# CHECK-NEXT: BB#24: ; frequency = 0.058795
+# CHECK-NEXT: Predecessors: #1, #60
+# CHECK-NEXT: Void b@46 = Branch(b@25, Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: Then:#13, Else:#21
+# CHECK-NEXT: BB#13: ; frequency = 0.029397
+# CHECK-NEXT: Predecessors: #24
+# CHECK-NEXT: Int32 b@54 = BelowEqual(b@26, $64(b@52), v7:CallInline)
+# CHECK-NEXT: Void b@55 = Branch(b@54, Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: Then:#25, Else:Rare:#12
+# CHECK-NEXT: BB#25: ; frequency = 0.029369
+# CHECK-NEXT: Predecessors: #13
+# CHECK-NEXT: Void b@66 = Branch(b@26, Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: Then:#62, Else:#21
+# CHECK-NEXT: BB#62: ; frequency = 0.014684
+# CHECK-NEXT: Predecessors: #25
+# CHECK-NEXT: Int64 b@184 = Const64(0, v7:CallInline)
+# CHECK-NEXT: Void b@118 = Upsilon($0(b@184), ^201, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Int64 b@9 = Load(b@8, offset = -48, ReadsImmutable, v7:CallInline)
+# CHECK-NEXT: Int64 b@61 = Select(b@36, b@9, $0(b@184), v7:CallInline)
+# CHECK-NEXT: Void b@148 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: #17
+# CHECK-NEXT: BB#17: ; frequency = 0.146843
+# CHECK-NEXT: Predecessors: #62, #16
+# CHECK-NEXT: Int64 b@201 = Phi(ReadsLocalState, v7:CallInline)
+# CHECK-NEXT: Int64 b@68 = Shl(b@201, $3(b@17), v7:CallInline)
+# CHECK-NEXT: Int64 b@69 = Add(b@24, b@68, v7:CallInline)
+# CHECK-NEXT: Void b@70 = Store(b@61, b@69, ControlDependent|Writes:Elements.1, v7:CallInline)
+# CHECK-NEXT: Int64 b@72 = Add(b@201, $1(b@71), v7:CallInline)
+# CHECK-NEXT: Int32 b@47 = Above(b@26, b@72, v7:CallInline)
+# CHECK-NEXT: Void b@79 = Branch(b@47, Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: Then:#16, Else:#21
+# CHECK-NEXT: BB#16: ; frequency = 0.132159
+# CHECK-NEXT: Predecessors: #17
+# CHECK-NEXT: Void b@58 = Upsilon(b@72, ^201, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@195 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: #17
+# CHECK-NEXT: BB#21: ; frequency = 0.058766
+# CHECK-NEXT: Predecessors: #24, #25, #17
+# CHECK-NEXT: Int32 b@30 = Const32(0, v6:Integer)
+# CHECK-NEXT: Void b@76 = Store($0(b@30), b@24, offset = -8, ControlDependent|Writes:Butterfly_publicLength, v7:CallInline)
+# CHECK-NEXT: Void b@77 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: #3
+# CHECK-NEXT: BB#12: ; frequency = 0.000057
+# CHECK-NEXT: Predecessors: #60, #13
+# CHECK-NEXT: Int64 b@174 = Load(b@8, offset = 96, ReadsImmutable, v7:CallInline)
+# CHECK-NEXT: Void b@80 = Patchpoint(b@18:Register(%rax), b@174:Register(%rsi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v7:CallInline)
+# CHECK-NEXT: Void b@81 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: #3
+# CHECK-NEXT: BB#60: ; frequency = 0.029412
+# CHECK-NEXT: Predecessors: #1
+# CHECK-NEXT: Int32 b@39 = Equal(b@32, $9(b@38), v7:CallInline)
+# CHECK-NEXT: Void b@99 = Branch(b@39, Terminal, v7:CallInline)
+# CHECK-NEXT: Successors: Then:#24, Else:Rare:#12
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@18: dereferenceableBytes = 8
+# CHECK-NEXT: b@23: dereferenceableBytes = 16
+# CHECK-NEXT: b@87: dereferenceableBytes = 16
+# CHECK-NEXT: b@142: dereferenceableBytes = 16
+# CHECK-NEXT: end of function f7

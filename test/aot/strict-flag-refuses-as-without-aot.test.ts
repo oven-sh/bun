@@ -1,7 +1,7 @@
 // `--disallow-code-generation-from-strings=strict` in an executable: whatever would turn a string or a file on the disk into
 // code ends in the flag's own error, an EvalError with one text. An executable built with --aot refuses code from the disk
 // anyway, in words of its own. Where the flag is set it says what the flag says, so the two builds print the same.
-import { expect, setDefaultTimeout } from "bun:test";
+import { afterAll, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
@@ -50,15 +50,15 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
   return { stdout, stderr, exitCode };
 }
 
-describe.each([
-  ["in the executable's own arguments", ["--compile-exec-argv=" + strict], ""],
-  ["in BUN_OPTIONS", [], strict + " "],
-])("the flag %s", (_, buildFlags, options) => {
-  let dir: ReturnType<typeof tempDir>;
-  let cwd: string;
-  beforeAll(async () => {
-    dir = tempDir("aot-strict-flag", files);
-    cwd = String(dir);
+const folders = new Map<string, Promise<string>>();
+const made: Disposable[] = [];
+afterAll(() => made.forEach(folder => folder[Symbol.dispose]()));
+/** A folder with the program built without --aot and with it, once for each list of flags. */
+const folderBuiltWith = (buildFlags: string[]) =>
+  folders.getOrInsertComputed(buildFlags.join(" "), async () => {
+    const dir = tempDir("aot-strict-flag", files);
+    made.push(dir);
+    const cwd = String(dir);
     for (const [outfile, flags] of [
       ["without", []],
       ["with", ["--aot"]],
@@ -70,7 +70,15 @@ describe.each([
       expect(built.stderr).not.toMatch(/^error\b/m);
       expect(built.exitCode).toBe(0);
     }
+    return cwd;
   });
+
+describe.each([
+  ["in the executable's own arguments", ["--compile-exec-argv=" + strict], ""],
+  ["in BUN_OPTIONS", [], strict + " "],
+])("the flag %s", (_, buildFlags, options) => {
+  let cwd: string;
+  beforeAll(async () => void (cwd = await folderBuiltWith(buildFlags)));
   const both = async (env: Record<string, string>) => ({
     without: await run([join(cwd, named("without"))], cwd, env),
     with: await run([join(cwd, named("with"))], cwd, env),
@@ -110,11 +118,8 @@ describe.each([
 });
 
 test("without the flag an executable built with --aot says what to do about it", async () => {
-  using dir = tempDir("aot-strict-flag", files);
-  const cwd = String(dir);
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", named("app")], cwd);
-  expect(built.exitCode).toBe(0);
-  const app = join(cwd, named("app"));
+  const cwd = await folderBuiltWith([]);
+  const app = join(cwd, named("with"));
   expect((await run([app], cwd)).stdout).toMatch(
     /^require of code on the disk => Error: Cannot load '.*disk\.js': it isn't in this executable, which only runs code that was compiled into it\. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk\. MODULE_NOT_FOUND$/m,
   );

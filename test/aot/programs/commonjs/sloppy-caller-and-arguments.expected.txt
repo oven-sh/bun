@@ -1,3 +1,0 @@
-reads: null | null
-stores: ignored
-of a strict function: TypeError: 'arguments', 'callee', and 'caller' cannot be accessed in this context.

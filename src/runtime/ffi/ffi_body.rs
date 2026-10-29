@@ -2389,7 +2389,7 @@ impl CompilerRT {
         // yet expose an inherent `tmpdir()`; reuse the crate-local
         // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
         use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
-        let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
+        let Ok(tmpdir) = Fs::FileSystem::get().tmpdir() else {
             return;
         };
 

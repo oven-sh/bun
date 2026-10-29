@@ -139,8 +139,8 @@ int us_udp_socket_set_ttl_multicast(struct us_udp_socket_t *s, int ttl) {
     return bsd_socket_ttl_multicast(us_poll_fd(&s->p), ttl);
 }
 
-int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {
-    return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
+int us_udp_socket_connect(struct us_udp_socket_t *s, const struct sockaddr_storage *addr) {
+    return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), addr);
 }
 
 int us_udp_socket_disconnect(struct us_udp_socket_t *s) {

@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_ushort, c_void};
 
 use crate::{LIBUS_SOCKET_DESCRIPTOR, Loop};
 // `sockaddr_storage` is not in `libc` on Windows; route through the leaf
@@ -124,9 +124,9 @@ impl Socket {
         us_udp_socket_close(self)
     }
 
-    pub fn connect(&mut self, hostname: *const c_char, port: c_uint) -> c_int {
-        // SAFETY: thin FFI passthrough; hostname must be NUL-terminated per uSockets.
-        unsafe { us_udp_socket_connect(self, hostname, port) }
+    /// `connect(2)` to an `AF_INET` or `AF_INET6` address. Returns 0, or -1 with the error in errno (`WSAGetLastError()` on Windows).
+    pub fn connect(&mut self, addr: &sockaddr_storage) -> c_int {
+        us_udp_socket_connect(self, addr)
     }
 
     pub fn disconnect(&mut self) -> c_int {
@@ -208,7 +208,7 @@ unsafe extern "C" {
         err: *mut c_int,
         user_data: *mut c_void,
     ) -> *mut Socket;
-    fn us_udp_socket_connect(socket: *mut Socket, hostname: *const c_char, port: c_uint) -> c_int;
+    safe fn us_udp_socket_connect(socket: &mut Socket, addr: &sockaddr_storage) -> c_int;
     safe fn us_udp_socket_disconnect(socket: &mut Socket) -> c_int;
     fn us_udp_socket_send(
         socket: *mut Socket,

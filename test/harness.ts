@@ -1964,6 +1964,21 @@ export function isIPv4() {
   return isIP("IPv4");
 }
 
+let ipv6Loopback: boolean | undefined;
+
+/** Whether a socket can bind `::1`. `isIPv6()` asks for an interface address instead, and is false on BuildKite Linux. */
+export function hasIPv6Loopback(): boolean {
+  if (ipv6Loopback === undefined) {
+    try {
+      Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } }).stop(true);
+      ipv6Loopback = true;
+    } catch {
+      ipv6Loopback = false;
+    }
+  }
+  return ipv6Loopback;
+}
+
 let glibcVersion: string | undefined;
 
 export function getGlibcVersion() {

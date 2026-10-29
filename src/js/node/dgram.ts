@@ -317,6 +317,9 @@ interface UDPHandle {
   queueCount: number;
   sendQueue: (QueuedSend | undefined)[] | undefined;
   sendQueueHead: number;
+  // Fixed by the socket type, as Node's handle is: `socket.type` is writable.
+  readonly family: 4 | 6;
+  connect: typeof handleConnect;
   send: typeof handleSend;
   drain: typeof handleDrain;
   getSendQueueSize: typeof handleGetSendQueueSize;
@@ -345,6 +348,8 @@ function newHandle(type: string, lookup: LookupFunction | undefined) {
     sendQueue: undefined,
     // Index of the first not-yet-drained sendQueue entry (see handleDrain).
     sendQueueHead: 0,
+    family: type === "udp6" ? 6 : 4,
+    connect: handleConnect,
     send: handleSend,
     drain: handleDrain,
     getSendQueueSize: handleGetSendQueueSize,
@@ -364,6 +369,18 @@ function newHandle(type: string, lookup: LookupFunction | undefined) {
   handle.onmessage = onMessage;
 
   return handle;
+}
+
+// Mirrors the libuv UDP wrap's connect() and connect6(): 0 or a negative uv errno, UV_EINVAL for what is no address of the handle's family.
+function handleConnect(this: UDPHandle, ip: string, port: number) {
+  const socket = this.socket;
+  if (!socket) return UV_EBADF;
+  return connectFn(socket, ip, port, this.family === 6);
+}
+
+// `isIP()` is 0 for text that the handle still reads as an address of its family, such as one with an empty zone.
+function blockListFamily(handle: UDPHandle, ip: string) {
+  return `ipv${isIP(ip) || handle.family}`;
 }
 
 // Mirrors the libuv UDP wrap's send(): sentBytes + 1 on synchronous success,
@@ -992,7 +1009,8 @@ const connectFn = $bindgen("udp_socket.bind.ts", "connect") as (
   socket: $Node.UDPSocketHandle,
   host: string,
   port: number,
-) => void;
+  ipv6: boolean,
+) => number;
 
 function doConnect(
   ex: Error | null,
@@ -1005,15 +1023,14 @@ function doConnect(
   const state = self[kStateSymbol];
   if (!state.handle) return;
 
-  if (!ex && state.sendBlockList?.check(ip, `ipv${isIP(ip)}`)) {
+  if (!ex && state.sendBlockList?.check(ip, blockListFamily(state.handle, ip))) {
     ex = $ERR_IP_BLOCKED(ip);
   }
 
   if (!ex) {
-    try {
-      connectFn(state.handle.socket!, ip, port);
-    } catch (e) {
-      ex = e as Error;
+    const err = state.handle.connect(ip, port);
+    if (err) {
+      ex = new ExceptionWithHostPort(err, "connect", address, port);
     }
   }
 
@@ -1033,13 +1050,14 @@ function doConnect(
   process.nextTick(() => self.emit("connect"));
 }
 
-const disconnectFn = $bindgen("udp_socket.bind.ts", "disconnect") as (socket: $Node.UDPSocketHandle) => void;
+const disconnectFn = $bindgen("udp_socket.bind.ts", "disconnect") as (socket: $Node.UDPSocketHandle) => number;
 
 Socket.prototype.disconnect = function (this: $Node.DgramSocket) {
   const state = this[kStateSymbol];
   if (state.connectState !== CONNECT_STATE_CONNECTED) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
-  disconnectFn(state.handle!.socket!);
+  const err = disconnectFn(state.handle!.socket!);
+  if (err) throw new ErrnoException(err, "connect");
   state.connectState = CONNECT_STATE_DISCONNECTED;
 };
 
@@ -1240,7 +1258,7 @@ function doSend(
     return;
   }
 
-  if (ip && state.sendBlockList?.check(ip, `ipv${isIP(ip)}`)) {
+  if (ip && state.sendBlockList?.check(ip, blockListFamily(state.handle, ip))) {
     if (callback) {
       process.nextTick(callback, $ERR_IP_BLOCKED(ip));
     }

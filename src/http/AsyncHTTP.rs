@@ -106,25 +106,31 @@ fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
-/// Build the `Proxy-Authorization: Basic <b64(user:pass)>` header value.
-/// Returns `None` (and logs) if percent-decoding fails.
-pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
-    if proxy.username.is_empty() && proxy.password.is_empty() {
+/// A CR, LF or NUL ends the header line that a configured value (token, OTP, user agent) is written into as is.
+pub fn breaks_header_line(value: &[u8]) -> bool {
+    bun_core::strings::contains_any(value, b"\r\n\0")
+}
+
+/// The `Basic <b64(user:pass)>` credentials for a URL's userinfo, as sent in
+/// `Authorization` / `Proxy-Authorization`. `None` when the URL has no
+/// userinfo, or (logged) when it does not percent-decode.
+pub fn basic_authorization(url: &URL<'_>) -> Option<Vec<u8>> {
+    if url.username.is_empty() && url.password.is_empty() {
         return None;
     }
 
-    let username = match PercentEncoding::decode_alloc(proxy.username) {
+    let username = match PercentEncoding::decode_alloc(url.username) {
         Ok(u) => u,
         Err(err) => {
-            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy username: {:?}", err);
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode URL username: {:?}", err);
             return None;
         }
     };
 
-    let password = match PercentEncoding::decode_alloc(proxy.password) {
+    let password = match PercentEncoding::decode_alloc(url.password) {
         Ok(p) => p,
         Err(err) => {
-            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode URL password: {:?}", err);
             return None;
         }
     };
@@ -179,7 +185,8 @@ fn make_client<'a>(
         result_callback: noop_callback(),
         if_modified_since: b"",
         request_content_len_buf: [0u8; b"18446744073709551615".len()],
-        http_proxy,
+        // The client dials and authenticates a proxy from this one parse, whoever made the URL.
+        http_proxy: http_proxy.map(|proxy| URL::parse_single_reader(proxy.href)),
         proxy_settings: None,
         proxy_headers,
         proxy_authorization: None,
@@ -193,6 +200,7 @@ fn make_client<'a>(
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
+        pool: crate::PoolOptions::default(),
     }
 }
 
@@ -254,6 +262,8 @@ pub struct Options<'a> {
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
     pub compress: Option<crate::compress_body::CompressOption>,
+    pub pool: crate::PoolOptions,
+    pub bypass_pool: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -359,7 +369,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         return;
     }
 
-    // Write-before-read: `Bun__fetchPreconnect` reaches here without going
+    // Write-before-read: `fetch.preconnect` reaches here without going
     // through any path that calls `HTTPThread::init`, so `schedule()` below
     // would deref the uninitialized `HTTP_THREAD` static (UB on niche-bearing
     // fields) if `fetch.preconnect()` is the process's first HTTP operation.
@@ -485,6 +495,10 @@ impl<'a> AsyncHTTP<'a> {
         }
         this.client.compress = options.compress;
         this.client.proxy_settings = options.proxy_settings;
+        this.client.pool = options.pool;
+        if options.bypass_pool {
+            this.client.flags.pool_bypass = crate::PoolBypass::NotThisHop;
+        }
 
         // `client.proxy_authorization` stays `None` on the JS-thread original;
         // `on_start` derives it on the HTTP-thread clone so redirects can
@@ -506,6 +520,7 @@ impl<'a> AsyncHTTP<'a> {
         headers_buf: &'a [u8],
         request_body: &'a [u8],
         http_proxy: Option<URL<'a>>,
+        proxy_settings: Option<Box<crate::ProxySettings>>,
         redirect_type: FetchRedirect,
     ) -> AsyncHTTP<'a> {
         Self::init(
@@ -518,6 +533,7 @@ impl<'a> AsyncHTTP<'a> {
             redirect_type,
             Options {
                 http_proxy,
+                proxy_settings,
                 ..Options::default()
             },
         )
@@ -606,6 +622,19 @@ impl<'a> AsyncHTTP<'a> {
         &mut self,
         response_buffer: &mut MutableString,
     ) -> crate::Result<crate::HTTPResponseMetadata> {
+        self.send_sync_for_result(response_buffer)?.into_metadata()
+    }
+
+    /// Like `send_sync`, but returns the whole result so the caller can decide whether to retry.
+    pub fn send_sync_for_result(
+        &mut self,
+        response_buffer: &mut MutableString,
+    ) -> crate::Result<HTTPClientResult<'static>> {
+        // `HTTPClient::start` sends any other scheme over plain TCP (`fetch("host:port/path")` relies on it); no blocking caller means that.
+        if !self.client.url.has_http_like_protocol() {
+            return Err(crate::Error::UnsupportedProtocol);
+        }
+
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
@@ -629,15 +658,7 @@ impl<'a> AsyncHTTP<'a> {
         let result = bun_ptr::ParentRef::from(ctx).read_item();
         // SAFETY: see above — sole owner, callback completed.
         drop(unsafe { bun_core::heap::take(ctx.as_ptr()) });
-        if let Some(err) = result.fail {
-            return Err(err);
-        }
-        let Some(metadata) = result.metadata else {
-            // Terminal result with neither error nor response head; surface as
-            // a network error rather than panicking on network-driven state.
-            return Err(crate::Error::ConnectionClosed);
-        };
-        Ok(metadata)
+        Ok(result)
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -731,10 +752,15 @@ impl<'a> AsyncHTTP<'a> {
                         .append_list_assume_capacity(&(*this).request_headers);
                     let original_url = (*this).url.clone();
                     let original_method = (*this).method;
+                    let original_client = &(*this).real.expect("unreachable").as_ref().client;
                     let client = &mut (*this).client;
                     client.url = original_url;
                     client.connected_url = URL::default();
                     client.method = original_method;
+                    // Each redirect also decrements the redirect count and picks a proxy for the
+                    // new URL, so restore both from the original.
+                    client.remaining_redirect_count = original_client.remaining_redirect_count;
+                    client.http_proxy = original_client.http_proxy.clone();
                     // Clone-owned (allocated after `ptr::read`).
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));
@@ -825,7 +851,7 @@ impl<'a> AsyncHTTP<'a> {
         // original's copy stays `None`.
         debug_assert!(self.client.proxy_authorization.is_none());
         if let Some(proxy) = &self.client.http_proxy {
-            self.client.proxy_authorization = build_proxy_authorization(proxy);
+            self.client.proxy_authorization = basic_authorization(proxy);
         }
 
         self.elapsed = http_thread_timer_read();

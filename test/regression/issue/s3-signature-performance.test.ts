@@ -10,7 +10,7 @@ test("S3 presigned URL performance test with stack allocator", () => {
   });
 
   // Test with various parameter combinations to stress the allocator
-  const testCases = [
+  const testCases: { name: string; params: Bun.S3FilePresignOptions }[] = [
     {
       name: "simple",
       params: {},

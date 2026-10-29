@@ -1,0 +1,240 @@
+base[key] = value with an object -> 1 | base, key, value, key to text
+base[key] = value with an object with numbers -> 1 | base, key, value, key to text
+base[key] = value with an empty object -> 1 | base, key, value, key to text
+base[key] = value with null -> threw TypeError | base, key, value
+base[key] = value with undefined -> threw TypeError | base, key, value
+base[key] = value with a number -> threw TypeError | base, key, value, key to text
+base[key] = value with a text -> threw TypeError | base, key, value, key to text
+base[key] = value with a frozen object -> threw TypeError | base, key, value, key to text
+base[key] = value with an array -> 1 | base, key, value, key to text
+base[key] = value with a symbol -> threw TypeError | base, key, value, key to text
+base[key] += value with an object -> 6 | base, key, key to text, value, amount to number, amount to number
+base[key] += value with an object with numbers -> 6 | base, key, key to text, value, amount to number
+base[key] += value with an empty object -> NaN | base, key, key to text, value, amount to number
+base[key] += value with null -> threw TypeError | base, key
+base[key] += value with undefined -> threw TypeError | base, key
+base[key] += value with a number -> threw TypeError | base, key, key to text, value, amount to number
+base[key] += value with a text -> threw TypeError | base, key, key to text, value, amount to number
+base[key] += value with a frozen object -> threw TypeError | base, key, key to text, value, amount to number
+base[key] += value with an array -> NaN | base, key, key to text, value, amount to number
+base[key] += value with a symbol -> threw TypeError | base, key, key to text, value, amount to number
+base[key] -= value with an object -> 4 | base, key, key to text, value, amount to number, amount to number
+base[key] -= value with an object with numbers -> 4 | base, key, key to text, value, amount to number
+base[key] -= value with an empty object -> NaN | base, key, key to text, value, amount to number
+base[key] -= value with null -> threw TypeError | base, key
+base[key] -= value with undefined -> threw TypeError | base, key
+base[key] -= value with a number -> threw TypeError | base, key, key to text, value, amount to number
+base[key] -= value with a text -> threw TypeError | base, key, key to text, value, amount to number
+base[key] -= value with a frozen object -> threw TypeError | base, key, key to text, value, amount to number
+base[key] -= value with an array -> NaN | base, key, key to text, value, amount to number
+base[key] -= value with a symbol -> threw TypeError | base, key, key to text, value, amount to number
+base[key]++ with an object -> 5 | base, key, key to text, amount to number
+base[key]++ with an object with numbers -> 5 | base, key, key to text
+base[key]++ with an empty object -> NaN | base, key, key to text
+base[key]++ with null -> threw TypeError | base, key
+base[key]++ with undefined -> threw TypeError | base, key
+base[key]++ with a number -> threw TypeError | base, key, key to text
+base[key]++ with a text -> threw TypeError | base, key, key to text
+base[key]++ with a frozen object -> threw TypeError | base, key, key to text
+base[key]++ with an array -> NaN | base, key, key to text
+base[key]++ with a symbol -> threw TypeError | base, key, key to text
+--base[key] with an object -> 4 | base, key, key to text, amount to number
+--base[key] with an object with numbers -> 4 | base, key, key to text
+--base[key] with an empty object -> NaN | base, key, key to text
+--base[key] with null -> threw TypeError | base, key
+--base[key] with undefined -> threw TypeError | base, key
+--base[key] with a number -> threw TypeError | base, key, key to text
+--base[key] with a text -> threw TypeError | base, key, key to text
+--base[key] with a frozen object -> threw TypeError | base, key, key to text
+--base[key] with an array -> NaN | base, key, key to text
+--base[key] with a symbol -> threw TypeError | base, key, key to text
+base[key] ||= value with an object -> {valueOf: function} | base, key, key to text
+base[key] ||= value with an object with numbers -> 5 | base, key, key to text
+base[key] ||= value with an empty object -> 1 | base, key, key to text, value
+base[key] ||= value with null -> threw TypeError | base, key
+base[key] ||= value with undefined -> threw TypeError | base, key
+base[key] ||= value with a number -> threw TypeError | base, key, key to text, value
+base[key] ||= value with a text -> threw TypeError | base, key, key to text, value
+base[key] ||= value with a frozen object -> 5 | base, key, key to text
+base[key] ||= value with an array -> 1 | base, key, key to text, value
+base[key] ||= value with a symbol -> threw TypeError | base, key, key to text, value
+base[key] ??= value with an object -> {valueOf: function} | base, key, key to text
+base[key] ??= value with an object with numbers -> 5 | base, key, key to text
+base[key] ??= value with an empty object -> 1 | base, key, key to text, value
+base[key] ??= value with null -> threw TypeError | base, key
+base[key] ??= value with undefined -> threw TypeError | base, key
+base[key] ??= value with a number -> threw TypeError | base, key, key to text, value
+base[key] ??= value with a text -> threw TypeError | base, key, key to text, value
+base[key] ??= value with a frozen object -> 5 | base, key, key to text
+base[key] ??= value with an array -> 1 | base, key, key to text, value
+base[key] ??= value with a symbol -> threw TypeError | base, key, key to text, value
+base.n = value with an object -> 1 | base, value
+base.n = value with an object with numbers -> 1 | base, value
+base.n = value with an empty object -> 1 | base, value
+base.n = value with null -> threw TypeError | base, value
+base.n = value with undefined -> threw TypeError | base, value
+base.n = value with a number -> threw TypeError | base, value
+base.n = value with a text -> threw TypeError | base, value
+base.n = value with a frozen object -> threw TypeError | base, value
+base.n = value with an array -> 1 | base, value
+base.n = value with a symbol -> threw TypeError | base, value
+base.n += value with an object -> 6 | base, value, amount to number, amount to number
+base.n += value with an object with numbers -> 6 | base, value, amount to number
+base.n += value with an empty object -> NaN | base, value, amount to number
+base.n += value with null -> threw TypeError | base
+base.n += value with undefined -> threw TypeError | base
+base.n += value with a number -> threw TypeError | base, value, amount to number
+base.n += value with a text -> threw TypeError | base, value, amount to number
+base.n += value with a frozen object -> threw TypeError | base, value, amount to number
+base.n += value with an array -> NaN | base, value, amount to number
+base.n += value with a symbol -> threw TypeError | base, value, amount to number
+base.n *= value with an object -> 10 | base, value, amount to number, amount to number
+base.n *= value with an object with numbers -> 10 | base, value, amount to number
+base.n *= value with an empty object -> NaN | base, value, amount to number
+base.n *= value with null -> threw TypeError | base
+base.n *= value with undefined -> threw TypeError | base
+base.n *= value with a number -> threw TypeError | base, value, amount to number
+base.n *= value with a text -> threw TypeError | base, value, amount to number
+base.n *= value with a frozen object -> threw TypeError | base, value, amount to number
+base.n *= value with an array -> NaN | base, value, amount to number
+base.n *= value with a symbol -> threw TypeError | base, value, amount to number
+base.n++ with an object -> 5 | base, amount to number
+base.n++ with an object with numbers -> 5 | base
+base.n++ with an empty object -> NaN | base
+base.n++ with null -> threw TypeError | base
+base.n++ with undefined -> threw TypeError | base
+base.n++ with a number -> threw TypeError | base
+base.n++ with a text -> threw TypeError | base
+base.n++ with a frozen object -> threw TypeError | base
+base.n++ with an array -> NaN | base
+base.n++ with a symbol -> threw TypeError | base
+base.n &&= value with an object -> 1 | base, value
+base.n &&= value with an object with numbers -> 1 | base, value
+base.n &&= value with an empty object -> undefined | base
+base.n &&= value with null -> threw TypeError | base
+base.n &&= value with undefined -> threw TypeError | base
+base.n &&= value with a number -> undefined | base
+base.n &&= value with a text -> undefined | base
+base.n &&= value with a frozen object -> threw TypeError | base, value
+base.n &&= value with an array -> undefined | base
+base.n &&= value with a symbol -> undefined | base
+base[0] = value with an object -> 1 | base, index, value
+base[0] = value with an object with numbers -> 1 | base, index, value
+base[0] = value with an empty object -> 1 | base, index, value
+base[0] = value with null -> threw TypeError | base, index, value
+base[0] = value with undefined -> threw TypeError | base, index, value
+base[0] = value with a number -> threw TypeError | base, index, value
+base[0] = value with a text -> threw TypeError | base, index, value
+base[0] = value with a frozen object -> threw TypeError | base, index, value
+base[0] = value with an array -> 1 | base, index, value
+base[0] = value with a symbol -> threw TypeError | base, index, value
+base[0] += value with an object -> 7 | base, index, value, amount to number, amount to number
+base[0] += value with an object with numbers -> 7 | base, index, value, amount to number
+base[0] += value with an empty object -> NaN | base, index, value, amount to number
+base[0] += value with null -> threw TypeError | base, index
+base[0] += value with undefined -> threw TypeError | base, index
+base[0] += value with a number -> threw TypeError | base, index, value, amount to number
+base[0] += value with a text -> threw TypeError | base, index, value, amount to number
+base[0] += value with a frozen object -> threw TypeError | base, index, value, amount to number
+base[0] += value with an array -> 7 | base, index, value, amount to number
+base[0] += value with a symbol -> threw TypeError | base, index, value, amount to number
+base[0]++ with an object -> 6 | base, index, amount to number
+base[0]++ with an object with numbers -> 6 | base, index
+base[0]++ with an empty object -> NaN | base, index
+base[0]++ with null -> threw TypeError | base, index
+base[0]++ with undefined -> threw TypeError | base, index
+base[0]++ with a number -> threw TypeError | base, index
+base[0]++ with a text -> threw TypeError | base, index
+base[0]++ with a frozen object -> threw TypeError | base, index
+base[0]++ with an array -> 6 | base, index
+base[0]++ with a symbol -> threw TypeError | base, index
+base.n * value with an object -> 10 | base, value, amount to number, amount to number
+base.n * value with an object with numbers -> 10 | base, value, amount to number
+base.n * value with an empty object -> NaN | base, value, amount to number
+base.n * value with null -> threw TypeError | base
+base.n * value with undefined -> threw TypeError | base
+base.n * value with a number -> NaN | base, value, amount to number
+base.n * value with a text -> NaN | base, value, amount to number
+base.n * value with a frozen object -> 10 | base, value, amount to number
+base.n * value with an array -> NaN | base, value, amount to number
+base.n * value with a symbol -> NaN | base, value, amount to number
+value * base.n with an object -> 10 | value, base, amount to number, amount to number
+value * base.n with an object with numbers -> 10 | value, base, amount to number
+value * base.n with an empty object -> NaN | value, base, amount to number
+value * base.n with null -> threw TypeError | value, base
+value * base.n with undefined -> threw TypeError | value, base
+value * base.n with a number -> NaN | value, base, amount to number
+value * base.n with a text -> NaN | value, base, amount to number
+value * base.n with a frozen object -> 10 | value, base, amount to number
+value * base.n with an array -> NaN | value, base, amount to number
+value * base.n with a symbol -> NaN | value, base, amount to number
+base[key] * value with an object -> 10 | base, key, key to text, value, amount to number, amount to number
+base[key] * value with an object with numbers -> 10 | base, key, key to text, value, amount to number
+base[key] * value with an empty object -> NaN | base, key, key to text, value, amount to number
+base[key] * value with null -> threw TypeError | base, key
+base[key] * value with undefined -> threw TypeError | base, key
+base[key] * value with a number -> NaN | base, key, key to text, value, amount to number
+base[key] * value with a text -> NaN | base, key, key to text, value, amount to number
+base[key] * value with a frozen object -> 10 | base, key, key to text, value, amount to number
+base[key] * value with an array -> NaN | base, key, key to text, value, amount to number
+base[key] * value with a symbol -> NaN | base, key, key to text, value, amount to number
+-base.n with an object -> -5 | base, amount to number
+-base.n with an object with numbers -> -5 | base
+-base.n with an empty object -> NaN | base
+-base.n with null -> threw TypeError | base
+-base.n with undefined -> threw TypeError | base
+-base.n with a number -> NaN | base
+-base.n with a text -> NaN | base
+-base.n with a frozen object -> -5 | base
+-base.n with an array -> NaN | base
+-base.n with a symbol -> NaN | base
+base.n < value with an object -> false | base, value, amount to number, amount to number
+base.n < value with an object with numbers -> false | base, value, amount to number
+base.n < value with an empty object -> false | base, value, amount to number
+base.n < value with null -> threw TypeError | base
+base.n < value with undefined -> threw TypeError | base
+base.n < value with a number -> false | base, value, amount to number
+base.n < value with a text -> false | base, value, amount to number
+base.n < value with a frozen object -> false | base, value, amount to number
+base.n < value with an array -> false | base, value, amount to number
+base.n < value with a symbol -> false | base, value, amount to number
+delete base[key] with an object -> true | base, key, key to text
+delete base[key] with an object with numbers -> true | base, key, key to text
+delete base[key] with an empty object -> true | base, key, key to text
+delete base[key] with null -> threw TypeError | base, key
+delete base[key] with undefined -> threw TypeError | base, key
+delete base[key] with a number -> true | base, key, key to text
+delete base[key] with a text -> true | base, key, key to text
+delete base[key] with a frozen object -> threw TypeError | base, key, key to text
+delete base[key] with an array -> true | base, key, key to text
+delete base[key] with a symbol -> true | base, key, key to text
+key in base with an object -> true | key, base, key to text
+key in base with an object with numbers -> true | key, base, key to text
+key in base with an empty object -> false | key, base, key to text
+key in base with null -> threw TypeError | key, base
+key in base with undefined -> threw TypeError | key, base
+key in base with a number -> threw TypeError | key, base
+key in base with a text -> threw TypeError | key, base
+key in base with a frozen object -> true | key, base, key to text
+key in base with an array -> false | key, base, key to text
+key in base with a symbol -> threw TypeError | key, base
+[base[key]] = list with an object -> [1] | list, base, key, key to text
+[base[key]] = list with an object with numbers -> [1] | list, base, key, key to text
+[base[key]] = list with an empty object -> [1] | list, base, key, key to text
+[base[key]] = list with null -> threw TypeError | list, base, key
+[base[key]] = list with undefined -> threw TypeError | list, base, key
+[base[key]] = list with a number -> threw TypeError | list, base, key, key to text
+[base[key]] = list with a text -> threw TypeError | list, base, key, key to text
+[base[key]] = list with a frozen object -> threw TypeError | list, base, key, key to text
+[base[key]] = list with an array -> [1] | list, base, key, key to text
+[base[key]] = list with a symbol -> threw TypeError | list, base, key, key to text
+({ n: base[key] } = object) with an object -> {n: 1} | object, base, key, key to text
+({ n: base[key] } = object) with an object with numbers -> {n: 1} | object, base, key, key to text
+({ n: base[key] } = object) with an empty object -> {n: 1} | object, base, key, key to text
+({ n: base[key] } = object) with null -> threw TypeError | object, base, key
+({ n: base[key] } = object) with undefined -> threw TypeError | object, base, key
+({ n: base[key] } = object) with a number -> threw TypeError | object, base, key, key to text
+({ n: base[key] } = object) with a text -> threw TypeError | object, base, key, key to text
+({ n: base[key] } = object) with a frozen object -> threw TypeError | object, base, key, key to text
+({ n: base[key] } = object) with an array -> {n: 1} | object, base, key, key to text
+({ n: base[key] } = object) with a symbol -> threw TypeError | object, base, key, key to text

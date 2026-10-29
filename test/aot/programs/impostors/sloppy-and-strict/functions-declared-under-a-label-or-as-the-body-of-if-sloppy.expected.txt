@@ -1,0 +1,49 @@
+strict: false
+written aLabelledFunction(1) "labelled"
+written aLabelledFunction(0) "labelled"
+written aFunctionAfterIf(1) "function"
+written aFunctionAfterIf(0) "undefined"
+written aFunctionAfterElse(1) "undefined"
+written aFunctionAfterElse(0) "function"
+written calledAfterIf(1) "made"
+written calledAfterIf(0) threw TypeError
+written inTheBlockOfWith(1) ["function", "number"]
+written inTheBlockOfWith(0) ["function", "number"]
+written aLabelInABlock(1) "function"
+written aLabelInABlock(0) "function"
+direct eval aLabelledFunction(1) "labelled"
+direct eval aLabelledFunction(0) "labelled"
+direct eval aFunctionAfterIf(1) "function"
+direct eval aFunctionAfterIf(0) "undefined"
+direct eval aFunctionAfterElse(1) "undefined"
+direct eval aFunctionAfterElse(0) "function"
+direct eval calledAfterIf(1) "made"
+direct eval calledAfterIf(0) threw TypeError
+direct eval inTheBlockOfWith(1) ["function", "number"]
+direct eval inTheBlockOfWith(0) ["function", "number"]
+direct eval aLabelInABlock(1) "function"
+direct eval aLabelInABlock(0) "function"
+indirect eval aLabelledFunction(1) "labelled"
+indirect eval aLabelledFunction(0) "labelled"
+indirect eval aFunctionAfterIf(1) "function"
+indirect eval aFunctionAfterIf(0) "undefined"
+indirect eval aFunctionAfterElse(1) "undefined"
+indirect eval aFunctionAfterElse(0) "function"
+indirect eval calledAfterIf(1) "made"
+indirect eval calledAfterIf(0) threw TypeError
+indirect eval inTheBlockOfWith(1) ["function", "number"]
+indirect eval inTheBlockOfWith(0) ["function", "number"]
+indirect eval aLabelInABlock(1) "function"
+indirect eval aLabelInABlock(0) "function"
+new Function aLabelledFunction(1) "labelled"
+new Function aLabelledFunction(0) "labelled"
+new Function aFunctionAfterIf(1) "function"
+new Function aFunctionAfterIf(0) "undefined"
+new Function aFunctionAfterElse(1) "undefined"
+new Function aFunctionAfterElse(0) "function"
+new Function calledAfterIf(1) "made"
+new Function calledAfterIf(0) threw TypeError
+new Function inTheBlockOfWith(1) ["function", "number"]
+new Function inTheBlockOfWith(0) ["function", "number"]
+new Function aLabelInABlock(1) "function"
+new Function aLabelInABlock(0) "function"

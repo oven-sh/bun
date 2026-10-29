@@ -1,0 +1,63 @@
+# Object.values({ ...Bun.hash }).map(each => ..), and the same with Object.assign and with a class: URL. The enumerable members that the table lists on a host object are among what its copy holds.
+# FORM: AsRead
+# RUN: flow
+# CHECK: function f4 parameter 0 type=undefined|builtin(BunHashAdler32)|builtin(BunHashCityHash32)|
+# CHECK: function f5 parameter 0 type=undefined|builtin(BunHashAdler32)|builtin(BunHashCityHash32)|
+# CHECK-NOT: function f6 parameter 0 type=undefined proven
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Copy" fields=[]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    Return v0
+}
+function f1 name="ofSpread" results=[{type=anything}] {
+    v0 = Builtin builtin=BunHash
+    v1 = NewObject layout=L0
+    CopyDataProperties v1, v0
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectValues
+    v5 = Call v4, v3, v1
+    v6 = PropGet v5 key="map"
+    v7 = NewClosure function=f4
+    v8 = Call v6, v5, v7 calleeKey="map"
+    Return v8
+}
+function f2 name="ofAssign" results=[{type=anything}] {
+    v0 = Builtin builtin=BunHash
+    v1 = NewObject layout=L0
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectAssign
+    v4 = Call v3, v2, v1, v0
+    v5 = Builtin builtin=ObjectValues
+    v6 = Call v5, v2, v4
+    v7 = PropGet v6 key="map"
+    v8 = NewClosure function=f5
+    v9 = Call v7, v6, v8 calleeKey="map"
+    Return v9
+}
+function f3 name="ofClass" results=[{type=anything}] {
+    v0 = Builtin builtin=URL
+    v1 = NewObject layout=L0
+    CopyDataProperties v1, v0
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectValues
+    v5 = Call v4, v3, v1
+    v6 = PropGet v5 key="map"
+    v7 = NewClosure function=f6
+    v8 = Call v6, v5, v7 calleeKey="map"
+    Return v8
+}
+function f4 name="eachOfSpread" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f5 name="eachOfAssign" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f6 name="eachOfClass" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

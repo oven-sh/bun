@@ -1,0 +1,3001 @@
+////: Square-9
+class Square extends Shape {
+  edge = 2;
+  area(): number {
+    return this.edge * this.edge;
+  }
+}
+////: attempt-33
+attempt(«1», () =>
+  edgeOrRadius(
+    new Proxy(new «2»(), {
+      has(target, key) {
+        log.push("has " + String(key));
+        return «3»;
+      },
+      get(target, key, receiver) {
+        log.push("get " + String(key));
+        return Reflect.get(target, key, receiver);
+      },
+    }),
+  ),
+);
+////: cleared
+function cleared(l: Leaf | null): unknown {
+  if (l !== null) {
+    «1»;
+    try {
+      return l.weight;
+    } catch (error) {
+      return error instanceof TypeError ? "a TypeError" : "another error";
+    }
+  }
+  return "other";
+}
+////: for-53
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) use(new «1»(), keep);
+  new Owner().inItsOwnField(false);
+  inAnElement([«2»], false);
+  inACapturedVariable(false);
+  rounds++;
+}
+////: if-5
+if (f.«1» instanceof Square) {
+  say(«2», f.«3»);
+}
+////: lines-122
+const «1»: Between = h => {
+  h.shape = new «2»();
+  h.value = «3»;
+};
+////: lines-199
+function «1»(v: number | string): unknown {
+  if (typeof v === "number") {
+    «2»(«3»);
+    return v + 1;
+  }
+  return "other";
+}
+////: lines-204
+const «1»: Between = «2» => {
+  «3» = new «4»();
+};
+////: lines-205
+const «1»: Between = «2» => {
+  «3» = «4»;
+};
+////: lines-268
+class «1» {
+  readonly kind = «2»;
+  «3» = «4»;
+}
+////: lines-302
+function «1», between: Between): unknown {
+  if ("edge" in s) {
+    between(s);
+    return [s.edge, s.edge * 2, s.corner, "edge" in s, Object.keys(s).join(), JSON.stringify(s)];
+  }
+  return ["radius", s.radius];
+}
+//// narrowed-an-unknown-value-step-by-step.ts
+////= text-13
+
+////= Point-2
+
+function isPoint(v: unknown): v is Point {
+  return typeof v === "object" && v !== null && "x" in v && typeof v.x === "number" && "y" in v && typeof v.y === "number";
+}
+
+function sum(v: unknown): unknown {
+  if (isPoint(v)) return [v.x, v.y, v.x + v.y, v.x * v.y];
+  return "not a point";
+}
+
+function stepByStep(v: unknown): unknown {
+  if (typeof v !== "object") return "no object: " + typeof v;
+  if (v === null) return "null";
+  if (!("x" in v)) return "no x";
+  if (typeof v.x !== "number") return "x is a " + typeof v.x;
+  return [v.x, v.x + 1, v.x * 2];
+}
+
+function listOfNumbers(v: unknown): unknown {
+  if (!Array.isArray(v)) return "no array";
+  if (!v.every(n => typeof n === "number")) return "not all numbers";
+  let total = 0;
+  for (const n of v) total += n;
+  return [v.length, total];
+}
+
+////= lines-48	Real	x	1	y	2
+
+class Computed {
+  get x(): number {
+    return 3;
+  }
+  get y(): number {
+    return 4;
+  }
+}
+
+function alternating(): object {
+  let reads = 0;
+  return {
+    get x() {
+      return reads++ % 2 === 0 ? 1 : "text";
+    },
+    y: 2,
+  };
+}
+
+function onceANumber(): object {
+  let reads = 0;
+  return {
+    get x() {
+      return reads++ === 0 ? 1 : undefined;
+    },
+    get y() {
+      return reads++ === 1 ? 2 : null;
+    },
+  };
+}
+
+const values: [string, () => unknown][] = [
+  ["a literal", () => ({ x: 1, y: 2 })],
+  ["a class instance", () => new Real()],
+  ["getters on a prototype", () => new Computed()],
+  ["parsed text", () => JSON.parse('{"x":1,"y":2}')],
+  ["a proxy", () => new Proxy({ x: 1, y: 2 }, {})],
+  ["an array with members", () => Object.assign([0], { x: 1, y: 2 })],
+  ["a function with members", () => Object.assign(() => 0, { x: 1, y: 2 })],
+  ["a getter that alternates", alternating],
+  ["getters that are numbers once", onceANumber],
+  ["a proxy that has everything", () => new Proxy({}, { has: () => true, get: () => 5 })],
+  ["a string", () => "text"],
+  ["null", () => null],
+  ["x is a string", () => ({ x: "1", y: 2 })],
+  ["NaN and negative zero", () => ({ x: NaN, y: -0 })],
+];
+
+for (let i = 0; i < 2000; i++) {
+  sum({ x: i, y: 1 });
+  stepByStep({ x: i });
+  listOfNumbers([i, 1]);
+}
+for (const [name, make] of values) {
+  attempt(name + ": the guard", () => sum(make()));
+  attempt(name + ": step by step", () => stepByStep(make()));
+}
+attempt("a list of numbers", () => listOfNumbers([1, 2, 3]));
+attempt("a list with a string", () => listOfNumbers([1, "2", 3]));
+attempt("a list with a hole", () => {
+  const list = [1, 2, 3];
+  delete list[1];
+  return listOfNumbers(list);
+});
+attempt("a proxy of a list", () => listOfNumbers(new Proxy([1, 2, 3], {})));
+attempt("a list whose element alternates", () => {
+  const list: unknown[] = [0, 2];
+  let reads = 0;
+  Object.defineProperty(list, 0, { get: () => (reads++ % 2 === 0 ? 1 : "text"), enumerable: true });
+  return listOfNumbers(list);
+});
+//// narrowed-and-eval-stores-to-the-variable.ts
+////= say
+
+function inAClosure(v: number | string): () => unknown {
+  if (typeof v === "string") v = v.length;
+  const read = () => v + 1;
+  eval("v = 'text'");
+  return read;
+}
+
+////= lines-199	straight	eval	"v = 'text'"
+
+function aConstantCondition(v: number | string): unknown {
+  const isNumber = typeof v === "number";
+  eval("v = 'text'");
+  if (isNumber) return v + 1;
+  return "other";
+}
+
+////= Leaf
+
+////= cleared	eval("l = null")
+
+function aLocal(): unknown {
+  let mode: "on" | "off" = "on";
+  eval("mode = 'off'");
+  return mode;
+}
+
+say("in a closure", inAClosure(1)());
+say("straight", straight(1));
+say("a condition kept in a constant", aConstantCondition(1));
+say("cleared", cleared(new Leaf()));
+say("a local typed by its last store", aLocal());
+//// narrowed-by-a-call-that-is-typed-never-and-returns.ts
+////= text-13
+
+////= Leaf
+
+const quiet: (() => never)[] = [];
+const loose: (() => void)[] = quiet;
+loose.push(() => {});
+
+const returns: () => never = quiet[0];
+const throws: () => never = () => {
+  throw new RangeError("stopped");
+};
+
+class Stopper {
+  stop(): never {
+    throw new RangeError("stopped");
+  }
+}
+
+function weightOf(l: Leaf | null, stop: () => never): unknown {
+  if (l === null) stop();
+  return l.weight;
+}
+
+function double(v: number | string, stop: () => never): unknown {
+  if (typeof v === "string") stop();
+  return [v, v * 2, v + 1];
+}
+
+function afterTheCall(stop: () => never): unknown {
+  const seen: string[] = ["before"];
+  try {
+    stop();
+    seen.push("after");
+  } catch {
+    seen.push("caught");
+  }
+  return seen;
+}
+
+function resultOfTheCall(stop: () => never): unknown {
+  const nothing: never = stop();
+  return ["typed never", typeof nothing];
+}
+
+function everyPathStops(v: number, stop: () => never): number {
+  if (v > 0) return v;
+  stop();
+}
+
+function inASwitch(mode: "on" | "off", stop: () => never): string {
+  switch (mode) {
+    case "on":
+      return "lit";
+    case "off":
+      stop();
+  }
+}
+
+function withTheConstant(l: Leaf | null): unknown {
+  if (l === null) returns();
+  return l.weight;
+}
+
+function round(label: string, stop: () => never): void {
+  attempt(label + ": a leaf", () => weightOf(new Leaf(), stop));
+  attempt(label + ": null", () => weightOf(null, stop));
+  attempt(label + ": a number", () => double(4, stop));
+  attempt(label + ": a string", () => double("text", stop));
+  attempt(label + ": what follows the call", () => afterTheCall(stop));
+  attempt(label + ": the result of the call", () => resultOfTheCall(stop));
+  attempt(label + ": a function whose every path stops", () => [everyPathStops(1, stop), everyPathStops(-1, stop)]);
+  attempt(label + ": the last case of a switch", () => [inASwitch("on", stop), inASwitch("off", stop)]);
+}
+
+round("it throws", throws);
+round("a method that throws", () => new Stopper().stop());
+for (let i = 0; i < 2000; i++) {
+  weightOf(new Leaf(), throws);
+  double(i, throws);
+  everyPathStops(1, throws);
+}
+round("it returns", returns);
+attempt("called by its own name: a leaf", () => withTheConstant(new Leaf()));
+attempt("called by its own name: null", () => withTheConstant(null));
+round("it throws again", throws);
+//// narrowed-by-a-condition-kept-in-a-constant.ts
+////= text-16
+
+class Cell {
+  readonly value: number | string = 1;
+  readonly shape: Shape = new Square();
+  readonly next: Cell | null = null;
+}
+
+type Loose = { value: number | string; shape: Shape; next: Cell | null };
+type Between = (c: Loose) => void;
+const keep: Between = () => {};
+const spoil: Between = c => {
+  c.value = "text";
+  c.shape = new Shape();
+  c.next = null;
+};
+
+function withNext(): Cell {
+  const c = new Cell();
+  const loose: Loose = c;
+  loose.next = new Cell();
+  return c;
+}
+
+const uses: [string, (c: Cell, between: Between) => unknown][] = [
+  ["typeof", (c, between) => {
+    const isNumber = typeof c.value === "number";
+    between(c);
+    if (isNumber) return [c.value, c.value + 1, c.value * 2];
+    return "other";
+  }],
+  ["instanceof", (c, between) => {
+    const isSquare = c.shape instanceof Square;
+    between(c);
+    if (isSquare) return [c.shape.edge, c.shape.edge * 2, c.shape.sides];
+    return "other";
+  }],
+  ["not null", (c, between) => {
+    const hasNext = c.next !== null;
+    between(c);
+    if (hasNext) return c.next.value;
+    return "other";
+  }],
+  ["two conditions in one constant", (c, between) => {
+    const both = typeof c.value === "number" && c.shape instanceof Square;
+    between(c);
+    if (both) return [c.value + 1, c.shape.edge];
+    return "other";
+  }],
+  ["a constant made from a constant", (c, between) => {
+    const isNumber = typeof c.value === "number";
+    const really = isNumber;
+    between(c);
+    return really ? c.value + 1 : "other";
+  }],
+  ["the negation", (c, between) => {
+    const isText = typeof c.value === "string";
+    between(c);
+    if (!isText) return c.value + 1;
+    return "other";
+  }],
+  ["used twice, the change in between", (c, between) => {
+    const isNumber = typeof c.value === "number";
+    const first = isNumber ? c.value + 1 : "other";
+    between(c);
+    const second = isNumber ? c.value + 1 : "other";
+    return [first, second];
+  }],
+];
+
+function round(label: string, between: Between): void {
+  for (const [name, use] of uses) attempt(label + ": " + name, () => use(withNext(), between));
+}
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(withNext(), keep);
+round("changed through a view that may store", spoil);
+round("honest again", keep);
+//// narrowed-by-a-destructured-tag.ts
+////= text-13
+
+type Action = { kind: "add"; payload: number } | { kind: "name"; payload: string };
+
+class Add {
+  kind: "add" = "add";
+  payload: number = 1;
+}
+
+class Name {
+  kind: "name" = "name";
+  payload: string = "n";
+}
+
+function inTheBody(action: Action): unknown {
+  const { kind, payload } = action;
+  if (kind === "add") return [kind, payload, payload + 1, payload * 2];
+  return [kind, payload, payload.length, payload.toUpperCase()];
+}
+
+function inTheParameters({ kind, payload }: Action): unknown {
+  if (kind === "add") return [kind, payload, payload + 1, payload * 2];
+  return [kind, payload, payload.length, payload.toUpperCase()];
+}
+
+function inASwitch({ kind, payload }: Add | Name): unknown {
+  switch (kind) {
+    case "add":
+      return [kind, payload, payload + 1];
+    case "name":
+      return [kind, payload, payload.length];
+  }
+}
+
+function all(label: string, make: () => Add | Name): void {
+  attempt(label + " in the body", () => inTheBody(make()));
+  attempt(label + " in the parameters", () => inTheParameters(make()));
+  attempt(label + " in a switch", () => inASwitch(make()));
+}
+
+function retag(t: { kind: "add" | "name" }, kind: "add" | "name"): void {
+  t.kind = kind;
+}
+
+all("an honest add", () => new Add());
+all("an honest name", () => new Name());
+for (let i = 0; i < 2000; i++) {
+  inTheBody(i % 2 === 0 ? new Add() : new Name());
+  inTheParameters(i % 2 === 0 ? new Add() : new Name());
+  inASwitch(i % 2 === 0 ? new Add() : new Name());
+}
+all("a name tagged add", () => {
+  const n = new Name();
+  retag(n, "add");
+  return n;
+});
+all("an add tagged name", () => {
+  const a = new Add();
+  retag(a, "name");
+  return a;
+});
+attempt("the payload is a getter that runs after the tag", () => {
+  const order: string[] = [];
+  const action: Action = {
+    get kind(): "add" {
+      order.push("kind");
+      return "add";
+    },
+    get payload(): number {
+      order.push("payload");
+      return 5;
+    },
+  };
+  return [inTheBody(action), inTheParameters(action), order.join()];
+});
+all("an honest add again", () => new Add());
+//// narrowed-by-a-lying-instanceof-inside-other-forms-of-test.ts
+////= say-5
+
+const first: Shape = new Shape();
+switch (true) {
+  case first instanceof Square:
+    say("switch true: edge", first.edge);
+    say("switch true: edge doubled", first.edge * 2);
+    break;
+  default:
+    say("switch true: sides", first.sides);
+}
+
+const second: Shape = new Shape();
+const isSquare = second instanceof Square;
+if (isSquare) {
+  say("a condition in a constant: edge", second.edge);
+  say("a condition in a constant: edge doubled", second.edge * 2);
+}
+
+const third: Shape = new Shape();
+mustHold(third instanceof Square);
+say("an asserted condition: edge", third.edge);
+say("an asserted condition: edge doubled", third.edge * 2);
+
+const fourth: Shape = new Shape();
+say("a conditional: edge", fourth instanceof Square ? fourth.edge : "other");
+say("and: edge", fourth instanceof Square && fourth.edge);
+say("or: edge", !(fourth instanceof Square) || fourth.edge);
+
+function generic<T extends Shape>(s: T): unknown {
+  return s instanceof Square ? s.edge : "other";
+}
+say("a type parameter: edge", generic(new Shape()));
+//// narrowed-by-a-predicate-nobody-wrote-over-a-class-that-answers-yes.ts
+////= say-2
+
+////= Square
+
+const shapes: Shape[] = [new Shape(), new Square()];
+const squares = shapes.filter(s => s instanceof Square);
+say("how many", squares.length);
+for (const s of squares) {
+  say("edge", s.edge);
+  say("edge doubled", s.edge * 2);
+}
+const found = shapes.find(s => s instanceof Square);
+if (found !== undefined) say("found: edge", found.edge);
+if (shapes.every(s => s instanceof Square)) say("every: edge of the first", shapes[0].edge);
+//// narrowed-by-a-private-name-stamped-onto-a-foreign-object.ts
+////= say
+
+////= Returns
+
+class Stamp extends Returns {
+  #mark = 1;
+  edge = 2;
+  area(): number {
+    return this.edge * this.#mark;
+  }
+  static marked(o: object): unknown {
+    if (#mark in o) {
+      return [o.#mark, o.edge, typeof o.area, o instanceof Stamp].join();
+    }
+    return "no mark";
+  }
+  static area(o: object): number {
+    if (#mark in o) return o.area();
+    return -1;
+  }
+}
+
+////= lines-18	Circle	radius	5
+
+const circle = new Circle();
+say("before", Stamp.marked(circle));
+const stamped = new Stamp(circle);
+say("the result is the circle", Object.is(stamped, circle));
+say("after", Stamp.marked(circle));
+say("keys", Object.keys(circle).join());
+say("radius", circle.radius);
+say("typed Stamp: edge", stamped.edge);
+say("typed Stamp: instanceof", stamped instanceof Stamp);
+try {
+  say("a method through the narrowed type", Stamp.area(circle));
+} catch (error) {
+  say("a method through the narrowed type threw a TypeError", error instanceof TypeError);
+}
+try {
+  say("a method through the result", stamped.area());
+} catch (error) {
+  say("a method through the result threw a TypeError", error instanceof TypeError);
+}
+try {
+  new Stamp(circle);
+  say("stamped twice", "no error");
+} catch (error) {
+  say("stamped twice threw a TypeError", error instanceof TypeError);
+}
+say("a stamped literal", Stamp.marked(new Stamp({})));
+//// narrowed-by-a-tag-that-is-a-getter-of-a-class.ts
+////= text-13
+
+const log: string[] = [];
+
+////= lines-268	Circle	"circle"	radius	1
+
+////= lines-268	Square	"square"	edge	2
+
+class Fickle {
+  reads = 0;
+  radius = 10;
+  edge = 20;
+  get kind(): "circle" | "square" {
+    log.push("kind");
+    return this.reads++ % 2 === 0 ? "circle" : "square";
+  }
+}
+
+type Shape = Circle | Square;
+
+function area(s: Shape): unknown {
+  switch (s.kind) {
+    case "circle":
+      return ["circle", s.radius];
+    case "square":
+      return ["square", s.edge];
+  }
+}
+
+function withIf(s: Shape): unknown {
+  if (s.kind === "circle") return [s.kind, s.radius];
+  return [s.kind, s.edge];
+}
+
+function twice(s: Shape): unknown {
+  return s.kind === "circle" && s.kind === "circle" ? ["both", s.radius] : ["not both", s.kind];
+}
+
+attempt("honest", () => [area(new Circle()), area(new Square()), withIf(new Circle()), withIf(new Square())]);
+for (let i = 0; i < 2000; i++) {
+  area(i % 2 === 0 ? new Circle() : new Square());
+  withIf(i % 2 === 0 ? new Circle() : new Square());
+}
+const fickle = new Fickle();
+attempt("first switch", () => area(fickle));
+attempt("second switch", () => area(fickle));
+attempt("first if", () => withIf(fickle));
+attempt("second if", () => withIf(fickle));
+attempt("tested twice", () => twice(fickle));
+attempt("tested twice again", () => twice(fickle));
+console.log("reads of the tag: " + log.length);
+attempt("honest again", () => [area(new Circle()), area(new Square())]);
+//// narrowed-by-a-tag-that-was-stored-alone-on-a-class-instance.ts
+////= say
+
+////= Circle
+
+////= Square-10
+
+function retag(o: { kind: "circle" | "square" }): void {
+  o.kind = "square";
+}
+
+////= area
+
+const circle = new Circle();
+say("before", area(circle));
+retag(circle);
+say("after", area(circle));
+say("kind", circle.kind);
+say("keys", Object.keys(circle).join());
+say("a square", area(new Square()));
+
+const s: Circle | Square = circle;
+if (s.kind === "circle") say("typed circle", s.radius);
+else say("typed never", s);
+//// narrowed-by-a-tag-then-a-call-stores-the-other-class.ts
+////= text-13
+
+////= lines-268	Circle	"circle"	radius	1
+
+class Square {
+  readonly kind = "square";
+  edge = 2;
+  corner = 90;
+}
+
+type Shape = Circle | Square;
+
+////= Holder-10
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= lines-204	swap	h	h.shape	Circle
+
+////= lines-20	edgeOf	s	Square	number	return	s.edge
+
+const uses: [string, (h: Holder, between: Between) => unknown][] = [
+  ["equal", (h, between) => (h.shape.kind === "square" ? (between(h), [h.shape.edge, h.shape.corner, h.shape.kind]) : "other")],
+  ["not equal", (h, between) => (h.shape.kind !== "circle" ? (between(h), [h.shape.edge, h.shape.corner, h.shape.kind]) : "other")],
+  ["handed on", (h, between) => (h.shape.kind === "square" ? (between(h), edgeOf(h.shape)) : "other")],
+  ["stored to", (h, between) => (h.shape.kind === "square" ? (between(h), (h.shape.edge = 7), Object.keys(h.shape).join()) : "other")],
+  ["added to", (h, between) => (h.shape.kind === "square" ? (between(h), (h.shape.edge += 7), JSON.stringify(h.shape)) : "other")],
+  [
+    "in a switch",
+    (h, between) => {
+      switch (h.shape.kind) {
+        case "square":
+          between(h);
+          return [h.shape.edge, h.shape.corner, h.shape.kind];
+        case "circle":
+          return "other";
+      }
+    },
+  ],
+  [
+    "kept in a constant",
+    (h, between) => {
+      if (h.shape.kind === "square") {
+        between(h);
+        const s: Square = h.shape;
+        return [s.edge, s.corner, s.kind, s instanceof Square];
+      }
+      return "other";
+    },
+  ],
+];
+
+////= round-7	" "	Holder
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Holder(), keep);
+round("swapped", swap);
+round("honest again", keep);
+//// narrowed-by-a-tag-then-the-tag-alone-is-stored.ts
+////= text-13
+
+////= Circle
+
+////= Square-10
+
+type Shape = Circle | Square;
+type Tagged = { kind: "circle" | "square" };
+type Between = (t: Tagged) => void;
+
+const keep: Between = () => {};
+////= lines-205	toCircle	t	t.kind	"circle"
+////= lines-205	toSquare	t	t.kind	"square"
+
+function describe(s: Shape): string {
+  switch (s.kind) {
+    case "circle":
+      return "circle " + s.radius;
+    case "square":
+      return "square " + s.edge;
+  }
+}
+
+function betweenTestAndUse(s: Shape, between: Between): unknown {
+  if (s.kind === "square") {
+    between(s);
+    return [s.kind, s.edge, describe(s), Object.keys(s).join(), s instanceof Square];
+  }
+  between(s);
+  return [s.kind, s.radius, describe(s), Object.keys(s).join(), s instanceof Circle];
+}
+
+function testedTwice(s: Shape, between: Between): unknown {
+  if (s.kind === "square") {
+    between(s);
+    if (s.kind === "square") return "still a square " + s.edge;
+    return ["typed never", typeof s];
+  }
+  return "a circle " + s.radius;
+}
+
+attempt("honest square", () => betweenTestAndUse(new Square(), keep));
+attempt("honest circle", () => betweenTestAndUse(new Circle(), keep));
+for (let i = 0; i < 2000; i++) {
+  betweenTestAndUse(i % 2 === 0 ? new Square() : new Circle(), keep);
+  testedTwice(new Square(), keep);
+}
+attempt("a square is retagged", () => betweenTestAndUse(new Square(), toCircle));
+attempt("a circle is retagged", () => betweenTestAndUse(new Circle(), toSquare));
+attempt("a square is retagged and tested again", () => testedTwice(new Square(), toCircle));
+attempt("retagged before the call", () => {
+  const s = new Square();
+  toCircle(s);
+  return [describe(s), betweenTestAndUse(s, keep)];
+});
+attempt("retagged and back", () => {
+  const s = new Square();
+  toCircle(s);
+  toSquare(s);
+  return [describe(s), betweenTestAndUse(s, keep)];
+});
+attempt("in an array, sorted by tag", () => {
+  const shapes: Shape[] = [new Square(), new Circle(), new Square()];
+  toCircle(shapes[2]);
+  toSquare(shapes[1]);
+  return shapes.map(describe);
+});
+attempt("honest square again", () => betweenTestAndUse(new Square(), keep));
+//// narrowed-by-a-tag-whose-only-other-store-is-define-property.ts
+////= say-4
+
+function retag(c: Circle): void {
+  Object.defineProperty(c, "kind", { value: "square" });
+}
+
+////= area-3
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += area(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", sum);
+
+const circle = new Circle();
+say("before: area", area(circle));
+say("before: described", describe(circle));
+retag(circle);
+say("after: kind", circle.kind);
+say("after: area", area(circle));
+say("after: described", describe(circle));
+say("after: radius", circle.radius);
+say("a fresh circle", describe(new Circle()));
+say("a fresh square", describe(new Square()));
+//// narrowed-by-a-tag-whose-only-other-store-is-object-assign.ts
+////= say-4
+
+function retag(c: Circle): void {
+  Object.assign(c, { kind: "square" });
+}
+
+////= area-3
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += area(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", sum);
+
+const circle = new Circle();
+say("before: area", area(circle));
+say("before: described", describe(circle));
+retag(circle);
+say("after: kind", circle.kind);
+say("after: area", area(circle));
+say("after: described", describe(circle));
+say("after: radius", circle.radius);
+say("a fresh circle", describe(new Circle()));
+say("a fresh square", describe(new Square()));
+//// narrowed-by-a-tag-whose-only-other-store-is-reflect-set.ts
+////= say-4
+
+function retag(c: Circle): void {
+  Reflect.set(c, "kind", "square");
+}
+
+////= area-3
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += area(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", sum);
+
+const circle = new Circle();
+say("before: area", area(circle));
+say("before: described", describe(circle));
+retag(circle);
+say("after: kind", circle.kind);
+say("after: area", area(circle));
+say("after: described", describe(circle));
+say("after: radius", circle.radius);
+say("a fresh circle", describe(new Circle()));
+say("a fresh square", describe(new Square()));
+//// narrowed-by-an-assignment-that-a-setter-turns-into-something-else.ts
+////= say
+
+class Texts {
+  kept: number | string = 0;
+  get value(): number | string {
+    return this.kept;
+  }
+  set value(v: number | string) {
+    this.kept = "<" + v + ">";
+  }
+}
+
+class Drops {
+  kept: Texts | null = null;
+  get inner(): Texts | null {
+    return this.kept;
+  }
+  set inner(v: Texts | null) {}
+}
+
+const t = new Texts();
+t.value = 5;
+say("typed number", t.value);
+say("typed number plus one", t.value + 1);
+say("typed number doubled", t.value * 2);
+const n: number = t.value;
+say("kept", n);
+
+const d = new Drops();
+d.inner = new Texts();
+say("typed Texts", d.inner);
+try {
+  say("a member of it", d.inner.kept);
+} catch (error) {
+  say("a member of it threw a TypeError", error instanceof TypeError);
+}
+//// narrowed-by-an-optional-chain-then-a-link-is-cut.ts
+////= text-13
+
+class Leaf {
+  weight: number | undefined = 7;
+  grow(): number {
+    return 8;
+  }
+}
+
+////= lines-137	Twig	leaf	Leaf	undefined
+
+class Branch {
+  twig: Twig | null = new Twig();
+  run?: () => number = () => 4;
+}
+
+type Between = (b: Branch) => void;
+const keep: Between = () => {};
+const cutTwig: Between = b => {
+  b.twig = null;
+  delete b.run;
+};
+const cutLeaf: Between = b => {
+  if (b.twig) b.twig.leaf = undefined;
+};
+const cutWeight: Between = b => {
+  if (b.twig && b.twig.leaf) b.twig.leaf.weight = undefined;
+};
+
+const uses: [string, (b: Branch, between: Between) => unknown][] = [
+  ["the chain is truthy", (b, between) => (b.twig?.leaf ? (between(b), b.twig.leaf.grow()) : "none")],
+  ["the chain is not undefined", (b, between) => (b.twig?.leaf !== undefined ? (between(b), b.twig.leaf.grow()) : "none")],
+  ["the end is not undefined", (b, between) => (b.twig?.leaf?.weight !== undefined ? (between(b), b.twig.leaf.weight + 1) : "none")],
+  ["the end is a number", (b, between) => (typeof b.twig?.leaf?.weight === "number" ? (between(b), b.twig.leaf.weight + 1) : "none")],
+  ["the end equals seven", (b, between) => (b.twig?.leaf?.weight === 7 ? (between(b), b.twig.leaf.weight) : "none")],
+  ["the end is an instance", (b, between) => (b.twig?.leaf instanceof Leaf ? (between(b), b.twig.leaf.weight) : "none")],
+  ["the middle after the end was tested", (b, between) => (b.twig?.leaf?.weight ? (between(b), b.twig.leaf) : "none")],
+  ["an optional call", (b, between) => (b.run?.() === 4 ? (between(b), b.run()) : "none")],
+  ["a chain after the change", (b, between) => (b.twig?.leaf ? (between(b), b.twig?.leaf?.weight) : "none")],
+];
+
+////= round-7	": "	Branch
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Branch(), keep);
+round("the first link is cut", cutTwig);
+round("the second link is cut", cutLeaf);
+round("the end is cleared", cutWeight);
+round("honest again", keep);
+//// narrowed-by-comparing-a-test-with-true.ts
+////= text-16
+
+////= Holder-13	value: number | string = 1;
+
+function isSquare(s: Shape): s is Square {
+  return s instanceof Square;
+}
+
+function isNumber(v: number | string): v is number {
+  return typeof v === "number";
+}
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= lines-122	spoil	Shape	"text"
+
+const uses: [string, (h: Holder, between: Between) => unknown][] = [
+  ["equal to true", (h, between) => (isSquare(h.shape) === true ? (between(h), [h.shape.edge, h.shape.edge * 2]) : "other")],
+  ["not equal to false", (h, between) => (isSquare(h.shape) !== false ? (between(h), [h.shape.edge, h.shape.edge * 2]) : "other")],
+  ["equal to false, the other branch", (h, between) => (isSquare(h.shape) === false ? "other" : (between(h), [h.shape.edge, h.shape.edge * 2]))],
+  ["true on the left", (h, between) => (true === isNumber(h.value) ? (between(h), [h.value, h.value + 1, h.value * 2]) : "other")],
+  ["loosely equal to true", (h, between) => (isNumber(h.value) == true ? (between(h), [h.value, h.value + 1, h.value * 2]) : "other")],
+  ["negated twice", (h, between) => (!!isNumber(h.value) ? (between(h), [h.value, h.value + 1, h.value * 2]) : "other")],
+  ["a test compared with true", (h, between) => ((typeof h.value === "number") === true ? (between(h), [h.value, h.value + 1, h.value * 2]) : "other")],
+  ["an instanceof compared with true", (h, between) => ((h.shape instanceof Square) === true ? (between(h), [h.shape.edge, h.shape.edge * 2]) : "other")],
+];
+
+////= round-7	": "	Holder
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Holder(), keep);
+round("replaced", spoil);
+round("honest again", keep);
+//// narrowed-by-honest-guards-and-assertions-then-replaced.ts
+////= text-13
+
+class Shape {
+  sides = 4;
+  isSquare(): this is Square {
+    return this instanceof Square;
+  }
+}
+
+////= Square-2
+
+////= Circle-2
+
+class Holder {
+  shape: Shape = new Square();
+  value: number | string = 1;
+  holdsANumber(): this is Holder & { value: number } {
+    return typeof this.value === "number";
+  }
+}
+
+function isSquare(s: Shape): s is Square {
+  return s instanceof Square;
+}
+
+function isNumber(v: number | string): v is number {
+  return typeof v === "number";
+}
+
+function mustBeSquare(s: Shape): asserts s is Square {
+  if (!(s instanceof Square)) throw new RangeError("not a square");
+}
+
+function mustBeNumber(v: number | string): asserts v is number {
+  if (typeof v !== "number") throw new RangeError("not a number");
+}
+
+////= mustHold
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= lines-122	toBase	Shape	"text"
+////= lines-122	toSibling	Circle	""
+
+const uses: [string, (h: Holder, between: Between) => unknown][] = [
+  ["a guard over a class", (h, between) => (isSquare(h.shape) ? (between(h), [h.shape.edge, h.shape.edge * 2, h.shape.sides]) : "other")],
+  ["a guard over a number", (h, between) => (isNumber(h.value) ? (between(h), [h.value, h.value + 1, h.value * 2]) : "other")],
+  ["a guard on this", (h, between) => (h.shape.isSquare() ? (between(h), [h.shape.edge, h.shape.edge * 2, h.shape.sides]) : "other")],
+  ["a guard on this about a member", (h, between) => (h.holdsANumber() ? (between(h), [h.value, h.value + 1, h.value * 2]) : "other")],
+  ["an assertion over a class", (h, between) => {
+    mustBeSquare(h.shape);
+    between(h);
+    return [h.shape.edge, h.shape.edge * 2, h.shape.sides];
+  }],
+  ["an assertion over a number", (h, between) => {
+    mustBeNumber(h.value);
+    between(h);
+    return [h.value, h.value + 1, h.value * 2];
+  }],
+  ["an asserted condition over a class", (h, between) => {
+    mustHold(h.shape instanceof Square);
+    between(h);
+    return [h.shape.edge, h.shape.edge * 2, h.shape.sides];
+  }],
+  ["an asserted condition over a number", (h, between) => {
+    mustHold(typeof h.value === "number");
+    between(h);
+    return [h.value, h.value + 1, h.value * 2];
+  }],
+  ["the guard says no", (h, between) => (!isSquare(h.shape) ? "other" : (between(h), h.shape.edge))],
+];
+
+////= round-7	": "	Holder
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Holder(), keep);
+round("the base class and a string", toBase);
+round("a sibling and an empty string", toSibling);
+round("honest again", keep);
+//// narrowed-by-in-then-the-name-is-deleted-through-an-alias.ts
+////= text-13
+
+////= Square-5
+
+////= Circle-3
+
+type Between = (s: { edge?: number }) => void;
+const keep: Between = () => {};
+const remove: Between = s => {
+  delete s.edge;
+};
+
+////= lines-302	edgeOf(s: Square | Circle
+
+////= lines-302	literalEdgeOf(s: { edge: number; corner: number } | { radius: number }
+
+function which(s: Square | Circle): string {
+  return "edge" in s ? "has an edge" : "typed as a circle, radius " + typeof s.radius;
+}
+
+attempt("honest class", () => edgeOf(new Square(), keep));
+attempt("honest literal", () => literalEdgeOf({ edge: 2, corner: 90 }, keep));
+for (let i = 0; i < 2000; i++) {
+  edgeOf(new Square(), keep);
+  literalEdgeOf({ edge: 2, corner: 90 }, keep);
+}
+attempt("deleted from a class instance", () => edgeOf(new Square(), remove));
+attempt("deleted from a literal", () => literalEdgeOf({ edge: 2, corner: 90 }, remove));
+attempt("deleted and stored again", () => {
+  const s = new Square();
+  remove(s);
+  s.edge = 5;
+  return [edgeOf(s, keep), Object.keys(s).join()];
+});
+attempt("deleted before the test", () => {
+  const s = new Square();
+  remove(s);
+  return which(s);
+});
+attempt("honest class again", () => edgeOf(new Square(), keep));
+attempt("honest literal again", () => literalEdgeOf({ edge: 2, corner: 90 }, keep));
+//// narrowed-by-in-where-a-proxy-answers.ts
+////= text-13
+
+////= Circle-3
+
+////= Square-6
+
+const log: string[] = [];
+
+function edgeOrRadius(s: Circle | Square): unknown {
+  if ("edge" in s) return ["edge", s.edge, s.edge * 2];
+  return ["radius", s.radius, s.radius * 2];
+}
+
+attempt("a circle", () => edgeOrRadius(new Circle()));
+attempt("a square", () => edgeOrRadius(new Square()));
+for (let i = 0; i < 2000; i++) edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+
+////= attempt-33	"a proxy of a circle that has everything"	Circle	true
+////= attempt-33	"a proxy of a square that has nothing"	Square	false
+attempt("a proxy of a square without traps", () => edgeOrRadius(new Proxy(new Square(), {})));
+attempt("a proxy whose has trap throws", () =>
+  edgeOrRadius(
+    new Proxy(new Circle(), {
+      has() {
+        throw new RangeError("no");
+      },
+    }),
+  ),
+);
+console.log("traps: " + log.join(", "));
+attempt("a circle again", () => edgeOrRadius(new Circle()));
+//// narrowed-by-in-where-a-subclass-of-the-other-member-has-the-name.ts
+////= say-13
+
+////= lines-14	class	Labeled	extends	Circle	edge	"text"
+
+function pick(which: number): Circle | Square {
+  return which === 0 ? new Circle() : which === 1 ? new Square() : new Labeled();
+}
+
+for (let which = 0; which < 3; which++) {
+  const s = pick(which);
+  if ("edge" in s) {
+    say(which + " edge", s.edge);
+    say(which + " edge doubled", s.edge * 2);
+    say(which + " edge plus one", s.edge + 1);
+  } else {
+    say(which + " radius", s.radius);
+  }
+}
+//// narrowed-by-in-where-an-instance-of-the-base-got-the-name-added.ts
+////= say-2
+
+////= Square-4
+
+function make(which: number): Shape | Square {
+  if (which === 0) return new Square();
+  if (which === 1) return new Shape();
+  return Object.assign(new Shape(), { edge: "added" });
+}
+
+for (let which = 0; which < 3; which++) {
+  const s = make(which);
+  if ("edge" in s) {
+    say(which + " edge", s.edge);
+    say(which + " edge doubled", s.edge * 2);
+    say(which + " corner", s.corner);
+    say(which + " sides", s.sides);
+  } else {
+    say(which + " sides only", s.sides);
+  }
+}
+//// narrowed-by-in-where-the-name-is-inherited.ts
+////= text-13
+
+////= Circle-3
+
+////= Square-6
+
+////= lines-92	Ringed	Circle	get	edge	string	"computed"
+
+////= lines-18	Oval	radius	3
+
+function edgeOrRadius(s: Circle | Square | Oval): unknown {
+  if ("edge" in s) return ["edge", s.edge, s.edge * 2, s.edge + 1, Object.keys(s).join()];
+  return ["radius", s.radius];
+}
+
+attempt("a circle", () => edgeOrRadius(new Circle()));
+attempt("a square", () => edgeOrRadius(new Square()));
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const s: Circle | Square = i % 2 === 0 ? new Circle() : new Square();
+  sum += "edge" in s ? s.edge : s.radius;
+}
+console.log("honest rounds: " + sum);
+
+attempt("a getter on the prototype of a subclass", () => edgeOrRadius(new Ringed()));
+attempt("the instance got a prototype with the name", () => {
+  const c = new Circle();
+  Object.setPrototypeOf(c, { edge: "from its new prototype" });
+  return edgeOrRadius(c);
+});
+attempt("the name is undefined on the prototype", () => {
+  const c = new Circle();
+  Object.setPrototypeOf(c, { edge: undefined });
+  return edgeOrRadius(c);
+});
+attempt("an oval before", () => edgeOrRadius(new Oval()));
+Object.setPrototypeOf(Oval.prototype, { edge: "from the end of the chain" });
+attempt("the prototype of the class got a parent with the name", () => edgeOrRadius(new Oval()));
+attempt("a circle again", () => edgeOrRadius(new Circle()));
+attempt("a square again", () => edgeOrRadius(new Square()));
+//// narrowed-by-instanceof-after-the-instance-got-another-prototype.ts
+////= say-2
+
+////= Square-9
+
+const moved: Shape = new Shape();
+Object.setPrototypeOf(moved, Square.prototype);
+if (moved instanceof Square) {
+  say("edge", moved.edge);
+  say("edge doubled", moved.edge * 2);
+  say("area", moved.area());
+  say("sides", moved.sides);
+} else {
+  say("not a square", moved.sides);
+}
+
+const left: Shape = new Square();
+Object.setPrototypeOf(left, Shape.prototype);
+if (left instanceof Square) {
+  say("still a square", left.edge);
+} else {
+  say("no longer a square: sides", left.sides);
+  say("no longer a square: keys", Object.keys(left).join());
+}
+//// narrowed-by-instanceof-against-bound-and-proxied-classes.ts
+////= say-8
+
+const BoundSquare = Square.bind(null);
+const ProxiedSquare = new Proxy(Square, {});
+const LyingSquare = new Proxy(Square, {
+  get(target, key, receiver) {
+    if (key === "prototype") return Shape.prototype;
+    return Reflect.get(target, key, receiver);
+  },
+});
+
+const shapes: [string, Shape][] = [
+  ["a shape", new Shape()],
+  ["a square", new Square()],
+  ["a circle", new Circle()],
+];
+
+for (const [name, s] of shapes) {
+  say(name + " against a bound class", s instanceof BoundSquare ? s.edge : "other");
+  say(name + " against a proxy of the class", s instanceof ProxiedSquare ? s.edge : "other");
+}
+
+for (const [name, s] of shapes) {
+  try {
+    say(name + " against a proxy that shows another prototype", s instanceof LyingSquare ? s.edge : "other");
+  } catch (error) {
+    say(name + " against a proxy that shows another prototype threw a TypeError", error instanceof TypeError);
+  }
+}
+//// narrowed-by-instanceof-then-a-call-stores-an-instance-of-the-base.ts
+////= say-2
+
+////= Square-4
+
+////= Holder-10
+
+////= lines-22	swap	h	Holder	h.shape	Shape
+
+const holder = new Holder();
+if (holder.shape instanceof Square) {
+  say("before: edge", holder.shape.edge);
+  swap(holder);
+  say("after: edge", holder.shape.edge);
+  say("after: corner", holder.shape.corner);
+  say("after: edge doubled", holder.shape.edge * 2);
+  say("after: sides", holder.shape.sides);
+  const kept: Square = holder.shape;
+  say("kept: edge", kept.edge);
+  say("kept: keys", Object.keys(kept).join());
+}
+//// narrowed-by-instanceof-where-a-getter-alternates-between-two-classes.ts
+////= say-2
+
+////= Square-4
+
+////= Circle-2
+
+class Flicker {
+  reads = 0;
+  get shape(): Shape {
+    return this.reads++ % 2 === 0 ? new Square() : new Shape();
+  }
+  get sibling(): Square | Circle {
+    return this.reads++ % 2 === 0 ? new Square() : new Circle();
+  }
+}
+
+const f = new Flicker();
+////= if-5	shape	"base for subclass: edge"	shape.edge
+////= if-5	shape	"base for subclass: corner"	shape.corner
+if (f.shape instanceof Square) {
+  say("base for subclass: edge doubled", f.shape.edge * 2);
+}
+////= if-5	sibling	"sibling: edge"	sibling.edge
+////= if-5	sibling	"sibling: corner"	sibling.corner
+////= if-5	sibling	"sibling: sides"	sibling.sides
+if (!(f.sibling instanceof Circle)) {
+  say("sibling by exclusion: edge", f.sibling.edge);
+}
+say("reads", f.reads);
+//// narrowed-by-instanceof-where-has-instance-is-a-type-guard.ts
+////= say-15
+
+class LooksSquare {
+  static [Symbol.hasInstance](value: unknown): value is Square {
+    return value instanceof Shape;
+  }
+}
+
+class LooksLikeANumber {
+  static [Symbol.hasInstance](value: unknown): value is number {
+    return true;
+  }
+}
+
+const shape: Shape = new Shape();
+if (shape instanceof LooksSquare) {
+  say("a shape: edge", shape.edge);
+  say("a shape: edge doubled", shape.edge * 2);
+  say("a shape: sides", shape.sides);
+}
+
+function double(v: unknown): unknown {
+  if (v instanceof LooksLikeANumber) return v * 2;
+  return "other";
+}
+
+function add(v: unknown): unknown {
+  if (v instanceof LooksLikeANumber) return v + 1;
+  return "other";
+}
+
+say("a number doubled", double(4));
+say("a string doubled", double("text"));
+say("a number plus one", add(4));
+say("a string plus one", add("text"));
+say("null plus one", add(null));
+say("a shape plus one", add(new Shape()));
+//// narrowed-by-instanceof-where-the-class-answers-yes-to-everything.ts
+////= say-2
+
+////= Square
+
+const plain: Shape = new Shape();
+if (plain instanceof Square) {
+  say("a shape: edge", plain.edge);
+  say("a shape: edge doubled", plain.edge * 2);
+  say("a shape: sides", plain.sides);
+} else {
+  say("a shape: not a square", plain.sides);
+}
+
+const real: Shape = new Square();
+if (real instanceof Square) {
+  say("a square: edge", real.edge);
+  say("a square: edge doubled", real.edge * 2);
+} else {
+  say("a square: not a square", real.sides);
+}
+//// narrowed-by-is-array-and-the-value-is-a-proxy-of-an-array.ts
+////= say
+
+const log: string[] = [];
+const target = [10, 20, 30];
+const proxy = new Proxy(target, {
+  get(t, key, receiver) {
+    log.push("get " + String(key));
+    if (key === "1") return 21;
+    return Reflect.get(t, key, receiver);
+  },
+  has(t, key) {
+    log.push("has " + String(key));
+    return Reflect.has(t, key);
+  },
+  set(t, key, value, receiver) {
+    log.push("set " + String(key));
+    return Reflect.set(t, key, value, receiver);
+  },
+});
+
+function total(list: number[] | { size: number }): number {
+  if (Array.isArray(list)) {
+    let sum = 0;
+    for (let i = 0; i < list.length; i++) sum += list[i];
+    return sum;
+  }
+  return list.size;
+}
+
+say("a real array", total([1, 2, 3]));
+say("an object", total({ size: 4 }));
+say("a proxy", total(proxy));
+say("traps", log.join());
+log.length = 0;
+
+const either: number[] | { size: number } = proxy;
+if (Array.isArray(either)) {
+  say("element 1", either[1]);
+  say("length", either.length);
+  say("push", either.push(40));
+  say("at", either.at(-1));
+  let sum = 0;
+  for (const n of either) sum += n;
+  say("for of", sum);
+  const [first, second] = either;
+  say("destructured", first + second);
+  say("spread", [...either].join());
+  say("1 in it", 1 in either);
+}
+say("traps", log.join());
+say("the target", target.join());
+//// narrowed-by-loose-equality-with-values-that-convert.ts
+////= text-13
+
+class Amount {
+  constructor(readonly cents: number) {}
+  valueOf(): number {
+    return this.cents;
+  }
+}
+
+class Label {
+  constructor(readonly words: string) {}
+  toString(): string {
+    return this.words;
+  }
+}
+
+function zeroOrAmount(x: number | Amount): unknown {
+  if (x == 0) return ["typed 0", typeof x, x + 1, x.toFixed(1)];
+  return "not zero";
+}
+
+function zeroOrBigint(x: number | bigint): unknown {
+  if (x == 0) return ["typed 0", typeof x, -x, x === 0];
+  return "not zero";
+}
+
+function zeroOrBigintAdded(x: number | bigint): unknown {
+  if (x == 0) return x + 1;
+  return "not zero";
+}
+
+function wordOrLabel(x: string | Label): unknown {
+  if (x == "word") return ["typed word", typeof x, x.length, x.toUpperCase()];
+  return "another word";
+}
+
+function oneOfTwoWords(x: "on" | "off" | Label): unknown {
+  if (x == "on") return ["typed on", typeof x, x === "on", x.length];
+  return "not on";
+}
+
+function notEqual(x: number | Amount): unknown {
+  if (x != 0) return "not zero";
+  return ["typed 0", typeof x, x + 1];
+}
+
+function missing(x: Amount | null | undefined): unknown {
+  if (x == null) return ["typed null or undefined", x === null, x === undefined];
+  return x.cents;
+}
+
+attempt("zero", () => zeroOrAmount(0));
+attempt("negative zero", () => zeroOrAmount(-0));
+attempt("five", () => zeroOrAmount(5));
+attempt("the word", () => wordOrLabel("word"));
+for (let i = 0; i < 2000; i++) {
+  zeroOrAmount(i % 2);
+  zeroOrBigint(i % 2);
+  wordOrLabel(i % 2 === 0 ? "word" : "other");
+}
+attempt("an amount of zero", () => zeroOrAmount(new Amount(0)));
+attempt("an amount of five", () => zeroOrAmount(new Amount(5)));
+attempt("an amount of zero, the other way round", () => notEqual(new Amount(0)));
+attempt("a bigint zero", () => zeroOrBigint(0n));
+attempt("a bigint zero, added to", () => zeroOrBigintAdded(0n));
+attempt("a bigint five", () => zeroOrBigint(5n));
+attempt("a label with the word", () => wordOrLabel(new Label("word")));
+attempt("a label with another word", () => wordOrLabel(new Label("other")));
+attempt("a label that says on", () => oneOfTwoWords(new Label("on")));
+attempt("null, undefined and an amount", () => [missing(null), missing(undefined), missing(new Amount(3))]);
+attempt("zero again", () => zeroOrAmount(0));
+//// narrowed-by-nullish-operators-over-accessors.ts
+////= text-13
+
+////= Leaf
+
+class Plain {
+  name: string | null = null;
+  leaf: Leaf | undefined = undefined;
+  count: number | null = null;
+}
+
+class Forgets {
+  stores: string[] = [];
+  get name(): string | null {
+    return null;
+  }
+  set name(v: string | null) {
+    this.stores.push("name");
+  }
+  get leaf(): Leaf | undefined {
+    return undefined;
+  }
+  set leaf(v: Leaf | undefined) {
+    this.stores.push("leaf");
+  }
+  get count(): number | null {
+    return null;
+  }
+  set count(v: number | null) {
+    this.stores.push("count");
+  }
+}
+
+class Alternates {
+  reads = 0;
+  get name(): string | null {
+    return this.reads++ % 2 === 0 ? null : "second";
+  }
+  set name(v: string | null) {}
+  get leaf(): Leaf | undefined {
+    return this.reads++ % 2 === 0 ? undefined : new Leaf();
+  }
+  set leaf(v: Leaf | undefined) {}
+  get count(): number | null {
+    return this.reads++ % 2 === 0 ? null : 2;
+  }
+  set count(v: number | null) {}
+}
+
+type Target = { name: string | null; leaf: Leaf | undefined; count: number | null };
+
+const uses: [string, (o: Target) => unknown][] = [
+  ["a default for a string", o => (o.name ?? "none").length],
+  ["a default for a number", o => (o.count ?? 10) + 1],
+  ["a default for an object", o => (o.leaf ?? new Leaf()).weight],
+  ["assigned if missing, then its length", o => {
+    o.name ??= "filled";
+    return o.name.length;
+  }],
+  ["assigned if missing, then plus one", o => {
+    o.count ??= 10;
+    return o.count + 1;
+  }],
+  ["assigned if missing, then a field", o => {
+    o.leaf ??= new Leaf();
+    return o.leaf.weight;
+  }],
+  ["the value of the assignment", o => (o.name ??= "filled").length],
+  ["assigned if falsy, then its length", o => {
+    o.name ||= "filled";
+    return o.name.length;
+  }],
+  ["assigned, then read", o => {
+    o.count = 5;
+    return [o.count, o.count + 1];
+  }],
+  ["tested against null through a default", o => ((o.name ?? null) !== null ? typeof o.name : "missing")],
+];
+
+for (const [name, use] of uses) attempt("plain: " + name, () => use(new Plain()));
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Plain());
+for (const [name, use] of uses) attempt("a setter that forgets: " + name, () => use(new Forgets()));
+for (const [name, use] of uses) attempt("a getter that alternates: " + name, () => use(new Alternates()));
+for (const [name, use] of uses) attempt("plain again: " + name, () => use(new Plain()));
+//// narrowed-by-predicates-nobody-wrote.ts
+////= text-32
+
+attempt("filter keeps the squares", () => {
+  const shapes: Shape[] = [new Square(), new Circle(), new Square()];
+  const squares = shapes.filter(s => s instanceof Square);
+  return squares.map(s => s.edge);
+});
+attempt("filter drops null", () => {
+  const list: (Square | null)[] = [new Square(), null, new Square()];
+  const present = list.filter(s => s !== null);
+  return present.map(s => s.edge);
+});
+attempt("filter keeps the numbers", () => {
+  const list: (number | string)[] = [1, "two", 3];
+  const numbers = list.filter(v => typeof v === "number");
+  return numbers.map(n => n * 2);
+});
+attempt("find gives a square", () => {
+  const shapes: Shape[] = [new Circle(), new Square()];
+  const found = shapes.find(s => s instanceof Square);
+  return found === undefined ? "none" : found.edge;
+});
+attempt("every narrows the array, then an alias pushes a circle", () => {
+  const shapes: Shape[] = [new Square()];
+  const alias = shapes;
+  if (shapes.every(s => s instanceof Square)) {
+    alias.push(new Circle());
+    alias.push(new Shape());
+    return shapes.map(s => [s.edge, s.edge * 2, s.sides]);
+  }
+  return "not all squares";
+});
+attempt("every narrows the array, then a call stores a string", () => {
+  const list: (number | string)[] = [1, 2];
+  const spoil = (): void => {
+    list[1] = "text";
+  };
+  if (list.every(v => typeof v === "number")) {
+    spoil();
+    return [list[0] + 1, list[1] + 1, list[1] * 2, list.reduce((a, b) => a + b, 0)];
+  }
+  return "not all numbers";
+});
+attempt("every is true of an empty array", () => {
+  const shapes: Shape[] = [];
+  if (shapes.every(s => s instanceof Square)) {
+    shapes.length = 1;
+    const first: Square = shapes[0];
+    return [typeof first, 0 in shapes];
+  }
+  return "not all squares";
+});
+attempt("every skips holes", () => {
+  const list: (number | string)[] = [1, 2, 3];
+  delete list[1];
+  if (list.every(v => typeof v === "number")) return [list[1], list[1] + 1, 1 in list];
+  return "not all numbers";
+});
+attempt("the callback changes what it already let through", () => {
+  const cells: { value: number | string }[] = [{ value: 1 }, { value: 2 }];
+  const values: (number | string)[] = [1, 2, 3];
+  const kept = values.filter((v, i) => {
+    if (i === 2) cells[0].value = "text";
+    return typeof v === "number";
+  });
+  return [kept, cells[0].value];
+});
+attempt("an element with a getter that alternates", () => {
+  const list: (number | string)[] = [0, 2];
+  let reads = 0;
+  Object.defineProperty(list, 0, { get: () => (reads++ % 2 === 0 ? 1 : "text"), enumerable: true, configurable: true });
+  if (list.every(v => typeof v === "number")) return [list[0], list[0], list[0] + 1, list[0] + 1];
+  return "not all numbers";
+});
+attempt("a predicate kept in a constant", () => {
+  const isSquare = (s: Shape) => s instanceof Square;
+  const holder: { shape: Shape } = { shape: new Square() };
+  if (isSquare(holder.shape)) {
+    const before = holder.shape.edge;
+    [0].forEach(() => {
+      holder.shape = new Circle();
+    });
+    return [before, holder.shape.edge, holder.shape.sides];
+  }
+  return "not a square";
+});
+//// narrowed-by-switch-true.ts
+////= text-32
+
+////= Holder-13	value: number | string | null = 1;
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= lines-122	spoil	Circle	"text"
+////= lines-122	clear	Shape	null
+
+function byValue(h: Holder, between: Between): unknown {
+  switch (true) {
+    case typeof h.value === "number":
+      between(h);
+      return ["number", h.value, h.value + 1, h.value * 2];
+    case typeof h.value === "string":
+      between(h);
+      return ["string", h.value, h.value.length];
+    default:
+      between(h);
+      return ["null", h.value];
+  }
+}
+
+function byClass(h: Holder, between: Between): unknown {
+  switch (true) {
+    case h.shape instanceof Square:
+      between(h);
+      return ["square", h.shape.edge, h.shape.edge * 2];
+    case h.shape instanceof Circle:
+      between(h);
+      return ["circle", h.shape.radius];
+    default:
+      return ["shape", h.shape.sides];
+  }
+}
+
+function fallingThrough(h: Holder, between: Between): unknown {
+  const seen: unknown[] = [];
+  switch (true) {
+    case typeof h.value === "number":
+      between(h);
+      seen.push(h.value);
+    case typeof h.value === "string":
+      seen.push(h.value === null ? "null" : typeof h.value);
+      break;
+    default:
+      seen.push("default");
+  }
+  return seen;
+}
+
+function theCasesChangeIt(h: Holder): unknown {
+  const change = (): boolean => {
+    h.value = "text";
+    return false;
+  };
+  switch (true) {
+    case h.value === null:
+      return "null";
+    case change():
+      return "never";
+    case typeof h.value === "number":
+      return ["number", h.value];
+    default:
+      return ["default", h.value, h.value.length];
+  }
+}
+
+function round(label: string, between: Between): void {
+  attempt(label + ": by value", () => byValue(new Holder(), between));
+  attempt(label + ": by class", () => byClass(new Holder(), between));
+  attempt(label + ": falling through", () => fallingThrough(new Holder(), between));
+}
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) {
+  byValue(new Holder(), keep);
+  byClass(new Holder(), keep);
+  fallingThrough(new Holder(), keep);
+}
+round("a sibling and a string", spoil);
+round("the base class and null", clear);
+attempt("a case changes what an earlier case tested", () => theCasesChangeIt(new Holder()));
+round("honest again", keep);
+//// narrowed-by-the-constructor-member-which-was-stored-to.ts
+////= say-15
+
+function make(square: boolean): Shape | Square {
+  return square ? new Square() : new Shape();
+}
+
+const own = make(false);
+own.constructor = Square;
+if (own.constructor === Square) {
+  say("an own member: edge", own.edge);
+  say("an own member: edge doubled", own.edge * 2);
+  say("an own member: sides", own.sides);
+  say("an own member: instanceof", own instanceof Square);
+}
+
+const real = make(true);
+if (real.constructor === Square) {
+  say("a real square: edge", real.edge);
+}
+
+////= lines-18	Round	sides	0
+
+////= lines-14	class	Disk	extends	Round	radius	3
+
+function makeRound(disk: boolean): Round | Disk {
+  return disk ? new Disk() : new Round();
+}
+
+Round.prototype.constructor = Disk;
+const round = makeRound(false);
+if (round.constructor === Disk) {
+  say("on the prototype: radius", round.radius);
+  say("on the prototype: radius doubled", round.radius * 2);
+  say("on the prototype: sides", round.sides);
+}
+//// narrowed-by-truthiness-then-a-call-clears-the-field.ts
+////= say-9
+
+class Branch {
+  leaf: Leaf | null = new Leaf();
+  spare: Leaf | undefined = new Leaf();
+}
+
+function clear(b: Branch): void {
+  b.leaf = null;
+  b.spare = undefined;
+}
+
+const branch = new Branch();
+if (branch.leaf && branch.spare) {
+  say("before", branch.leaf.weight + branch.spare.weight);
+  clear(branch);
+  say("leaf after", branch.leaf);
+  say("spare after", branch.spare);
+  try {
+    say("leaf weight", branch.leaf.weight);
+  } catch (error) {
+    say("leaf weight threw a TypeError", error instanceof TypeError);
+  }
+  try {
+    say("spare weight", branch.spare.weight);
+  } catch (error) {
+    say("spare weight threw a TypeError", error instanceof TypeError);
+  }
+}
+//// narrowed-by-truthiness-where-a-getter-of-a-class-alternates.ts
+////= text-13
+
+////= Leaf
+
+class Steady {
+  leaf: Leaf | null = new Leaf();
+  count: number | undefined = 3;
+  name: string | null = "name";
+  run: (() => number) | undefined = () => 4;
+}
+
+class Flicker {
+  reads = 0;
+  get leaf(): Leaf | null {
+    return this.reads++ % 2 === 0 ? new Leaf() : null;
+  }
+  get count(): number | undefined {
+    return this.reads++ % 2 === 0 ? 3 : undefined;
+  }
+  get name(): string | null {
+    return this.reads++ % 2 === 0 ? "name" : null;
+  }
+  get run(): (() => number) | undefined {
+    return this.reads++ % 2 === 0 ? () => 4 : undefined;
+  }
+}
+
+interface Source {
+  readonly leaf: Leaf | null;
+  readonly count: number | undefined;
+  readonly name: string | null;
+  readonly run: (() => number) | undefined;
+}
+
+const uses: [string, (o: Source) => unknown][] = [
+  ["if, a field", o => {
+    if (o.leaf) return o.leaf.weight;
+    return "none";
+  }],
+  ["and, a field", o => o.leaf && o.leaf.weight],
+  ["conditional, a field", o => (o.leaf ? o.leaf.weight : "none")],
+  ["not, a field", o => (!o.leaf ? "none" : o.leaf.weight)],
+  ["or, a field", o => !o.leaf || o.leaf.weight],
+  ["a number, plus one", o => (o.count ? o.count + 1 : "none")],
+  ["a number, to fixed", o => (o.count ? o.count.toFixed(1) : "none")],
+  ["a number, read", o => (o.count ? o.count : "none")],
+  ["a string, its length", o => (o.name ? o.name.length : "none")],
+  ["a string, read", o => (o.name ? o.name : "none")],
+  ["a string, added to", o => (o.name ? o.name + "!" : "none")],
+  ["a function, called", o => (o.run ? o.run() : "none")],
+  ["a function, and called", o => o.run && o.run()],
+  ["a loop", o => {
+    let total = 0;
+    let turns = 0;
+    while (o.leaf && turns++ < 3) total += o.leaf === null ? 100 : o.leaf.weight;
+    return total;
+  }],
+];
+
+for (const [name, use] of uses) attempt("steady " + name, () => use(new Steady()));
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Steady());
+for (const [name, use] of uses) attempt("alternating " + name, () => use(new Flicker()));
+for (const [name, use] of uses) attempt("steady again " + name, () => use(new Steady()));
+//// narrowed-by-typeof-then-a-call-stores-a-string-in-the-field.ts
+////= say
+
+////= lines-136	Cell	value	number	string	1
+
+////= lines-58	spoil	c	Cell	c.value	"text"
+
+const cell = new Cell();
+if (typeof cell.value === "number") {
+  say("before", cell.value + 1);
+  spoil(cell);
+  say("after", cell.value);
+  say("after plus one", cell.value + 1);
+  say("after doubled", cell.value * 2);
+  const kept: number = cell.value;
+  say("kept", kept);
+  say("kept halved", kept / 2);
+}
+//// narrowed-by-typeof-then-a-store-through-an-alias-in-the-same-function.ts
+////= say
+
+class Cell {
+  value: number | string = 1;
+  count: number | bigint = 2;
+}
+
+function sameFunction(cell: Cell, alias: Cell): void {
+  if (typeof cell.value === "number" && typeof cell.count === "number") {
+    say("before", cell.value + cell.count);
+    alias.value = "text";
+    alias.count = 5n;
+    say("value", cell.value);
+    say("value plus one", cell.value + 1);
+    say("count", cell.count);
+    say("count negated", -cell.count);
+    say("count compared", cell.count > 3);
+  }
+}
+
+const one = new Cell();
+sameFunction(one, one);
+sameFunction(new Cell(), new Cell());
+
+const local = new Cell();
+const other = local;
+if (typeof local.value === "number") {
+  other.value = "text";
+  say("local value", local.value);
+  say("local value plus one", local.value + 1);
+}
+//// narrowed-elements-then-built-ins-move-other-kinds-into-their-place.ts
+////= text-16
+
+type Values = (number | string)[];
+type Shapes = Shape[];
+
+const ways: [string, (values: Values, shapes: Shapes) => unknown][] = [
+  ["nothing", () => 0],
+  ["fill", (values, shapes) => [values.fill("text"), shapes.fill(new Shape())]],
+  ["splice", (values, shapes) => [values.splice(0, 1, "text"), shapes.splice(0, 1, new Shape())]],
+  ["unshift", (values, shapes) => [values.unshift("text"), shapes.unshift(new Shape())]],
+  ["reverse", (values, shapes) => [values.reverse(), shapes.reverse()]],
+  ["copyWithin", (values, shapes) => [values.copyWithin(0, 2), shapes.copyWithin(0, 2)]],
+  ["sort", (values, shapes) => [values.sort((a, b) => (typeof a === "string" ? -1 : typeof b === "string" ? 1 : 0)), shapes.sort((a, b) => (a instanceof Square ? 1 : 0) - (b instanceof Square ? 1 : 0))]],
+  ["shift", (values, shapes) => [values.shift(), values.shift(), shapes.shift(), shapes.shift()]],
+  ["a shorter length", (values, shapes) => [(values.length = 0), (shapes.length = 0)]],
+  ["Object.assign", (values, shapes) => [Object.assign(values, ["text"]), Object.assign(shapes, [new Shape()])]],
+  ["Reflect.set", (values, shapes) => [Reflect.set(values, 0, "text"), Reflect.set(shapes, 0, new Shape())]],
+  ["an array pattern", (values, shapes) => {
+    [values[0], shapes[0]] = ["text", new Shape()];
+  }],
+  ["a swap", (values, shapes) => {
+    [values[0], values[2]] = [values[2], values[0]];
+    [shapes[0], shapes[2]] = [shapes[2], shapes[0]];
+  }],
+  ["delete", (values, shapes) => [delete values[0], delete shapes[0]]],
+  ["a getter on the index", (values, shapes) => {
+    Object.defineProperty(values, 0, { get: () => "text" });
+    Object.defineProperty(shapes, 0, { get: () => new Shape() });
+  }],
+  ["push through call on the first slot", (values, shapes) => {
+    values.length = 0;
+    shapes.length = 0;
+    Array.prototype.push.call(values, "text");
+    Array.prototype.push.call(shapes, new Shape());
+  }],
+];
+
+function read(values: Values, shapes: Shapes, way: (values: Values, shapes: Shapes) => unknown): unknown {
+  if (typeof values[0] === "number" && shapes[0] instanceof Square) {
+    way(values, shapes);
+    return [values[0], values[0] + 1, values[0] * 2, shapes[0]?.edge, shapes[0]?.sides, values.length, shapes.length];
+  }
+  return "other";
+}
+
+const makeValues = (): Values => [1, 2, "text"];
+const makeShapes = (): Shapes => [new Square(), new Square(), new Shape()];
+
+for (let i = 0; i < 2000; i++) read(makeValues(), makeShapes(), ways[0][1]);
+for (const [name, way] of ways) attempt(name, () => read(makeValues(), makeShapes(), way));
+attempt("nothing again", () => read(makeValues(), makeShapes(), ways[0][1]));
+//// narrowed-every-way-and-nothing-changes-honest.ts
+////= text-13
+
+////= Shape
+
+////= Square-9
+
+class Circle extends Shape {
+  radius = 5;
+  area(): number {
+    return this.radius * this.radius * 3;
+  }
+}
+
+class Holder {
+  shape: Square | Circle = new Square();
+  value: number | string = 1;
+  count: number | bigint = 2;
+  next: Holder | null = null;
+  mode: "on" | "off" = "on";
+  work: (() => number) | Square = () => 3;
+  point: [number] | [number, number] = [1, 2];
+}
+
+function total(h: Holder): number {
+  let sum = 0;
+  if (h.shape instanceof Square) sum += h.shape.edge + h.shape.area();
+  else sum += h.shape.radius + h.shape.area();
+  if (typeof h.value === "number") sum += h.value * 2;
+  else sum += h.value.length;
+  if (typeof h.count === "number") sum += h.count;
+  else sum += Number(h.count * 2n);
+  if (h.next !== null) sum += h.next.shape.sides;
+  if (h.next?.next) sum += h.next.next.shape.sides;
+  sum += h.mode === "on" ? 1 : 2;
+  sum += typeof h.work === "function" ? h.work() : h.work.edge;
+  sum += h.point.length === 2 ? h.point[1] : h.point[0];
+  if ("edge" in h.shape) sum += h.shape.edge;
+  switch (true) {
+    case h.shape instanceof Circle:
+      sum += h.shape.radius;
+      break;
+    default:
+      sum += h.shape.edge;
+  }
+  return sum;
+}
+
+function make(i: number): Holder {
+  const h = new Holder();
+  if (i % 2 === 1) h.shape = new Circle();
+  if (i % 3 === 1) h.value = "text";
+  if (i % 5 === 1) h.count = 7n;
+  if (i % 7 === 1) h.next = make(i + 1);
+  if (i % 11 === 1) h.mode = "off";
+  if (i % 13 === 1) h.work = new Square();
+  if (i % 17 === 1) h.point = [9];
+  return h;
+}
+
+let sum = 0;
+for (let i = 0; i < 4000; i++) sum += total(make(i));
+console.log("the total of 4000 holders: " + sum);
+for (let i = 0; i < 20; i++) attempt("holder " + i, () => total(make(i)));
+attempt("squares only", () => {
+  const shapes: (Square | Circle)[] = [];
+  for (let i = 0; i < 10; i++) shapes.push(i % 2 === 0 ? new Square() : new Circle());
+  const squares = shapes.filter(s => s instanceof Square);
+  return squares.reduce((a, s) => a + s.edge, 0);
+});
+//// narrowed-in-a-closure-and-arguments-stores-to-the-parameter.cts
+////= say
+
+say("strict", (function (this: unknown) {
+  return this === undefined;
+})());
+
+function inAClosure(v: number | string): () => number {
+  if (typeof v === "string") v = v.length;
+  const read = () => v + 1;
+  arguments[0] = "text";
+  return read;
+}
+
+function straight(v: number | string): unknown {
+  if (typeof v === "number") {
+    arguments[0] = "text";
+    return v + 1;
+  }
+  return "other";
+}
+
+////= lines-199	throughAHelper	overwrite	arguments
+
+function overwrite(list: IArguments): void {
+  list[0] = "text";
+}
+
+////= Leaf
+
+////= cleared	arguments[0] = null
+
+function aLiteral(mode: "on" | "off"): unknown {
+  if (mode === "on") {
+    arguments[0] = "off";
+    return mode;
+  }
+  return "other";
+}
+
+function notPassed(v?: number | string): unknown {
+  if (v === undefined) {
+    arguments[0] = "text";
+    return v;
+  }
+  return "other";
+}
+
+say("in a closure", inAClosure(1)());
+say("in a closure, from a string", inAClosure("ab")());
+say("straight", straight(1));
+say("through a helper", throughAHelper(1));
+say("cleared", cleared(new Leaf()));
+say("a literal type", aLiteral("on"));
+say("not passed", notPassed());
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += String(straight(i)).length;
+say("2000 rounds", sum);
+//// narrowed-in-closures-made-after-the-last-assignment.ts
+////= text-16
+
+function afterTheLastAssignment(input: number | string | null): () => unknown {
+  let v = input;
+  if (v === null) v = 0;
+  if (typeof v === "string") v = v.length;
+  return () => [v, v + 1, v * 2];
+}
+
+function aParameter(v: number | string): () => unknown {
+  if (typeof v === "string") v = v.length;
+  return () => [v, v + 1, v * 2];
+}
+
+function aClass(s: Square | null): () => unknown {
+  if (s === null) s = new Square();
+  return () => [s.edge, s.edge * 2, s.sides];
+}
+
+function manyClosures(v: number | string | undefined): (() => unknown)[] {
+  if (v === undefined) v = 1;
+  if (typeof v === "string") return [() => v.length, () => v.toUpperCase()];
+  return [() => v + 1, () => v.toFixed(1), () => [1, 2, 3].map(n => n * v)];
+}
+
+function inAMethodOfALiteral(v: number | null): { read(): number; get twice(): number } {
+  if (v === null) v = 5;
+  return {
+    read() {
+      return v + 1;
+    },
+    get twice() {
+      return v * 2;
+    },
+  };
+}
+
+attempt("null", afterTheLastAssignment(null));
+attempt("a string", afterTheLastAssignment("four"));
+attempt("a number", afterTheLastAssignment(2.5));
+attempt("a parameter, a string", aParameter("four"));
+attempt("a parameter, a number", aParameter(-0));
+attempt("a class, null", aClass(null));
+attempt("a class, a square", aClass(new Square()));
+attempt("many closures, undefined", () => manyClosures(undefined).map(f => f()));
+attempt("many closures, a string", () => manyClosures("ab").map(f => f()));
+attempt("many closures, a number", () => manyClosures(3).map(f => f()));
+attempt("a method and a getter of a literal", () => {
+  const o = inAMethodOfALiteral(null);
+  return [o.read(), o.twice, inAMethodOfALiteral(1).read()];
+});
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const made = aParameter(i % 2 === 0 ? i : "ab");
+  const result = made();
+  if (Array.isArray(result)) sum += result.length;
+}
+console.log("honest rounds: " + sum);
+attempt("called later, from a built-in", () => [3, "abc", null].map(v => afterTheLastAssignment(v)).map(f => f()));
+//// narrowed-in-five-places-a-class-or-nothing.ts
+////= text-13
+
+////= lines-142	Leaf	weight	7	heavier
+
+class Branch {
+  leaf: Leaf | null = new Leaf();
+  spare: Leaf | undefined = new Leaf();
+  extra?: Leaf = new Leaf();
+}
+
+type Between = (b: Branch) => void;
+const keep: Between = () => {};
+const clear: Between = b => {
+  b.leaf = null;
+  b.spare = undefined;
+  delete b.extra;
+};
+
+////= lines-20	weightOf	l	Leaf	number	return	l.weight
+
+const uses: [string, (b: Branch, between: Between) => unknown][] = [
+  ["not null, read", (b, between) => (b.leaf !== null ? (between(b), b.leaf) : "none")],
+  ["not null, a field", (b, between) => (b.leaf !== null ? (between(b), b.leaf.weight) : "none")],
+  ["not null, a method", (b, between) => (b.leaf !== null ? (between(b), b.leaf.heavier()) : "none")],
+  ["not null, handed on", (b, between) => (b.leaf !== null ? (between(b), weightOf(b.leaf)) : "none")],
+  ["truthy, a field", (b, between) => (b.leaf ? (between(b), b.leaf.weight) : "none")],
+  ["loosely not null, a field", (b, between) => (b.leaf != null ? (between(b), b.leaf.weight) : "none")],
+  ["not undefined, read", (b, between) => (b.spare !== undefined ? (between(b), b.spare) : "none")],
+  ["not undefined, a field", (b, between) => (b.spare !== undefined ? (between(b), b.spare.weight) : "none")],
+  ["typeof object, a field", (b, between) => (typeof b.spare === "object" ? (between(b), b.spare.weight) : "none")],
+  ["instanceof, a field", (b, between) => (b.spare instanceof Leaf ? (between(b), b.spare.weight) : "none")],
+  ["optional, read", (b, between) => (b.extra ? (between(b), b.extra) : "none")],
+  ["optional, a field", (b, between) => (b.extra ? (between(b), b.extra.weight) : "none")],
+  ["optional, still there", (b, between) => (b.extra ? (between(b), "extra" in b) : "none")],
+  ["a store to a field of it", (b, between) => (b.leaf !== null ? (between(b), (b.leaf.weight = 9)) : "none")],
+];
+
+class Owner {
+  own: Leaf | null = new Leaf();
+  change(really: boolean): void {
+    if (really) this.own = null;
+  }
+  inItsOwnField(really: boolean): unknown {
+    if (this.own !== null) {
+      this.change(really);
+      return this.own.weight;
+    }
+    return "none";
+  }
+}
+
+function inAnElement(leaves: (Leaf | null)[], really: boolean): unknown {
+  const change = (): void => {
+    if (really) leaves[0] = null;
+  };
+  if (leaves[0] !== null) {
+    change();
+    return leaves[0].weight;
+  }
+  return "none";
+}
+
+function inACapturedVariable(really: boolean): unknown {
+  let l: Leaf | null = new Leaf();
+  const change = (): void => {
+    if (really) l = null;
+  };
+  if (l !== null) {
+    change();
+    return l.weight;
+  }
+  return "none";
+}
+
+function round(label: string, between: Between, really: boolean): void {
+  for (const [name, use] of uses) attempt(label + " in a parameter, " + name, () => use(new Branch(), between));
+  attempt(label + " in its own field", () => new Owner().inItsOwnField(really));
+  attempt(label + " in an element", () => inAnElement([new Leaf()], really));
+  attempt(label + " in a captured variable", () => inACapturedVariable(really));
+}
+
+round("honest", keep, false);
+let rounds = 0;
+////= for-53	Branch	new Leaf()
+console.log("honest rounds: " + rounds);
+round("cleared", clear, true);
+round("honest again", keep, false);
+//// narrowed-in-five-places-a-function-or-an-object.ts
+////= text-13
+
+////= lines-143	Task	cost	3	run
+
+type Work = (() => number) | Task;
+
+class Slot {
+  work: Work = () => 1;
+}
+
+type Between = (s: Slot) => void;
+const keep: Between = () => {};
+////= lines-204	toTask	s	s.work	Task
+const toFunction: Between = s => {
+  s.work = () => 2;
+};
+
+////= lines-118	call	f	number
+
+////= lines-20	costOf	t	Task	number	return	t.cost
+
+const asFunction: [string, (s: Slot, between: Between) => unknown][] = [
+  ["read", (s, between) => (typeof s.work === "function" ? (between(s), typeof s.work) : "other")],
+  ["called", (s, between) => (typeof s.work === "function" ? (between(s), s.work()) : "other")],
+  ["handed on", (s, between) => (typeof s.work === "function" ? (between(s), call(s.work)) : "other")],
+  ["its length", (s, between) => (typeof s.work === "function" ? (between(s), s.work.length) : "other")],
+  ["through call", (s, between) => (typeof s.work === "function" ? (between(s), s.work.call(undefined)) : "other")],
+  ["by exclusion", (s, between) => (!(s.work instanceof Task) ? (between(s), s.work()) : "other")],
+];
+
+const asTask: [string, (s: Slot, between: Between) => unknown][] = [
+  ["read", (s, between) => (typeof s.work === "object" ? (between(s), typeof s.work) : "other")],
+  ["a field", (s, between) => (typeof s.work === "object" ? (between(s), s.work.cost) : "other")],
+  ["a method", (s, between) => (typeof s.work === "object" ? (between(s), s.work.run()) : "other")],
+  ["handed on", (s, between) => (typeof s.work === "object" ? (between(s), costOf(s.work)) : "other")],
+  ["by instanceof", (s, between) => (s.work instanceof Task ? (between(s), s.work.cost) : "other")],
+  ["by exclusion", (s, between) => (typeof s.work !== "function" ? (between(s), s.work.cost) : "other")],
+  ["by in", (s, between) => ("cost" in s.work ? (between(s), s.work.cost) : "other")],
+];
+
+function withTask(): Slot {
+  const s = new Slot();
+  s.work = new Task();
+  return s;
+}
+
+function inACapturedVariable(really: boolean): unknown {
+  let w: Work = () => 1;
+  const change = (): void => {
+    if (really) w = new Task();
+  };
+  if (typeof w === "function") {
+    change();
+    return w();
+  }
+  return "other";
+}
+
+function inAnElement(works: Work[], really: boolean): unknown {
+  const change = (): void => {
+    if (really) works[0] = new Task();
+  };
+  if (typeof works[0] === "function") {
+    change();
+    return works[0]();
+  }
+  return "other";
+}
+
+function round(label: string, first: Between, second: Between, really: boolean): void {
+  for (const [name, use] of asFunction) attempt(label + " a function, " + name, () => use(new Slot(), first));
+  for (const [name, use] of asTask) attempt(label + " an object, " + name, () => use(withTask(), second));
+  attempt(label + " in a captured variable", () => inACapturedVariable(really));
+  attempt(label + " in an element", () => inAnElement([() => 1], really));
+}
+
+round("honest", keep, keep, false);
+let rounds = 0;
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of asFunction) use(new Slot(), keep);
+  for (const [, use] of asTask) use(withTask(), keep);
+  inACapturedVariable(false);
+  inAnElement([() => 1], false);
+  rounds++;
+}
+console.log("honest rounds: " + rounds);
+round("replaced", toTask, toFunction, true);
+round("honest again", keep, keep, false);
+//// narrowed-in-five-places-a-number-or-a-bigint.ts
+////= text-13
+
+////= lines-136	Cell	value	number	bigint	1
+
+type Between = (c: Cell) => void;
+const keep: Between = () => {};
+////= lines-205	spoil	c	c.value	5n
+
+////= half
+
+const letters = ["a", "b", "c", "d", "e", "f"];
+
+const uses: [string, (c: Cell, between: Between) => unknown][] = [
+  ["read", (c, between) => (typeof c.value === "number" ? (between(c), c.value) : "other")],
+  ["plus one", (c, between) => (typeof c.value === "number" ? (between(c), c.value + 1) : "other")],
+  ["doubled", (c, between) => (typeof c.value === "number" ? (between(c), c.value * 2) : "other")],
+  ["negated", (c, between) => (typeof c.value === "number" ? (between(c), -c.value) : "other")],
+  ["compared", (c, between) => (typeof c.value === "number" ? (between(c), c.value > 3) : "other")],
+  ["equal to five", (c, between) => (typeof c.value === "number" ? (between(c), c.value === 5) : "other")],
+  ["or zero", (c, between) => (typeof c.value === "number" ? (between(c), c.value | 0) : "other")],
+  ["halved by a function", (c, between) => (typeof c.value === "number" ? (between(c), half(c.value)) : "other")],
+  ["to fixed", (c, between) => (typeof c.value === "number" ? (between(c), c.value.toFixed(1)) : "other")],
+  ["floor", (c, between) => (typeof c.value === "number" ? (between(c), Math.floor(c.value)) : "other")],
+  ["as an index", (c, between) => (typeof c.value === "number" ? (between(c), letters[c.value]) : "other")],
+  ["in a template", (c, between) => (typeof c.value === "number" ? (between(c), `${c.value}`) : "other")],
+  [
+    "incremented",
+    (c, between) => {
+      if (typeof c.value === "number") {
+        between(c);
+        c.value++;
+        return c.value;
+      }
+      return "other";
+    },
+  ],
+  [
+    "added to",
+    (c, between) => {
+      if (typeof c.value === "number") {
+        between(c);
+        c.value += 1;
+        return c.value;
+      }
+      return "other";
+    },
+  ],
+];
+
+class Owner {
+  own: number | bigint = 1;
+  change(really: boolean): void {
+    if (really) this.own = 5n;
+  }
+  inItsOwnField(really: boolean): unknown {
+    if (typeof this.own === "number") {
+      this.change(really);
+      return [this.own, -this.own, this.own > 3, this.own === 5];
+    }
+    return "not a number";
+  }
+  addsInItsOwnField(really: boolean): unknown {
+    if (typeof this.own === "number") {
+      this.change(really);
+      return this.own + 1;
+    }
+    return "not a number";
+  }
+}
+
+function inAnElement(values: (number | bigint)[], really: boolean): unknown {
+  const change = (): void => {
+    if (really) values[0] = 5n;
+  };
+  if (typeof values[0] === "number") {
+    change();
+    return [values[0], -values[0], values[0] > 3];
+  }
+  return "not a number";
+}
+
+function inACapturedVariable(really: boolean): unknown {
+  let v: number | bigint = 1;
+  const change = (): void => {
+    if (really) v = 5n;
+  };
+  if (typeof v === "number") {
+    change();
+    return [v, -v, v > 3];
+  }
+  return "not a number";
+}
+
+function round(label: string, between: Between, really: boolean): void {
+  for (const [name, use] of uses) attempt(label + " in a parameter, " + name, () => use(new Cell(), between));
+  attempt(label + " in its own field", () => new Owner().inItsOwnField(really));
+  attempt(label + " in its own field, added to", () => new Owner().addsInItsOwnField(really));
+  attempt(label + " in an element", () => inAnElement([1], really));
+  attempt(label + " in a captured variable", () => inACapturedVariable(really));
+}
+
+round("honest", keep, false);
+let rounds = 0;
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) use(new Cell(), keep);
+  new Owner().inItsOwnField(false);
+  new Owner().addsInItsOwnField(false);
+  inAnElement([1], false);
+  inACapturedVariable(false);
+  rounds++;
+}
+console.log("honest rounds: " + rounds);
+round("replaced", spoil, true);
+round("honest again", keep, false);
+//// narrowed-in-five-places-a-number-or-a-string.ts
+////= text-13
+
+////= lines-136	Cell	value	number	string	1
+
+type Between = (c: Cell) => void;
+const keep: Between = () => {};
+////= lines-205	spoil	c	c.value	"text"
+
+////= half
+
+function inAParameter(c: Cell, between: Between): unknown {
+  if (typeof c.value === "number") {
+    between(c);
+    return [c.value, c.value + 1, c.value * 2, half(c.value)];
+  }
+  return "not a number";
+}
+
+function inALocal(between: Between): unknown {
+  const c = new Cell();
+  if (typeof c.value === "number") {
+    between(c);
+    return [c.value, c.value + 1, c.value * 2, half(c.value)];
+  }
+  return "not a number";
+}
+
+class Owner {
+  cell = new Cell();
+  own: number | string = 1;
+  inAField(between: Between): unknown {
+    if (typeof this.cell.value === "number") {
+      between(this.cell);
+      return [this.cell.value, this.cell.value + 1, this.cell.value * 2, half(this.cell.value)];
+    }
+    return "not a number";
+  }
+  change(really: boolean): void {
+    if (really) this.own = "text";
+  }
+  inItsOwnField(really: boolean): unknown {
+    if (typeof this.own === "number") {
+      this.change(really);
+      return [this.own, this.own + 1, this.own * 2, half(this.own)];
+    }
+    return "not a number";
+  }
+}
+
+function inAnElement(cells: Cell[], values: (number | string)[], really: boolean): unknown {
+  const change = (): void => {
+    if (really) {
+      cells[0].value = "text";
+      values[0] = "text";
+    }
+  };
+  if (typeof cells[0].value === "number" && typeof values[0] === "number") {
+    change();
+    return [cells[0].value, cells[0].value + 1, half(cells[0].value), values[0], values[0] + 1, half(values[0])];
+  }
+  return "not a number";
+}
+
+function inACapturedVariable(really: boolean): unknown {
+  let v: number | string = 1;
+  const change = (): void => {
+    if (really) v = "text";
+  };
+  if (typeof v === "number") {
+    change();
+    return [v, v + 1, v * 2, half(v)];
+  }
+  return "not a number";
+}
+
+function round(label: string, between: Between, really: boolean): void {
+  attempt(label + " in a parameter", () => inAParameter(new Cell(), between));
+  attempt(label + " in a local", () => inALocal(between));
+  attempt(label + " in a field", () => new Owner().inAField(between));
+  attempt(label + " in its own field", () => new Owner().inItsOwnField(really));
+  attempt(label + " in an element", () => inAnElement([new Cell()], [1], really));
+  attempt(label + " in a captured variable", () => inACapturedVariable(really));
+}
+
+round("honest", keep, false);
+let rounds = 0;
+for (let i = 0; i < 2000; i++) {
+  inAParameter(new Cell(), keep);
+  inALocal(keep);
+  new Owner().inAField(keep);
+  new Owner().inItsOwnField(false);
+  inAnElement([new Cell()], [1], false);
+  inACapturedVariable(false);
+  rounds++;
+}
+console.log("honest rounds: " + rounds);
+round("replaced", spoil, true);
+round("honest again", keep, false);
+//// narrowed-in-five-places-an-array-or-a-tuple.ts
+////= text-13
+
+type Point = [number] | [number, number];
+type Message = ["count", number] | ["name", string];
+
+class Holder {
+  point: Point = [1, 2];
+  message: Message = ["count", 1];
+  list: number[] | string = [1, 2, 3];
+}
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+const inPlace: Between = h => {
+  const numbers: number[] = h.point;
+  numbers.pop();
+  const parts: (string | number)[] = h.message;
+  parts[1] = "text";
+  if (typeof h.list !== "string") h.list.length = 0;
+};
+const replaced: Between = h => {
+  h.point = [9];
+  h.message = ["name", "text"];
+  h.list = "text";
+};
+
+function second(p: [number, number]): number {
+  return p[1];
+}
+
+const uses: [string, (h: Holder, between: Between) => unknown][] = [
+  ["by length, the second", (h, between) => (h.point.length === 2 ? (between(h), h.point[1]) : "other")],
+  ["by length, the second plus one", (h, between) => (h.point.length === 2 ? (between(h), h.point[1] + 1) : "other")],
+  ["by length, the length", (h, between) => (h.point.length === 2 ? (between(h), h.point.length) : "other")],
+  ["by length, handed on", (h, between) => (h.point.length === 2 ? (between(h), second(h.point)) : "other")],
+  [
+    "by length, destructured",
+    (h, between) => {
+      if (h.point.length === 2) {
+        between(h);
+        const [a, b] = h.point;
+        return [a, b, a + b];
+      }
+      return "other";
+    },
+  ],
+  ["by length, spread", (h, between) => (h.point.length === 2 ? (between(h), Math.max(...h.point)) : "other")],
+  ["by a tag, the rest", (h, between) => (h.message[0] === "count" ? (between(h), h.message[1]) : "other")],
+  ["by a tag, the rest plus one", (h, between) => (h.message[0] === "count" ? (between(h), h.message[1] + 1) : "other")],
+  ["by a tag, the tag", (h, between) => (h.message[0] === "count" ? (between(h), h.message[0]) : "other")],
+  ["by is array, the first", (h, between) => (Array.isArray(h.list) ? (between(h), h.list[0]) : "other")],
+  ["by is array, the length", (h, between) => (Array.isArray(h.list) ? (between(h), h.list.length) : "other")],
+  ["by is array, joined", (h, between) => (Array.isArray(h.list) ? (between(h), h.list.join("-")) : "other")],
+  ["by is array, pushed to", (h, between) => (Array.isArray(h.list) ? (between(h), h.list.push(4)) : "other")],
+  ["by typeof, the first", (h, between) => (typeof h.list !== "string" ? (between(h), h.list[0]) : "other")],
+  [
+    "by is array, summed",
+    (h, between) => {
+      if (Array.isArray(h.list)) {
+        between(h);
+        let sum = 0;
+        for (const n of h.list) sum += n;
+        return sum;
+      }
+      return "other";
+    },
+  ],
+];
+
+function inACapturedVariable(really: boolean): unknown {
+  let p: Point = [1, 2];
+  const change = (): void => {
+    if (really) p = [9];
+  };
+  if (p.length === 2) {
+    change();
+    return [p[1], p.length];
+  }
+  return "other";
+}
+
+function inAnElement(points: Point[], really: boolean): unknown {
+  const change = (): void => {
+    if (really) points[0] = [9];
+  };
+  if (points[0].length === 2) {
+    change();
+    return [points[0][1], points[0].length];
+  }
+  return "other";
+}
+
+function round(label: string, between: Between, really: boolean): void {
+  for (const [name, use] of uses) attempt(label + " " + name, () => use(new Holder(), between));
+  attempt(label + " in a captured variable", () => inACapturedVariable(really));
+  attempt(label + " in an element", () => inAnElement([[1, 2]], really));
+}
+
+round("honest", keep, false);
+let rounds = 0;
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) use(new Holder(), keep);
+  inACapturedVariable(false);
+  inAnElement([[1, 2]], false);
+  rounds++;
+}
+console.log("honest rounds: " + rounds);
+round("changed in place", inPlace, true);
+round("replaced", replaced, true);
+round("honest again", keep, false);
+//// narrowed-in-five-places-literal-types.ts
+////= text-13
+
+type Mode = "on" | "off";
+type Level = 0 | 1 | 2;
+
+class Switch {
+  mode: Mode = "on";
+  level: Level = 0;
+  armed: boolean = true;
+  big: 1n | 2n = 1n;
+}
+
+type Between = (s: Switch) => void;
+const keep: Between = () => {};
+const flip: Between = s => {
+  s.mode = "off";
+  s.level = 2;
+  s.armed = false;
+  s.big = 2n;
+};
+
+const costs = { on: 10, off: 20 };
+const names = ["zero", "one", "two"];
+
+////= lines-42	onlyOn	m	"on"	string	m	"!"
+
+////= lines-42	onlyZero	l	0	number	l	100
+
+function word(m: Mode): string {
+  switch (m) {
+    case "on":
+      return "lit";
+    case "off":
+      return "dark";
+  }
+}
+
+const uses: [string, (s: Switch, between: Between) => unknown][] = [
+  ["a string, read", (s, between) => (s.mode === "on" ? (between(s), s.mode) : "other")],
+  ["a string, compared again", (s, between) => (s.mode === "on" ? (between(s), s.mode === "on") : "other")],
+  ["a string, as a key", (s, between) => (s.mode === "on" ? (between(s), costs[s.mode]) : "other")],
+  ["a string, handed on", (s, between) => (s.mode === "on" ? (between(s), onlyOn(s.mode)) : "other")],
+  ["a string, switched on", (s, between) => (s.mode === "on" ? (between(s), word(s.mode)) : "other")],
+  ["a string, in a template", (s, between) => (s.mode === "on" ? (between(s), `<${s.mode}>`) : "other")],
+  ["a string, its length", (s, between) => (s.mode === "on" ? (between(s), s.mode.length) : "other")],
+  ["a string, by exclusion", (s, between) => (s.mode !== "off" ? (between(s), s.mode) : "other")],
+  ["a number, read", (s, between) => (s.level === 0 ? (between(s), s.level) : "other")],
+  ["a number, plus one", (s, between) => (s.level === 0 ? (between(s), s.level + 1) : "other")],
+  ["a number, as an index", (s, between) => (s.level === 0 ? (between(s), names[s.level]) : "other")],
+  ["a number, handed on", (s, between) => (s.level === 0 ? (between(s), onlyZero(s.level)) : "other")],
+  ["a number, tested", (s, between) => (s.level === 0 ? (between(s), s.level ? "truthy" : "falsy") : "other")],
+  ["a number, falsy", (s, between) => (!s.level ? (between(s), s.level) : "other")],
+  ["a number, by exclusion", (s, between) => (s.level !== 1 && s.level !== 2 ? (between(s), s.level) : "other")],
+  ["a boolean, read", (s, between) => (s.armed ? (between(s), s.armed) : "other")],
+  ["a boolean, tested", (s, between) => (s.armed ? (between(s), s.armed ? "yes" : "no") : "other")],
+  ["a boolean, negated", (s, between) => (s.armed === true ? (between(s), !s.armed) : "other")],
+  ["a bigint, read", (s, between) => (s.big === 1n ? (between(s), s.big) : "other")],
+  ["a bigint, doubled", (s, between) => (s.big === 1n ? (between(s), s.big * 2n) : "other")],
+];
+
+class Owner {
+  mode: Mode = "on";
+  change(really: boolean): void {
+    if (really) this.mode = "off";
+  }
+  inItsOwnField(really: boolean): unknown {
+    if (this.mode === "on") {
+      this.change(really);
+      return [this.mode, costs[this.mode], onlyOn(this.mode)];
+    }
+    return "other";
+  }
+}
+
+function inAnElement(modes: Mode[], really: boolean): unknown {
+  const change = (): void => {
+    if (really) modes[0] = "off";
+  };
+  if (modes[0] === "on") {
+    change();
+    return [modes[0], costs[modes[0]], onlyOn(modes[0])];
+  }
+  return "other";
+}
+
+function inACapturedVariable(really: boolean): unknown {
+  let m: Mode = "on";
+  const change = (): void => {
+    if (really) m = "off";
+  };
+  if (m === "on") {
+    change();
+    return [m, costs[m], onlyOn(m)];
+  }
+  return "other";
+}
+
+function round(label: string, between: Between, really: boolean): void {
+  for (const [name, use] of uses) attempt(label + " " + name, () => use(new Switch(), between));
+  attempt(label + " in its own field", () => new Owner().inItsOwnField(really));
+  attempt(label + " in an element", () => inAnElement(["on"], really));
+  attempt(label + " in a captured variable", () => inACapturedVariable(really));
+}
+
+round("honest", keep, false);
+let rounds = 0;
+////= for-53	Switch	"on"
+console.log("honest rounds: " + rounds);
+round("flipped", flip, true);
+round("honest again", keep, false);
+//// narrowed-in-five-places-two-classes.ts
+////= text-13
+
+////= Shape
+
+class Square extends Shape {
+  edge = 2;
+  corner = 90;
+  area(): number {
+    return this.edge * this.edge;
+  }
+}
+
+////= Circle-2
+
+////= Holder-10
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= lines-204	toBase	h	h.shape	Shape
+////= lines-204	toSibling	h	h.shape	Circle
+
+////= lines-20	edgeOf	s	Square	number	return	s.edge
+
+function inAParameter(h: Holder, between: Between): unknown {
+  if (h.shape instanceof Square) {
+    between(h);
+    return [h.shape.edge, h.shape.corner, h.shape.sides, edgeOf(h.shape), Object.keys(h.shape).join()];
+  }
+  return "not a square";
+}
+
+function callsInAParameter(h: Holder, between: Between): unknown {
+  if (h.shape instanceof Square) {
+    between(h);
+    return h.shape.area();
+  }
+  return "not a square";
+}
+
+function inALocal(between: Between): unknown {
+  const h = new Holder();
+  if (h.shape instanceof Square) {
+    between(h);
+    return [h.shape.edge, h.shape.corner, h.shape.sides, edgeOf(h.shape)];
+  }
+  return "not a square";
+}
+
+class Owner {
+  holder = new Holder();
+  own: Shape = new Square();
+  inAField(between: Between): unknown {
+    if (this.holder.shape instanceof Square) {
+      between(this.holder);
+      return [this.holder.shape.edge, this.holder.shape.corner, this.holder.shape.sides, edgeOf(this.holder.shape)];
+    }
+    return "not a square";
+  }
+  change(to: Shape | null): void {
+    if (to !== null) this.own = to;
+  }
+  inItsOwnField(to: Shape | null): unknown {
+    if (this.own instanceof Square) {
+      this.change(to);
+      return [this.own.edge, this.own.corner, this.own.sides, edgeOf(this.own)];
+    }
+    return "not a square";
+  }
+}
+
+function inAnElement(shapes: Shape[], to: Shape | null): unknown {
+  const change = (): void => {
+    if (to !== null) shapes[0] = to;
+  };
+  if (shapes[0] instanceof Square) {
+    change();
+    return [shapes[0].edge, shapes[0].corner, shapes[0].sides, edgeOf(shapes[0])];
+  }
+  return "not a square";
+}
+
+function inACapturedVariable(to: Shape | null): unknown {
+  let s: Shape = new Square();
+  const change = (): void => {
+    if (to !== null) s = to;
+  };
+  if (s instanceof Square) {
+    change();
+    return [s.edge, s.corner, s.sides, edgeOf(s)];
+  }
+  return "not a square";
+}
+
+function round(label: string, between: Between, make: () => Shape | null): void {
+  attempt(label + " in a parameter", () => inAParameter(new Holder(), between));
+  attempt(label + " in a parameter, a method", () => callsInAParameter(new Holder(), between));
+  attempt(label + " in a local", () => inALocal(between));
+  attempt(label + " in a field", () => new Owner().inAField(between));
+  attempt(label + " in its own field", () => new Owner().inItsOwnField(make()));
+  attempt(label + " in an element", () => inAnElement([new Square()], make()));
+  attempt(label + " in a captured variable", () => inACapturedVariable(make()));
+}
+
+round("honest", keep, () => null);
+let rounds = 0;
+for (let i = 0; i < 2000; i++) {
+  inAParameter(new Holder(), keep);
+  callsInAParameter(new Holder(), keep);
+  inALocal(keep);
+  new Owner().inAField(keep);
+  new Owner().inItsOwnField(null);
+  inAnElement([new Square()], null);
+  inACapturedVariable(null);
+  rounds++;
+}
+console.log("honest rounds: " + rounds);
+round("the base class", toBase, () => new Shape());
+round("a sibling", toSibling, () => new Circle());
+round("honest again", keep, () => null);
+//// narrowed-in-one-function-with-honest-callers-and-one-odd-caller.ts
+////= text-32
+
+////= Holder-13	constructor(readonly hook: (h: Holder) => void) {}
+
+function edgeOf(h: Holder): unknown {
+  if (h.shape instanceof Square) {
+    h.hook(h);
+    return [h.shape.edge, h.shape.edge * 2, h.shape.sides];
+  }
+  return "other";
+}
+
+const quiet = (h: Holder): void => {};
+const swaps = (h: Holder): void => {
+  h.shape = new Circle();
+};
+
+function firstHonestCaller(): unknown {
+  return edgeOf(new Holder(quiet));
+}
+
+function secondHonestCaller(): unknown {
+  const h = new Holder(quiet);
+  return [edgeOf(h), edgeOf(h)];
+}
+
+function thirdHonestCaller(): unknown {
+  let last: unknown = null;
+  for (let i = 0; i < 2000; i++) last = edgeOf(new Holder(quiet));
+  return last;
+}
+
+function oddCaller(): unknown {
+  return edgeOf(new Holder(swaps));
+}
+
+const table = { edgeOf };
+const list = [edgeOf];
+
+attempt("the first honest caller", firstHonestCaller);
+attempt("the second honest caller", secondHonestCaller);
+attempt("the third honest caller", thirdHonestCaller);
+attempt("the odd caller", oddCaller);
+attempt("the odd caller through call", () => edgeOf.call(undefined, new Holder(swaps)));
+attempt("the odd caller through apply", () => edgeOf.apply(undefined, [new Holder(swaps)]));
+attempt("the odd caller through bind", () => edgeOf.bind(undefined, new Holder(swaps))());
+attempt("the odd caller through a member", () => table.edgeOf(new Holder(swaps)));
+attempt("the odd caller through an element", () => list[0](new Holder(swaps)));
+attempt("the odd caller through map", () => [new Holder(quiet), new Holder(swaps), new Holder(quiet)].map(edgeOf));
+attempt("the odd caller through Reflect.apply", () => Reflect.apply(edgeOf, undefined, [new Holder(swaps)]));
+attempt("the first honest caller again", firstHonestCaller);
+attempt("the second honest caller again", secondHonestCaller);
+//// narrowed-members-of-a-proxy-typed-as-the-class.ts
+////= text-16
+
+////= Holder-3
+
+const log: string[] = [];
+
+function alternating(): Holder {
+  const reads = new Map<PropertyKey, number>();
+  const second: Holder = { shape: new Shape(), value: "text", leaf: null, mode: "off" };
+  return new Proxy(new Holder(), {
+    get(target, key, receiver) {
+      const n = reads.get(key) ?? 0;
+      reads.set(key, n + 1);
+      log.push(String(key) + n);
+      return Reflect.get(n % 2 === 0 ? target : second, key);
+    },
+  });
+}
+
+function transparent(): Holder {
+  return new Proxy(new Holder(), {});
+}
+
+function swallowsStores(): Holder {
+  return new Proxy(new Holder(), {
+    set() {
+      return true;
+    },
+  });
+}
+
+const uses: [string, (h: Holder) => unknown][] = [
+  ["instanceof", h => (h.shape instanceof Square ? h.shape.edge : "other")],
+  ["instanceof, doubled", h => (h.shape instanceof Square ? h.shape.edge * 2 : "other")],
+  ["typeof", h => (typeof h.value === "number" ? h.value : "other")],
+  ["typeof, plus one", h => (typeof h.value === "number" ? h.value + 1 : "other")],
+  ["not null", h => (h.leaf !== null ? h.leaf : "other")],
+  ["not null, a member", h => (h.leaf !== null ? h.leaf.edge : "other")],
+  ["a literal", h => (h.mode === "on" ? h.mode : "other")],
+  ["a store narrows, then a read", h => {
+    h.value = "stored";
+    return [h.value, h.value.length];
+  }],
+  ["a store of a number narrows, then arithmetic", h => {
+    h.value = 41;
+    return h.value + 1;
+  }],
+  ["a store of null narrows", h => {
+    h.leaf = null;
+    return h.leaf;
+  }],
+];
+
+for (const [name, use] of uses) attempt("a plain holder: " + name, () => use(new Holder()));
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Holder());
+for (const [name, use] of uses) attempt("a proxy without traps: " + name, () => use(transparent()));
+for (const [name, use] of uses) attempt("a proxy that alternates: " + name, () => use(alternating()));
+console.log("reads: " + log.join(" "));
+for (const [name, use] of uses) attempt("a proxy that swallows stores: " + name, () => use(swallowsStores()));
+for (const [name, use] of uses) attempt("a plain holder again: " + name, () => use(new Holder()));

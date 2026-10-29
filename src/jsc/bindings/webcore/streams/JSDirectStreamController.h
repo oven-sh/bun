@@ -90,9 +90,9 @@ public:
     JSC::WriteBarrier<JSReadableStream> m_stream;
     // The converted user source (this + pull/cancel/close). Cleared once no hook can run.
     JSC::WriteBarrier<JSDirectStreamSource> m_source;
-    // _pendingRead — the promise the in-flight read()/readMany() is waiting on. Only
+    // _pendingRead — the in-flight read()/readMany()'s own promise (see onPull). Only
     // promise-backed reads register here; pipeTo / tee / for-await reads wait in the
-    // reader's [[readRequests]] instead (see onPull). handleError rejects AND CLEARS it.
+    // reader's [[readRequests]] instead. handleError rejects AND CLEARS it.
     JSC::WriteBarrier<JSC::JSPromise> m_pendingRead;
     // _deferCloseReason
     JSC::WriteBarrier<JSC::Unknown> m_deferCloseReason;
@@ -105,6 +105,9 @@ public:
     // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
     // throwing stub" trick).
     bool m_closed : 1 { false };
+    // The source already ended the stream: closed, or end()/close() ran inside pull() and
+    // completes when pull() returns. The five methods no-op from this point, not from m_closed.
+    bool sourceEnded() const { return m_closed || m_deferClose == 1; }
     // An async pull()'s returned promise has not yet settled; cleared by its settlement
     // reactions. m_pullAgain is set only when a NEW read arrives while m_pullInFlight
     // (edge-triggered, matching the spec default controller's [[pullAgain]]).
@@ -116,6 +119,8 @@ public:
     // process.nextTick job delivers it during the same microtask/nextTick drain.
     bool m_endOfTickFlushArmed : 1 { false };
     bool m_finalChunkArmed : 1 { false };
+    // A whole-body consumer (.text() etc.): an async pull() resolving without close()/end() closes.
+    bool m_closeOnPullSettled : 1 { false };
     // ArrayBuffer sink: the bytes write() accepted since it armed m_pendingWrite (saturating).
     uint32_t m_pendingWriteLength { 0 };
     // ArrayBuffer sink: m_buffer's capacity as last reported to the heap (reportExtraMemoryAllocated);
@@ -161,11 +166,8 @@ public:
 
     // The state machine. All userJS: YES.
     // The READ pump: every default-reader read on a Direct stream lands here. A promise-backed
-    // read()/readMany() passes readRequestQueued=false and adopts the returned promise
-    // (undefined when the pump refused). A pipeTo / tee / for-await read adds its
-    // JSReadRequest to [[readRequests]] first and passes readRequestQueued=true: that
-    // request is the consumer, the pump registers no promise for it and returns undefined.
-    JSC::JSValue onPull(JSC::JSGlobalObject*, bool readRequestQueued);
+    // read()/readMany() passes its own promise for the pump to settle (false = refused: the caller reports done); a read that queued a JSReadRequest (pipeTo / tee / for-await) passes nullptr.
+    bool onPull(JSC::JSGlobalObject*, JSC::JSPromise* readPromise);
     // `end()` / `close(reason)` — reason may be the empty JSValue (absent).
     void onClose(JSC::JSGlobalObject*, JSC::JSValue reason);
     // `flush()` — BRANCH ORDER IS LOAD-BEARING.

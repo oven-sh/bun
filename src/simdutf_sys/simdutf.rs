@@ -58,6 +58,11 @@ unsafe extern "C" {
     ) -> usize;
     pub fn simdutf__utf16_length_from_utf8(input: *const u8, length: usize) -> usize;
     pub fn simdutf__utf8_length_from_latin1(input: *const u8, length: usize) -> usize;
+    pub fn simdutf__convert_latin1_to_utf8(
+        input: *const u8,
+        length: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
 }
 
 pub mod validate {
@@ -281,4 +286,10 @@ pub mod base64 {
             )
         }
     }
+}
+
+/// Returns false if this CPU can't run any compiled-in kernel. simdutf then falls back to a stub
+/// that returns false for every query.
+pub fn has_any_implementation() -> bool {
+    validate::ascii(b"a")
 }

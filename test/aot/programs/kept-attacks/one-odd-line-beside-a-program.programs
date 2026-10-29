@@ -1,0 +1,57 @@
+//// one-odd-line-beside-a-program/x-emitter.ts
+// An emitter passes an instance on to a listener stores a string into a number field of it.
+import { EventEmitter } from "node:events";
+
+function spoil(body: any): void {
+  body.mass = "9";
+}
+
+////= Body-4
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+new EventEmitter().on("e", spoil).emit("e", world[0]);
+seen.push(measure(world), world.map(body => Object.keys(body).length).join(""));
+console.log(seen.join(" "));
+//// one-odd-line-beside-a-program/x-emitter-small.ts
+// One odd line that never runs stands beside a program that does not change: x emitter small. It prints what plain Bun prints.
+import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+e.on("x", (v: number) => console.log(v + 1));
+e.emit("x", 1);
+//// one-odd-line-beside-a-program/x-locale.ts
+// `toLocaleString`, which every object inherits, calls the `toString` of its receiver, a method of the class that stores a string into a number field.
+export {};
+
+////= Body-6
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+seen.push(world[1].toLocaleString());
+seen.push(measure(world), world.map(body => Object.keys(body).length).join(""));
+console.log(seen.join(" "));
+//// one-odd-line-beside-a-program/x-reaction.ts
+// A reaction throws an instance, and the function given to `catch` two links further down stores a string into a number field of what it gets.
+export {};
+
+////= Body-4
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+////= lines
+seen.push(measure(world), world.map(body => Object.keys(body).length).join(""));
+console.log(seen.join(" "));
+//// one-odd-line-beside-a-program/x-tl3.ts
+// One odd line that never runs stands beside a program that does not change. It prints what plain Bun prints.
+class A { toString() { return "a"; } }
+console.log(new A().toLocaleString());
+//// one-odd-line-beside-a-program/x-y3.ts
+// One odd line that never runs stands beside a program that does not change. It prints what plain Bun prints.
+import { EventEmitter } from "node:events";
+const log: string[] = [];
+class Meter { measure(): string { return "first"; } }
+const emitter = new EventEmitter();
+emitter.on("meter", (back: any) => { Object.getPrototypeOf(back).measure = function (): string { return "replaced"; }; });
+emitter.emit("meter", new Meter());
+log.push(new Meter().measure());
+console.log(log.join("; "));

@@ -1,0 +1,1 @@
+{ "build": ["--aot-testing=FailPredictions:2:1"] }

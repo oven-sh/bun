@@ -1756,7 +1756,7 @@ impl<'a> Resolver<'a> {
             }
 
             let mut needs_side_effects = true;
-            if let Some(existing) = Result::deref_package_json(result.package_json) {
+            if let Some(existing) = result.package_json {
                 // if we don't have it here, they might put it in a sideEfffects
                 // map of the parent package.json
                 // TODO: check if webpack also does this parent lookup
@@ -1774,12 +1774,10 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            result.package_json = result
-                .package_json
-                .or_else(|| dir.enclosing_package_json.map(std::ptr::from_ref));
+            result.package_json = result.package_json.or_else(|| dir.enclosing_package_json);
 
             if needs_side_effects {
-                if let Some(package_json) = Result::deref_package_json(result.package_json) {
+                if let Some(package_json) = result.package_json {
                     result.primary_side_effects_data =
                         primary_side_effects(&package_json.side_effects, path.text());
                 }
@@ -2120,10 +2118,7 @@ impl<'a> Resolver<'a> {
                     {
                         result.path_pair.primary = fallback_module.path;
                         result.module_type = options::ModuleType::Cjs;
-                        // @ptrFromInt(@intFromPtr(...)) — cast away constness
-                        result.package_json = Some(std::ptr::from_ref::<PackageJSON>(
-                            fallback_module.package_json,
-                        ));
+                        result.package_json = Some(fallback_module.package_json);
                         result.flags.set_is_from_node_modules(true);
                         return ResultUnion::Success(result);
                     }
@@ -2341,7 +2336,7 @@ impl<'a> Resolver<'a> {
                             return ResultUnion::Success(Result {
                                 path_pair: match_result.path_pair,
                                 dirname_fd: match_result.dirname_fd,
-                                package_json: Some(std::ptr::from_ref(pkg)),
+                                package_json: Some(pkg),
                                 jsx: self.opts.jsx.clone(),
                                 module_type: match_result.module_type,
                                 flags,
@@ -2479,7 +2474,7 @@ impl<'a> Resolver<'a> {
                                 return ResultUnion::Success(Result {
                                     path_pair: pair,
                                     dirname_fd: node_module.dirname_fd,
-                                    package_json: Some(std::ptr::from_ref(package_json)),
+                                    package_json: Some(package_json),
                                     jsx: self.opts.jsx.clone(),
                                     ..Default::default()
                                 });
@@ -2999,7 +2994,7 @@ impl<'a> Resolver<'a> {
                                                 package_json.source.path.text,
                                             )
                                             .is_node_module(),
-                                            package_json: Some(std::ptr::from_ref(package_json)),
+                                            package_json: Some(package_json),
                                             dir_info: Some(dir_info),
                                             ..Default::default()
                                         };
@@ -3514,7 +3509,7 @@ impl<'a> Resolver<'a> {
                                                 .source
                                                 .path
                                                 .is_node_module(),
-                                            package_json: Some(std::ptr::from_ref(package_json)),
+                                            package_json: Some(package_json),
                                             dir_info: Some(dir_info),
                                             ..Default::default()
                                         };
@@ -3839,7 +3834,7 @@ impl<'a> Resolver<'a> {
         mut esm_resolution: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
@@ -3862,7 +3857,7 @@ impl<'a> Resolver<'a> {
         esm_resolution: &mut crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
@@ -4038,12 +4033,7 @@ impl<'a> Resolver<'a> {
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
                     is_node_module: true,
-                    package_json: Some(
-                        resolved_dir_info
-                            .package_json()
-                            .map(std::ptr::from_ref)
-                            .unwrap_or_else(|| std::ptr::from_ref(package_json)),
-                    ),
+                    package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
                     module_type,
                     ..Default::default()
                 };
@@ -4058,9 +4048,7 @@ impl<'a> Resolver<'a> {
                     .is_success()
                 {
                     out.is_node_module = true;
-                    out.package_json = out
-                        .package_json
-                        .or_else(|| Some(std::ptr::from_ref(package_json)));
+                    out.package_json = out.package_json.or(Some(package_json));
                     return MatchStatus::Success;
                 }
                 esm_resolution.status = Status::ModuleNotFound;
@@ -4081,7 +4069,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         base: &[u8],
         extension_order: options::ExtOrder,
         is_wildcard: bool,
@@ -4170,7 +4158,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         query: &crate::fs::EntryLookup,
         out: &mut MatchResult,
     ) -> bool {
@@ -4205,12 +4193,7 @@ impl<'a> Resolver<'a> {
             file_fd: query.entry().cache().fd,
             dir_info: Some(resolved_dir_info),
             is_node_module: true,
-            package_json: Some(
-                resolved_dir_info
-                    .package_json()
-                    .map(std::ptr::from_ref)
-                    .unwrap_or_else(|| std::ptr::from_ref(package_json)),
-            ),
+            package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
             module_type,
             ..Default::default()
         };
@@ -5453,7 +5436,7 @@ impl<'a> Resolver<'a> {
                                     primary: _path,
                                     secondary: None,
                                 },
-                                package_json: Some(std::ptr::from_ref(browser_json)),
+                                package_json: Some(browser_json),
                                 ..Default::default()
                             };
                             dec_ret!(MatchStatus::Success);
@@ -5480,7 +5463,7 @@ impl<'a> Resolver<'a> {
                         primary: Fs::Path::init(result.path),
                         secondary: None,
                     },
-                    package_json: Some(std::ptr::from_ref(package_json)),
+                    package_json: Some(package_json),
                     dirname_fd: result.dirname_fd,
                     ..Default::default()
                 };
@@ -5627,7 +5610,7 @@ impl<'a> Resolver<'a> {
                             primary: Path::init(out_buf),
                             secondary: None,
                         },
-                        package_json: Some(std::ptr::from_ref(package_json)),
+                        package_json: Some(package_json),
                         dirname_fd,
                         ..Default::default()
                     };
@@ -5713,7 +5696,7 @@ impl<'a> Resolver<'a> {
                                     primary: _path,
                                     secondary: None,
                                 },
-                                package_json: Some(std::ptr::from_ref(browser_json)),
+                                package_json: Some(browser_json),
                                 ..Default::default()
                             };
                             return MatchStatus::Success;
@@ -5788,7 +5771,7 @@ impl<'a> Resolver<'a> {
                                     secondary: None,
                                 },
                                 dirname_fd: file.dirname_fd,
-                                package_json: Some(std::ptr::from_ref(package_json)),
+                                package_json: Some(package_json),
                                 file_fd: file.file_fd,
                                 ..Default::default()
                             };
@@ -5845,11 +5828,11 @@ impl<'a> Resolver<'a> {
                 dec_ret!(MatchStatus::NotFound);
             }
         };
-        let mut package_json: Option<*const PackageJSON> = None;
+        let mut package_json: Option<&'static PackageJSON> = None;
 
         // Try using the main field(s) from "package.json"
         if let Some(pkg_json) = dir_info.package_json() {
-            package_json = Some(std::ptr::from_ref(pkg_json));
+            package_json = Some(pkg_json);
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
                 // BACKREF: `RawSlice` detaches the `&self.opts.main_fields`

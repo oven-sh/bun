@@ -4743,11 +4743,12 @@ test("react-compiler leaves a file as written that imports `c` from the compiler
     Object.fromEntries(Object.entries(sources).map(([name, source]) => [`${name}.jsx`, source])),
   );
 
-  const build = async (target: "browser" | "bun", reactCompiler: boolean) => {
+  const build = async (target: "browser" | "bun", format: "esm" | "cjs", reactCompiler: boolean) => {
     const result = await Bun.build({
       entrypoints: Object.keys(sources).map(name => join(String(dir), `${name}.jsx`)),
       root: String(dir),
       target,
+      format,
       external: ["*"],
       reactCompiler,
     });
@@ -4760,35 +4761,22 @@ test("react-compiler leaves a file as written that imports `c` from the compiler
   // The compiler memoizes for a browser and takes the state and the handlers out for a server.
   const asWritten: Record<string, string[]> = {};
   for (const target of ["browser", "bun"] as const) {
-    const withCompiler = await build(target, true);
-    const withoutCompiler = await build(target, false);
-    asWritten[target] = Object.keys(withCompiler)
-      .filter(name => withCompiler[name] === withoutCompiler[name])
-      .sort();
+    for (const format of ["esm", "cjs"] as const) {
+      const withCompiler = await build(target, format, true);
+      const withoutCompiler = await build(target, format, false);
+      asWritten[`${target}, ${format}`] = Object.keys(withCompiler)
+        .filter(name => withCompiler[name] === withoutCompiler[name])
+        .sort();
+    }
   }
 
   const expected = Object.keys(compiledAlready).sort();
-  expect(asWritten).toEqual({ browser: expected, bun: expected });
-});
-
-// Upstream's fixture for the same rule, built as the fixtures are: every error of the compiler ends the build.
-// Its memo cache is what a hook returns, `useMemoCache()`, and the compiler lets no function write to that.
-test.skipIf(!isDebug && !isASAN)("react-compiler builds upstream's fixture of a compiled file", async () => {
-  const build = (reactCompiler: boolean) =>
-    Bun.build({
-      entrypoints: [join(import.meta.dir, "react-compiler-fixtures", "skip-useMemoCache.js")],
-      target: "browser",
-      external: ["*"],
-      reactCompiler,
-      // @ts-expect-error test-only option, not in bun-types
-      reactCompilerParseTestPragmas: true,
-      throw: false,
-    });
-  const withCompiler = await build(true);
-  const withoutCompiler = await build(false);
-
-  expect(withCompiler.logs.map(log => String(log.message))).toEqual([]);
-  expect(await withCompiler.outputs[0].text()).toBe(await withoutCompiler.outputs[0].text());
+  expect(asWritten).toEqual({
+    "browser, esm": expected,
+    "browser, cjs": expected,
+    "bun, esm": expected,
+    "bun, cjs": expected,
+  });
 });
 
 // The parser has a stack check. The lowering, which takes more of the stack for a

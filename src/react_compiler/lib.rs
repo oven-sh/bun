@@ -32,7 +32,6 @@ pub(crate) mod pipeline;
 pub mod program;
 
 pub use compile_result::{CompileDiagnostic, CompileOutput};
-pub use imports::REACT_COMPILER_RUNTIME_MODULES;
 pub use lint::{Categories, Linted, lint_function};
 pub use options::ReactCompilerOptions;
 pub use program::{

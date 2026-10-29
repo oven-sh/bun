@@ -370,8 +370,6 @@ pub(crate) extern "C" fn Bun__nodeQuic__processEndpoint(owner: &QuicEndpoint) {
     owner.run_driver_pass(false);
 }
 
-bun_event_loop::impl_timer_owner!(QuicEndpoint; from_timer_ptr => event_loop_timer);
-
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     let user = uws::udp::Socket::opaque_mut(socket).user();
     if user.is_null() {

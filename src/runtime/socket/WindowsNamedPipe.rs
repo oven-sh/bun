@@ -71,8 +71,6 @@ pub(crate) struct WindowsNamedPipe {
     pub(crate) flags: Cell<Flags>,
 }
 
-bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
-
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]

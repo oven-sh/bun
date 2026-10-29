@@ -193,12 +193,17 @@ test("a zone that names no interface is interface 0", { skip: !hasIPv6Loopback }
     await outcome(s => s.setMulticastInterface("::%nosuchzone0"), "udp6", "::1"),
     await outcome(s => s.setMulticastInterface("::%nosuchzone0 junk"), "udp6", "::1"),
   ];
-  // macOS does not take interface 0 for IPV6_MULTICAST_IF: the call fails there, in Node.js too.
   if (process.platform === "darwin") {
-    assert.deepStrictEqual(
-      results.map(result => result?.syscall),
-      ["setMulticastInterface", "setMulticastInterface"],
-    );
+    // macOS does not take interface 0 for IPV6_MULTICAST_IF, in Node.js too. XNU answers EINVAL, and EADDRNOTAVAIL before macOS 14.4.
+    const code = results[0]?.code === "EADDRNOTAVAIL" ? "EADDRNOTAVAIL" : "EINVAL";
+    const refused = {
+      name: "Error",
+      code,
+      errno: -os.constants.errno[code],
+      syscall: "setMulticastInterface",
+      message: `setMulticastInterface ${code}`,
+    };
+    assert.deepStrictEqual(results, [refused, refused]);
   } else {
     assert.deepStrictEqual(results, [undefined, undefined]);
   }

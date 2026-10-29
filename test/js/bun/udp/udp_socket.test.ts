@@ -413,9 +413,13 @@ describe("udpSocket()", () => {
     // test-dgram-multicast-set-interface.js
     test.skipIf(!canBindIPv6Loopback)("a zone that names no interface is interface 0", async () => {
       const result: any = await outcome(s => s.setMulticastInterface("::%nosuchzone0"), "::1");
-      // macOS does not take interface 0 for IPV6_MULTICAST_IF: its setsockopt fails, in Node.js too.
-      if (isMacOS) expect(result?.syscall).toBe("setsockopt");
-      else expect(result).toBe(true);
+      if (isMacOS) {
+        // macOS does not take interface 0 for IPV6_MULTICAST_IF, in Node.js too. XNU answers EINVAL, and EADDRNOTAVAIL before macOS 14.4.
+        expect(result?.syscall).toBe("setsockopt");
+        expect(["EINVAL", "EADDRNOTAVAIL"]).toContain(result.code);
+      } else {
+        expect(result).toBe(true);
+      }
     });
 
     // The zone is all that an IPv6 interface argument gives. /proc/net/igmp6

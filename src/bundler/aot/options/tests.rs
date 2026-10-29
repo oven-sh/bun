@@ -601,7 +601,7 @@ fn single_entry_point_directory_is_root() {
         (b"main.ts", b"/project"),
         (b"src/main.ts", b"/project/src"),
         (b"./src/../lib/main.ts", b"/project/lib"),
-        (b"/main.ts", b"/"),
+        (b"/main.ts", b"/project"),
     ];
     for (entry_point, root_directory) in cases {
         assert_eq!(
@@ -620,7 +620,7 @@ fn common_entry_point_directory_is_root() {
         (&[b"src/lib/b.ts", b"src/a.ts"], b"/project/src"),
         (&[b"src/a.ts", b"src-gen/b.ts"], b"/project"),
         (&[b"src/a.ts", b"./src/b.ts"], b"/project/src"),
-        (&[b"a.ts", b"/other/b.ts"], b"/"),
+        (&[b"a.ts", b"/other/b.ts"], b"/project"),
     ];
     for (entry_points, root_directory) in cases {
         assert_eq!(

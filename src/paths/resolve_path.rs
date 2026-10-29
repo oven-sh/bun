@@ -367,6 +367,11 @@ pub fn longest_common_path<'a>(input: &[&'a [u8]]) -> &'a [u8] {
     longest_common_path_generic::<platform::Loose>(input)
 }
 
+/// Like `longest_common_path`, with the rules of the host: on Windows the compare is case-insensitive and paths on two volumes share nothing.
+pub fn longest_common_path_native<'a>(input: &[&'a [u8]]) -> &'a [u8] {
+    longest_common_path_generic::<platform::Auto>(input)
+}
+
 pub fn get_if_exists_longest_common_path<'a>(input: &[&'a [u8]]) -> Option<&'a [u8]> {
     get_if_exists_longest_common_path_generic::<platform::Loose>(input)
 }

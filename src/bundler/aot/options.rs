@@ -15,7 +15,7 @@ use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
-use super::paths::{absolute_path, relative_path, report_long_path};
+use super::paths::{absolute_path, real_directory_path, relative_path, report_long_path};
 use crate::bun_fs::PathName;
 use crate::bundle_v2::FileMap;
 use crate::options::{
@@ -387,9 +387,6 @@ fn widen_to_assets(
         path.strip_prefix(without_trailing_slash_windows_path(&working_directory))
             .is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
     };
-    if !is_inside(&entry_directory) {
-        return entry_directory;
-    }
     let paths = assets
         .iter()
         .map(|asset| absolute_path(&working_directory, asset));
@@ -433,13 +430,6 @@ fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
     let name = bun_core::ZStr::from_buf(&name[..], path.len());
     let mut buffer = bun_paths::path_buffer_pool::get();
     Some(bun_sys::realpath(name, &mut buffer).ok()?.to_vec())
-}
-
-fn real_directory_path(directory: &[u8]) -> Option<Vec<u8>> {
-    let opened = bun_sys::Dir::open(directory).ok()?;
-    let mut buffer = bun_paths::path_buffer_pool::get();
-    let real_path = opened.get_fd_path(&mut buffer).ok()?;
-    Some(real_path.to_vec())
 }
 
 fn entry_point_names(

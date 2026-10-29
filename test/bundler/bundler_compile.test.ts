@@ -637,26 +637,28 @@ describe("bundler", () => {
     },
   });
   // The embedded root is the directory that holds every entry point, however each one is spelled on the command
-  // line, so a Worker path resolves the same as in the executable that `--aot` builds.
+  // line, so a Worker path resolves the same as in the executable that `--aot` builds. A path that names no
+  // embedded file is read from disk, relative to the working directory: the copy on disk says so.
   itBundled("compile/EmbeddedRootIgnoresEntryPointSpelling", {
     backend: "cli",
     compile: true,
     files: {
       "/src/entry.ts": /* js */ `
-        import { rmSync } from "fs";
-        rmSync("./src", { recursive: true, force: true });
         for (const spec of ["./w/worker.ts", "./src/w/worker.ts"]) {
           const w = new Worker(spec);
-          console.log(spec, "->", await new Promise(r => { w.onmessage = e => r(e.data); w.onerror = () => r("not found"); }));
+          console.log(spec, "->", await new Promise(r => { w.onmessage = e => r(e.data); w.onerror = e => r("error: " + e.message); }));
           w.terminate();
         }
       `,
-      "/src/w/worker.ts": `postMessage("worker ok");`,
+      "/src/w/worker.ts": `postMessage("worker:embedded");`,
+    },
+    runtimeFiles: {
+      "/src/w/worker.ts": `postMessage("worker:disk");`,
     },
     entryPointsRaw: ["src/entry.ts", "./src/w/worker.ts"],
     outfile: "dist/out",
     run: {
-      stdout: "./w/worker.ts -> worker ok\n./src/w/worker.ts -> not found\n",
+      stdout: "./w/worker.ts -> worker:embedded\n./src/w/worker.ts -> worker:disk\n",
       file: "dist/out",
       setCwd: true,
     },

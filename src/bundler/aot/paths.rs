@@ -7,6 +7,14 @@ pub(crate) fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
     resolve_path::join_abs_string_spill::<Auto>(working_directory, &mut spill, &[path]).to_vec()
 }
 
+/// The path of `directory` with every link followed, if it can be opened.
+pub(crate) fn real_directory_path(directory: &[u8]) -> Option<Vec<u8>> {
+    let opened = bun_sys::Dir::open(directory).ok()?;
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let real_path = opened.get_fd_path(&mut buffer).ok()?;
+    Some(real_path.to_vec())
+}
+
 pub(super) fn relative_path(working_directory: &[u8], from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     let from = absolute_path(working_directory, from);
     let to = absolute_path(working_directory, to);

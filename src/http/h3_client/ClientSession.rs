@@ -466,11 +466,11 @@ pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPCli
 ///
 /// INVARIANT: every caller passes a non-null `quic::Socket` that lsquic owns
 /// and keeps live for the borrow's duration — either an `extern "C"` callback
-/// argument (live for the callback), or a `ClientSession.qsocket` field (set
+/// argument's connection (live for the callback), or a `ClientSession.qsocket` field (set
 /// by `ClientContext::connect`, valid until `on_conn_close`). The handle is an
 /// FFI-owned allocation distinct from any Rust struct holding it. All access
 /// is HTTP-thread-only, so the returned `&mut` is the sole live borrow.
-/// Centralises the raw `&mut *qs` upgrade shared by `callbacks::qsocket_arg`
+/// Centralises the raw `&mut *qs` upgrade shared by `callbacks::on_stream_open`
 /// and `ClientSession::qsocket_mut`.
 #[inline(always)]
 pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
@@ -481,7 +481,7 @@ pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket
 /// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&mut`.
 ///
 /// Same INVARIANT as [`quic_socket_mut`] — lsquic-owned, live for the
-/// borrow's duration (callback argument, or `Stream.qstream` set in
+/// borrow's duration (`Stream.qstream` is set in
 /// `on_stream_open` and nulled in `on_stream_close` / `detach`), FFI
 /// allocation distinct from any Rust holder, HTTP-thread-only.
 #[inline(always)]

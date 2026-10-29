@@ -1451,8 +1451,7 @@ impl EventLoop {
 pub(crate) fn get_active_tasks(
     heap: &crate::bindgen::JsHeap<'_>,
 ) -> crate::generated_bindgen::event_loop::ActiveTasks {
-    // SAFETY: only the VM is taken from it.
-    let vm_ref = unsafe { heap.global() }.bun_vm();
+    let vm_ref = heap.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
     #[cfg(windows)]
     // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.

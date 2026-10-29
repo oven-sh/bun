@@ -115,6 +115,47 @@ pub(crate) fn convert_stmts_for_chunk(
                         continue 'stmt_loop;
                     }
 
+                    let added = crate::linker_context::merge_external_esm_imports::added_external_import_items(
+                        chunk,
+                        source_index,
+                        s.import_record_index,
+                    );
+                    if !added.is_empty() {
+                        let own = s.items.slice();
+                        let items = bump.alloc_slice_fill_with(own.len() + added.len(), |i| {
+                            match own.get(i) {
+                                Some(item) => bun_ast::ClauseItem {
+                                    alias: item.alias,
+                                    alias_loc: item.alias_loc,
+                                    name: item.name,
+                                    original_name: item.original_name,
+                                },
+                                // Its locs are in another file's source: no mapping.
+                                None => bun_ast::ClauseItem {
+                                    alias: added[i - own.len()].1,
+                                    alias_loc: Loc::EMPTY,
+                                    name: bun_ast::LocRef {
+                                        ref_: added[i - own.len()].2,
+                                        loc: Loc::EMPTY,
+                                    },
+                                    original_name: bun_ast::StoreStr::EMPTY,
+                                },
+                            }
+                        });
+                        stmt = Stmt::alloc(
+                            S::Import {
+                                namespace_ref: s.namespace_ref,
+                                default_name: s.default_name,
+                                items: items.into(),
+                                star_name_loc: s.star_name_loc,
+                                import_record_index: s.import_record_index,
+                                is_single_line: s.is_single_line || own.is_empty(),
+                                phase_defer: s.phase_defer,
+                            },
+                            stmt.loc,
+                        );
+                    }
+
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
                         stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);

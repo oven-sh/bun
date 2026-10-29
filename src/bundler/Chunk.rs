@@ -1321,6 +1321,9 @@ pub struct JavaScriptChunk {
 
     /// Sorted `(source_index << 32) | import_record_index`; see `merge_external_esm_imports`.
     pub(crate) redundant_external_imports: Vec<u64>,
+    /// Sorted by `(source_index << 32) | import_record_index` of the statement that prints the
+    /// name; see `merge_external_esm_imports`.
+    pub(crate) added_external_import_items: Vec<(u64, bun_ast::StoreStr, Ref)>,
 
     // for code splitting
     /// The other chunks with top-level side effects that the walk ordering

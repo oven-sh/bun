@@ -365,6 +365,49 @@ describe("bundler", () => {
     }
   }
 
+  // The generated JSX runtime import of b.jsx adds `Fragment`, and the linker
+  // moves that name into the statement of a.jsx (#3029). The module record
+  // must list `Fragment` under that statement. Not in the matrix: it needs an
+  // external package on disk.
+  for (const minify of [false, true]) {
+    itBundled(`compile/ESMBytecode+JSXRuntimeImportUnion${minify ? "+minify" : ""}`, {
+      compile: true,
+      bytecode: true,
+      format: "esm",
+      ...(minify && {
+        minifySyntax: true,
+        minifyIdentifiers: true,
+        minifyWhitespace: true,
+      }),
+      files: {
+        "/entry.js": `
+          import { A } from "./a.jsx";
+          import { B } from "./b.jsx";
+          console.log(A().type, B().type, B().props.children.type);
+        `,
+        "/a.jsx": `export const A = () => <div />;`,
+        "/b.jsx": `export const B = () => <><span /></>;`,
+      },
+      external: ["react"],
+      runtimeFiles: {
+        "/node_modules/react/jsx-runtime.js": `
+          export const Fragment = "Fragment";
+          export const jsx = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": `
+          export const Fragment = "Fragment";
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/package.json": `{
+          "name": "react",
+          "type": "module",
+          "exports": { "./jsx-runtime": "./jsx-runtime.js", "./jsx-dev-runtime": "./jsx-dev-runtime.js" }
+        }`,
+      },
+      run: { stdout: "div Fragment span", setCwd: true },
+    });
+  }
+
   // Multi-entry ESM bytecode with Worker (can't be in the matrix — needs
   // entryPointsRaw, outfile, setCwd). Each entry becomes a separate module
   // in the standalone graph with its own bytecode + ModuleInfo.

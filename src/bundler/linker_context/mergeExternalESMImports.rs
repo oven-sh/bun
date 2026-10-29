@@ -22,6 +22,8 @@ struct Seen<'a> {
     default: Ref,
     /// Keyed by export name (`ClauseItem.alias`).
     items: HashMap<&'a [u8], Ref>,
+    /// The first kept statement that can take a `{}` clause (it has no `* as`).
+    host: Option<u64>,
 }
 
 #[inline]
@@ -147,7 +149,15 @@ pub(crate) fn merge_external_esm_imports<'a>(c: &mut LinkerContext<'a>, chunks: 
                     let introduces = |kept: Ref, ref_: Ref| {
                         kept.is_empty() || js.exports_to_other_chunks.contains_key(&ref_)
                     };
+                    // `symbols.merge` is bundle-wide, so a dropped statement's file must be in this chunk only.
+                    let blocked = (copies_files && entry_bits[source_index as usize].count() != 1)
+                        // Code that a direct `eval` runs can name the bindings of its file.
+                        || module_scopes[source_index as usize].contains_direct_eval
+                        // `symbols.merge` would give the kept symbol the name of a pinned one.
+                        || bindings()
+                            .any(|r| symbols.get_const(r).is_some_and(|symbol| symbol.must_not_be_renamed()));
                     let must_keep = !path_already_imported
+                        || blocked
                         || star_ref.is_some_and(|r| introduces(entry.star, r))
                         || default_ref.is_some_and(|r| introduces(entry.default, r))
                         || items.iter().any(|item| {
@@ -161,16 +171,52 @@ pub(crate) fn merge_external_esm_imports<'a>(c: &mut LinkerContext<'a>, chunks: 
                                     r,
                                 )
                             })
-                        })
-                        // `symbols.merge` is bundle-wide, so a dropped statement's file must be in this chunk only.
-                        || (copies_files && entry_bits[source_index as usize].count() != 1)
-                        // Code that a direct `eval` runs can name the bindings of its file.
-                        || module_scopes[source_index as usize].contains_direct_eval
-                        // `symbols.merge` would give the kept symbol the name of a pinned one.
-                        || bindings()
-                            .any(|r| symbols.get_const(r).is_some_and(|symbol| symbol.must_not_be_renamed()));
+                        });
+
+                    let mut link = |dropped: Ref, kept: Ref| {
+                        let root = c.graph.symbols.merge(dropped, kept);
+                        debug_assert!(
+                            entry_bits[dropped.source_index() as usize]
+                                .subset_of(&entry_bits[root.source_index() as usize]),
+                            "a chunk with the dropped import's file has no file that declares its binding",
+                        );
+                    };
+
+                    // #3029: a generated JSX runtime import that adds names gives them to the
+                    // host statement of its path and is dropped. The names are per chunk: the
+                    // host's file can be in several chunks.
+                    let host = entry.host.filter(|_| {
+                        must_keep
+                            && !blocked
+                            && file_parts[part_i as usize].tag == bun_ast::PartTag::JsxImport
+                            && star_ref.is_none()
+                            && default_ref.is_none()
+                            && !bindings().any(|r| js.exports_to_other_chunks.contains_key(&r))
+                    });
+                    if let Some(host) = host {
+                        for item in items {
+                            let Some(item_ref) = item.name.ref_.to_nullable() else {
+                                continue;
+                            };
+                            let slot =
+                                bun_core::handle_oom(entry.items.get_or_put(item.alias.slice()));
+                            if slot.found_existing {
+                                link(item_ref, *slot.value_ptr);
+                            } else {
+                                *slot.value_ptr = item_ref;
+                                js.added_external_import_items
+                                    .push((host, item.alias, item_ref));
+                            }
+                        }
+                        js.redundant_external_imports
+                            .push(pack(source_index, s.import_record_index));
+                        continue;
+                    }
 
                     if must_keep {
+                        if star_ref.is_none() && entry.host.is_none() {
+                            entry.host = Some(pack(source_index, s.import_record_index));
+                        }
                         // Bindings overlapping an earlier statement stay distinct; the renamer suffixes them.
                         if let Some(ns) = star_ref
                             && entry.star.is_empty()
@@ -195,14 +241,6 @@ pub(crate) fn merge_external_esm_imports<'a>(c: &mut LinkerContext<'a>, chunks: 
                         continue;
                     }
 
-                    let mut link = |dropped: Ref, kept: Ref| {
-                        let root = c.graph.symbols.merge(dropped, kept);
-                        debug_assert!(
-                            entry_bits[dropped.source_index() as usize]
-                                .subset_of(&entry_bits[root.source_index() as usize]),
-                            "a chunk with the dropped import's file has no file that declares its binding",
-                        );
-                    };
                     if let Some(ns) = star_ref {
                         link(ns, entry.star);
                     }
@@ -223,6 +261,7 @@ pub(crate) fn merge_external_esm_imports<'a>(c: &mut LinkerContext<'a>, chunks: 
         }
 
         js.redundant_external_imports.sort_unstable();
+        js.added_external_import_items.sort_by_key(|added| added.0);
     }
 }
 
@@ -239,4 +278,21 @@ pub(crate) fn is_redundant_external_import(
     js.redundant_external_imports
         .binary_search(&pack(source_index, import_record_index))
         .is_ok()
+}
+
+/// The names `merge_external_esm_imports` moved into this statement's clause, in this chunk.
+pub(crate) fn added_external_import_items<'c>(
+    chunk: &'c Chunk<'_>,
+    source_index: u32,
+    import_record_index: u32,
+) -> &'c [(u64, bun_ast::StoreStr, Ref)] {
+    let js = match &chunk.content {
+        chunk::Content::Javascript(js) => js,
+        _ => return &[],
+    };
+    let key = pack(source_index, import_record_index);
+    let added = js.added_external_import_items.as_slice();
+    let start = added.partition_point(|item| item.0 < key);
+    let end = added.partition_point(|item| item.0 <= key);
+    &added[start..end]
 }

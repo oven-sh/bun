@@ -28,6 +28,19 @@ const reactRuntime = {
   }`,
 };
 
+const reactProductionRuntime = {
+  "/node_modules/react/jsx-runtime.js": /* js */ `
+    export const Fragment = "Fragment";
+    export const jsx = (type, props) => ({ type, props });
+    export const jsxs = (type, props) => ({ type, props, many: true });
+  `,
+  "/node_modules/react/package.json": /* json */ `{
+    "name": "react",
+    "type": "module",
+    "exports": { "./jsx-runtime": "./jsx-runtime.js" }
+  }`,
+};
+
 /** Packages that print a line when they are evaluated. */
 const loggingRuntime = (...names: string[]) =>
   Object.fromEntries(
@@ -1245,8 +1258,8 @@ describe("bundler", () => {
       expect(importStatements(api.readFile("/out.js"))).toEqual(['import { jsxDEV } from "react/jsx-dev-runtime";']);
     },
   });
-  // b.jsx also needs `Fragment`, so its statement adds a binding and stays
-  // whole: its `jsxDEV` is a second binding.
+  // b.jsx also needs `Fragment`. A generated import that adds a name gives it
+  // to the first statement of the path and is dropped.
   itBundled("regression/ExternalImportDedupeJSXRuntimeFragment#8671", {
     files: {
       "/entry.js": /* js */ `
@@ -1264,9 +1277,342 @@ describe("bundler", () => {
     run: { stdout: "div Fragment span" },
     onAfterBundle(api) {
       expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { jsxDEV, Fragment } from "react/jsx-dev-runtime";',
+      ]);
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/3029
+  itBundled("regression/ExternalImportDedupeJSXRuntimeUnion#3029", {
+    files: {
+      "/index.js": /* jsx */ `
+        import { X } from "./a.js";
+        const HelloWorld = () => (<><X />World</>);
+        console.log(JSON.stringify(HelloWorld()));
+      `,
+      "/a.js": /* jsx */ `
+        const X = () => <div>Hello</div>;
+        export { X };
+      `,
+    },
+    format: "esm",
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: reactRuntime,
+    run: { stdout: '{"type":"Fragment","props":{"children":[{"props":{}},"World"]}}' },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { jsxDEV, Fragment } from "react/jsx-dev-runtime";',
+      ]);
+    },
+  });
+  // Three sets of names from "react/jsx-runtime": `jsx`, then `jsxs`, then
+  // `Fragment`.
+  for (const minify of [false, true]) {
+    itBundled(`regression/ExternalImportDedupeJSXRuntimeUnionProduction${minify ? "Minified" : ""}#3029`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { A } from "./a.jsx";
+          import { B } from "./b.jsx";
+          import { C } from "./c.jsx";
+          console.log(A().type, B().many, C().type, C().many);
+        `,
+        "/a.jsx": /* jsx */ `export const A = () => <div />;`,
+        "/b.jsx": /* jsx */ `export const B = () => <div><i /><b /></div>;`,
+        "/c.jsx": /* jsx */ `export const C = () => <><i /><b /></>;`,
+      },
+      format: "esm",
+      external: ["react"],
+      env: { NODE_ENV: "production" },
+      jsx: { runtime: "automatic", development: false },
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      runtimeFiles: reactProductionRuntime,
+      run: { stdout: "div true Fragment true" },
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js");
+        if (minify) {
+          expect(code.match(/\bimport\b[^;]*"react\/jsx-runtime"/g)).toHaveLength(1);
+        } else {
+          expect(importStatements(code)).toEqual(['import { jsx, jsxs, Fragment } from "react/jsx-runtime";']);
+        }
+      },
+    });
+  }
+  // A user import of the runtime is the first statement of the path, so it
+  // takes the name of the generated import.
+  itBundled("regression/ExternalImportDedupeJSXRuntimeUnionUserImportFirst#3029", {
+    files: {
+      "/entry.js": /* js */ `
+        import { viaDefault } from "./a.js";
+        import { B } from "./b.jsx";
+        console.log(viaDefault, B().type);
+      `,
+      "/a.js": /* js */ `
+        import runtime from "react/jsx-dev-runtime";
+        export const viaDefault = typeof runtime.jsxDEV;
+      `,
+      "/b.jsx": /* jsx */ `export const B = () => <div />;`,
+    },
+    format: "esm",
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: {
+      ...reactRuntime,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        export const Fragment = "Fragment";
+        export const jsxDEV = (type, props) => ({ type, props });
+        export default { jsxDEV };
+      `,
+    },
+    run: { stdout: "function div" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import runtime, { jsxDEV } from "react/jsx-dev-runtime";',
+      ]);
+    },
+  });
+  // `import * as` cannot take names. The first generated import stays and
+  // takes the name of the later one.
+  itBundled("regression/ExternalImportDedupeJSXRuntimeUnionAfterNamespaceImport#3029", {
+    files: {
+      "/entry.js": /* js */ `
+        import { keys } from "./a.js";
+        import { B } from "./b.jsx";
+        import { C } from "./c.jsx";
+        console.log(keys, B().type, C().type);
+      `,
+      "/a.js": /* js */ `
+        import * as runtime from "react/jsx-dev-runtime";
+        export const keys = Object.keys(runtime).sort().join();
+      `,
+      "/b.jsx": /* jsx */ `export const B = () => <div />;`,
+      "/c.jsx": /* jsx */ `export const C = () => <><i /></>;`,
+    },
+    format: "esm",
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: reactRuntime,
+    run: { stdout: "Fragment,jsxDEV div Fragment" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import * as runtime from "react/jsx-dev-runtime";',
+        'import { jsxDEV, Fragment } from "react/jsx-dev-runtime";',
+      ]);
+    },
+  });
+  // b.jsx has a direct `eval`, which can name the bindings of its file. Its
+  // statement stays whole.
+  itBundled("regression/ExternalImportDedupeJSXRuntimeUnionDirectEval#3029", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from "./a.jsx";
+        import { B } from "./b.jsx";
+        console.log(A().type, B().type, B().props.children);
+      `,
+      "/a.jsx": /* jsx */ `export const A = () => <div />;`,
+      "/b.jsx": /* jsx */ `export const B = () => <>{eval("typeof Fragment")}</>;`,
+    },
+    format: "esm",
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: reactRuntime,
+    run: { stdout: "div Fragment string" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
         'import { jsxDEV } from "react/jsx-dev-runtime";',
         'import { jsxDEV as jsxDEV2, Fragment } from "react/jsx-dev-runtime";',
       ]);
+    },
+  });
+  // b1.jsx and b2.jsx are CommonJS and print first. Their generated imports
+  // are hoisted out of the __commonJS wrappers: the statement of b1.jsx takes
+  // `Fragment` from b2.jsx and `jsxs` from a.jsx.
+  itBundled("regression/ExternalImportDedupeJSXRuntimeUnionCommonJSWrapper#3029", {
+    files: {
+      "/entry.js": /* js */ `
+        import b1 from "./b1.jsx";
+        import b2 from "./b2.jsx";
+        import { A } from "./a.jsx";
+        console.log(b1.B().type, b2.B().type, b2.B().props.children.type, A().many);
+      `,
+      "/b1.jsx": /* jsx */ `module.exports = { B: () => <span /> };`,
+      "/b2.jsx": /* jsx */ `module.exports = { B: () => <><i /></> };`,
+      "/a.jsx": /* jsx */ `export const A = () => <div><b /><b /></div>;`,
+    },
+    format: "esm",
+    external: ["react"],
+    env: { NODE_ENV: "production" },
+    jsx: { runtime: "automatic", development: false },
+    runtimeFiles: reactProductionRuntime,
+    run: { stdout: "span Fragment i true" },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("__commonJS");
+      expect(importStatements(code)).toEqual(['import { jsx, Fragment, jsxs } from "react/jsx-runtime";']);
+    },
+  });
+  // w.jsx is reached through `import()` and prints first, so its statement is
+  // the one that takes `Fragment`. "react/jsx-dev-runtime" still evaluates
+  // before "extb".
+  itBundled("regression/ExternalImportDedupeJSXRuntimeUnionKeepsEvaluationOrder#3029", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import "./b.js";
+        import { X } from "./a.jsx";
+        console.log("entry", (<><X /></>).type);
+        import("./w.jsx").then(m => console.log("w", m.W().type));
+      `,
+      "/b.js": /* js */ `
+        import "extb";
+        console.log("b.js");
+      `,
+      "/a.jsx": /* jsx */ `export const X = () => <i />;`,
+      "/w.jsx": /* jsx */ `export const W = () => <b />;`,
+    },
+    format: "esm",
+    external: ["react", "extb"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: {
+      ...reactRuntime,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        console.log("evaluating react/jsx-dev-runtime");
+        export const Fragment = "Fragment";
+        export const jsxDEV = (type, props) => ({ type, props });
+      `,
+      "/node_modules/extb/index.js": /* js */ `console.log("evaluating extb");`,
+      "/node_modules/extb/package.json": /* json */ `{ "name": "extb", "type": "module", "main": "index.js" }`,
+    },
+    run: {
+      stdout: `
+        evaluating react/jsx-dev-runtime
+        evaluating extb
+        b.js
+        entry Fragment
+        w b
+      `,
+    },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { jsxDEV, Fragment } from "react/jsx-dev-runtime";',
+        'import"extb";',
+      ]);
+    },
+  });
+  // With splitting, the chunk of entry1.js has two files of its own, and
+  // a2.jsx adds `Fragment`.
+  itBundled("regression/ExternalImportDedupeJSXRuntimeUnionSplitting#3029", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { S } from "./shared.jsx";
+        import { A1 } from "./a1.jsx";
+        import { A2 } from "./a2.jsx";
+        console.log("e1", S().type, A1().type, A2().type);
+      `,
+      "/entry2.js": /* js */ `
+        import { S } from "./shared.jsx";
+        console.log("e2", S().type);
+      `,
+      "/shared.jsx": /* jsx */ `export const S = () => <span />;`,
+      "/a1.jsx": /* jsx */ `export const A1 = () => <i />;`,
+      "/a2.jsx": /* jsx */ `export const A2 = () => <><b /></>;`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: true,
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: reactRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "e1 span i Fragment" },
+      { file: "/out/entry2.js", stdout: "e2 span" },
+    ],
+    onAfterBundle(api) {
+      const fromReact = (file: string) =>
+        importStatements(api.readFile("/out/" + file)).filter(s => s.includes('"react/'));
+      expect(fromReact("entry1.js")).toEqual(['import { jsxDEV, Fragment } from "react/jsx-dev-runtime";']);
+      expect(fromReact("entry2.js")).toEqual([]);
+      for (const file of readdirSync(api.outdir).filter(f => f.endsWith(".js") && !f.startsWith("entry"))) {
+        expect(fromReact(file)).toEqual(['import { jsxDEV } from "react/jsx-dev-runtime";']);
+      }
+    },
+  });
+  // Without splitting, shared.jsx is in both chunks. Its statement takes the
+  // names of each chunk on its own: `Fragment` in e1.js only.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingJSXRuntimeUnion#3029", {
+    files: {
+      "/e1.js": /* js */ `
+        import { S } from "./shared.jsx";
+        import { O } from "./only1.jsx";
+        console.log("e1", S().type, O().type);
+      `,
+      "/e2.js": /* js */ `
+        import { S } from "./shared.jsx";
+        import { O } from "./only2.jsx";
+        const Fragment = "mine";
+        console.log("e2", S().type, O().type, Fragment);
+      `,
+      "/shared.jsx": /* jsx */ `export const S = () => <span />;`,
+      "/only1.jsx": /* jsx */ `export const O = () => <><i /></>;`,
+      "/only2.jsx": /* jsx */ `export const O = () => <b />;`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: reactRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 span Fragment" },
+      { file: "/out/e2.js", stdout: "e2 span b mine" },
+    ],
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out/e1.js"))).toEqual([
+        'import { jsxDEV, Fragment } from "react/jsx-dev-runtime";',
+      ]);
+      expect(importStatements(api.readFile("/out/e2.js"))).toEqual(['import { jsxDEV } from "react/jsx-dev-runtime";']);
+    },
+  });
+  // only1.jsx is in the chunk of e1.js only and prints first. shared.jsx is in
+  // both chunks, so it keeps its own statement, and its local `jsxDEV` does not
+  // capture the import in either chunk.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingJSXRuntimeUnionNestedScope#3029", {
+    files: {
+      "/e1.js": /* js */ `
+        import { O } from "./only1.jsx";
+        import { S } from "./shared.jsx";
+        console.log("e1", O().type, S().type, S().props.children);
+      `,
+      "/e2.js": /* js */ `
+        import { S } from "./shared.jsx";
+        console.log("e2", S().type, S().props.children);
+      `,
+      "/only1.jsx": /* jsx */ `export const O = () => <><i /></>;`,
+      "/shared.jsx": /* jsx */ `
+        export const S = () => {
+          const jsxDEV = "local";
+          return <b>{jsxDEV}</b>;
+        };
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: reactRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 Fragment b local" },
+      { file: "/out/e2.js", stdout: "e2 b local" },
+    ],
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out/e1.js"))).toEqual([
+        'import { jsxDEV, Fragment } from "react/jsx-dev-runtime";',
+        'import { jsxDEV as jsxDEV2 } from "react/jsx-dev-runtime";',
+      ]);
+      expect(importStatements(api.readFile("/out/e2.js"))).toEqual(['import { jsxDEV } from "react/jsx-dev-runtime";']);
     },
   });
   // A re-export of an external prints an import too. The pass reads `import`

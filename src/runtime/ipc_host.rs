@@ -168,8 +168,8 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
                     // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
-                    // owned by uSockets; `get_socket` only borrows its
-                    // `us_socket_t` member and `get_fd` is a read-only FFI call.
+                    // owned by uSockets; `get_socket` only borrows its field as
+                    // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
                     let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
                     #[cfg(not(windows))]
                     match Handle::init_dup(fd, handle, false) {

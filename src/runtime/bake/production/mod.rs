@@ -435,7 +435,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
-    framework.init_transpiler(
+    let (server_transpiler, _) = framework.init_transpiler(
         &options.arena,
         vm_log,
         crate::bake::Mode::ProductionStatic,
@@ -443,7 +443,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         &mut server_transpiler,
         &options.bundler_options.server,
     )?;
-    framework.init_transpiler(
+    let (client_transpiler, _) = framework.init_transpiler(
         &options.arena,
         vm_log,
         crate::bake::Mode::ProductionStatic,
@@ -451,8 +451,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         &mut client_transpiler,
         &options.bundler_options.client,
     )?;
-    if separate_ssr_graph {
-        framework.init_transpiler(
+    let mut ssr_transpiler = if separate_ssr_graph {
+        let (ssr_transpiler, _) = framework.init_transpiler(
             &options.arena,
             vm_log,
             crate::bake::Mode::ProductionStatic,
@@ -460,21 +460,16 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             &mut ssr_transpiler,
             &options.bundler_options.ssr,
         )?;
-    }
-    // SAFETY: written above by init_transpiler.
-    let server_transpiler = unsafe { server_transpiler.assume_init_mut() };
-    // SAFETY: written above by init_transpiler.
-    let client_transpiler = unsafe { client_transpiler.assume_init_mut() };
-    // `ssr_transpiler` stays `MaybeUninit` and is only `assume_init_mut()`'d
-    // inside `if separate_ssr_graph` blocks below — Rust forbids forming
-    // `&mut T` to uninitialized memory regardless of later use.
+        Some(ssr_transpiler)
+    } else {
+        None
+    };
 
     if ctx.bundler_options.bake_debug_disable_minify {
         let mut targets: Vec<&mut Transpiler> =
             vec![&mut *client_transpiler, &mut *server_transpiler];
-        if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler when separate_ssr_graph.
-            targets.push(unsafe { ssr_transpiler.assume_init_mut() });
+        if let Some(ssr_transpiler) = ssr_transpiler.as_deref_mut() {
+            targets.push(ssr_transpiler);
         }
         for transpiler in targets {
             transpiler.options.minify_syntax = false;
@@ -612,17 +607,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
-        // Transpiler pointers — reborrow via raw to sidestep the
-        // `&'a mut Transpiler<'a>` invariant lifetime on the bundler API.
-        // SAFETY: the three transpilers live in this stack frame and outlive
-        // the bundle call; `BundleV2` does not retain them past return.
-        let server_ptr: *mut Transpiler = &raw mut *server_transpiler;
-        let client_ptr: *mut Transpiler = &raw mut *client_transpiler;
-        let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler when separate_ssr_graph.
-            core::ptr::from_mut(unsafe { ssr_transpiler.assume_init_mut() })
-        } else {
-            server_ptr
+        // Without a separate SSR graph, the bundler never dereferences `ssr_transpiler`.
+        let ssr_transpiler = match ssr_transpiler {
+            Some(ssr_transpiler) => NonNull::from(ssr_transpiler),
+            None => NonNull::from(&mut *server_transpiler),
         };
 
         // Construct the `AnyEventLoop` enum
@@ -636,12 +624,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // (in the bundler), not a user-facing diagnostic to swallow.
         BundleV2::generate_from_bake_production_cli(
             &entry_points,
-            // SAFETY: see `server_ptr` comment above.
-            unsafe { &mut *server_ptr },
+            server_transpiler,
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
-                client_transpiler: NonNull::new(client_ptr).expect("stack-owned transpiler"),
-                ssr_transpiler: NonNull::new(ssr_ptr).expect("stack-owned transpiler"),
+                client_transpiler: NonNull::from(client_transpiler),
+                ssr_transpiler,
                 plugins: options.bundler_options.plugin,
             },
             &options.arena,

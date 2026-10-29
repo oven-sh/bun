@@ -1376,9 +1376,8 @@ pub(crate) mod js_bundler {
                 let mut opened = bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice());
                 // The shared directory is derived from names: a package or a plugin can resolve them, and the user may not be allowed to list it.
                 if is_shared_by_entry_points
-                    && opened.as_ref().is_err_and(|err| {
-                        matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::EACCES)
-                    })
+                    && (opened.as_ref())
+                        .is_err_and(bun_bundler::options::common_entry_directory_falls_back)
                 {
                     path = Utf8Bytes::Borrowed(b".");
                     opened = bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice());

@@ -609,6 +609,17 @@ describe.concurrent("the default root of a multi-entry build", () => {
       using dir = tempDir("build-root-package-names", packageFiles);
       expect(await outputs(String(dir), entryPoints)).toEqual(expected);
     });
+
+    test("beside a file with the name of the package", async () => {
+      using dir = tempDir("build-root-package-file", { ...packageFiles, "madeup": "not a directory" });
+      expect(await outputs(String(dir), nine)).toEqual(inPackage(...nine));
+    });
+
+    test.skipIf(isWindows)("beside a link with the name of the package that leads to itself", async () => {
+      using dir = tempDir("build-root-package-loop", packageFiles);
+      fs.symlinkSync("madeup", path.join(String(dir), "madeup"));
+      expect(await outputs(String(dir), nine)).toEqual(inPackage(...nine));
+    });
   });
 });
 

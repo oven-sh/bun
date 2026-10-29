@@ -99,6 +99,14 @@ pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) 
     bun_paths::string_paths::without_trailing_slash_windows_path(&common).to_vec()
 }
 
+/// Whether the working directory replaces `common_entry_directory`, which failed to open with `err`: the path names no directory, or the user may not list it.
+pub fn common_entry_directory_falls_back(err: &bun_sys::Error) -> bool {
+    matches!(
+        err.get_errno(),
+        bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::ELOOP | bun_sys::E::EACCES
+    )
+}
+
 /// `resolve_path::longest_common_path` has a second rule for more than eight paths, which can answer a folder that does not hold all of them.
 pub(crate) fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
     let Some((&first, rest)) = paths.split_first() else {

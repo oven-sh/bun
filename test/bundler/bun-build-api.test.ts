@@ -892,47 +892,38 @@ describe("Bun.build", () => {
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  // Not under ASAN: the resolver's entry for an ancestor directory that it may not list is never freed, before any build.
-  test.skipIf(isWindows || isASAN)(
+  test.skipIf(isWindows)(
     "the default root is the working directory when the shared directory does not open",
     async () => {
-      const nine = Array.from({ length: 9 }, (_, i) => `../${i % 2 ? "x" : "y"}/e${i}.ts`);
       using dir = tempDir("build-root-unlistable", {
-        "shared/app/index.ts": `console.log("index");`,
-        ...Object.fromEntries(
-          nine.map(name => [path.posix.join("shared/app", name), `console.log(${JSON.stringify(name)});`]),
-        ),
+        "src/x/a.ts": `console.log("a");`,
+        "src/y/b.ts": `console.log("b");`,
         "build.ts": `
         import { relative, resolve } from "node:path";
-        const nine = ${JSON.stringify(nine)};
-        for (const [outdir, entrypoints] of [["mixed", ["./index.ts", "../x/e1.ts"]], ["nine", nine]]) {
+        const builds = [["mixed", ["src/x/a.ts", "./src/y/b.ts"]], ["plain", ["src/x/a.ts", "src/y/b.ts"]]];
+        for (const [outdir, entrypoints] of builds) {
           const result = await Bun.build({ entrypoints, outdir });
           console.log(JSON.stringify(result.outputs.map(output => relative(resolve(outdir), output.path)).sort()));
         }
       `,
       });
-      const shared = join(String(dir), "shared");
+      const shared = join(String(dir), "src");
       using unprivileged = unprivilegedSpawnOptions(String(dir));
 
       // The user may enter the folder and may not list it.
       chmodSync(shared, 0o311);
       try {
         await using proc = Bun.spawn({
-          cmd: [bunExe(), join(String(dir), "build.ts")],
+          cmd: [bunExe(), "build.ts"],
           env: bunEnv,
-          cwd: join(shared, "app"),
+          cwd: String(dir),
           stdout: "pipe",
           stderr: "pipe",
           ...unprivileged,
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-          stdout: [
-            '["_.._/x/e1.js","index.js"]',
-            JSON.stringify(
-              [1, 3, 5, 7].map(i => `_.._/x/e${i}.js`).concat([0, 2, 4, 6, 8].map(i => `_.._/y/e${i}.js`)),
-            ),
-          ],
+          stdout: ['["src/x/a.js","src/y/b.js"]', '["src/x/a.js","src/y/b.js"]'],
           stderr: "",
           exitCode: 0,
         });

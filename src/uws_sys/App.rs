@@ -146,28 +146,6 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
 
-    pub(crate) fn publish_with_options(
-        &mut self,
-        topic: &[u8],
-        message: &[u8],
-        opcode: Opcode,
-        compress: bool,
-    ) -> SendStatus {
-        // SAFETY: self is a valid *mut uws_app_t; slices are valid for the call.
-        unsafe {
-            c::uws_publish(
-                SSL as i32,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                topic.as_ptr(),
-                topic.len(),
-                message.as_ptr(),
-                message.len(),
-                opcode,
-                compress,
-            )
-        }
-    }
-
     // ─────────────────────────────────────────────────────────────────────
     // RouteHandler
     //

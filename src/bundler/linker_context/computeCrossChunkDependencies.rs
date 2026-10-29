@@ -219,7 +219,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         }
 
                         // Ignore symbols that are going to be replaced by undefined
-                        if symbol.import_item_status == bun_ast::ImportItemStatus::Missing {
+                        if symbol.import_item_status.get() == bun_ast::ImportItemStatus::Missing {
                             continue 'refs;
                         }
 

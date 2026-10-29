@@ -498,9 +498,7 @@ impl Execution {
         Some((NonNull::from(sequence), NonNull::from(group)))
     }
 
-    /// `data` names an earlier attempt of a sequence of this file. Only a failed attempt leaves
-    /// a completion behind (a passed one has none left), and the runner already reported that
-    /// failure when it retried the test.
+    /// `data` names an earlier attempt of a sequence of this file: a failed one, already reported when it was retried.
     fn is_earlier_attempt(&mut self, data: &RefDataValue) -> bool {
         let RefDataValue::Execution { group_index, entry_data: Some(entry_data) } = data else {
             return false;

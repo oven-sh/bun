@@ -800,8 +800,7 @@ impl BunTest {
 
     fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
-            // An `entry` that is over fails nothing: `handle_uncaught_exception` reports the error
-            // between tests, or drops it when a retry already absorbed that attempt.
+            // An `entry` that is over fails nothing; the error prints between tests or is dropped.
             strong.get().on_uncaught_exception(global_this, Some(error), false, entry);
             return;
         }

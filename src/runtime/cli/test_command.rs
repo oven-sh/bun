@@ -4799,13 +4799,11 @@ impl TestCommand {
         // "Ran N tests" summary (printed after this), so seeding completes
         // before the next file edit.
         if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
-            // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
-            // `enable_hot_module_reloading`; non-null because
-            // `is_watcher_enabled()` checked it.
-            let watcher =
-                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
-                let _ = watcher.add_file_by_path_slow(path);
+                // SAFETY: `bun_watcher` is the `*mut Watcher` set by
+                // `enable_hot_module_reloading`; non-null because
+                // `is_watcher_enabled()` checked it.
+                let _ = unsafe { &mut *vm.bun_watcher }.add_file_by_path_slow(path);
             }
         }
 

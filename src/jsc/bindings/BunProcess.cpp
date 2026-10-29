@@ -3462,14 +3462,25 @@ static JSValue constructExecPath(VM& vm, JSObject* processObject)
 
 static JSValue constructArgv(VM& vm, JSObject* processObject)
 {
+    uncheckedDowncast<Process>(processObject)->m_argvBuilt = true;
     return JSValue::decode(Bun__Process__createArgv(processObject->globalObject()));
 }
 
-static void storeEntryPath(JSGlobalObject* globalObject, JSValue argv, const BunString& previous, const BunString& next)
+// process.argv[1] is the entry path. Every holder of the array (Bun.argv, the node:process export, a reference the program kept) sees a store into it.
+extern "C" void Bun__Process__entryPointDidChange(Zig::GlobalObject* globalObject, const BunString* previous, const BunString* next)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (!globalObject->hasProcessObject()) {
+        return;
+    }
+    auto* process = globalObject->processObject();
+    if (!process->m_argvBuilt) {
+        return;
+    }
+    // Not a get(): that would call a getter the program installed.
+    JSValue argv = process->getDirect(vm, Identifier::fromString(vm, "argv"_s));
     auto* array = argv ? dynamicDowncast<JSArray>(argv) : nullptr;
     if (!array) {
         return;
@@ -3483,41 +3494,19 @@ static void storeEntryPath(JSGlobalObject* globalObject, JSValue argv, const Bun
         return;
     }
     JSValue entry = slot.getValue(globalObject, 1u);
-    if (!entry.isString()) {
+    String previousPath = previous->toWTFString(BunString::ZeroCopy);
+    // A rope of another length cannot be equal, and to resolve it can throw.
+    if (!entry.isString() || asString(entry)->length() != previousPath.length()) {
         return;
     }
     auto path = asString(entry)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    if (path.data != previous.toWTFString(BunString::ZeroCopy)) {
+    if (path.data != previousPath) {
         return;
     }
 
     // An assignment that does not throw: a frozen array keeps its element.
-    RELEASE_AND_RETURN(scope, void(array->putByIndexInline(globalObject, 1u, jsString(vm, next.toWTFString()), false)));
-}
-
-// process.argv[1] is the entry path. Every holder of the array (Bun.argv, the node:process export, a reference the program kept) sees a store into it.
-extern "C" void Bun__Process__entryPointDidChange(Zig::GlobalObject* globalObject, const BunString* previous, const BunString* next)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // No atom means no object of this VM has an `argv` property, so no array was built. Identifier::fromString would allocate that atom.
-    RefPtr<AtomStringImpl> atom = AtomStringImpl::lookUp("argv"_s.span8());
-    if (!atom) {
-        return;
-    }
-    PropertyName name(atom.get());
-
-    // Not a get(): that would build the array, or call a getter the program installed.
-    if (globalObject->hasProcessObject()) {
-        storeEntryPath(globalObject, globalObject->processObject()->getDirect(vm, name), *previous, *next);
-        RETURN_IF_EXCEPTION(scope, );
-    }
-    // Bun.argv holds another array once the program has assigned to process.argv.
-    if (globalObject->m_bunObject.isInitialized()) {
-        RELEASE_AND_RETURN(scope, storeEntryPath(globalObject, globalObject->bunObject()->getDirect(vm, name), *previous, *next));
-    }
+    RELEASE_AND_RETURN(scope, void(array->putByIndexInline(globalObject, 1u, jsString(vm, next->toWTFString()), false)));
 }
 
 static JSValue constructExecArgv(VM& vm, JSObject* processObject)

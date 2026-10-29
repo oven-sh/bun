@@ -18,6 +18,7 @@ test_support = []
 [dependencies]
 bun_ast.workspace = true
 bun_core.workspace = true
+bun_js_parser.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_sema.workspace = true

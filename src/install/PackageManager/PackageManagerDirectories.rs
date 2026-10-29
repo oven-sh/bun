@@ -1034,17 +1034,16 @@ pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryErr
         Ok(p) => p,
         Err(err) => return Err(DirectoryError::GlobalLinkPath(err)),
     };
-    this.global_link_dir_path = Box::<[u8]>::from(bun_core::handle_oom(
-        FileSystem::instance().dirname_store().append(path_),
-    ));
+    this.global_link_dir_path =
+        bun_core::handle_oom(FileSystem::instance().dirname_store().append(path_));
     this.global_dir = Some(global_dir);
     this.global_link_dir = Some(link_dir);
     Ok(link_fd)
 }
 
-pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
+pub fn global_link_dir_path(this: &mut PackageManager) -> &'static [u8] {
     let _ = global_link_dir(this);
-    &this.global_link_dir_path
+    this.global_link_dir_path
 }
 
 // ────────────────────────── cached path resolution ────────────────────────────

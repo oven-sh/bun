@@ -1,10 +1,11 @@
 // `--trim` keeps toLocaleString and localeCompare where the program names them. A name that arrives as data names nothing: the call throws an error that says how to keep the method.
 // A list or a comparison that holds the name keeps it.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const removed = (name: string) =>
   `${name} was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "intl" to compile.trim.allow in Bun.build().`;
@@ -41,38 +42,45 @@ if (!canTrim)
     "SKIPPED: test/aot/trim-keeps-locale-methods-only-where-they-are-named.test.ts: this Bun was not linked for --trim",
   );
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
-  "locale methods in a trimmed executable",
-  () => {
-    test.each(programs)(
-      "%s",
-      (_, source, answer, trimmedSays) =>
-        slot(async () => {
-          using dir = tempDir("aot-trim-locale-methods", { "program.js": source + "\n" });
-          const folder = String(dir);
-          const ran: Record<string, { stdout: string; stderr: string; exitCode: number | null }> = {};
-          for (const [kind, flags] of [
-            ["untrimmed", []],
-            ["trimmed", ["--trim"]],
-          ] as const) {
-            built(
-              await spawned(
-                [bunExe(), "build", "--compile", "--aot", ...flags, "program.js", "--outfile", kind],
-                folder,
-                bunEnv,
-              ),
-            );
-            ran[kind] = await spawned([join(folder, kind), "toLocaleString", "localeCompare"], folder, bunEnv);
-          }
-          expect({ stdout: ran.untrimmed.stdout, exitCode: ran.untrimmed.exitCode }).toEqual({
-            stdout: answer + "\n",
-            exitCode: 0,
-          });
-          if (trimmedSays === null) return expect(ran.trimmed).toEqual(ran.untrimmed);
-          expect(ran.trimmed.stderr).toContain(trimmedSays);
-          expect({ stdout: ran.trimmed.stdout, exitCode: ran.trimmed.exitCode }).toEqual({ stdout: "", exitCode: 1 });
-        }),
-      600_000,
-    );
-  },
-);
+(canTrim && !unsupported ? describe.concurrent : describe.skip)("locale methods in a trimmed executable", () => {
+  test.each(programs)(
+    "%s",
+    (_, source, answer, trimmedSays) =>
+      slot(async () => {
+        using dir = tempDir("aot-trim-locale-methods", { "program.js": source + "\n" });
+        const folder = String(dir);
+        const ran: Record<string, { stdout: string; stderr: string; exitCode: number | null }> = {};
+        for (const [kind, flags] of [
+          ["untrimmed", []],
+          ["trimmed", ["--trim"]],
+        ] as const) {
+          built(
+            await spawned(
+              [
+                bunExe(),
+                "build",
+                "--compile",
+                ...withoutDebugInformation,
+                "--aot",
+                ...flags,
+                "program.js",
+                "--outfile",
+                kind,
+              ],
+              folder,
+              bunEnv,
+            ),
+          );
+          ran[kind] = await spawned([join(folder, kind), "toLocaleString", "localeCompare"], folder, bunEnv);
+        }
+        expect({ stdout: ran.untrimmed.stdout, exitCode: ran.untrimmed.exitCode }).toEqual({
+          stdout: answer + "\n",
+          exitCode: 0,
+        });
+        if (trimmedSays === null) return expect(ran.trimmed).toEqual(ran.untrimmed);
+        expect(ran.trimmed.stderr).toContain(trimmedSays);
+        expect({ stdout: ran.trimmed.stdout, exitCode: ran.trimmed.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      }),
+    600_000,
+  );
+});

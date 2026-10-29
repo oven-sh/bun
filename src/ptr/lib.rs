@@ -377,10 +377,7 @@ pub use detach_lifetime_ref as detach_ref;
 //
 // `Interned` is the type-level proof that a `&'static [u8]` came from
 // Population A. Safe constructors accept only genuinely-process-lifetime
-// inputs (`from_static`, `leak`, `leak_vec`); the single `unsafe` escape hatch
-// (`assume`) forces every Population-B caller to spell out — in its SAFETY
-// comment — exactly which owner backs the bytes and when it drops, so the lie
-// is grep-able rather than ambient.
+// inputs (`from_static`, `From<&'static [u8]>`, `From<&'static str>`).
 //
 // `repr(transparent)` over `&'static [u8]`: zero-cost, FFI-identical to the
 // fields it replaces, `Option<Interned>` niche-packs, and `Send + Sync` is
@@ -402,8 +399,7 @@ pub use detach_lifetime_ref as detach_ref;
 /// `Interned` exists so that the ~80 open-coded `&[u8] → &'static [u8]` widens
 /// become a safe value flowing from the store, and so that the ~24 sites whose
 /// backing **does** drop can no longer pretend to be `'static` — they must
-/// spell `unsafe { Interned::assume(..) }` and name the owner in the SAFETY
-/// comment, or (correctly) switch to [`RawSlice<u8>`] / [`BackRef<T>`].
+/// switch to [`RawSlice<u8>`] / [`BackRef<T>`], or name the owner at a [`detach_lifetime`] call.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Interned(&'static [u8]);
@@ -417,20 +413,6 @@ impl Interned {
     #[inline]
     pub const fn from_static(s: &'static [u8]) -> Self {
         Interned(s)
-    }
-
-    /// Escape hatch for storage this module cannot see (mmap'd standalone
-    /// graph, mimalloc arena leaked for the process, C-side constant table).
-    ///
-    /// # Safety
-    /// `s` must remain valid and immutable for the rest of the process. Name
-    /// the owning store in the SAFETY comment. **Never** call this on bytes
-    /// owned by a value with a `Drop` impl that runs before process exit — use
-    /// [`RawSlice<u8>`] for holder-lifetime slices instead.
-    #[inline]
-    pub const unsafe fn assume(s: &[u8]) -> Self {
-        // SAFETY: caller contract — `s` is process-lifetime and immutable.
-        Interned(unsafe { &*core::ptr::from_ref::<[u8]>(s) })
     }
 
     /// Recover the underlying `&'static [u8]` (for storing into legacy fields

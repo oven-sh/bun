@@ -2230,11 +2230,7 @@ impl MulticastRequest {
 fn zone_scope_id(zone: &[u8]) -> u32 {
     #[cfg(windows)]
     {
-        // Windows: zone identifier is a numeric scope id, not an
-        // interface name (`fe80::1%5`).
-        // Same rules as WTF::parseIntegerAllowingTrailingJunk<int32_t>:
-        // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
-        // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
+        // The zone is the scope id itself (`fe80::1%5`), read as WTF::parseIntegerAllowingTrailingJunk<int32_t> reads it.
         let mut i = 0usize;
         while i < zone.len() && matches!(zone[i], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c') {
             i += 1;

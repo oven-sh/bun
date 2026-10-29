@@ -333,6 +333,10 @@ describe("udpSocket()", () => {
     test("undefined and null are no interface", async () => {
       const membership = await outcome(s => s.addMembership(G));
       const sourceMembership = await outcome(s => s.addSourceSpecificMembership(H, S));
+      // The call got to setsockopt: it is `true`, or the error of the system, and not a refusal of the reader.
+      const gotToSetsockopt = (result: any) =>
+        result === true || (result?.syscall === "setsockopt" && !result.message.includes("is not an IP address"));
+      expect([gotToSetsockopt(membership), gotToSetsockopt(sourceMembership)]).toEqual([true, true]);
       expect({
         "addMembership(group, undefined)": await outcome(s => s.addMembership(G, undefined)),
         "addMembership(group, null)": await outcome(s => s.addMembership(G, null as any)),

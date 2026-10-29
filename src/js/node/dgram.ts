@@ -1456,9 +1456,7 @@ type MulticastMethod =
   | "dropSourceSpecificMembership";
 type NativeMulticastMethod = (address: string, second?: string, third?: string) => boolean;
 
-// Calls a multicast method of the native socket, which is the socket of
-// Bun.udpSocket() too, and reports a failure the way Node's ErrnoException
-// would: "addMembership EINVAL".
+// Reports a failure the way Node's ErrnoException would: "addMembership EINVAL".
 function callMulticast(
   socket: $Node.UDPSocketHandle,
   method: MulticastMethod,
@@ -1471,8 +1469,7 @@ function callMulticast(
     if ((socket[method] as NativeMulticastMethod)(address, second, third) !== false) return;
   } catch (err: any) {
     const code = err?.code;
-    // ERR_INVALID_ARG_TYPE: the source or the interface is not of the family
-    // of the group. libuv answers UV_EINVAL for that too.
+    // ERR_INVALID_ARG_TYPE is the native "Family mismatch", which libuv answers with UV_EINVAL.
     if (code !== "EINVAL" && code !== "ERR_INVALID_ARG_TYPE") {
       if (err?.syscall === "setsockopt") {
         err.syscall = method;

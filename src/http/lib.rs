@@ -812,8 +812,7 @@ pub struct HTTPClient<'a> {
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) proxy_authorization: Option<Vec<u8>>,
     /// Set while this request is tunneling through an HTTP proxy (CONNECT);
-    /// moved to the keep-alive pool with the socket. The pointee is also
-    /// recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
+    /// moved to the keep-alive pool with the socket.
     pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
     /// Set when this request is bound to a stream on an HTTP/2 session.
     /// Owned by the session; cleared by the session when the stream completes.
@@ -1638,21 +1637,15 @@ impl<'a> HTTPClient<'a> {
         // field of `self`); the RawSlice invariant centralises the unsafe.
         self.state.request_body.slice()
     }
-    /// The tunnel handle's pointer, for the entry points that may release the
-    /// handle while they run (`ProxyTunnel::on_writable` / `receive`).
-    #[inline]
-    pub(crate) fn proxy_tunnel_ptr(&self) -> Option<NonNull<ProxyTunnel>> {
-        self.proxy_tunnel.as_ref().map(|p| p.as_non_null())
-    }
     /// Detach the proxy tunnel, if one is attached, and drop this client's ref
     /// on it.
     #[inline]
     pub(crate) fn close_proxy_tunnel(&mut self, shutdown: bool) {
         if let Some(t) = self.proxy_tunnel.take() {
             if shutdown {
-                proxy_tunnel::ProxyTunnel::shutdown(t.as_non_null());
+                t.shutdown();
             }
-            proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
+            t.detach_socket();
         }
     }
     /// Common tail of `fail` / `fail_from_h2` / `complete_connecting_process`:
@@ -3171,11 +3164,10 @@ impl<'a> HTTPClient<'a> {
     ) -> crate::Result<bool> {
         // Through a proxy tunnel the stream body goes via the inner TLS,
         // not the outer socket.
-        if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
+        if let Some(proxy) = self.proxy_tunnel.as_deref() {
             if socket.is_closed() || socket.is_shutdown() {
                 return Err(crate::Error::ConnectionClosed);
             }
-            let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
             // Any Err is backpressure: WantRead/WantWrite retry on the next
             // on_writable, and a fatal SSL error already ran on_close (and
             // may have freed *self), so bail via Ok(true) without touching
@@ -3361,8 +3353,8 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        if let Some(proxy) = self.proxy_tunnel_ptr() {
-            ProxyTunnel::on_writable::<IS_SSL>(proxy, socket);
+        if let Some(proxy) = self.proxy_tunnel.clone() {
+            proxy.on_writable::<IS_SSL>(socket);
             // ProxyTunnel::on_writable → SSLWrapper::flush → handle_traffic
             // may process a TLS alert or close_notify that was buffered
             // alongside the handshake flight, firing on_close →
@@ -3501,11 +3493,7 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
-                if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // Detached upgrade so `&mut self` can be reborrowed below;
-                    // the tunnel is a disjoint heap allocation (see
-                    // `proxy_tunnel::raw_as_mut` INVARIANT).
-                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
+                if let Some(proxy) = self.proxy_tunnel.as_deref() {
                     match &self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) => {
                             self.set_timeout(&socket);
@@ -3539,10 +3527,6 @@ impl<'a> HTTPClient<'a> {
             RequestStage::ProxyHeaders => {
                 bun_core::scoped_log!(fetch, "send proxy headers");
                 if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // Detached upgrade so `&mut self` can be reborrowed below;
-                    // the tunnel is a disjoint heap allocation (see
-                    // `proxy_tunnel::raw_as_mut` INVARIANT).
-                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     self.set_timeout(&socket);
                     // Proxy-tunnel writes can be partial across event-loop ticks
                     // — compress straight into the Vec.
@@ -3581,7 +3565,8 @@ impl<'a> HTTPClient<'a> {
                         return;
                     }
                     // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                    let Ok(amount) = ProxyTunnel::write(proxy, to_send) else {
+                    // SAFETY: nothing since the test above releases the ref that `self.proxy_tunnel` holds.
+                    let Ok(amount) = ProxyTunnel::write(unsafe { &*proxy_ptr }, to_send) else {
                         return;
                     };
 
@@ -3931,7 +3916,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        if let Some(proxy) = self.proxy_tunnel_ptr() {
+        if let Some(proxy) = self.proxy_tunnel.clone() {
             // Body phase only, mirroring the non-proxy dispatch below (header
             // phase is an absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
             debug_assert!(!self.state.flags.receive_paused); // maybe_pause_receive bails on proxy_tunnel
@@ -3941,7 +3926,7 @@ impl<'a> HTTPClient<'a> {
             ) {
                 self.set_timeout(&socket);
             }
-            ProxyTunnel::receive(proxy, incoming_data);
+            proxy.receive(incoming_data);
             return;
         }
 
@@ -4300,7 +4285,7 @@ impl<'a> HTTPClient<'a> {
             // socket is still alive. Pooling that dead wrapper would hang the
             // next request (proxy.write() → error.ConnectionClosed, swallowed).
             let tunnel_poolable = if let Some(t) = self.proxy_tunnel.as_deref() {
-                t.write_buffer.is_empty()
+                t.is_write_buffer_empty()
                     && t.wrapper
                         .as_ref()
                         .map(|w| {
@@ -4330,7 +4315,7 @@ impl<'a> HTTPClient<'a> {
                 // dereffs it if pooling fails.
                 let tunnel = self.proxy_tunnel.take();
                 if let Some(t) = &tunnel {
-                    proxy_tunnel::raw_as_mut(t.as_ptr()).detach_owner(&*self);
+                    t.detach_owner(&*self);
                 }
                 let had_tunnel = tunnel.is_some();
                 // target_hostname = url.hostname (the CONNECT TCP target at

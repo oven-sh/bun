@@ -15,6 +15,7 @@ use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 
 use crate::Graph::InputFileFlags;
 use crate::Index;
+use crate::PathToSourceIndexMap::ModuleKey;
 use crate::bundle_v2::BundleV2;
 use crate::bundle_v2::bv2_impl::{PatchImportRecordsCtx, ResolveImportRecordCtx};
 use crate::parse_task;
@@ -323,7 +324,7 @@ fn record_target(
     if rec.source_index.is_valid() {
         return Some(rec.source_index.get());
     }
-    map?.get_path(&rec.path)
+    map?.get().get(ModuleKey::of_path(rec.path.text))
 }
 
 /// The export names the result of `import()` / `require()` record `idx` can
@@ -389,7 +390,13 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
 
     this.graph.input_files.items_source_mut()[idx] = source;
 
-    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
+    let scheduled = this.process_resolve_queue(
+        &resolve_result.resolve_queue,
+        barrel_ir.as_mut_slice(),
+        target,
+        barrel_idx,
+        true,
+    );
 
     this.patch_import_record_source_indices(
         &mut barrel_ir,
@@ -536,7 +543,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get(ModuleKey::of_path(resolved_path_text)) {
                 Some(t) => t,
                 None => continue,
             }
@@ -629,7 +636,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         let ir_target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get(ModuleKey::of_path(resolved_path_text)) {
                 Some(t) => t,
                 None => continue,
             }

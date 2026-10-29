@@ -749,12 +749,24 @@ impl<'a> LinkerContext<'a> {
                         .path
                         .text
                 };
+                // The page is the module of this path that has the html loader: the path's own
+                // module when html is its default loader, else the one keyed by that loader.
+                // SAFETY: `input_files` SoA is append-only; read-only here.
+                let loaders = unsafe { (*parse_graph).input_files.items_loader() };
                 // SAFETY: sole `&mut` into the per-target map for this lookup.
-                let source_index: u32 = unsafe {
-                    (*parse_graph).path_to_source_index_map(Target::Browser)
-                }
-                .get(path_text)
-                .unwrap_or_else(|| {
+                let browser_modules =
+                    unsafe { (*parse_graph).path_to_source_index_map(Target::Browser) };
+                let source_index: u32 = [None, Some(Loader::Html)]
+                    .into_iter()
+                    .find_map(|loader| {
+                        browser_modules
+                            .get(crate::PathToSourceIndexMap::ModuleKey {
+                                text: path_text,
+                                loader,
+                            })
+                            .filter(|&module| loaders[module as usize] == Loader::Html)
+                    })
+                    .unwrap_or_else(|| {
                     panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 });
 

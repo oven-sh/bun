@@ -6,7 +6,7 @@
 
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_collections::ArrayHashMap;
 use bun_core::ThreadLock;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
@@ -149,9 +149,53 @@ pub struct BundleV2<'a> {
 bun_core::declare_scope!(Bundle, visible);
 bun_core::declare_scope!(scan_counter, visible);
 
-/// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
-/// dedups by path during a single `on_parse_task_complete` pass.
-pub(crate) type ResolveQueue<'a> = StringHashMap<*mut ParseTask<'a>>;
+/// A module that an import record of one file asks for and the graph did not have when the
+/// record was resolved. `process_resolve_queue` registers it and binds the record.
+pub(crate) struct PendingModule<'a> {
+    pub(crate) record_index: u32,
+    /// The loader of the module's key. Its text is `task.path.text`.
+    pub(crate) key_loader: Option<bun_ast::Loader>,
+    /// Arena-owned by `graph.heap`.
+    pub(crate) task: *mut ParseTask<'a>,
+}
+
+/// The pending modules of one file, in record order.
+pub(crate) type ResolveQueue<'a> = Vec<PendingModule<'a>>;
+
+/// What one import asks for: the loader the file is parsed with, and the key loader of that
+/// module (see `ModuleKey`). Every arm of the scan that binds an import to a module decides
+/// both here, so the key and the loader of a module always agree.
+///
+/// `record_loader` is the loader of the import's `with { type }`, as the parser left it.
+/// `path_loader` is the loader the path gets by default.
+pub(crate) fn requested_module(
+    record_loader: Option<bun_ast::Loader>,
+    path_loader: bun_ast::Loader,
+    is_html_url_asset: bool,
+    for_dev_server: bool,
+) -> (bun_ast::Loader, Option<bun_ast::Loader>) {
+    use bun_ast::Loader;
+    let mut loader = record_loader.unwrap_or(path_loader);
+    // A URL asset that an HTML file references (`<link rel="manifest" href="./manifest.json">`)
+    // is copied to the output directory as it is. A loader that would parse it gives way to the
+    // file loader.
+    if is_html_url_asset
+        && !loader.should_copy_for_bundling()
+        && !loader.is_javascript_like()
+        && !loader.is_css()
+        && loader != Loader::Html
+    {
+        loader = Loader::File;
+    }
+    // Every JSON file is valid JSONC and has the same value there, so `with { type: "json" }`
+    // on a path that is JSONC by default (package.json, tsconfig.json) is that path's own module.
+    if loader == Loader::Json && path_loader == Loader::Jsonc {
+        loader = Loader::Jsonc;
+    }
+    // The dev server's incremental graph has one module for each path.
+    let key_loader = (!for_dev_server && loader != path_loader).then_some(loader);
+    (loader, key_loader)
+}
 
 pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
@@ -280,7 +324,7 @@ impl<'a> BundleV2<'a> {
 // ══════════════════════════════════════════════════════════════════════════
 
 pub mod bv2_impl {
-    use super::ResolveQueue;
+    use super::{PendingModule, ResolveQueue};
     use crate::IndexInt;
     use crate::mal_prelude::*;
     // This is Bun's JavaScript/TypeScript bundler
@@ -1073,7 +1117,8 @@ pub mod bv2_impl {
                 pub(crate) import_record_index: u32,
                 pub(crate) range: bun_ast::Range,
                 pub(crate) original_target: Target,
-                /// Set for the html file of a dev server route, see `BundleV2::requested_file_loader`.
+                /// An entry point: set for the html file of a dev server route, see
+                /// `BundleV2::requested_file_loader`. An import: the loader of its `with { type }`.
                 pub(crate) loader: Option<Loader>,
             }
 
@@ -1454,7 +1499,7 @@ pub mod bv2_impl {
     use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
-    use crate::PathToSourceIndexMap::PathToSourceIndexMap;
+    use crate::PathToSourceIndexMap::{ModuleKey, PathToSourceIndexMap};
     use crate::ServerComponentParseTask::ServerComponentParseTask;
     use crate::barrel_imports;
 
@@ -2553,16 +2598,29 @@ pub mod bv2_impl {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
+            // A path is one file to the type checker. When a path is in the build under two
+            // loaders, its module under the path's own loader stands for it.
+            let keyed = self.keyed_modules();
+            let has_own_loader_module = |index: usize| {
+                keyed
+                    .binary_search_by_key(&(index as IndexInt), |&(module, _)| module)
+                    .is_err()
+                    || !(self.graph.build_graphs.values()).any(|map| {
+                        map.get(ModuleKey::of_path(sources[index].path.text))
+                            .is_some()
+                    })
+            };
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
-            let mut sources = (sources.iter().zip(loaders).zip(flags))
-                .filter(|((source, loader), flags)| {
+            let mut sources = (sources.iter().zip(loaders).zip(flags).enumerate())
+                .filter(|(index, ((source, loader), flags))| {
                     loader.is_javascript_like_or_json()
                         && source.path.is_file()
                         && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                             && bun_sys::exists(source.path.text))
+                        && has_own_loader_module(*index)
                 })
-                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+                .map(|(_, ((source, loader), _))| (source.path.text, source.contents(), *loader));
             let checked = options::TypeChecked {
                 cwd: Fs::FileSystem::get().top_level_dir(),
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
@@ -2634,7 +2692,7 @@ pub mod bv2_impl {
                     let secondary_path: &[u8] = &secondary_paths[source_index as usize];
                     if !secondary_path.is_empty() {
                         let Some(secondary_source_index) =
-                            path_to_source_index_map.get(secondary_path)
+                            path_to_source_index_map.get(ModuleKey::of_path(secondary_path))
                         else {
                             continue;
                         };
@@ -2644,6 +2702,92 @@ pub mod bv2_impl {
                     }
                 }
             }
+        }
+
+        /// The modules that have a key loader, sorted by source index. Only the module maps know
+        /// the key of a module, and a module that two targets share is in two of them.
+        fn keyed_modules(&self) -> Vec<(IndexInt, Loader)> {
+            let mut keyed: Vec<(IndexInt, Loader)> = Vec::new();
+            for map in self.graph.build_graphs.values() {
+                keyed.extend(map.keyed().map(|(loader, _, module)| (module, loader)));
+            }
+            keyed.sort_unstable_by_key(|&(module, _)| module);
+            keyed.dedup();
+            keyed
+        }
+
+        /// Like esbuild: when one pretty path is in the build under two key loaders, the modules with a key loader become `d.json with { type: 'text' }`.
+        pub(crate) fn disambiguate_pretty_paths(&mut self) {
+            let keyed = self.keyed_modules();
+            if keyed.is_empty() {
+                return;
+            }
+            let sources = self.graph.input_files.items_source();
+
+            // Pretty path of a module with a key loader → (the first such loader, another key loader has this path too).
+            let mut names: bun_collections::StringHashMap<(Loader, bool)> = Default::default();
+            for &(module, loader) in &keyed {
+                let name = names
+                    .get_or_put(sources[module as usize].path.pretty)
+                    .expect("oom");
+                if !name.found_existing {
+                    *name.value_ptr = (loader, false);
+                } else if name.value_ptr.0 != loader {
+                    name.value_ptr.1 = true;
+                }
+            }
+            for (module, source) in sources.iter().enumerate() {
+                if keyed
+                    .binary_search_by_key(&(module as IndexInt), |&(keyed, _)| keyed)
+                    .is_err()
+                    && let Some(name) = names.get_mut(source.path.pretty)
+                {
+                    name.1 = true;
+                }
+            }
+
+            let targets = self.graph.ast.items_target();
+            let mut renamed: Vec<(IndexInt, Fs::Path<'a>)> = Vec::new();
+            for &(module, loader) in &keyed {
+                let mut path = sources[module as usize].path;
+                if !names.get(path.pretty).is_some_and(|name| name.1) {
+                    continue;
+                }
+                if path.is_file() && path.pretty.as_ptr() == path.text.as_ptr() {
+                    // The linker gives the other module of this path its pretty form later.
+                    path = self
+                        .path_with_pretty_initialized(&path, targets[module as usize])
+                        .expect("oom");
+                }
+                let loader_name: &'static str = loader.into();
+                let mut pretty: Vec<u8> = path.pretty.to_vec();
+                pretty.extend_from_slice(b" with { type: '");
+                pretty.extend_from_slice(loader_name.as_bytes());
+                pretty.extend_from_slice(b"' }");
+                // SAFETY: arena outlives the bundle pass; see `path_with_pretty_initialized`.
+                path.pretty =
+                    unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(&pretty)) };
+                renamed.push((module, path));
+            }
+            for (module, path) in renamed {
+                self.graph.input_files.items_source_mut()[module as usize].path = path;
+            }
+        }
+
+        /// `requested_module` for an import that went to the onResolve plugins.
+        fn requested_module_of_plugin_record(
+            &self,
+            import_record: &jsc_api::JSBundler::MiniImportRecord,
+            path_loader: Loader,
+        ) -> (Loader, Option<Loader>) {
+            let importer_loader = self.graph.input_files.items_loader()
+                [import_record.importer_source_index as usize];
+            super::requested_module(
+                import_record.loader,
+                path_loader,
+                importer_loader == Loader::Html && import_record.kind == ImportKind::Url,
+                self.dev_server.is_some(),
+            )
         }
 
         /// This runs on the Bundle Thread.
@@ -2672,6 +2816,12 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
+                    // SAFETY: see `transpiler` note above.
+                    let path_loader = Fs::Path::init(path_primary.text)
+                        .loader(unsafe { &(*transpiler).options.loaders })
+                        .unwrap_or(Loader::File);
+                    let (loader, key_loader) =
+                        self.requested_module_of_plugin_record(import_record, path_loader);
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2679,7 +2829,10 @@ pub mod bv2_impl {
                     let (found_existing, value_ptr): (bool, *mut u32) = {
                         let entry = self
                             .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
+                            .get_or_put(ModuleKey {
+                                text: path_primary.text,
+                                loader: key_loader,
+                            })
                             .expect("oom");
                         (
                             entry.found_existing,
@@ -2687,20 +2840,6 @@ pub mod bv2_impl {
                         )
                     };
                     if !found_existing {
-                        let loader: Loader = 'brk: {
-                            let record: &mut ImportRecord =
-                                &mut self.graph.ast.items_import_records_mut()
-                                    [import_record.importer_source_index as usize]
-                                    .as_mut_slice()
-                                    [import_record.import_record_index as usize];
-                            if let Some(out_loader) = record.loader {
-                                break 'brk out_loader;
-                            }
-                            // SAFETY: see `transpiler` note above.
-                            break 'brk Fs::Path::init(path_primary.text)
-                                .loader(unsafe { &(*transpiler).options.loaders })
-                                .unwrap_or(Loader::File);
-                        };
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
                         let mut tmp_source = bun_ast::Source {
@@ -2925,27 +3064,25 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
+            // SAFETY: see `transpiler` note above.
+            let path_loader = path
+                .loader(unsafe { &(*transpiler).options.loaders })
+                .unwrap_or(Loader::File);
+            let (loader, key_loader) =
+                self.requested_module_of_plugin_record(import_record, path_loader);
+            let key = ModuleKey {
+                text: path.text,
+                loader: key_loader,
+            };
+
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
+            if let Some(existing) = self.path_to_source_index_map(target).get(key) {
                 out_source_index = Some(Index::init(existing));
             } else {
                 let path = self
                     .path_with_pretty_initialized(&path, target)
                     .expect("oom");
-                let loader: Loader = 'brk: {
-                    let record: &ImportRecord = &self.graph.ast.items_import_records()
-                        [import_record.importer_source_index as usize]
-                        .as_slice()[import_record.import_record_index as usize];
-                    if let Some(out_loader) = record.loader {
-                        break 'brk out_loader;
-                    }
-                    // SAFETY: see `transpiler` note above.
-                    break 'brk path
-                        .loader(unsafe { &(*transpiler).options.loaders })
-                        .unwrap_or(Loader::File);
-                    // HTML is only allowed at the entry point.
-                };
                 let mut tmp_source = bun_ast::Source {
                     path,
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -2961,11 +3098,14 @@ pub mod bv2_impl {
                     )
                     .expect("oom");
                 self.path_to_source_index_map(target)
-                    .put(path.text, idx)
+                    .put(key, idx)
                     .expect("oom");
                 out_source_index = Some(Index::init(idx));
 
-                if let Some(secondary) = &resolve_result.path_pair.secondary {
+                // The CommonJS twin of a dual package is a twin of its JavaScript module only.
+                if let Some(secondary) = &resolve_result.path_pair.secondary
+                    && key_loader.is_none()
+                {
                     if !secondary.is_disabled && !strings::eql_long(secondary.text, path.text, true)
                     {
                         self.graph.input_files.items_secondary_path_mut()[idx as usize] =
@@ -2979,9 +3119,6 @@ pub mod bv2_impl {
                 // For example, it is silly to bundle index.css depended on by client+server twice.
                 // It makes sense to separate these for JS because the target affects DCE
                 if self.transpiler.options.server_components && !loader.is_javascript_like() {
-                    // reshaped for borrowck — cannot hold two `&mut` into
-                    // `self.graph` simultaneously, so re-derive the map per insert.
-                    let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
                     let main_target = self.transpiler.options.target;
                     let separate_ssr = self
                         .framework
@@ -2997,11 +3134,11 @@ pub mod bv2_impl {
                         _ => (Target::Browser, Target::ServerComponentsSsr),
                     };
                     self.path_to_source_index_map(ta)
-                        .put(&key_text, idx)
+                        .put(key, idx)
                         .expect("oom");
                     if separate_ssr {
                         self.path_to_source_index_map(tb)
-                            .put(&key_text, idx)
+                            .put(key, idx)
                             .expect("oom");
                     }
                 }
@@ -3027,7 +3164,7 @@ pub mod bv2_impl {
             // borrow doesn't span the resolver / `&mut self` calls below.
             if self
                 .path_to_source_index_map(target)
-                .get(path_slice)
+                .get(ModuleKey::of_path(path_slice))
                 .is_some()
             {
                 return Ok(());
@@ -3047,7 +3184,7 @@ pub mod bv2_impl {
             let path = self.path_with_pretty_initialized(&result.path_pair.primary, target)?;
             path.assert_pretty_is_valid();
             self.path_to_source_index_map(target)
-                .put(path_slice, source_index.get())
+                .put(ModuleKey::of_path(path_slice), source_index.get())
                 .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
@@ -3115,23 +3252,27 @@ pub mod bv2_impl {
             if !self.file_map.is_some_and(|files| files.contains(path.text)) {
                 path.assert_file_path_is_absolute();
             }
+            let (loader, key_loader) = super::requested_module(
+                loader,
+                self.requested_file_loader(path, None),
+                false,
+                self.dev_server.is_some(),
+            );
+            let key = ModuleKey {
+                text: path.text,
+                loader: key_loader,
+            };
             // borrowck: get-then-put instead of a single get-or-put.
-            if self
-                .path_to_source_index_map(target)
-                .get(path.text)
-                .is_some()
-            {
+            if self.path_to_source_index_map(target).get(key).is_some() {
                 return Ok(None);
             }
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let loader = self.requested_file_loader(path, loader);
-
             let path = self.path_with_pretty_initialized(path, target)?;
             path.assert_pretty_is_valid();
             self.path_to_source_index_map(target)
-                .put(path.text, source_index.get())
+                .put(key, source_index.get())
                 .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
@@ -3735,7 +3876,7 @@ pub mod bv2_impl {
             // try this.graph.entry_points.append(arena, Index.runtime);
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
             self.path_to_source_index_map(self.transpiler.options.target)
-                .put(&b"bun:wrap"[..], Index::RUNTIME.get())
+                .put(ModuleKey::of_path(b"bun:wrap"), Index::RUNTIME.get())
                 .expect("oom");
             let runtime_parse_task: &mut ParseTask = self.arena().alloc(rt.parse_task);
             // SAFETY: BACKREF — `self` outlives the task; lifetime erased per ParseTask::ctx convention.
@@ -4385,6 +4526,7 @@ pub mod bv2_impl {
                 this.type_check()?;
 
                 this.scan_for_secondary_paths();
+                this.disambiguate_pretty_paths();
 
                 this.process_server_component_manifest_files()?;
 
@@ -4550,6 +4692,7 @@ pub mod bv2_impl {
                 }
 
                 this.scan_for_secondary_paths();
+                this.disambiguate_pretty_paths();
 
                 this.process_server_component_manifest_files()?;
 
@@ -4732,6 +4875,44 @@ pub mod bv2_impl {
                             }
                         }
                         templates.push((index, template));
+                    }
+                }
+
+                // A standalone executable keeps one file for each embedded path, and it stores a text
+                // module as a string body, not as the file's bytes. A text module takes a `[hash]`
+                // of its own when another kind of asset has its path.
+                if (templates.iter()).any(|(index, _)| loaders[*index] == Loader::Text) {
+                    let sanitize = !self.transpiler.options.compile_mode.is_executable();
+                    let printed = |template: &options::PathTemplate| {
+                        let mut path = Vec::new();
+                        template.print(&mut path, sanitize).expect("oom");
+                        path
+                    };
+                    let content_hashes = content_hashes_for_additional_files;
+                    let mut other_hashes: Vec<u64> = (templates.iter())
+                        .filter(|(index, _)| loaders[*index] != Loader::Text)
+                        .map(|(index, _)| content_hashes[*index])
+                        .collect();
+                    other_hashes.sort_unstable();
+                    for at in 0..templates.len() {
+                        let index = templates[at].0;
+                        if loaders[index] != Loader::Text
+                            || other_hashes.binary_search(&content_hashes[index]).is_err()
+                        {
+                            continue;
+                        }
+                        let path = printed(&templates[at].1);
+                        let is_shared = templates.iter().any(|(other, template)| {
+                            loaders[*other] != Loader::Text
+                                && content_hashes[*other] == content_hashes[index]
+                                && printed(template) == path
+                        });
+                        if is_shared {
+                            let template = &mut templates[at].1;
+                            template.placeholder.hash = Some(template.content_hash(
+                                bun_wyhash::hash_with_seed(content_hashes[index], b"text"),
+                            ));
+                        }
                     }
                 }
 
@@ -5262,9 +5443,25 @@ pub mod bv2_impl {
                         path.namespace = &result.namespace;
                     }
                     if !result.external {
+                        let (loader, key_loader) =
+                            if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                                // A file that a plugin resolved an entry point to instead keeps its own loader.
+                                let requested = (resolve.import_record.loader)
+                                    .filter(|_| path.text == &*resolve.import_record.specifier);
+                                (this.requested_file_loader(&path, requested), None)
+                            } else {
+                                // An import keeps the loader of its `with { type }` on the path the plugin returned.
+                                this.requested_module_of_plugin_record(
+                                    &resolve.import_record,
+                                    this.requested_file_loader(&path, None),
+                                )
+                            };
                         let existing = this.graph.build_graphs
                             [resolve.import_record.original_target]
-                            .get_or_put(path.text)
+                            .get_or_put(ModuleKey {
+                                text: path.text,
+                                loader: key_loader,
+                            })
                             .expect("oom");
                         if !existing.found_existing {
                             // We need to parse this
@@ -5283,14 +5480,6 @@ pub mod bv2_impl {
                             // duped the key into the map (see PathToSourceIndexMap.rs).
 
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            // A file that a plugin resolved the record to instead keeps its own loader.
-                            let loader = this.requested_file_loader(
-                                &path,
-                                resolve
-                                    .import_record
-                                    .loader
-                                    .filter(|_| path.text == &*resolve.import_record.specifier),
-                            );
 
                             this.graph
                                 .input_files
@@ -5591,6 +5780,7 @@ pub mod bv2_impl {
             self.type_check()?;
 
             self.scan_for_secondary_paths();
+            self.disambiguate_pretty_paths();
 
             self.process_server_component_manifest_files()?;
 
@@ -6200,7 +6390,7 @@ pub mod bv2_impl {
                             import_record_index,
                             range: import_record.range,
                             original_target,
-                            loader: None,
+                            loader: import_record.loader,
                         },
                     );
 
@@ -6419,8 +6609,6 @@ pub mod bv2_impl {
             true
         }
 
-        // TODO: remove ResolveQueue
-        //
         // Moving this to the Bundle thread was a significant perf improvement on Linux for first builds
         //
         // The problem is that module resolution has many mutexes.
@@ -6529,9 +6717,25 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// Whether every import record of a file with `importer_loader` keeps the source index of
+        /// its module. The dev server finds a module by `record.path`, so there only an HTML or
+        /// CSS importer, and a barrel un-deferral pass (the BFS follows the indices), keep them
+        /// all. An import of a stylesheet always keeps its index.
+        pub(crate) fn saves_every_source_index(
+            &self,
+            importer_loader: Loader,
+            is_barrel_un_deferral: bool,
+        ) -> bool {
+            is_barrel_un_deferral
+                || self.dev_server.is_none()
+                || importer_loader == Loader::Html
+                || importer_loader.is_css()
+        }
+
         /// Resolve all unresolved import records for a module, or only `ctx.only_records`.
         /// Skips records that are already resolved (valid source_index), unused, or internal.
-        /// Returns a resolve queue of new modules to schedule, plus any fatal error.
+        /// Binds each record whose module is in the graph. Returns the modules to register and
+        /// schedule, each with the record that asked for it, plus any fatal error.
         /// Used by both initial parse resolution and barrel un-deferral.
         pub(crate) fn resolve_import_records(
             &mut self,
@@ -6581,6 +6785,9 @@ pub mod bv2_impl {
             resolve_queue.reserve(estimated_resolve_queue_count);
 
             let mut last_error: Option<Error> = None;
+            let for_dev_server = self.dev_server.is_some();
+            let saves_every_source_index =
+                self.saves_every_source_index(loader, only_records.is_some());
 
             'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
                 if !only_selected_record(only_records, i) {
@@ -6772,32 +6979,28 @@ pub mod bv2_impl {
                     {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
-                        let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                            Fs::Path::init(path_primary.text)
-                                .loader(&transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
-                        });
+                        let path_loader = Fs::Path::init(path_primary.text)
+                            .loader(&transpiler.options.loaders)
+                            .unwrap_or(Loader::File);
+                        let (import_record_loader, key_loader) = super::requested_module(
+                            import_record.loader,
+                            path_loader,
+                            loader == Loader::Html && import_record.kind == ImportKind::Url,
+                            for_dev_server,
+                        );
                         import_record.loader = Some(import_record_loader);
 
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
+                        if let Some(id) = self.path_to_source_index_map(target).get(ModuleKey {
+                            text: path_primary.text,
+                            loader: key_loader,
+                        }) {
                             import_record.source_index = Index::init(id);
-                            continue;
-                        }
-
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
-                        if resolve_entry.found_existing {
-                            // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path = unsafe { &**resolve_entry.value_ptr }.path;
                             continue;
                         }
 
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.graph.heap.alloc_slice_copy(path_primary.text);
                         import_record.path = path_primary;
-                        let _ = path_primary.text; // key already interned by get_or_put
                         bun_core::scoped_log!(
                             Bundle,
                             "created ParseTask from FileMap: {}",
@@ -6818,7 +7021,11 @@ pub mod bv2_impl {
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        *resolve_entry.value_ptr = resolve_task;
+                        resolve_queue.push(PendingModule {
+                            record_index: i as u32,
+                            key_loader,
+                            task: resolve_task,
+                        });
                         continue;
                     }
                 }
@@ -7130,38 +7337,34 @@ pub mod bv2_impl {
                     }
                 }
 
-                let import_record_loader = 'brk: {
-                    let resolved_loader = import_record.loader.unwrap_or_else(|| {
-                        path.loader(&transpiler.options.loaders)
-                            .unwrap_or(Loader::File)
-                    });
-                    // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
-                    // the file must be copied to the output directory as-is. If the resolved loader would
-                    // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
-                    // so that `shouldCopyForBundling()` returns true and the asset is emitted.
-                    // Only do this for HTML sources — CSS url() imports should retain their original behavior.
-                    if loader == Loader::Html
-                        && import_record.kind == ImportKind::Url
-                        && !resolved_loader.should_copy_for_bundling()
-                        && !resolved_loader.is_javascript_like()
-                        && !resolved_loader.is_css()
-                        && resolved_loader != Loader::Html
-                    {
-                        break 'brk Loader::File;
-                    }
-                    break 'brk resolved_loader;
-                };
+                let path_loader = path
+                    .loader(&transpiler.options.loaders)
+                    .unwrap_or(Loader::File);
+                // Only HTML sources force the file loader on a URL asset. A CSS `url()` keeps its loader.
+                let (import_record_loader, key_loader) = super::requested_module(
+                    import_record.loader,
+                    path_loader,
+                    loader == Loader::Html && import_record.kind == ImportKind::Url,
+                    for_dev_server,
+                );
                 import_record.loader = Some(import_record_loader);
+                let key = ModuleKey {
+                    text: path.text,
+                    loader: key_loader,
+                };
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
-                    if self.dev_server.is_some() && loader != Loader::Html {
+                if let Some(id) = self.path_to_source_index_map(target).get(key) {
+                    if for_dev_server && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
-                    } else {
+                    }
+                    if saves_every_source_index
+                        || self.graph.input_files.items_loader()[id as usize].is_css()
+                    {
                         import_record.source_index = Index::init(id);
                     }
                     continue;
@@ -7171,19 +7374,11 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
-                if resolve_entry.found_existing {
-                    // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                    import_record.path = unsafe { &**resolve_entry.value_ptr }.path;
-                    continue;
-                }
-
                 *path = self
                     .path_with_pretty_initialized(path, target)
                     .expect("oom");
 
                 import_record.path = *path;
-                // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
                 // Arena-owned.
                 let resolve_task_val = ParseTask::init(
@@ -7204,8 +7399,10 @@ pub mod bv2_impl {
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
-                *resolve_entry.value_ptr = resolve_task;
-                if let Some(secondary) = &resolve_result.path_pair.secondary {
+                // The CommonJS twin of a dual package is a twin of its JavaScript module only.
+                if let Some(secondary) = &resolve_result.path_pair.secondary
+                    && key_loader.is_none()
+                {
                     if !secondary.is_disabled
                         && !core::ptr::eq(secondary, path)
                         && !strings::eql_long(secondary.text, path.text, true)
@@ -7213,9 +7410,14 @@ pub mod bv2_impl {
                         resolve_task.secondary_path_for_commonjs_interop = Some(*secondary);
                     }
                 }
+                resolve_queue.push(PendingModule {
+                    record_index: i as u32,
+                    key_loader,
+                    task: resolve_task,
+                });
 
                 if is_html_entrypoint {
-                    self.generate_server_html_module(path, target, import_record, path.text)
+                    self.generate_server_html_module(path, target, import_record, key)
                         .expect("unreachable");
                 }
             }
@@ -7226,13 +7428,17 @@ pub mod bv2_impl {
             }
         }
 
-        /// Process a resolve queue: create input file slots and schedule parse tasks.
+        /// Process a resolve queue: create input file slots, schedule parse tasks, and bind each
+        /// pending import record of `import_records` to its module.
+        /// `saves_every_source_index`: see the method of that name.
         /// Returns the number of newly scheduled tasks (for pending_items accounting).
         pub(crate) fn process_resolve_queue(
             &mut self,
             resolve_queue: &ResolveQueue<'a>,
+            import_records: &mut [ImportRecord<'a>],
             target: options::Target,
             importer_source_index: IndexInt,
+            saves_every_source_index: bool,
         ) -> i32 {
             let mut diff: i32 = 0;
             // reshaped for borrowck — `graph` and the
@@ -7247,11 +7453,11 @@ pub mod bv2_impl {
                     )
                 });
             let dev_server_is_none = self.dev_server.is_none();
-            for (key, value) in resolve_queue.iter() {
-                let value: *mut ParseTask = *value;
+            let first_new_module = self.graph.input_files.len() as IndexInt;
+            for pending in resolve_queue {
                 // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
                 // the arena outlives this loop.
-                let value = unsafe { &mut *value };
+                let value = unsafe { &mut *pending.task };
                 let loader = value.loader.unwrap_or_else(|| {
                     value
                         .path
@@ -7265,7 +7471,30 @@ pub mod bv2_impl {
                 } else {
                     &mut self.graph.build_graphs[target]
                 };
-                let existing = map.get_or_put(key).expect("oom");
+                let existing = map
+                    .get_or_put(ModuleKey {
+                        text: value.path.text,
+                        loader: pending.key_loader,
+                    })
+                    .expect("oom");
+
+                // The record of a server-side HTML import stays on its manifest module
+                // (`generate_server_html_module`); this entry is the page itself.
+                if !is_html_entrypoint {
+                    let (module, module_loader) = if existing.found_existing {
+                        let module = *existing.value_ptr;
+                        (
+                            module,
+                            self.graph.input_files.items_loader()[module as usize],
+                        )
+                    } else {
+                        (self.graph.input_files.len() as IndexInt, loader)
+                    };
+                    if saves_every_source_index || module_loader.is_css() {
+                        import_records[pending.record_index as usize].source_index =
+                            Index::init(module);
+                    }
+                }
 
                 if !existing.found_existing {
                     let new_task: &mut ParseTask = value;
@@ -7328,8 +7557,10 @@ pub mod bv2_impl {
 
                     self.graph.pool().schedule(new_task);
                 } else {
-                    if loader.should_copy_for_bundling() {
-                        let existing_idx = *existing.value_ptr;
+                    let existing_idx = *existing.value_ptr;
+                    // A second record of this file for a module this queue just added is
+                    // counted with the first.
+                    if loader.should_copy_for_bundling() && existing_idx < first_new_module {
                         let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
@@ -7358,8 +7589,7 @@ pub mod bv2_impl {
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
         pub(crate) redirect_import_record_index: u32,
-        /// See `only_selected_record`. `Some` also saves the source indices regardless
-        /// of dev_server/loader: the barrel BFS follows them.
+        /// `Some` for a barrel un-deferral pass: see `saves_every_source_index`.
         pub(crate) only_records: Option<&'a [u32]>,
     }
 
@@ -7377,23 +7607,18 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        /// Patch source_index on import records from pathToSourceIndexMap and
-        /// resolve_tasks_waiting_for_import_source_index. Called after
-        /// processResolveQueue has registered new modules.
+        /// Binds the records an onResolve plugin answered before this file was on the graph
+        /// (`resolve_tasks_waiting_for_import_source_index`), and re-points this file's key when
+        /// the file is a CommonJS redirect. `resolve_import_records` and `process_resolve_queue`
+        /// bind every other record. Called after `process_resolve_queue`.
         pub(crate) fn patch_import_record_source_indices(
             &mut self,
             import_records: &mut import_record::List,
             ctx: PatchImportRecordsCtx,
         ) {
-            // Borrowck rejects holding a `&self.graph` alias
-            // across the `&mut self.graph.build_graphs[...]` borrow
-            // below, so address the disjoint `self.graph.*` fields directly instead.
+            let save_import_record_source_index =
+                self.saves_every_source_index(ctx.loader, ctx.only_records.is_some());
             let input_file_loaders = self.graph.input_files.items_loader();
-            debug_assert!(ctx.only_records.is_none_or(<[u32]>::is_sorted));
-            let save_import_record_source_index = ctx.only_records.is_some()
-                || self.dev_server.is_none()
-                || ctx.loader == Loader::Html
-                || ctx.loader.is_css();
 
             if let Some(idx) = self
                 .resolve_tasks_waiting_for_import_source_index
@@ -7413,26 +7638,35 @@ pub mod bv2_impl {
                 drop(value);
             }
 
+            // A file that is only `module.exports = require("./target")`: later imports of this
+            // file's key get the target. The record of a target that is new to the graph has the
+            // target's resolved path; a record whose target was in the graph keeps its specifier,
+            // and that file is not redirected.
+            let Some(redirect) = get_redirect_id(ctx.redirect_import_record_index) else {
+                return;
+            };
+            let Some(record) = import_records.as_slice().get(redirect as usize) else {
+                return;
+            };
             // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
-            for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
-                if !only_selected_record(ctx.only_records, i) {
-                    continue;
-                }
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
-                    if save_import_record_source_index
-                        || input_file_loaders[source_index as usize].is_css()
-                    {
-                        record.source_index.0 = source_index;
-                    }
-
-                    if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
-                        if compare == i as u32 {
-                            let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
-                        }
-                    }
-                }
+            let target = if record.source_index.is_valid() {
+                Some(record.source_index.get()).filter(|&target| {
+                    path_to_source_index_map.is_key_of(record.path.text, target)
+                })
+            } else if self.dev_server.is_some() {
+                // The dev server does not keep the index on a JavaScript importer's record.
+                path_to_source_index_map.get(ModuleKey::of_path(record.path.text))
+            } else {
+                None
+            };
+            if let Some(target) = target {
+                let _ = path_to_source_index_map.redirect(
+                    ctx.source_path,
+                    ctx.source_index.get(),
+                    target,
+                ); // OOM-only Result
             }
         }
 
@@ -7441,7 +7675,7 @@ pub mod bv2_impl {
             path: &Fs::Path<'a>,
             target: options::Target,
             import_record: &mut ImportRecord,
-            path_text: &[u8],
+            key: ModuleKey<'_>,
         ) -> Result<(), Error> {
             // 1. Create the ast right here
             // 2. Create a separate "virutal" module that becomes the manifest later on.
@@ -7517,7 +7751,7 @@ pub mod bv2_impl {
             import_record.source_index = Index::init(fake_source_index.0);
             let _ = self
                 .path_to_source_index_map(target)
-                .put(path_text, fake_source_index.0); // OOM-only Result
+                .put(key, fake_source_index.0); // OOM-only Result
             self.graph
                 .html_imports
                 .server_source_indices
@@ -7727,10 +7961,14 @@ pub mod bv2_impl {
                         this.graph.css_file_count += 1;
                     }
 
+                    let saves_every_source_index =
+                        this.saves_every_source_index(result.loader, false);
                     diff += this.process_resolve_queue(
                         &resolve_queue,
+                        result.ast.import_records.as_mut_slice(),
                         result.ast.target,
                         result_source_index as IndexInt,
+                        saves_every_source_index,
                     );
 
                     let result_heap = *result.ast.import_records.allocator();
@@ -7763,7 +8001,8 @@ pub mod bv2_impl {
                             let resolved_index = if star_ir.source_index.is_valid() {
                                 star_ir.source_index.get()
                             } else if let Some(idx) =
-                                this.graph.build_graphs[result_ast_target].get_path(&star_ir.path)
+                                this.graph.build_graphs[result_ast_target]
+                                    .get(ModuleKey::of_path(star_ir.path.text))
                             {
                                 idx
                             } else {
@@ -7904,7 +8143,11 @@ pub mod bv2_impl {
 
                         this.graph
                             .path_to_source_index_map(result_ast_target)
-                            .put(source_path_text, reference_source_index)
+                            .redirect(
+                                source_path_text,
+                                result_source_index as IndexInt,
+                                reference_source_index,
+                            )
                             .expect("oom");
 
                         this.graph

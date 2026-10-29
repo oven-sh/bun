@@ -3,10 +3,11 @@ import { bunEnv, bunExe, isLinux } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 
 // On Linux, threads count toward RLIMIT_NPROC (the same counter a cgroup
-// pids.max enforces). The kernel does not enforce the limit for root, so a
-// root test runner drops to another uid: an unused one through setpriv, so
-// that no other process of that uid can come or go, or `nobody` through
-// runuser.
+// pids.max enforces), per uid. The kernel does not enforce the limit for
+// root, so a root test runner drops to another uid: an unused one through
+// setpriv, so that no other process of that uid can come or go, or `nobody`
+// through runuser. A runner that is not root shares its uid with the other
+// tests, whose threads come and go, so the limit cannot be made exact there.
 const isRoot = process.getuid?.() === 0;
 const hasPrlimit = isLinux && !!Bun.which("prlimit");
 
@@ -47,7 +48,7 @@ const dropRoot = (() => {
   }
   return undefined;
 })();
-const canLimitThreads = hasPrlimit && (!isRoot || dropRoot !== undefined);
+const canLimitThreads = hasPrlimit && dropRoot !== undefined;
 
 // Every script first proves that the limit is in force (a child cannot be
 // spawned), then runs one operation and prints a JSON line.
@@ -59,10 +60,8 @@ const prelude = `
 
 /** Runs `script` in a bun whose uid may own `extraThreads` threads more than it does now. */
 function spawnWithThreadLimit(extraThreads: number, script: string) {
-  const uid = isRoot ? dropRoot!.uid : process.getuid!();
-  const limit = threadsOwnedBy(uid) + extraThreads;
-  const cmd = [Bun.which("prlimit")!, `--nproc=${limit}`, bunExe(), "-e", prelude + script];
-  if (isRoot) cmd.unshift(...dropRoot!.prefix);
+  const limit = threadsOwnedBy(dropRoot!.uid) + extraThreads;
+  const cmd = [...dropRoot!.prefix, Bun.which("prlimit")!, `--nproc=${limit}`, bunExe(), "-e", prelude + script];
   return Bun.spawn({
     cmd,
     env: {

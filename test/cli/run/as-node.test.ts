@@ -160,6 +160,15 @@ describe("fake node cli", () => {
       });
     });
 
+    test.concurrent("node - leaves - out of execArgv", async () => {
+      const source = "console.log(JSON.stringify(process.execArgv))";
+      expect(await nodeWithStdin(source, ["--no-warnings", "-", "a"])).toEqual({
+        stdout: '["--no-warnings"]\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test.concurrent.each(["--input-type=module", "--input-type module"])("%s runs an ES module", async flag => {
       const source = 'import { sep } from "node:path"; console.log("ran", typeof sep);';
       expect(await nodeWithStdin(source, flag.split(" "))).toEqual({ stdout: "ran string\n", stderr: "", exitCode: 0 });
@@ -241,19 +250,15 @@ describe("fake node cli", () => {
     test.skipIf(isWindows)("a stdin that cannot be read is an error", async () => {
       using temp = tempDir("fake-node-stdin", {});
       const directory = openSync(String(temp), "r");
-      let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
-      try {
-        proc = Bun.spawn({
-          cmd: [bunExe(), "--bun", "node"],
-          cwd: String(temp),
-          env: { ...bunEnv, NODE_ENV: undefined },
-          stdin: directory,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-      } finally {
-        closeSync(directory);
-      }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--bun", "node"],
+        cwd: String(temp),
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdin: directory,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      closeSync(directory);
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toBe("");
       expect(stderr).toContain("Failed to read the program from stdin");

@@ -302,7 +302,8 @@ mod _impl {
             // emulate `defer prev = arg` by setting at end of each iteration body
             let arg: &[u8] = arg;
 
-            if arg.len() >= 1 && arg[0] == b'-' {
+            // `-` is the script name: the program on stdin.
+            if arg.len() >= 1 && arg[0] == b'-' && arg != b"-" {
                 args.push(if arg.starts_with(b"--aot-graph-fd=") {
                     BunString::static_("--debug-aot")
                 } else if arg.starts_with(b"--aot-checked=") {

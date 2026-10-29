@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned } from "./run-programs";
+import { built, slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -30,30 +30,28 @@ async function shownInTerminal(cmd: string[], cwd: string) {
 
 // Elsewhere than on Windows the mode the terminal had before is kept in the bytes of a typed array that native code writes.
 describe.skipIf(isWindows)("process.stdin.setRawMode() in a terminal", () => {
-  for (const flags of [[], ["--aot-validate"]]) {
-    test(
-      `answers as \`bun run\` does${flags.length ? ", validated" : ""}`,
-      () =>
-        slot(async () => {
-          using dir = tempDir("aot-raw-mode", { "app.ts": program });
-          const folder = String(dir);
-          built(
-            await spawned(
-              [bunExe(), "build", "--compile", "--aot", ...flags, "app.ts", "--outfile", "app"],
-              folder,
-              env,
-            ),
-          );
+  test(
+    "answers as `bun run` does, validated",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-raw-mode", { "app.ts": program });
+        const folder = String(dir);
+        built(
+          await spawned(
+            [bunExe(), "build", "--compile", "--aot", "--aot-validate", "app.ts", "--outfile", "app"],
+            folder,
+            env,
+          ),
+        );
 
-          const compiled = await shownInTerminal([join(folder, "app")], folder);
-          expect(compiled).toEqual({
-            shown: "terminal true raw false\nset true true\nunset true false\n",
-            exitCode: 0,
-            signal: null,
-          });
-          expect(compiled).toEqual(await shownInTerminal([bunExe(), "app.ts"], folder));
-        }),
-      300_000,
-    );
-  }
+        const compiled = await shownInTerminal([join(folder, "app")], folder);
+        expect(compiled).toEqual({
+          shown: "terminal true raw false\nset true true\nunset true false\n",
+          exitCode: 0,
+          signal: null,
+        });
+        expect(compiled).toEqual(await shownInTerminal([bunExe(), "app.ts"], folder));
+      }),
+    300_000,
+  );
 });

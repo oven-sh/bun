@@ -1,3 +1,0 @@
-{
-  "skipInShell": "the build stops at a type error of TypeScript itself, so there is nothing for the jsc shell to run"
-}

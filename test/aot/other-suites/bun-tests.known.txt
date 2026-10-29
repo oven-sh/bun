@@ -550,6 +550,8 @@ DIFFERS test/js/node/module/node-module-module.test.js > node-module-module > re
 DIFFERS test/js/node/perf_hooks/perf_hooks.test.ts > histograms that another thread sends empty, and again once it has filled them, are collected without an explicit GC: text at run time (eval, the Function constructor, a Worker or an import of text)
 DIFFERS test/js/node/perf_hooks/perf_hooks.test.ts > histograms that another thread sends full are collected without an explicit GC: text at run time (eval, the Function constructor, a Worker or an import of text)
 DIFFERS test/js/node/process/stdin/stdin-fixtures.test.ts > stdin > works with readable listener: the clock
+DIFFERS test/js/node/string-module.test.js > should import a base64 data: URL longer than the path-length limit: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/string-module.test.js > should import a data: URL longer than the path-length limit: text at run time (eval, the Function constructor, a Worker or an import of text)
 DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_agent: a file by a path that is computed or made at run time
 DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_client: a file by a path that is computed or made at run time
 DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_common: a file by a path that is computed or made at run time

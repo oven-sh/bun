@@ -278,7 +278,7 @@ impl HotReloadEvent {
         let dev: *mut DevServer = unsafe { (*first).owner };
         if dev.is_null() {
             // SAFETY: `atomics` was set in `WatcherAtomics::init` to the
-            // `heap::into_raw` pointer; DevServer released its reference so
+            // `heap::alloc_nn` pointer; DevServer released its reference so
             // this is the unique owner.
             unsafe { bun_core::heap::destroy((*first).atomics) };
             return;

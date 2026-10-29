@@ -2,8 +2,8 @@
 // A read of it answers `undefined` without a test that fails and without a lookup by name. The counts are exact: no clock and no machine decides them.
 import { expect } from "bun:test";
 import { tempDirWithBunTypes as tempDir } from "harness";
+import { slot } from "./harness/commands";
 import { buildCounted, countScript, testsAddedByTheCompiler } from "./harness/counted-run";
-import { slot } from "./run-programs";
 import { test } from "./supported";
 
 const numbers = Array.from({ length: 56 }, (_, index) => `a${index}`);

@@ -196,7 +196,7 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
         // SAFETY: `vm` is the live per-thread VM (hook contract); field read only.
-        let uws_loop = unsafe { (*vm).uws_loop() };
+        let uws_loop = unsafe { (*vm).uws_loop_ref() };
         let delta = if enable { 1 } else { -1 };
         match self.flags.get().kind() {
             // setImmediate has slightly different event loop logic

@@ -33,18 +33,13 @@ impl MarkedArgumentBuffer {
             f: Option<F>,
             r: Option<R>,
         }
-        extern "C" fn run<F, R>(ctx: *mut Ctx<F, R>, args: *mut MarkedArgumentBuffer)
+        extern "C" fn run<F, R>(ctx: &mut Ctx<F, R>, args: &mut MarkedArgumentBuffer)
         where
             F: FnOnce(&mut MarkedArgumentBuffer) -> R,
         {
-            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below; nothing
-            // `f` runs can reach it.
-            let f = unsafe { (*ctx).f.take() }.unwrap();
-            // SAFETY: `args` is the live stack-allocated `MarkedArgumentBuffer` C++
-            // hands us for the duration of this callback.
-            let r = f(unsafe { &mut *args });
-            // SAFETY: as above.
-            unsafe { (*ctx).r = Some(r) };
+            // `ctx` is the local below; nothing `f` runs can reach it.
+            let f = ctx.f.take().unwrap();
+            ctx.r = Some(f(args));
         }
         let mut ctx = Ctx {
             f: Some(f),
@@ -70,17 +65,17 @@ impl MarkedArgumentBuffer {
         })
     }
 
-    fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
+    fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: &mut T, args: &mut MarkedArgumentBuffer)) {
         // `MarkedArgumentBuffer__run` round-trips `ctx` opaquely back to `func`,
         // and `func`'s ABI is identical modulo the
         // pointee types (both params are thin pointers).
         MarkedArgumentBuffer__run(
             std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
             // SAFETY: both fn-pointer signatures are `extern "C"` with two
-            // thin-pointer params; ABI-identical modulo pointee type.
+            // thin-pointer params; C++ only hands `ctx` back to `func`, with the address of its live local.
             unsafe {
                 bun_ptr::cast_fn_ptr::<
-                    extern "C" fn(*mut T, *mut MarkedArgumentBuffer),
+                    extern "C" fn(&mut T, &mut MarkedArgumentBuffer),
                     extern "C" fn(*mut c_void, *mut c_void),
                 >(func)
             },

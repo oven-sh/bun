@@ -3574,7 +3574,7 @@ impl<'a> HTTPClient<'a> {
                         return;
                     }
                     // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                    // SAFETY: nothing since the test above releases the ref that `self.proxy_tunnel` holds.
+                    // SAFETY: nothing since the test above releases the ref that `self.proxy_tunnel` holds, and a close inside `write` parks a ref until `drain_events` (`on_close`).
                     let Ok(amount) = ProxyTunnel::write(unsafe { &*proxy_ptr }, to_send) else {
                         return;
                     };

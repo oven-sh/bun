@@ -96,7 +96,7 @@ impl ProxyTunnel {
 /// `*mut HTTPClient` registered in [`ProxyTunnel::start`]/`adopt`. The client
 /// is embedded in its `AsyncHTTP` and outlives the tunnel. Each callback's
 /// outer `&mut HTTPClient` must be NLL-dead before any reentrant call that
-/// re-derives it via raw ptr (`close_raw`, `progress_update_*`,
+/// re-derives it via raw ptr (`close`, `progress_update_*`,
 /// `on_writable`); call sites are shaped accordingly.
 #[inline]
 fn client_from_ctx<'a, 'c>(ctx: *mut HTTPClient<'c>) -> &'a mut HTTPClient<'c> {
@@ -177,7 +177,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     if this.state.flags.is_waiting_for_cert_check {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        tunnel.close_raw(crate::Error::UnexpectedData);
+        tunnel.close(crate::Error::UnexpectedData);
         return;
     }
     match this.state.response_stage {
@@ -190,9 +190,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
                 Ok(v) => v,
                 Err(err) => {
                     // `this` is dead (NLL); reenter via raw ptr so on_close's
-                    // fresh `&mut *ctx` / `&mut *proxy_ptr` do not alias us.
-                    // SAFETY: `tunnel` above holds a ref.
-                    tunnel.close_raw(err);
+                    // fresh `&mut *ctx` does not alias us.
+                    tunnel.close(err);
                     return;
                 }
             };
@@ -212,7 +211,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
                 Ok(v) => v,
                 Err(err) => {
                     // SAFETY: see Body arm.
-                    tunnel.close_raw(err);
+                    tunnel.close(err);
                     return;
                 }
             };
@@ -244,7 +243,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         _ => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData unexpected data");
             // SAFETY: `this` dead (NLL); reenter via raw ptr.
-            tunnel.close_raw(crate::Error::UnexpectedData);
+            tunnel.close(crate::Error::UnexpectedData);
         }
     }
 }
@@ -277,7 +276,7 @@ fn on_handshake(
             let err = crate::get_cert_error_from_no(handshake_error.error_no);
             // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
             // fresh `&mut *ctx` does not alias us.
-            tunnel.close_raw(err);
+            tunnel.close(err);
             return;
         }
         if !first_report {
@@ -355,7 +354,7 @@ fn on_handshake(
             crate::Error::TLSHandshakeFailed
         };
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        tunnel.close_raw(err);
+        tunnel.close(err);
         return;
     }
 }
@@ -366,7 +365,7 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     // on_open → flush) each NLL-end their `client_from_ctx`/`*ctx` borrow
     // before reentering, so there is NO live `&mut HTTPClient` anywhere up the
     // stack — re-deriving via the centralised `client_from_ctx` accessor here
-    // is the sole live borrow, dropped immediately after copying out the
+    // is the sole live borrow, and it is read only for the
     // tunnel pointer. The pointee is alive: this client holds a
     // strong ref to the tunnel for the duration of tunneling.
     let Some(tunnel) = client_from_ctx(ctx).proxy_tunnel.as_deref() else {
@@ -374,17 +373,13 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     };
     // Preserve TLS record ordering: if any encrypted bytes are buffered,
     // enqueue new bytes and flush them in FIFO via onWritable.
-    if tunnel.with_write_buffer(|b| b.is_not_empty()) {
+    if !tunnel.is_write_buffer_empty() {
         if tunnel.with_write_buffer(|b| b.write(encoded_data)).is_err() {
             bun_core::out_of_memory();
         }
         return;
     }
-    let written = match tunnel.socket.get() {
-        Socket::Ssl(socket) => socket.write(encoded_data),
-        Socket::Tcp(socket) => socket.write(encoded_data),
-        Socket::None => 0,
-    };
+    let written = tunnel.socket.get().write(encoded_data);
     let pending = &encoded_data[usize::try_from(written).expect("int cast")..];
     if !pending.is_empty() {
         // lets flush when we are truly writable
@@ -395,9 +390,9 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
 }
 
 fn on_close(ctx: *mut HTTPClient) {
-    // on_close is fired from inside SSLWrapper::shutdown (via close_raw) whose
+    // on_close is fired from inside SSLWrapper::shutdown (via `close`) whose
     // caller may itself be a callback that already held `&mut *ctx`; that
-    // outer borrow is required to be NLL-dead before close_raw is invoked
+    // outer borrow is required to be NLL-dead before `close` is invoked
     // (see on_data/on_handshake), so this fresh `&mut` is sole.
     let this = client_from_ctx(ctx);
     scoped_log!(
@@ -454,9 +449,7 @@ fn on_close(ctx: *mut HTTPClient) {
     crate::http_thread().schedule_proxy_deref(keepalive);
 }
 
-/// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or
-/// `&mut ProxyTunnel` across this call (they are reborrowed inside via the
-/// module's `client_from_ctx` invariant — see ALIASING NOTE above).
+/// `ctx` must be live, and the caller must not hold a `&mut HTTPClient` across this call (see ALIASING NOTE above).
 fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: &ProxyTunnel) {
     // Same context rule as the ProxyHeaders arm of `on_data`: the tunnel is
     // pooled into whichever context `progress_update` is handed.
@@ -552,7 +545,7 @@ impl ProxyTunnel {
         tunnel.wrapper = Some(wrapper);
         tunnel.socket.set(Socket::from_generic::<IS_SSL>(socket));
         let tunnel = this.proxy_tunnel.insert(RefPtr::new(tunnel));
-        // `this` is not used below: start() synchronously fires on_open() /
+        // No field of `this` is read below: start() synchronously fires on_open() /
         // write_encrypted(), which re-derive `&mut HTTPClient` from the raw ctx
         // pointer (see ALIASING NOTE).
         let wrapper = tunnel.wrapper.as_ref().unwrap();
@@ -566,12 +559,9 @@ impl ProxyTunnel {
     }
 
     /// Sets `shutdown_err` then drives `wrapper.shutdown()`, which fires `on_close`.
-    pub(crate) fn close_raw(&self, err: Error) {
+    pub(crate) fn close(&self, err: Error) {
         self.shutdown_err.set(err);
-        if let Some(wrapper) = &self.wrapper {
-            // fast shutdown the connection
-            let _ = wrapper.shutdown(true);
-        }
+        self.shutdown();
     }
 
     pub(crate) fn shutdown(&self) {
@@ -604,7 +594,7 @@ impl ProxyTunnel {
 
     /// Encrypted bytes arrived on the outer socket. Same contract as
     /// [`Self::on_writable`]: delivering the decrypted data can release the
-    /// client's handle, so the guard taken from it may hold the last ref.
+    /// client's handle, so the caller's clone may hold the last ref.
     pub(crate) fn receive(&self, buf: &[u8]) {
         if let Some(wrapper) = &self.wrapper {
             wrapper.receive_data(buf);

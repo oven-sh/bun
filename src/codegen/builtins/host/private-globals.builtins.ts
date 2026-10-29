@@ -118,8 +118,7 @@ export default b.declarations(
     functionObjectCode: { symbol: "NodeError_proto_toString", header: "ErrorCode.h" },
     length: 0,
   }),
-  // A stack trace lists each of the three functions that `require` hands a file to. The name is the one that ZigGlobalObject.cpp makes the function object with:
-  // a frame is named from here, also where nothing may look for the function object, which is at the end of a collection.
+  // A stack trace lists the three functions that `require` hands a file to, each under the name that ZigGlobalObject.cpp gives its function object.
   b.extend("%PrivateGlobals%.createInternalModuleById", {
     functionObjectCode: {
       symbol: "Bun::InternalModuleRegistry::jsCreateInternalModuleById",

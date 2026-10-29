@@ -3015,13 +3015,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 if let Some(mi) = module_info.as_deref_mut() {
                     mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
                 }
-                // Derive the `*mut` from a `&mut` borrow (not `&x as *const _
-                // as *mut _`, which is Stacked-Borrows UB). The borrow ends
-                // here; the raw pointer stays valid until `module_info` is
-                // moved/touched again (after `print_with_source_map`).
-                let module_info_ptr: Option<
-                    *mut bun_bundler::analyze_transpiled_module::ModuleInfo,
-                > = module_info.as_deref_mut().map(core::ptr::from_mut);
 
                 // ── js_printer::print ───────────────────────────────────────
                 // SAFETY: `extra.source_code_printer` is non-null per `TranspileExtra`
@@ -3075,7 +3068,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             &mut *extra.source_code_printer,
                             bun_js_printer::Format::EsmAscii,
                             mapper.get(),
-                            module_info_ptr,
+                            module_info.as_deref_mut(),
                         )
                     };
                     // The printer never took ownership of `module_info`;

@@ -1124,10 +1124,7 @@ pub mod parse_worker {
                     },
                     Loc { start: 0 },
                 );
-                let require_args = bump.alloc_slice_fill_default::<Expr>(2);
-                require_args[0] = import_path;
-                let object_properties = bump.alloc_slice_fill_default::<G::Property>(1);
-                object_properties[0] = G::Property {
+                let object_property = G::Property {
                     key: Some(Expr::init(
                         E::String {
                             data: b"type".into(),
@@ -1144,10 +1141,9 @@ pub mod parse_worker {
                     )),
                     ..Default::default()
                 };
-                require_args[1] = Expr::init(
+                let object = Expr::init(
                     E::Object {
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        properties: unsafe { G::PropertyList::from_bump_slice(object_properties) },
+                        properties: G::PropertyList::init_one(object_property),
                         is_single_line: true,
                         ..Default::default()
                     },
@@ -1156,8 +1152,7 @@ pub mod parse_worker {
                 let require_call = Expr::init(
                     E::Call {
                         target: require_property,
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
+                        args: bun_ast::ExprNodeList::from_arena_slice(&[import_path, object]),
                         ..Default::default()
                     },
                     Loc { start: 0 },

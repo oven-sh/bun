@@ -13,6 +13,8 @@ use bun_css::{
 };
 use bun_wyhash::Wyhash;
 
+use crate::css_parser::ParserOpts;
+
 use super::impl_;
 
 use super::builder::SelectorBuilder;
@@ -846,6 +848,37 @@ fn parse_scope_switch(input: &mut CssParser) -> CResult<bool> {
     }}
 }
 
+/// `>`, `+` or `~`: a combinator that can start a relative selector.
+fn parse_leading_combinator(input: &mut CssParser) -> CResult<Combinator> {
+    let location = input.current_source_location();
+    let token = *input.next()?;
+    match token {
+        Token::Delim(c) if c == u32::from(b'>') => Ok(Combinator::Child),
+        Token::Delim(c) if c == u32::from(b'+') => Ok(Combinator::NextSibling),
+        Token::Delim(c) if c == u32::from(b'~') => Ok(Combinator::LaterSibling),
+        _ => Err(location.new_unexpected_token_error(token)),
+    }
+}
+
+/// `:global(...)` or `:local(...)` with an argument that starts with a combinator. Returns that combinator.
+fn parse_scope_with_leading_combinator(input: &mut CssParser) -> CResult<Combinator> {
+    input.expect_colon()?;
+    let location = input.current_source_location();
+    let token = *input.next_including_whitespace()?;
+    let is_scope = matches!(token, Token::Function(name) if crate::match_ignore_ascii_case! { name, {
+        b"global" | b"local" => true,
+        _ => false,
+    }});
+    if !is_scope {
+        return Err(location.new_unexpected_token_error(token));
+    }
+    input.parse_nested_block(|input| {
+        let combinator = parse_leading_combinator(input)?;
+        while input.next().is_ok() {}
+        Ok(combinator)
+    })
+}
+
 fn parse_relative_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
@@ -856,7 +889,7 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
     let mut nesting_requirement = nesting_requirement_;
     let s = input.state();
 
-    let combinator: Option<Combinator> = 'combinator: {
+    let mut combinator: Option<Combinator> = 'combinator: {
         let tok = input.next()?;
         if let Token::Delim(c) = tok {
             match u8::try_from(*c).ok() {
@@ -883,7 +916,27 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
         nesting_requirement = NestingRequirement::None;
     }
 
-    let mut selector = parse_selector::<Impl>(parser, input, state, nesting_requirement)?;
+    let mut selector = match parse_selector::<Impl>(parser, input, state, nesting_requirement) {
+        Ok(selector) => selector,
+        Err(error) => {
+            // In a CSS module the combinator can be in the wrapper that starts the selector: `:global(> .x)`.
+            if combinator.is_some() || !input.flags.css_modules() {
+                return Err(error);
+            }
+            let failed_at = input.state();
+            input.reset(&s);
+            let Ok(lead) = parse_scope_with_leading_combinator(input) else {
+                input.reset(&failed_at);
+                return Err(error);
+            };
+            input.reset(&s);
+            input.flags.insert(ParserOpts::LEADS_RELATIVE_SELECTOR);
+            let selector = parse_selector::<Impl>(parser, input, state, NestingRequirement::None);
+            input.flags.remove(ParserOpts::LEADS_RELATIVE_SELECTOR);
+            combinator = Some(lead);
+            selector?
+        }
+    };
     if let Some(wombo_combo) = combinator {
         // https://www.w3.org/TR/selectors/#absolutizing
         selector
@@ -1369,10 +1422,40 @@ impl<'a> SelectorParser<'a> {
         true
     }
 
-    pub(crate) fn parse_non_ts_functional_pseudo_class(
+    /// The argument of `:global(...)` or `:local(...)` in a CSS module. A combinator that starts it goes in front of the
+    /// wrapper in `holder`, the selector that holds the wrapper: `.a :global(> .x)` is `.a > :global(.x)`.
+    fn parse_scope_argument<Impl: BunSelectorImpl>(
+        &mut self,
+        input: &mut CssParser,
+        global: bool,
+        holder: &mut SelectorBuilder<Impl>,
+        allows_combinators: bool,
+    ) -> CResult<Box<Selector>> {
+        let leads_relative_selector = input.flags.contains(ParserOpts::LEADS_RELATIVE_SELECTOR);
+        input.flags.remove(ParserOpts::LEADS_RELATIVE_SELECTOR);
+
+        input.skip_whitespace();
+        if matches!(input.next_byte(), Some(b'>' | b'+' | b'~')) {
+            let start = input.state();
+            let taken = parse_leading_combinator(input).is_ok_and(|combinator| {
+                leads_relative_selector || (allows_combinators && holder.join(combinator))
+            });
+            if !taken {
+                input.reset(&start);
+            }
+        }
+
+        input
+            .parse_with_global_scope(global, |input| Selector::parse(self, input))
+            .map(Box::new)
+    }
+
+    pub(crate) fn parse_non_ts_functional_pseudo_class<Impl: BunSelectorImpl>(
         &mut self,
         name: Str,
         parser: &mut CssParser,
+        holder: &mut SelectorBuilder<Impl>,
+        allows_combinators: bool,
     ) -> CResult<PseudoClass> {
         let pseudo_class = crate::match_ignore_ascii_case! { name, {
             b"lang" => {
@@ -1383,14 +1466,10 @@ impl<'a> SelectorParser<'a> {
                 direction: Direction::parse(parser)?,
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
-                selector: Box::new(
-                    parser.parse_with_global_scope(false, |parser| Selector::parse(self, parser))?,
-                ),
+                selector: self.parse_scope_argument(parser, false, holder, allows_combinators)?,
             },
             b"global" if self.options.css_modules.is_some() => PseudoClass::Global {
-                selector: Box::new(
-                    parser.parse_with_global_scope(true, |parser| Selector::parse(self, parser))?,
-                ),
+                selector: self.parse_scope_argument(parser, true, holder, allows_combinators)?,
             },
             _ => {
                 if !strings::starts_with_char(name, b'-') {
@@ -3214,7 +3293,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
-    builder: &SelectorBuilder<Impl>,
+    builder: &mut SelectorBuilder<Impl>,
 ) -> CResult<Option<SimpleSelectorParseResult<Impl>>> {
     type S<Impl> = SimpleSelectorParseResult<Impl>;
 
@@ -3362,7 +3441,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
             } else {
                 let pseudo_class: GenericComponent<Impl> = if is_functional {
                     input.parse_nested_block(|input2: &mut CssParser| {
-                        parse_functional_pseudo_class::<Impl>(parser, input2, name, state)
+                        parse_functional_pseudo_class::<Impl>(parser, input2, builder, name, state)
                     })?
                 } else {
                     parse_simple_pseudo_class::<Impl>(parser, location, name, *state)?
@@ -3609,6 +3688,7 @@ pub(crate) fn parse_inner_compound_selector<Impl: BunSelectorImpl>(
 pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
+    builder: &mut SelectorBuilder<Impl>,
     name: Str,
     state: &mut SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
@@ -3656,7 +3736,12 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
             .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
     }
 
-    let result = parser.parse_non_ts_functional_pseudo_class(name, input)?;
+    let result = parser.parse_non_ts_functional_pseudo_class(
+        name,
+        input,
+        builder,
+        state.allows_combinators(),
+    )?;
 
     Ok(GenericComponent::NonTsPseudoClass(result))
 }

@@ -3047,6 +3047,8 @@ bitflags::bitflags! {
         const CLIP_COLORS = 0b1000;
         /// Lengths and percentages have the range `[0,∞]`: a math function below zero means zero, a literal is invalid.
         const NON_NEGATIVE = 0b10000;
+        /// The `:global(...)` or `:local(...)` parsed next starts a relative selector, which owns the combinator that starts its argument.
+        const LEADS_RELATIVE_SELECTOR = 0b100000;
     }
 }
 impl ParserOpts {

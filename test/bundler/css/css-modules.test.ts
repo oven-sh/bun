@@ -934,6 +934,164 @@ describe("css modules", () => {
       styles: {},
     });
   });
+
+  // `:global(> .x)` means `> :global(.x)`: the combinator belongs to the selector that holds the wrapper, as in
+  // css-loader and esbuild. The same holds for `:local()`, and for `+` and `~`.
+  describe("a combinator that starts the argument of :global() or :local()", () => {
+    const red = (css: string) => css.replaceAll("{}", "{ color: red }");
+    const unhash = (text: string) => text.replace(/_[\w-]{6}(?![\w-])/g, "_H");
+
+    test.concurrent.each([
+      // The five places where modules on GitHub have the wrapper.
+      [".a :global(> .x) {}", ".a_H > .x", ["a"]],
+      [".a:global(> .x) {}", ".a_H > .x", ["a"]],
+      [".a:has(:global(> .x)) {}", ".a_H:has( > .x)", ["a"]],
+      [".a { :global(> .x) {} }", ".a_H > .x", ["a"]],
+      [".a { & :global(> .x) {} }", ".a_H > .x", ["a"]],
+
+      [".a { &:global(> .x) {} }", ".a_H > .x", ["a"]],
+      [".a :global(+ .x) {}", ".a_H + .x", ["a"]],
+      [".a { :global(~ .x) {} }", ".a_H ~ .x", ["a"]],
+      [".a :global(/* all */ >.x) {}", ".a_H > .x", ["a"]],
+      [".a :local(> .x) {}", ".a_H > .x_H", ["a", "x"]],
+      [".a { :local(+ .x) {} }", ".a_H + .x_H", ["a", "x"]],
+      [":global .g :local(> .x) .y {}", ".g > .x_H .y", ["x"]],
+      [":global(.g :local(> .x)) .y {}", ".g > .x_H .y_H", ["x", "y"]],
+      [".a { :global(> .b) { :global(> .c) {} } }", ".a_H > .b > .c", ["a"]],
+      [".a { :global(> .x) > .y {} }", ".a_H > .x > .y_H", ["a", "y"]],
+      [".a, .b { :global(> .x) {} }", ":is(.a_H, .b_H) > .x", ["a", "b"]],
+
+      // What follows the wrapper goes to the last compound selector of its argument.
+      [".table:global(>tfoot>tr>td).final {}", ".table_H > tfoot > tr > td.final_H", ["table", "final"]],
+      [".a :global(> .x):hover {}", ".a_H > .x:hover", ["a"]],
+      [".a :global(> .x)::before {}", ".a_H > .x:before", ["a"]],
+      [
+        ".m :global(.ui.drop):global(> .text:not(.default) > img) {}",
+        ".m_H .ui.drop > .text:not(.default) > img",
+        ["m"],
+      ],
+      [".w>*:global(>.y) {}", ".w_H > * > .y", ["w"]],
+      [".a:is(.b :global(> .x)) {}", ".a_H:is(.b_H > .x)", ["a", "b"]],
+
+      // A `:scope` that is written stays. A forgiving list drops a selector that cannot be relative, as before.
+      [".a :global(:scope > .x) {}", ".a_H :scope > .x", ["a"]],
+      [".a:is(:global(> .x)) {}", ".a_H:is()", ["a"]],
+      [".a { :global(> .x):is(:global(> .y)) {} }", ".a_H > .x:is()", ["a"]],
+    ])("%s", async (css, selector, locals) => {
+      expect(await bundle({ "styles.module.css": red(css) })).toEqual({
+        logs: [],
+        css: `${selector} { color: red; }`,
+        styles: Object.fromEntries(locals.map(name => [name, `${name}_H`])),
+      });
+    });
+
+    test.concurrent("in @media and in @scope", async () => {
+      const css = `
+        .a { @media print { :global(> .x) { color: red } } }
+        @scope (.card) to (:global(> .y)) { :local(> .z) { color: blue } }`;
+      expect(await bundle({ "styles.module.css": css })).toEqual({
+        logs: [],
+        css: `@media print { .a_H > .x { color: red; } } @scope (.card_H) to (:scope > .y) { :where(:scope) > .z_H { color: #00f; } }`,
+        styles: { a: "a_H", card: "card_H", z: "z_H" },
+      });
+    });
+
+    test.concurrent("rules inside a rule whose selector starts with the wrapper", async () => {
+      const css = `.p { :global(> .x) {
+        > canvas { color: red }
+        &:has(:global(.n)) { color: green }
+        .tab { color: blue }
+        .q & { color: pink }
+      } }`;
+      expect(await bundle({ "styles.module.css": css })).toEqual({
+        logs: [],
+        css: `.p_H > .x > canvas { color: red; } .p_H > .x:has(.n) { color: green; } .p_H > .x .tab_H { color: #00f; } .q_H :is(.p_H > .x) { color: pink; }`,
+        styles: { p: "p_H", tab: "tab_H", q: "q_H" },
+      });
+    });
+
+    // A list whose members hold a wrapper is printed as one rule per selector.
+    test.concurrent("a list of selectors that start with the wrapper", async () => {
+      const css = `.c { :global(> *), :global(> * > *), :global(div) { color: red } }`;
+      expect(await bundle({ "styles.module.css": css })).toEqual({
+        logs: [],
+        css: `.c_H > * { color: red; } .c_H > * > * { color: red; } .c_H div { color: red; }`,
+        styles: { c: "c_H" },
+      });
+    });
+
+    test.concurrent("prints like the combinator in front of the wrapper, minified and with nesting kept", async () => {
+      const inWrapper = `
+        .a :global(> .x) { color: red }
+        .b:global(+ .x) { color: red }
+        .c { :global(~ .x) { color: red } & :local(> .y) { color: red } }
+        .d:has(:global(> .x)) { color: red }`;
+      const inFront = `
+        .a > :global(.x) { color: red }
+        .b + :global(.x) { color: red }
+        .c { ~ :global(.x) { color: red } & > :local(.y) { color: red } }
+        .d:has(> :global(.x)) { color: red }`;
+      const print = async (css: string, options: Pick<Bun.BuildConfig, "target" | "minify">) => {
+        using dir = tempDir("css-modules-combinator", {
+          "styles.module.css": css,
+          "entry.js": `import "./styles.module.css";`,
+        });
+        const result = await Bun.build({ ...options, entrypoints: [join(String(dir), "entry.js")], throw: false });
+        expect(result.logs).toEqual([]);
+        return unhash(await result.outputs.find(output => output.path.endsWith(".css"))!.text());
+      };
+      for (const target of ["browser", "bun"] as const) {
+        for (const minify of [false, true]) {
+          const printed = await print(inWrapper, { target, minify });
+          expect(printed).toContain(minify ? ".a_H>.x{" : ".a_H > .x {");
+          expect(printed).toBe(await print(inFront, { target, minify }));
+        }
+      }
+    });
+
+    test.concurrent("bun build --no-bundle", async () => {
+      using dir = tempDir("css-modules-combinator-no-bundle", {
+        "styles.module.css": `.a :global(> .x) { color: red } .b { :local(+ .y) { color: blue } }`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", "styles.module.css"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: unhash(stdout).replace(/\s+/g, " ").trim(), stderr, exitCode }).toEqual({
+        stdout: ".a_H > .x { color: red; } .b_H + .y_H { color: #00f; }",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    const empty = "Invalid selector. Empty selector is not allowed";
+    test.concurrent.each([
+      // The combinator has nothing that it can join. It stays unread and the argument fails on it, as before.
+      [":global(> .x) {}", empty],
+      [".a:not(:global(> .x)) {}", empty],
+      [".a:nth-child(2n of :global(> .x)) {}", empty],
+      [".a > :global(> .x) {}", empty],
+      [":host(.a:global(> .b)) {}", empty],
+      [".a { :global :local(> .x) {} }", empty],
+      [".a :global(:local(> .x)) {}", empty],
+      [".a:has(:global(> .x):not(:global(> .y))) {}", empty],
+      // The combinator is read, and what follows it is not one selector.
+      [".a :global(>) {}", empty],
+      [".a { :global(>) {} }", empty],
+      [".a :global(>>> .x) {}", empty],
+      [".a :global(> .x, > .y) {}", "Unexpected token: ,"],
+      // Errors that the combinator has no part in.
+      [".a :global(.x >) {}", "Invalid selector. Found a dangling combinator with no selector"],
+      [".a::before:global(> .x) {}", "Invalid selector. Token is not allowed in this state"],
+      [".a { :global(> .x {} }", "Unexpected end of input"],
+    ])("%s is an error", async (css, message) => {
+      expect(await bundle({ "styles.module.css": red(css) })).toEqual({ logs: [message] });
+    });
+  });
 });
 
 describe("bare :global and :local: what stays an error", () => {

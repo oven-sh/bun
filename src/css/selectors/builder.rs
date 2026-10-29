@@ -108,6 +108,22 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         self.simple_selectors.insert(0, GenericComponent::Nesting);
     }
 
+    /// Makes `combinator` the combinator in front of the simple selector that is pushed next, in place of a descendant
+    /// combinator if one is there. Returns false if the selector is empty so far, or another combinator is there.
+    pub(crate) fn join(&mut self, combinator: Combinator) -> bool {
+        if self.current_len > 0 {
+            self.push_combinator(combinator);
+            return true;
+        }
+        match self.combinators.slice_mut().last_mut() {
+            Some((last, _)) if *last == Combinator::Descendant => {
+                *last = combinator;
+                true
+            }
+            _ => false,
+        }
+    }
+
     // `SmallList` owns its spill buffer and frees on `Drop`, so no explicit
     // `Drop` impl is needed here.
 

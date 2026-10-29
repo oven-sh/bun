@@ -80,8 +80,9 @@ if (typeof Bun !== "undefined") {
 
 /** Whether a tls.Server with `options` authorizes the client that shows the certificate of `agent`. */
 async function authorizes(options, agent) {
-  const { promise, resolve } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers();
   const server = tls.createServer(options, socket => (resolve(socket.authorized), socket.end()));
+  server.on("tlsClientError", reject);
   const client = tls.connect({
     port: await listening(server),
     host: "127.0.0.1",
@@ -90,7 +91,8 @@ async function authorizes(options, agent) {
     key: pem(`${agent}-key`),
     cert: pem(`${agent}-cert`),
   });
-  client.on("error", () => {});
+  client.on("error", reject);
+  client.on("close", () => reject(new Error("closed before 'secureConnection'")));
   return promise.finally(() => (client.destroy(), server.close()));
 }
 

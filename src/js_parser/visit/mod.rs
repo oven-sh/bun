@@ -1798,11 +1798,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .map(|r| p.load_name_from_ref(r));
             // `Host::new_local` appends the locals of the compiled function here.
             let generated_len = p.current_scope().generated.len();
+            let arena = p.arena;
             let compiled = {
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
                     &mut rc,
                     host,
+                    arena,
                     &pending,
                     stmts.as_mut_slice(),
                     name,

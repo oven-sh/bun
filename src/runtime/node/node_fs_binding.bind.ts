@@ -42,14 +42,14 @@ const deferred = { deferred: true, reportedAs: "options" } as const;
 const boolean = (value: boolean) => ({ type: b.bool.default(value), expected: ["boolean"] });
 const optionalBoolean = { type: b.bool.optional, expected: ["boolean"] };
 
-const encoding = b.opaque;
+const encoding = b.opaque.optional;
 const flag = FileFlags.emptyStringAsNull;
 const mode = { type: FileMode.emptyStringAsNull, expected: ["number"], reportedAs: "mode" };
 const signal = {
   type: b.abortSignal.shared.emptyStringAsNull,
   expected: ["AbortSignal"],
 };
-const encodingOr = (options: b.Type) => b.union({ string: b.stringLike, options, other: b.ignored });
+const encodingOr = (dictionary: b.Type) => b.union({ string: b.stringLike, options: dictionary, other: b.ignored });
 
 export const EncodingOptions = b.dictionary({ encoding }, options);
 export const EncodingOrOptions = encodingOr(EncodingOptions);
@@ -110,21 +110,15 @@ export const RmOptions = b.dictionary(
 );
 const rmdirExpected = { options: 'The "options" argument must be of type object.' };
 
-export const SymlinkType = b.union({ missing: b.null, name: b.string.allowStringObject, other: b.ignored });
+export const SymlinkType = b.union({ none: b.null, name: b.string.allowStringObject, other: b.ignored });
 
 export const ReadPosition = b.union({
-  missing: b.null,
+  none: b.null,
   number: b.i64.validateInteger(-1),
   bigInt: b.bigInt,
 });
-const cell = (name: string) => b.cell(`JSC::${name}`, `JavaScriptCore/${name}.h`, { rustPath: "bun_jsc::JSObject" });
 /** `fs.write(fd, buffer, callback)` passes the callback on. */
-export const WriteOffset = b.union({
-  missing: b.null,
-  function: cell("JSFunction"),
-  internalFunction: cell("InternalFunction"),
-  number: b.u64.validateInteger(),
-});
+export const WriteOffset = b.union({ number: b.u64.validateInteger(), other: b.opaque });
 /** `number` is truncated. */
 export const WriteLength = b.union({ number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
 /** A whole number that is not negative. Anything else is the current position. */
@@ -153,11 +147,39 @@ export const WatchFileOptions = b.dictionary(
   { ...options, nonObjectAsEmpty: true },
 );
 
+/** What `x` and `xSync` do with an argument (`args::*::from_js` in node_fs.rs): they keep none and return none. */
+const usesOfArgument = [
+  ...table.hostOptionBag([
+    "bigint",
+    "encoding",
+    "flag",
+    "flush",
+    "force",
+    "maxRetries",
+    "mode",
+    "recursive",
+    "retryDelay",
+    "signal",
+    "throwIfNoEntry",
+    "withFileTypes",
+  ]),
+  table.readsContents(),
+  table.writesContents(),
+  table.printedByFormatter("constructor"),
+];
+const uses = (args: Record<string, b.Type>) => ({
+  this: table.inspected,
+  ...Object.fromEntries(Object.keys(args).map(name => [name, usesOfArgument])),
+});
+
 interface Signature {
   args: Record<string, b.Type>;
   expected?: Record<string, readonly string[] | string>;
 }
-/** `length` is `[of x, of xSync]`. Each of `overloads` names its Rust function, to which `_cb` and `_sync` are added. */
+/**
+ * `length` is `[length of x, length of xSync]`.
+ * Each of `overloads` names its Rust function, to which `_cb` and `_sync` are added.
+ */
 type Operation = (Signature | { overloads: readonly (Signature & { rustName: string })[] }) & {
   length: readonly [number, number];
 };
@@ -239,7 +261,7 @@ const operations: Record<string, Operation> = {
       {
         rustName: "write_buffer",
         args: { ...fd, buffer: b.bufferSource.allowShared, offset: WriteOffset, length: WriteLength, position },
-        expected: { buffer: writeBuffer, offset: ["number"] },
+        expected: { buffer: writeBuffer },
       },
       {
         rustName: "write_string",
@@ -280,31 +302,6 @@ const syncResults: Record<string, readonly string[]> = {
   write: ["number"],
   writev: ["number"],
 };
-
-const usesOfArgument = [
-  ...table.hostOptionBag([
-    "bigint",
-    "encoding",
-    "flag",
-    "flush",
-    "force",
-    "maxRetries",
-    "mode",
-    "recursive",
-    "retryDelay",
-    "signal",
-    "throwIfNoEntry",
-    "withFileTypes",
-  ]),
-  table.readsContents(),
-  table.writesContents(),
-  table.printedByFormatter("constructor"),
-];
-/** What `x` and `xSync` do with their arguments: they keep none and return none. */
-const uses = (args: Record<string, b.Type>) => ({
-  this: table.inspected,
-  ...Object.fromEntries(Object.keys(args).map(name => [name, usesOfArgument])),
-});
 
 /** `x`, `xCb`, which is `x` with a leading callback, and `xSync`. */
 function members(name: string, { length: [length, syncLength], ...operation }: Operation) {

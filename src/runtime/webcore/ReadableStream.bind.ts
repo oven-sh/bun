@@ -1,32 +1,32 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const method = { returns: b.opaque, capability: "js", throws: true } as const;
-const promise = { ...method, returns: b.promise } as const;
+const js = { capability: "js", throws: true } as const;
+const read = { returns: b.promise, ...js } as const;
 
 const members = {
   cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
-  drain: { ...method, returns: b.bufferSource.returning("Uint8Array").optional, length: 1 },
+  drain: { returns: b.opaque.returning("Uint8Array", "undefined"), ...js, length: 1 },
   isClosed: { getter: b.bool, pure: true },
   pull: {
-    ...method,
+    ...js,
     args: { view: b.bufferSource.allowShared.otherAsNull, flags: b.jsArray.otherAsNull },
     returns: b.opaque.returning("number", "boolean", "Promise", "Uint8Array", "undefined"),
     passThis: true,
     length: 1,
   },
-  start: { ...method, returns: b.opaque.returning("number", "Uint8Array", "undefined"), length: 1 },
+  start: { returns: b.opaque.returning("number", "Uint8Array", "undefined"), ...js, length: 1 },
   updateRef: { args: { enable: b.bool.loose } },
 } as const;
 
 /** Reads the whole stream. */
 const buffered = {
-  arrayBuffer: promise,
-  blob: promise,
-  bytes: promise,
-  json: promise,
+  arrayBuffer: read,
+  blob: read,
+  bytes: read,
+  json: read,
   /** What `json` parses, for the JSON parser of a compiled program. */
-  jsonSource: promise,
-  text: promise,
+  jsonSource: read,
+  text: read,
 } as const;
 
 const bufferedSource = {

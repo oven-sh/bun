@@ -25,11 +25,7 @@ const write = {
   },
 } as const;
 const int32 = b.i32.validateInteger();
-// `init` first refuses a stream that is busy or closed, so these are `.deferred`.
-const uint32Array = b.cell("JSC::JSUint32Array", "JavaScriptCore/JSTypedArrays.h", {
-  rustPath: "bun_jsc::bindgen::BufferSource",
-  tsType: "Uint32Array",
-}).deferred;
+/** `init` first refuses a stream that is busy or closed, so these are `.deferred`. */
 const callback = b.callable.deferred;
 const dictionary = b.bufferSource.allowShared.optional.deferred;
 const dictionaryExpected = ["Buffer", "TypedArray", "DataView"];
@@ -68,11 +64,11 @@ export const NativeZlib = compressionStream(
       level: int32,
       memLevel: int32,
       strategy: int32,
-      writeResult: uint32Array,
+      writeState: b.opaque,
       writeCallback: callback,
       dictionary,
     },
-    expected: { writeResult: ["Uint32Array"], writeCallback: ["function"], dictionary: dictionaryExpected },
+    expected: { writeCallback: ["function"], dictionary: dictionaryExpected },
   },
   { ...method, args: { level: int32, strategy: int32 } },
 );
@@ -81,18 +77,8 @@ export const NativeBrotli = compressionStream(
   "crate::node::zlib::native_brotli::NativeBrotli",
   [8, 9],
   {
-    args: {
-      params: uint32Array,
-      writeResult: uint32Array,
-      writeCallback: callback,
-      dictionary,
-    },
-    expected: {
-      params: ["Uint32Array"],
-      writeResult: ["Uint32Array"],
-      writeCallback: ["function"],
-      dictionary: dictionaryExpected,
-    },
+    args: { initParamsArray: b.opaque, writeState: b.opaque, writeCallback: callback, dictionary },
+    expected: { writeCallback: ["function"], dictionary: dictionaryExpected },
     returns: b.bool,
   },
   {},
@@ -103,18 +89,13 @@ export const NativeZstd = compressionStream(
   [10, 11],
   {
     args: {
-      initParamsArray: uint32Array,
-      pledgedSrcSize: b.jsNumber.otherAsNull,
-      writeState: uint32Array,
+      initParamsArray: b.opaque,
+      pledgedSrcSize: b.opaque,
+      writeState: b.opaque,
       processCallback: callback,
       dictionary,
     },
-    expected: {
-      initParamsArray: ["Uint32Array"],
-      writeState: ["Uint32Array"],
-      processCallback: ["function"],
-      dictionary: dictionaryExpected,
-    },
+    expected: { processCallback: ["function"], dictionary: dictionaryExpected },
     returns: b.bool,
   },
   {},

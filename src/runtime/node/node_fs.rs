@@ -3163,7 +3163,7 @@ pub(crate) mod args {
         ) -> JsResult<Self> {
             let buffers = VectorArrayBuffer::from_js(
                 ctx,
-                buffers,
+                buffers.to_js(),
                 // The iovec pointers outlive this call on the async path; root
                 // each element and pin its backing store until completion.
                 parsing.flavor == Flavor::Async,
@@ -3447,7 +3447,7 @@ pub(crate) mod args {
             // be absolute. When using 'junction', the target argument
             // will automatically be normalized to absolute path.
             let link_type: SymlinkLinkType = match link_type.convert(ctx)? {
-                generated::SymlinkType::Missing => SymlinkLinkType::Unspecified,
+                generated::SymlinkType::None => SymlinkLinkType::Unspecified,
                 generated::SymlinkType::Name(str) => {
                     if str.eq_ascii(b"dir") {
                         SymlinkLinkType::Dir
@@ -3530,9 +3530,10 @@ pub(crate) mod args {
             generated::EncodingOrOptions::String(name) => {
                 Encoding::assert(name.to_js(), ctx, default)?
             }
-            generated::EncodingOrOptions::Options(options) => {
-                Encoding::assert(options.encoding.to_js(), ctx, default)?
-            }
+            generated::EncodingOrOptions::Options(options) => match options.encoding {
+                Some(value) => Encoding::assert(value.to_js(), ctx, default)?,
+                None => default,
+            },
             generated::EncodingOrOptions::Other => default,
         })
     }
@@ -3734,7 +3735,9 @@ pub(crate) mod args {
                     encoding = Encoding::assert(name.to_js(), ctx, encoding)?;
                 }
                 generated::EncodingOrReaddirOptions::Options(val) => {
-                    encoding = Encoding::assert(val.encoding(ctx)?.to_js(), ctx, encoding)?;
+                    if let Some(value) = val.encoding(ctx)? {
+                        encoding = Encoding::assert(value.to_js(), ctx, encoding)?;
+                    }
                     if let Some(r) = val.recursive(ctx)? {
                         recursive = r;
                     }
@@ -3895,10 +3898,18 @@ pub(crate) mod args {
                 ..Default::default()
             };
             'parse: {
-                let generated::WriteOffset::Number(offset) = offset else {
-                    break 'parse;
+                args.offset = match offset {
+                    generated::WriteOffset::Number(offset) => offset,
+                    generated::WriteOffset::Other(current) => {
+                        let current = current.to_js();
+                        if current.is_undefined_or_null() || current.is_function() {
+                            break 'parse;
+                        }
+                        return Err(
+                            ctx.throw_invalid_argument_type_value(b"offset", b"number", current)
+                        );
+                    }
                 };
-                args.offset = offset;
                 // Node bounds `offset` by the buffer whether or not a
                 // `length` follows (`length` defaults to the rest).
                 let buf_len = args.buffer.slice().len();
@@ -4114,7 +4125,7 @@ pub(crate) mod args {
             //   validatePosition(position, 'position', length);
             // }
             let position_int: i64 = match position.convert(ctx)? {
-                generated::ReadPosition::Missing => -1,
+                generated::ReadPosition::None => -1,
                 generated::ReadPosition::Number(position) => position,
                 generated::ReadPosition::BigInt(position) => {
                     let position = position.as_big_int();
@@ -4222,7 +4233,9 @@ pub(crate) mod args {
                     encoding = Encoding::assert(name.to_js(), ctx, encoding)?;
                 }
                 generated::EncodingOrReadFileOptions::Options(arg) => {
-                    encoding = Encoding::assert(arg.encoding(ctx)?.to_js(), ctx, encoding)?;
+                    if let Some(value) = arg.encoding(ctx)? {
+                        encoding = Encoding::assert(value.to_js(), ctx, encoding)?;
+                    }
                     flag = FileSystemFlags::from_js(ctx, arg.flag(ctx)?)?.unwrap_or(flag);
                     if let Some(signal) = arg.signal(ctx)? {
                         signal.pending_activity_ref();
@@ -4294,7 +4307,7 @@ pub(crate) mod args {
                     "path must be a string or a file descriptor"
                 ))
             })?;
-            let mut encoding = Encoding::Buffer;
+            let mut encoding = Encoding::Utf8;
             let mut flag = default_flag;
             let mut mode: Mode = DEFAULT_PERMISSION;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -4303,18 +4316,14 @@ pub(crate) mod args {
                 }
             });
             let mut flush = false;
-            if matches!(
-                data,
-                generated::WriteFileData::Text(_) | generated::WriteFileData::StringObject(_)
-            ) {
-                encoding = Encoding::Utf8;
-            }
             match options {
                 generated::EncodingOrWriteFileOptions::String(name) => {
                     encoding = Encoding::assert(name.to_js(), ctx, encoding)?;
                 }
                 generated::EncodingOrWriteFileOptions::Options(arg) => {
-                    encoding = Encoding::assert(arg.encoding(ctx)?.to_js(), ctx, encoding)?;
+                    if let Some(value) = arg.encoding(ctx)? {
+                        encoding = Encoding::assert(value.to_js(), ctx, encoding)?;
+                    }
                     flag = FileSystemFlags::from_js(ctx, arg.flag(ctx)?)?.unwrap_or(flag);
                     if let Some(mode_) = arg.mode(ctx)? {
                         mode = node::mode_from_js(ctx, mode_)?;
@@ -4342,11 +4351,17 @@ pub(crate) mod args {
                 // String objects not allowed (typeof new String("hi") === "object")
                 // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
                 generated::WriteFileData::StringObject(object) if encoding != Encoding::Utf8 => {
-                    Some(BunString::from_js(object.to_js(), ctx)?)
-                        .filter(|string| !string.is_empty())
-                        .map(|string| {
-                            StringOrBuffer::from_bun_string(ctx, string, encoding, parsing.flavor)
-                        })
+                    let string = BunString::from_js(object.to_js(), ctx)?;
+                    if string.is_empty() {
+                        None
+                    } else {
+                        Some(StringOrBuffer::from_bun_string(
+                            ctx,
+                            string,
+                            encoding,
+                            parsing.flavor,
+                        ))
+                    }
                 }
                 generated::WriteFileData::StringObject(_) | generated::WriteFileData::Other => None,
             }

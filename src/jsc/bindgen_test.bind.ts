@@ -86,10 +86,10 @@ export const latin1 = b.fn({
   returns: b.string.local,
   capability: "heap",
 });
-export const TestTextOrBytes = b.union({ text: b.string.utf8, buffer: b.bufferSource, missing: b.null });
+export const TestTextOrBuffer = b.union({ text: b.string.utf8, buffer: b.bufferSource, none: b.null });
 export const textOrBytes = b.fn({
   args: { text: b.string.utf8, as: b.u8 },
-  returns: TestTextOrBytes,
+  returns: TestTextOrBuffer,
   capability: "heap",
   throws: true,
 });
@@ -566,17 +566,17 @@ export const TestPoint = b.dictionary({ x: b.f64 });
 /** `point` gets objects only, so `text` gets every other value that no alternative before it takes. */
 export const TestHandle = b.union({
   missing: b.undefined,
-  nothing: b.null,
+  none: b.null,
   callback: b.callable,
   list: b.jsArray,
   point: TestPoint,
   text: b.string.loose.utf8,
 });
 export const describeHandle = b.fn({ args: { value: TestHandle }, returns: b.string.utf8 });
-export const TestObjectOrRest = b.union({ object: b.object, other: b.opaque });
-export const isObject = b.fn({ args: { value: TestObjectOrRest }, returns: b.bool });
+export const TestObjectOrOther = b.union({ object: b.object, other: b.opaque });
+export const isObject = b.fn({ args: { value: TestObjectOrOther }, returns: b.bool });
 export const objectEcho = b.fn({ args: { value: b.object }, returns: b.object, capability: "heap" });
-export const TestAbsence = b.union({ missing: b.undefined, nothing: b.null, number: b.f64 });
+export const TestAbsence = b.union({ missing: b.undefined, none: b.null, number: b.f64 });
 export const absenceEcho = b.fn({ args: { value: TestAbsence }, returns: TestAbsence });
 
 export const TestOtherAsNullOptions = b.dictionary(
@@ -636,7 +636,7 @@ export const wideIntegerOrBigInt = b.fn({ args: { value: b.u64.allowBigInt }, re
 
 /** An alternative for each kind of value. What `bytes` and `blob` refuse, and everything else, goes to `options`. */
 export const TestAnything = b.union({
-  missing: b.null,
+  none: b.null,
   flag: b.bool,
   integer: b.i32.allowBigInt,
   text: b.string,
@@ -680,9 +680,9 @@ export const TestInner = b.dictionary({
   b: b.i32.default(7),
   name: b.string.utf8.default("inner"),
 });
-export const TestChoice = b.union({ missing: b.null, flag: b.bool });
-/** A string is a color. What `bytes` refuses, and everything else, is kept as it is. */
-export const TestColorOrRest = b.union({
+export const TestChoice = b.union({ none: b.null, flag: b.bool });
+/** A string is a color. What `buffer` refuses, and everything else, is kept as it is. */
+export const TestColorOrOther = b.union({
   color: TestColor,
   buffer: b.bufferSource,
   missing: b.undefined,
@@ -692,7 +692,7 @@ export const TestOuter = b.dictionary({
   inner: TestInner.nullable,
   value: b.opaque.optional,
   choice: TestChoice,
-  rest: TestColorOrRest,
+  rest: TestColorOrOther,
 });
 /** What a default written in the schema gives each member, the nested ones included. */
 export const describeDefaults = b.fn({
@@ -708,8 +708,8 @@ export const joinSecondFirst = b.fn({
   capability: "js",
   throws: true,
 });
-export const TestTextOrIgnored = b.union({ text: b.string, other: b.ignored });
-export const textOrNull = b.fn({ args: { value: TestTextOrIgnored }, returns: b.string.nullable });
+export const TestTextOrOther = b.union({ text: b.string, other: b.ignored });
+export const textOrNull = b.fn({ args: { value: TestTextOrOther }, returns: b.string.nullable });
 export const isPromise = b.fn({ args: { value: b.promise.otherAsNull }, returns: b.bool });
 export const takePromise = b.fn({ args: { promise: b.promise }, returns: b.promise, capability: "heap" });
 /** `value`, or `fallback` if that is `null` or `undefined`. */
@@ -792,6 +792,39 @@ export const TestDeferredOptions = b.dictionary(
   },
   { deferred: true, reportedAs: "options" },
 );
+export const TestPosition = b.union({
+  none: b.null,
+  number: b.i64.validateInteger(-1),
+  bigInt: b.bigInt,
+  other: b.ignored,
+});
+const convertedArguments = {
+  int: b.i32.optional,
+  loose: b.i32.loose.optional,
+  wrapped: b.u8.wrap.optional,
+  ranged: b.i64.validateInteger(-1, 2 ** 32 - 1).optional,
+  digit: b.i32.validateIntegerRange(0, 9).optional,
+  double: b.f64.optional,
+  position: TestPosition,
+  callback: b.callable.optional,
+  buffer: b.bufferSource.allowShared.optional,
+  unshared: b.bufferSource.optional,
+  object: b.object.optional,
+  list: b.jsArray.optional,
+  number: b.jsNumber.optional,
+  text: b.stringLike.optional,
+  string: b.string.local.optional,
+  options: TestDeferredOptions.optional,
+};
+/** What each argument converts to. Of a JS value, whether there is one. */
+export const describeConverted = b.fn({ args: convertedArguments, returns: b.string });
+export const describeConvertedDeferred = b.fn({
+  args: Object.fromEntries(Object.entries(convertedArguments).map(([name, type]) => [name, type.deferred])),
+  returns: b.string,
+  capability: "js",
+  throws: true,
+});
+
 /** Reads `name`, refuses an empty one itself, and only then reads the others. */
 export const describeDeferred = b.fn({
   args: { options: TestDeferredOptions },
@@ -855,7 +888,6 @@ export const nameOrKind = b.fn({
   capability: "js",
   throws: true,
 });
-export const takeSymbol = b.fn({ args: { symbol: b.symbol }, returns: b.symbol, capability: "heap" });
 export const isStringLike = b.fn({ args: { value: b.stringLike.otherAsNull }, returns: b.bool });
 export const takeNumber = b.fn({ args: { number: b.jsNumber }, returns: b.jsNumber, capability: "heap" });
 export const TestMaybeCounter = b.dictionary({ counter: TestCounter.withValue.otherAsNull });
@@ -882,8 +914,8 @@ export const readsPrivateMember = b.fn({
   throws: true,
 });
 /** `""`, `null` and `undefined` are absent. Every other value goes to an alternative. */
-export const TestFlagOrRest = b.union({ enabled: b.bool, options: TestDeferredOptions, other: b.opaque });
-export const describeFlagOrRest = b.fn({ args: { value: TestFlagOrRest.emptyStringAsNull }, returns: b.string.utf8 });
+export const TestFlagOrOther = b.union({ enabled: b.bool, options: TestDeferredOptions, other: b.opaque });
+export const describeFlagOrOther = b.fn({ args: { value: TestFlagOrOther.emptyStringAsNull }, returns: b.string.utf8 });
 /** An own `undefined` is converted, and refused. Only a property the object does not have is absent. */
 export const TestOwnIfPassed = b.dictionary({ recursive: { type: b.bool.ifPassed, own: true } });
 export const TestDeferredOwnIfPassed = b.dictionary(

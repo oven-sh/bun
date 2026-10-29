@@ -43,16 +43,16 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
     value: JsLocal<'a>,
-    replacer: Option<JsLocal<'a>>,
-) -> JsResult<Option<JSValue>> {
+    replacer: JsLocal<'a>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    let value = value.to_js();
+    let (value, replacer) = (value.to_js(), replacer.to_js());
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
-        return Ok(None);
+        return Ok(JSValue::UNDEFINED);
     }
 
-    if replacer.is_some() {
+    if !replacer.is_undefined_or_null() {
         return Err(global.throw(format_args!(
             "TOML.stringify does not support the replacer argument"
         )));
@@ -83,7 +83,7 @@ pub(crate) fn stringify<'a>(
         };
     }
 
-    stringifier.builder.to_string(global).map(Some)
+    stringifier.builder.to_string(global)
 }
 
 #[derive(Debug)]

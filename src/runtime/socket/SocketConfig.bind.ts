@@ -1,5 +1,4 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { SecureContext } from "../api/bun/SecureContext.bind.ts";
 import { TLSOptions } from "./SSLConfig.bind.ts";
 
 export const SocketHandlerBinaryType = b.enumeration([
@@ -53,28 +52,4 @@ export const SocketOptions = b.dictionary(
     fd: b.i32.allowBigInt.optional,
   },
   { fromJS: true },
-);
-
-/** The `tls` object, read for the `SecureContext` in it. `TLSOptions` reads the rest. */
-export const PrebuiltTLSOptions = b.dictionary(
-  { secureContext: { type: SecureContext.withValue.emptyStringAsNull, expected: ["SecureContext"] } },
-  { deferred: true, reportedAs: "tls" },
-);
-/** `TLSOptions` refuses `other`. */
-export const UpgradeTLS = b.union({ enabled: b.bool, options: PrebuiltTLSOptions, other: b.opaque });
-
-/**
- * The object that `SocketOptions` is read from in one call, and what `Bun.listen` and `Bun.connect` read from it
- * afterwards. A member of another type is ignored.
- */
-export const SocketOptionsObject = b.dictionary(
-  {
-    tls: PrebuiltTLSOptions.otherAsNull,
-    fd: b.f64.otherAsNull,
-    /** Windows: `fd` is a `SOCKET`, not a libuv descriptor. */
-    fdIsRawSocket: b.bool.loose.default(false),
-    localAddress: b.string.allowStringObject.otherAsNull,
-    localPort: b.f64.otherAsNull,
-  },
-  { deferred: true },
 );

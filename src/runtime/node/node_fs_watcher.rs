@@ -656,11 +656,10 @@ impl<'a> Arguments<'a> {
         };
         let persistent = options.persistent(cx.global())?.unwrap_or(true);
         let verbose = options.verbose(cx.global())?.unwrap_or(false);
-        let encoding = Encoding::assert(
-            options.encoding(cx.global())?.to_js(),
-            cx.global(),
-            Encoding::Utf8,
-        )?;
+        let encoding = match options.encoding(cx.global())? {
+            Some(encoding) => Encoding::assert(encoding.to_js(), cx.global(), Encoding::Utf8)?,
+            None => Encoding::Utf8,
+        };
         let recursive = options.recursive(cx.global())?.unwrap_or(false);
         // abort signal
         let signal = options.signal(cx.global())?;

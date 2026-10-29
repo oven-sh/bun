@@ -1326,7 +1326,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn drain(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
+    pub fn drain(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let mut list = self.context.drain_internal_buffer();
         if list.len() > 0 {
             // Ownership of the buffer transfers to JSC: `to_js` installs
@@ -1335,9 +1335,9 @@ impl<C: SourceContext> NewSource<C> {
             // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
             let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
             let _ = core::mem::ManuallyDrop::new(list);
-            return ab.to_js(cx.global()).map(Some);
+            return ab.to_js(cx.global());
         }
-        Ok(None)
+        Ok(JSValue::UNDEFINED)
     }
 
     // text/arrayBuffer/blob/bytes/json/jsonSource all share the same body modulo

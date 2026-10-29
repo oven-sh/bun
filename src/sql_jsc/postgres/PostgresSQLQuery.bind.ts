@@ -20,7 +20,7 @@ export const PostgresSQLQuery = b.class({
       returns: b.bool,
       capability: "js",
     },
-    describeResult: { ...js, args: { number: b.f64 }, returns: b.object.nullable },
+    describeResult: { ...js, args: { number: b.opaque }, returns: b.opaque.returning("object", "null") },
     run: {
       ...js,
       args: { connection: PostgresSQLConnection, query: b.object },
@@ -28,11 +28,7 @@ export const PostgresSQLQuery = b.class({
       passThis: true,
     },
     setCopy: { args: { callback: b.callable.otherAsNull, writable: b.bool.loose }, capability: "js", passThis: true },
-    setMode: {
-      ...js,
-      args: { mode: b.f64.withValue },
-      expected: { mode: "Expected mode to be a Number for 'setMode'." },
-    },
+    setMode: { ...js, args: { mode: b.opaque } },
     setPendingValue: {
       args: { value: b.opaque },
       capability: "js",

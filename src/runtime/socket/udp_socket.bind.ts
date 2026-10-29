@@ -1,6 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
-import { coercedInt32 } from "./socket_body.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::udp_socket" });
 
@@ -11,9 +10,7 @@ export const dgramBindFd = b.fn({
   args: { fd: b.i32, address: b.string.loose.utf8, port: b.i32.wrap, flags: b.i32.wrap },
   throws: true,
 });
-/** `{ address, port, family }` */
-const socketAddress = b.object.optional;
-export const dgramGetSockNameFd = b.fn({ args: { fd: b.i32 }, returns: socketAddress, capability: "js", throws: true });
+export const dgramGetSockNameFd = b.fn({ args: { fd: b.i32 }, returns: b.opaque, capability: "js", throws: true });
 export const dgramGuessHandleType = b.fn({ args: { fd: b.i32 }, returns: b.string });
 export const dgramListenFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramCloseFd = b.fn({ args: { fd: b.i32 }, throws: true });
@@ -29,9 +26,6 @@ const sourceSpecificMembership = {
   args: { sourceAddress: b.opaque, groupAddress: b.opaque, interfaceAddress: b.opaque },
   returns: b.bool,
 } as const;
-/** Returns `enabled` as it was passed. */
-const flag = { ...js, args: { enabled: b.bool.loose.withValue }, returns: b.opaque } as const;
-const ttl = { ...js, args: { ttl: coercedInt32.deferred }, returns: b.i32 } as const;
 
 const callback = (name: string) => ({
   type: b.callable.emptyStringAsNull,
@@ -75,7 +69,7 @@ export const UDPSocket = b.class({
   internalFields: ["onData", "onDrain", "onError"],
   proto: {
     addMembership: membership,
-    address: { ...js, getter: socketAddress, cache: true },
+    address: { ...js, getter: b.opaque.returning("object", "undefined"), cache: true },
     addSourceSpecificMembership: sourceSpecificMembership,
     binaryType: { ...js, getter: b.string.local, cache: true },
     close: {},
@@ -87,16 +81,15 @@ export const UDPSocket = b.class({
     port: { getter: b.i32.optional, cache: true },
     ref: {},
     reload: { ...js, passThis: true, args: { options: UDPSocketOptions.otherAsNull }, length: 1 },
-    remoteAddress: { ...js, getter: socketAddress, cache: true },
+    remoteAddress: { ...js, getter: b.opaque.returning("object", "undefined"), cache: true },
     /** `(data)` when connected, `(data, port, address)` when not. */
     send: { ...js, args: { data: b.opaque, port: b.opaque, address: b.opaque }, returns: b.bool },
-    /** Payloads when connected, else a payload, a port and an address for each packet. */
     sendMany: { ...js, args: { packets: b.opaque }, returns: b.i32, length: 3 },
-    setBroadcast: flag,
+    setBroadcast: { ...js, args: { enabled: b.opaque }, returns: b.opaque },
     setMulticastInterface: { ...js, args: { interfaceAddress: b.opaque }, returns: b.bool },
-    setMulticastLoopback: flag,
-    setMulticastTTL: ttl,
-    setTTL: ttl,
+    setMulticastLoopback: { ...js, args: { enabled: b.opaque }, returns: b.opaque },
+    setMulticastTTL: { ...js, args: { ttl: b.opaque }, returns: b.i32 },
+    setTTL: { ...js, args: { ttl: b.opaque }, returns: b.i32 },
     unref: {},
     "@@dispose": { rustName: "close" },
   },

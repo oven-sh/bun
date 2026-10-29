@@ -15,43 +15,23 @@ static ALWAYS_INLINE bool canSkipPrototypeChain(JSGlobalObject* globalObject, JS
     return prototype == globalObject->objectPrototype() || prototype.isNull();
 }
 
-JSValue DictionaryMemberReader::get(unsigned index)
+JSValue DictionaryMemberReader::get(const Identifier& name)
 {
     // Asked per member: converting one can run JavaScript.
     if (canSkipPrototypeChain(m_globalObject, m_object)) [[likely]] {
         unsigned attributes = 0;
-        JSValue value = m_object->getDirect(m_vm, m_memberNames[index], attributes);
+        JSValue value = m_object->getDirect(m_vm, name, attributes);
         if (!value)
             return jsUndefined();
         if (!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) [[likely]]
             return value;
     }
-    return getIfPropertyExistsPrototypePollutionMitigation(m_vm, m_globalObject, m_object, m_memberNames[index]);
+    return getIfPropertyExistsPrototypePollutionMitigation(m_vm, m_globalObject, m_object, name);
 }
 
-// `get(unsigned)` does not call this: it reloads its members after `getDirect`, and arguments would stay in three more callee-saved registers across it.
-static ALWAYS_INLINE JSValue getMember(VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& name)
+JSValue DictionaryMemberReader::get(unsigned index)
 {
-    if (canSkipPrototypeChain(globalObject, object)) [[likely]] {
-        unsigned attributes = 0;
-        JSValue value = object->getDirect(vm, name, attributes);
-        if (!value)
-            return jsUndefined();
-        if (!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) [[likely]]
-            return value;
-    }
-    return getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, object, name);
-}
-
-JSValue DictionaryMemberReader::get(const Identifier& name)
-{
-    return getMember(m_vm, m_globalObject, m_object, name);
-}
-
-JSValue getDictionaryMember(JSGlobalObject* globalObject, JSObject* object, unsigned memberNameIndex)
-{
-    auto& vm = getVM(globalObject);
-    return getMember(vm, globalObject, object, schemaStrings(vm).memberNames(memberNameIndex, 1)[0]);
+    return get(m_memberNames[index]);
 }
 
 JSValue DictionaryMemberReader::getOwn(unsigned index)

@@ -9,7 +9,7 @@ use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::JsLocal;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSObject, JSValue, JsResult, Strong};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
 use bun_uws as uws;
 
@@ -586,11 +586,12 @@ impl SocketConfig {
 
     pub(crate) fn from_js(
         vm: &'static VirtualMachine,
-        opts: JsLocal<'_, JSObject>,
+        opts: JSValue,
         global_object: &JSGlobalObject,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
-        let generated = SocketOptions::from_local(global_object, opts)?;
-        Self::from_generated(vm, global_object, generated, mode)
+        SocketOptions::from_js(global_object, opts, |generated| {
+            Self::from_generated(vm, global_object, generated, mode)
+        })
     }
 }

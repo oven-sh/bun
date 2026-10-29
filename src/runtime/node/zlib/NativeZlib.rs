@@ -84,7 +84,7 @@ mod _impl {
             level: i32,
             mem_level: i32,
             strategy: i32,
-            write_result: Deferred<'_, JsLocal<'_, BufferSource>>,
+            write_state: JsLocal<'_>,
             write_callback: Deferred<'_, JsLocal<'_, Callable>>,
             dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
         ) -> JsResult<()> {
@@ -96,8 +96,23 @@ mod _impl {
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result = write_result.convert(global)?;
-            if write_result.as_array_buffer(global).byte_len < 2 * size_of::<u32>() {
+            let write_result_value = write_state.to_js();
+            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
+                return Err(global.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            };
+            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            }
+            let write_result_slice = write_result_buf.as_u32();
+            if write_result_slice.len() < 2 {
                 return Err(global
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -125,7 +140,7 @@ mod _impl {
                 ));
             }
 
-            js::write_result_set_cached(this_value, global, write_result.to_js());
+            js::write_result_set_cached(this_value, global, write_result_value);
             js::write_callback_set_cached(
                 this_value,
                 global,

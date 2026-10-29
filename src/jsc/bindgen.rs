@@ -555,7 +555,8 @@ impl<T> Copy for Deferred<'_, T> {}
 
 impl<'a, T> Deferred<'a, T> {
     /// # Safety
-    /// Something holds `value` for the call `heap` belongs to, and `convert` takes it: it is empty only for `.ifPassed`.
+    /// Something holds `value` for the call `heap` belongs to, and `convert` takes it: it is empty
+    /// only for `.ifPassed`.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn from_extern(value: JSValue, _: &JsHeap<'a>, convert: ConvertFn<'a, T>) -> Self {
@@ -585,9 +586,6 @@ impl<'a> JsLocal<'a, crate::JSBigInt> {
         crate::JSBigInt::from_js(self.0).unwrap()
     }
 }
-
-/// Marks a [`JsLocal`] that is a symbol.
-pub enum Symbol {}
 
 /// Marks a [`JsLocal`] that is a string or a `String` object.
 pub enum StringLike {}

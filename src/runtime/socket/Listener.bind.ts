@@ -1,7 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
-import { SocketOptionsObject } from "./SocketConfig.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::listener" });
 
@@ -19,7 +18,7 @@ export const Listener = b.class({
     port: { getter: b.u16.optional, pure: true },
     ref: { capability: "js", passThis: true },
     reload: { args: { options: b.opaque }, capability: "js", throws: true },
-    stop: { args: { closeActiveConnections: b.bool.otherAsNull }, capability: "js", length: 1 },
+    stop: { args: { closeActiveConnections: b.opaque }, capability: "js" },
     unix: { getter: b.string.utf8.optional, cache: true },
     unref: {},
     "@@dispose": { capability: "js" },
@@ -27,12 +26,7 @@ export const Listener = b.class({
 });
 
 /** `options` is what `SocketConfig` takes. */
-const fromOptions = {
-  args: { options: SocketOptionsObject.otherAsNull },
-  capability: "js",
-  throws: true,
-  length: 1,
-} as const;
+const fromOptions = { args: { options: b.opaque }, capability: "js", throws: true } as const;
 /** Returns a promise of the socket. */
 export const connect = b.fn({ ...fromOptions, returns: b.promise, rustPath: "crate::socket::Listener::connect" });
 export const listen = b.fn({ ...fromOptions, returns: Listener, rustPath: "crate::socket::Listener::listen" });

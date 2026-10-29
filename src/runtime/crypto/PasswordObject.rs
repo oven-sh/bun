@@ -60,7 +60,7 @@ impl AlgorithmValue {
         algorithm: PasswordHashAlgorithm<'a>,
     ) -> bindgen::Result<'a, AlgorithmValue> {
         match algorithm {
-            PasswordHashAlgorithm::Missing => Ok(AlgorithmValue::DEFAULT),
+            PasswordHashAlgorithm::Unspecified => Ok(AlgorithmValue::DEFAULT),
             PasswordHashAlgorithm::Label(label) => {
                 Algorithm::from_label(heap, "hash", &label.to_utf8()).map(Self::with_defaults)
             }
@@ -145,7 +145,7 @@ fn cost<'a>(
     name: &str,
 ) -> bindgen::Result<'a, Option<f64>> {
     match value {
-        PasswordCost::Missing => Ok(None),
+        PasswordCost::None => Ok(None),
         PasswordCost::Text(text) if text.is_empty() => Ok(None),
         PasswordCost::Number(number) => Ok(Some(*number)),
         _ => Err(invalid_argument_type(heap, "hash", name, "number")),

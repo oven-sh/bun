@@ -1,46 +1,30 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { FetchSession, FetchTLS, FlagOrNumber, ProxyInit } from "./fetch/FetchSession.bind.ts";
 import { BodyInit, HeadersInit, SignalInit } from "./response.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::fetch" });
 
 const js = { capability: "js", throws: true } as const;
 
-export const CompressEncodingName = b.union({ name: b.string.allowStringObject, other: b.opaque });
-export const CompressOptions = b.dictionary(
-  {
-    encoding: CompressEncodingName,
-    /** Its range is the one of `encoding`. */
-    level: b.opaque.nullable,
-  },
-  { deferred: true },
-);
-export const CompressInit = b.union({
-  missing: b.undefined,
-  null: b.null,
-  flag: b.bool,
-  name: b.string.allowStringObject,
-  options: CompressOptions,
-  other: b.opaque,
-});
-export const MaxRedirects = b.union({ missing: b.null, number: b.f64, other: b.ignored });
+/** A number is `false` when it truncates to 0. */
+export const FlagOrNumber = b.union({ flag: b.bool, number: b.f64, other: b.ignored });
+export const MaxRedirects = b.union({ none: b.null, number: b.f64, other: b.ignored });
 export const FetchVerbose = b.union({ string: b.stringLike, flag: b.bool, other: b.ignored });
 export const FetchInit = b.dictionary(
   {
     url: b.string.loose.optional,
     method: b.string.loose.emptyStringAsNull,
     decompress: FlagOrNumber,
-    compress: CompressInit,
+    compress: b.opaque.optional,
     maxRedirects: MaxRedirects,
-    session: { type: FetchSession.withValue.nullable, expected: "fetch: 'session' must be a Bun.FetchSession" },
-    tls: FetchTLS.otherAsNull,
+    session: b.opaque.nullable,
+    tls: b.object.otherAsNull,
     unix: b.opaque.optional,
     protocol: b.stringLike.otherAsNull,
     timeout: FlagOrNumber,
     redirect: b.opaque.nullable,
     keepalive: FlagOrNumber,
     verbose: FetchVerbose,
-    proxy: ProxyInit,
+    proxy: b.opaque.optional,
     signal: SignalInit,
     body: BodyInit,
     headers: HeadersInit,
@@ -48,8 +32,8 @@ export const FetchInit = b.dictionary(
   },
   { deferred: true },
 );
-/** An `object` that is neither a `Request` nor, after `ToString`, a URL is read as `init` is. */
-export const FetchInput = b.union({ text: b.string.allowStringObject, object: FetchInit, other: b.opaque });
+export const FetchInput = b.union({ text: b.string.allowStringObject, init: FetchInit, other: b.opaque });
+/** An `input` that is neither a `Request` nor, after `ToString`, a URL is read as `init` is. */
 const request = {
   args: { input: FetchInput, init: FetchInit.otherAsNull },
   returns: b.promise,

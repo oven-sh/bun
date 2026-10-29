@@ -363,11 +363,14 @@ impl PostgresSQLQuery {
     }
 
     /// `result.statement` of the result for which `on_result` gave this number instead.
-    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: f64) -> JsResult<Option<JSValue>> {
-        self.undescribed
-            .with_mut(|results| results.take(number))
-            .map(|(parameters, fields)| describe(cx.global(), &self.query, &parameters, &fields))
-            .transpose()
+    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
+        match self
+            .undescribed
+            .with_mut(|results| results.take(number.to_js()))
+        {
+            Some((parameters, fields)) => describe(cx.global(), &self.query, &parameters, &fields),
+            None => Ok(JSValue::NULL),
+        }
     }
 
     // The generator counts the struct itself.
@@ -418,22 +421,22 @@ impl PostgresSQLQuery {
         js::pending_value_set_cached(this_value.to_js(), cx.global(), value.to_js());
     }
 
-    pub fn set_mode(
-        &self,
-        cx: &mut JsScope<'_>,
-        (mode, js_mode): (f64, JsLocal<'_>),
-    ) -> JsResult<()> {
+    pub fn set_mode(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
-        let result_mode = match mode as i32 {
+        let js_mode = mode.to_js();
+        if !js_mode.is_number() {
+            return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
+        }
+
+        let mode = js_mode.coerce::<i32>(global_object)?;
+        let result_mode = match mode {
             0 => PostgresSQLQueryResultMode::Objects,
             1 => PostgresSQLQueryResultMode::Values,
             2 => PostgresSQLQueryResultMode::Raw,
             _ => {
-                return Err(global_object.throw_invalid_argument_type_value(
-                    b"mode",
-                    b"Number",
-                    js_mode.to_js(),
-                ));
+                return Err(
+                    global_object.throw_invalid_argument_type_value(b"mode", b"Number", js_mode)
+                );
             }
         };
         self.update_flags(|f| f.result_mode = result_mode);
@@ -448,8 +451,10 @@ impl PostgresSQLQuery {
         query: JsLocal<'_, JSObject>,
     ) -> JsResult<()> {
         let global_object = cx.global();
+        let query = query.to_js();
         self.row_type
-            .set(RowDecoder::expected_row_type(global_object, query.to_js()));
+            .set(RowDecoder::expected_row_type(global_object, query));
+
         let this_value = this_value.to_js();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let unnamed = connection
@@ -525,7 +530,7 @@ impl PostgresSQLQuery {
             ))
         });
         self.this_value.with_mut(|r| r.upgrade(global_object));
-        js::target_set_cached(this_value, global_object, query.to_js());
+        js::target_set_cached(this_value, global_object, query);
 
         connection.advance();
         connection.flush_data_and_reset_timeout();

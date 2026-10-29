@@ -3,7 +3,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;
 use std::collections::VecDeque;
 
-use bun_jsc::bindgen::{Deferred, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{
     ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
@@ -737,10 +737,10 @@ impl QuicStream {
         });
     }
 
-    pub(crate) fn write(&self, cx: &mut JsScope<'_>, batch: JsLocal<'_>) -> JsResult<Option<f64>> {
+    pub(crate) fn write(&self, cx: &mut JsScope<'_>, batch: JsLocal<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         if self.destroyed.get() {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         }
         let batch = batch.to_js();
         let mut queued: u64 = 0;
@@ -766,7 +766,7 @@ impl QuicStream {
             session.note_stream_write();
         }
         self.kick_write();
-        Ok(Some(queued as f64))
+        Ok(JSValue::js_number(queued as f64))
     }
 
     pub(crate) fn end_write(&self, _: &mut JsScope<'_>) {
@@ -953,15 +953,17 @@ impl QuicStream {
     pub(crate) fn send_headers(
         &self,
         cx: &mut JsScope<'_>,
-        kind: Deferred<'_, i32>,
+        kind: JsLocal<'_>,
         headers: JsLocal<'_>,
-        flags: Deferred<'_, i32>,
+        flags: JsLocal<'_>,
     ) -> JsResult<bool> {
         let global = cx.global();
         if self.destroyed.get() {
             return Ok(false);
         }
+        let kind = kind.to_js();
         let headers = headers.to_js();
+        let flags = flags.to_js();
         // `buildNgHeaderString` returns [nul-joined string, pair count]; the
         // count is what keeps the latin1 encode below unspliceable.
         let header_string = headers.get_index(global, 0)?;
@@ -970,9 +972,9 @@ impl QuicStream {
         use crate::webcore::encoding::BunStringEncode as _;
         let bytes = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
-        let is_trailing = kind.convert(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
+        let is_trailing = kind.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
         let eos = is_trailing
-            || flags.convert(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
+            || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         let Some(s) = self.ls() else {
             self.pending_headers
                 .with_mut(|q| q.push((bytes, header_count, eos)));

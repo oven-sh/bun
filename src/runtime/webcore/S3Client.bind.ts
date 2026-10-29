@@ -4,7 +4,6 @@ import { Blob, PathOrBlob } from "./Blob.bind.ts";
 
 const method = { returns: b.promise, capability: "js", throws: true } as const;
 
-/** `missing` and `other` are not paths: each function reports them in its own words. */
 export const S3Path = b.union({ missing: b.undefined, path: PathLike });
 
 /** `S3Client.write(..)` uses the credentials of the environment, `client.write(..)` those of the client. */

@@ -1,5 +1,4 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
-import { ResourceUsage } from "./subprocess/ResourceUsage.bind.ts";
 
 export default b.module({ rustPath: "crate::api::bun::subprocess::testing_apis" });
 
@@ -7,7 +6,7 @@ export default b.module({ rustPath: "crate::api::bun::subprocess::testing_apis" 
 const stdio = { getter: b.opaque, capability: "js" } as const;
 
 /** A number or a name. `NaN` and `""` are the default too. */
-export const KillSignal = b.union({ number: b.f64, name: b.string, missing: b.null, other: b.ignored });
+export const KillSignal = b.union({ number: b.f64, name: b.string, none: b.null, other: b.ignored });
 
 /** What `Bun.spawn` returns. */
 export const Subprocess = b.class({
@@ -26,7 +25,7 @@ export const Subprocess = b.class({
     pid: { getter: b.i32 },
     readable: { ...stdio, throws: true, cache: "stdout", rustName: "stdout" },
     ref: { rustName: "do_ref" },
-    resourceUsage: { returns: ResourceUsage.optional, capability: "js" },
+    resourceUsage: { returns: b.opaque.returning("ResourceUsage", "undefined"), capability: "js", throws: true },
     send: {
       args: { message: b.opaque, handle: b.opaque, options: b.opaque, callback: b.opaque },
       returns: b.bool,
@@ -44,7 +43,12 @@ export const Subprocess = b.class({
     terminal: { internalField: "terminal" },
     unref: { rustName: "do_unref" },
     writable: { ...stdio, cache: "stdin", rustName: "stdin" },
-    "@@asyncDispose": { returns: b.promise.optional, capability: "js", throws: true, passThis: true },
+    "@@asyncDispose": {
+      returns: b.opaque.returning("Promise", "undefined"),
+      capability: "js",
+      throws: true,
+      passThis: true,
+    },
   },
 });
 

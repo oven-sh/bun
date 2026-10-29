@@ -5,12 +5,11 @@ use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
 
 use crate::generated_bindgen::socket_body::SocketHandle;
-use crate::generated_bindgen::socket_config::SocketOptionsObject;
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags};
 
 static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
@@ -91,12 +90,12 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
 pub(crate) fn do_connect<'a>(
     cx: &mut JsScope<'a>,
     socket: SocketHandle<'a>,
-    options: Option<SocketOptionsObject<'a>>,
+    options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     let (maybe_tcp, maybe_tls) = match socket {
         SocketHandle::Tcp(socket) => (Some(socket.as_ctx_ptr()), None),
         SocketHandle::Tls(socket) => (None, Some(socket.as_ctx_ptr())),
         SocketHandle::Other => (None, None),
     };
-    Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, options)
+    Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, options.to_js())
 }

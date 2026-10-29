@@ -14,10 +14,9 @@ use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
-use bun_jsc::{
-    self as jsc, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsResult, StringJsc as _,
-};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{self as jsc, JSGlobalObject, JSObject, JSValue, JsError, JsResult, StringJsc as _};
 use bun_options_types::aot_options::AotOptions;
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
@@ -29,13 +28,13 @@ use crate::cli::compile_options::{self, CompileFlags, OptionError, TrimFlags};
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
-use bun_bundler_jsc::options_jsc::compile_target_from_slice;
+use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_slice};
 
 pub(crate) mod js_bundler {
     use super::*;
     use crate::generated_bindgen::js_bundler::{
         BuildCompile, BuildConditions, BuildConfig, BuildEnvBehavior, BuildMetafile, BuildMinify,
-        BuildNaming, BuildSourceMap, BytecodeOrder,
+        BuildNaming,
     };
     use bun_core::Utf8Bytes;
 
@@ -595,17 +594,6 @@ pub(crate) mod js_bundler {
         }
     }
 
-    fn compile_target_from_name(global: &JSGlobalObject, slice: &[u8]) -> JsResult<CompileTarget> {
-        if !slice.starts_with(b"bun-") {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Expected compile target to start with 'bun-', got {}",
-                bstr::BStr::new(slice)
-            )));
-        }
-
-        compile_target_from_slice(global, slice)
-    }
-
     impl CompileOptions {
         fn from_js(
             global_this: &JSGlobalObject,
@@ -624,20 +612,20 @@ pub(crate) mod js_bundler {
                     return Ok(Some((this, RawCompileFlags::default())));
                 }
                 Some(BuildCompile::Target(target)) => {
-                    this.compile_target = compile_target_from_name(global_this, target.slice())?;
+                    this.compile_target = compile_target_from_js(global_this, target.to_js())?;
                     return Ok(Some((this, RawCompileFlags::default())));
                 }
-                Some(BuildCompile::Options(object)) => object,
+                Some(BuildCompile::Options(object)) => object.to_js(),
             };
 
-            check_compile_keys(global_this, object.object().to_js())?;
+            check_compile_keys(global_this, object)?;
 
-            if let Some(target) = object.target(global_this)? {
-                this.compile_target = compile_target_from_name(global_this, target.slice())?;
+            if let Some(target) = object.get_own(global_this, &BunString::static_("target"))? {
+                this.compile_target = compile_target_from_js(global_this, target)?;
             }
 
-            if let Some(exec_argv) = object.exec_argv(global_this)? {
-                let mut iter = exec_argv.to_js().array_iterator(global_this)?;
+            if let Some(exec_argv) = object.get_own_array(global_this, "execArgv")? {
+                let mut iter = exec_argv.array_iterator(global_this)?;
                 let mut is_first = true;
                 while let Some(arg) = iter.next()? {
                     let slice = arg.to_utf8(global_this)?;
@@ -651,7 +639,10 @@ pub(crate) mod js_bundler {
                 }
             }
 
-            if let Some(slice) = object.executable_path(global_this)? {
+            if let Some(executable_path) =
+                object.get_own(global_this, &BunString::static_("executablePath"))?
+            {
+                let slice = executable_path.to_utf8(global_this)?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
                 if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                     .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -665,12 +656,22 @@ pub(crate) mod js_bundler {
                 this.executable_path.append_slice_exact(slice.slice())?;
             }
 
-            if let Some(windows) = object.windows(global_this)? {
-                if let Some(hide_console) = windows.hide_console(global_this)? {
-                    this.windows_hide_console = hide_console;
+            if let Some(windows) = object.get_own_truthy(global_this, "windows")? {
+                if !windows.is_object() {
+                    return Err(global_this
+                        .throw_invalid_arguments(format_args!("windows must be an object")));
                 }
 
-                if let Some(slice) = windows.icon(global_this)? {
+                if let Some(hide_console) =
+                    windows.get_own(global_this, &BunString::static_("hideConsole"))?
+                {
+                    this.windows_hide_console = hide_console.to_boolean();
+                }
+
+                if let Some(windows_icon_path) =
+                    windows.get_own(global_this, &BunString::static_("icon"))?
+                {
+                    let slice = windows_icon_path.to_utf8(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                         .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -684,113 +685,141 @@ pub(crate) mod js_bundler {
                     this.windows_icon_path.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(slice) = windows.title(global_this)? {
+                if let Some(windows_title) =
+                    windows.get_own(global_this, &BunString::static_("title"))?
+                {
+                    let slice = windows_title.to_utf8(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(slice) = windows.publisher(global_this)? {
+                if let Some(windows_publisher) =
+                    windows.get_own(global_this, &BunString::static_("publisher"))?
+                {
+                    let slice = windows_publisher.to_utf8(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(slice) = windows.version(global_this)? {
+                if let Some(windows_version) =
+                    windows.get_own(global_this, &BunString::static_("version"))?
+                {
+                    let slice = windows_version.to_utf8(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(slice) = windows.description(global_this)? {
+                if let Some(windows_description) =
+                    windows.get_own(global_this, &BunString::static_("description"))?
+                {
+                    let slice = windows_description.to_utf8(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(slice) = windows.copyright(global_this)? {
+                if let Some(windows_copyright) =
+                    windows.get_own(global_this, &BunString::static_("copyright"))?
+                {
+                    let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
             }
 
-            if let Some(slice) = object.outfile(global_this)? {
+            if let Some(outfile) = object.get_own(global_this, &BunString::static_("outfile"))? {
+                let slice = outfile.to_utf8(global_this)?;
                 this.outfile.append_slice_exact(slice.slice())?;
             }
 
-            if let Some(assets) = object.assets(global_this)? {
-                let mut iter = assets.to_js().array_iterator(global_this)?;
+            if let Some(assets) = object.get_own_array(global_this, "assets")? {
+                let mut iter = assets.array_iterator(global_this)?;
                 while let Some(arg) = iter.next()? {
                     let slice = arg.to_utf8(global_this)?;
                     this.assets.push(Box::from(slice.slice()));
                 }
             }
 
-            if let Some(autoload_dotenv) = object.autoload_dotenv(global_this)? {
+            if let Some(autoload_dotenv) =
+                object.get_boolean_loose(global_this, "autoloadDotenv")?
+            {
                 this.autoload_dotenv = autoload_dotenv;
             }
 
             let mut is_autoload_bunfig_written = false;
-            if let Some(autoload_bunfig) = object.autoload_bunfig(global_this)? {
+            if let Some(autoload_bunfig) =
+                object.get_boolean_loose(global_this, "autoloadBunfig")?
+            {
                 this.autoload_bunfig = autoload_bunfig;
                 is_autoload_bunfig_written = true;
             }
 
-            if let Some(autoload_tsconfig) = object.autoload_tsconfig(global_this)? {
+            if let Some(autoload_tsconfig) =
+                object.get_boolean_loose(global_this, "autoloadTsconfig")?
+            {
                 this.autoload_tsconfig = autoload_tsconfig;
             }
 
-            if let Some(autoload_package_json) = object.autoload_package_json(global_this)? {
+            if let Some(autoload_package_json) =
+                object.get_boolean_loose(global_this, "autoloadPackageJson")?
+            {
                 this.autoload_package_json = autoload_package_json;
             }
 
-            let raw = RawCompileFlags::from_js(global_this, object.object().to_js())?;
-            prepend_code_generation_flag(
-                global_this,
-                object.object().to_js(),
-                &mut this.exec_argv,
-            )?;
+            let raw = RawCompileFlags::from_js(global_this, object)?;
+            prepend_code_generation_flag(global_this, object, &mut this.exec_argv)?;
             if raw.removes_unused && !is_autoload_bunfig_written {
                 this.autoload_bunfig = false;
             }
 
             // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
-            let refuse = |value: JSValue| {
-                global_this.throw_invalid_property_type_value(
-                    b"compile.bytecodeOrder",
-                    b"string or array of strings",
-                    value,
-                )
-            };
-            let mut push = |slice: Utf8Bytes| -> JsResult<()> {
-                if slice.slice().is_empty() {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "compile.bytecodeOrder must not contain an empty path"
-                    )));
-                }
-                this.bytecode_order.push(Box::from(slice.slice()));
-                Ok(())
-            };
-            match object.bytecode_order(global_this)? {
-                BytecodeOrder::Missing | BytecodeOrder::Enabled(false) => {}
-                BytecodeOrder::List(bytecode_order) => {
-                    let mut iter = bytecode_order.to_js().array_iterator(global_this)?;
-                    while let Some(path) = iter.next()? {
-                        if !path.is_string() {
-                            return Err(refuse(path));
-                        }
-                        push(path.to_utf8(global_this)?)?;
+            if let Some(bytecode_order) = object.get(global_this, "bytecodeOrder")?
+                && !bytecode_order.is_undefined_or_null()
+                && bytecode_order != JSValue::FALSE
+            {
+                let mut push = |path: JSValue| -> JsResult<()> {
+                    if !path.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.bytecodeOrder",
+                            b"string or array of strings",
+                            path,
+                        ));
                     }
+                    let slice = path.to_utf8(global_this)?;
+                    if slice.slice().is_empty() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.bytecodeOrder must not contain an empty path"
+                        )));
+                    }
+                    this.bytecode_order.push(Box::from(slice.slice()));
+                    Ok(())
+                };
+                if bytecode_order.js_type().is_array() {
+                    let mut iter = bytecode_order.array_iterator(global_this)?;
+                    while let Some(path) = iter.next()? {
+                        push(path)?;
+                    }
+                } else {
+                    push(bytecode_order)?;
                 }
-                BytecodeOrder::One(path) => push(path)?,
-                BytecodeOrder::Enabled(true) => return Err(refuse(JSValue::TRUE)),
-                BytecodeOrder::Other(value) => return Err(refuse(value.to_js())),
             }
 
-            if let Some(jit_policy) = object.jit_policy(global_this)? {
-                let scale = jit_policy as f32;
-                if !(scale.is_finite() && scale >= 1.0) {
-                    return Err(global_this.throw_range_error(
-                        jit_policy,
-                        bun_jsc::RangeErrorOptions {
-                            field_name: b"compile.jitPolicy",
-                            msg: b"a finite number >= 1",
-                            ..Default::default()
-                        },
-                    ));
+            if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
+                if !jit_policy.is_undefined() {
+                    if !jit_policy.is_number() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.jitPolicy",
+                            b"number",
+                            jit_policy,
+                        ));
+                    }
+                    let scale = jit_policy.as_number() as f32;
+                    if !(scale.is_finite() && scale >= 1.0) {
+                        return Err(global_this.throw_range_error(
+                            jit_policy.as_number(),
+                            bun_jsc::RangeErrorOptions {
+                                field_name: b"compile.jitPolicy",
+                                msg: b"a finite number >= 1",
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    this.jit_policy = scale;
                 }
-                this.jit_policy = scale;
             }
 
             Ok(Some((this, raw)))
@@ -1017,24 +1046,22 @@ pub(crate) mod js_bundler {
                 drop(slice);
             }
 
-            match config.sourcemap(global_this)? {
-                None | Some(BuildSourceMap::Enabled(false)) => {}
-                Some(BuildSourceMap::Enabled(true)) => {
-                    this.source_map = if has_out_dir {
-                        options::SourceMapOption::Linked
-                    } else {
-                        options::SourceMapOption::Inline
-                    };
-                }
-                Some(BuildSourceMap::Name(name)) => {
-                    this.source_map = match options::SOURCE_MAP_OPTION_MAP.get(name.slice()) {
-                        Some(source_map) => *source_map,
-                        None => {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "sourcemap must be one of \"none\", \"linked\", \"inline\", \"external\""
-                            )));
-                        }
-                    };
+            if let Some(source_map_js) = config.sourcemap(global_this)?.map(JsLocal::to_js) {
+                if source_map_js.is_boolean() {
+                    if source_map_js == JSValue::TRUE {
+                        this.source_map = if has_out_dir {
+                            options::SourceMapOption::Linked
+                        } else {
+                            options::SourceMapOption::Inline
+                        };
+                    }
+                } else if !source_map_js.is_empty_or_undefined_or_null() {
+                    this.source_map = source_map_js.to_enum_from_map(
+                        global_this,
+                        "sourcemap",
+                        &options::SOURCE_MAP_OPTION_MAP,
+                        "\"none\", \"linked\", \"inline\", \"external\"",
+                    )?;
                 }
             }
 
@@ -1070,15 +1097,13 @@ pub(crate) mod js_bundler {
                 }
             }
 
-            if let Some(name) = config.packages(global_this)? {
-                this.packages = match options::PACKAGES_OPTION_MAP.get(name.slice()) {
-                    Some(packages) => *packages,
-                    None => {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "packages must be one of \"bundle\", \"external\""
-                        )));
-                    }
-                };
+            if let Some(packages) = config.packages(global_this)? {
+                this.packages = packages.to_js().to_enum_from_map(
+                    global_this,
+                    "packages",
+                    &options::PACKAGES_OPTION_MAP,
+                    "\"bundle\", \"external\"",
+                )?;
             }
 
             // Parse JSX configuration
@@ -1126,12 +1151,13 @@ pub(crate) mod js_bundler {
                 }
             }
 
-            if let Some(name) = config.format(global_this)? {
-                let Some(&format) = options::Format::MAP.get(name.slice()) else {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "format must be one of \"esm\", \"cjs\", \"iife\""
-                    )));
-                };
+            if let Some(format) = config.format(global_this)? {
+                let format = format.to_js().to_enum_from_map(
+                    global_this,
+                    "format",
+                    &options::Format::MAP,
+                    "\"esm\", \"cjs\", \"iife\"",
+                )?;
                 this.format = format;
 
                 if this.bytecode && format != options::Format::Cjs && format != options::Format::Esm
@@ -1205,10 +1231,7 @@ pub(crate) mod js_bundler {
             // An empty array is as good as none.
             let entry_points_opt = match config.entrypoints(global_this)? {
                 Some(ep) if ep.to_js().get_length(global_this)? != 0 => Some(ep),
-                _ => match config.entry_points(global_this)? {
-                    Some(ep) if ep.to_js().get_length(global_this)? != 0 => Some(ep),
-                    _ => None,
-                },
+                _ => config.entry_points(global_this)?,
             };
             if let Some(entry_points) = entry_points_opt {
                 let mut iter = entry_points.to_js().array_iterator(global_this)?;
@@ -1217,7 +1240,8 @@ pub(crate) mod js_bundler {
                     this.entry_points.insert(slice.slice())?;
                     drop(slice);
                 }
-            } else {
+            }
+            if this.entry_points.count() == 0 {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected entrypoints to be an array of strings"
                 )));
@@ -2396,16 +2420,13 @@ impl BuildArtifact {
         }
     }
 
-    pub(crate) fn get_hash<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
+    pub(crate) fn get_hash(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
         write!(cursor, "{}", self.hash).expect("Unexpected");
         let written = 512 - cursor.len();
-        heap.create_utf8_string(&buf[..written])
+        bun_string_jsc::create_utf8_for_js(cx.global(), &buf[..written])
     }
 
     pub(crate) fn get_size(&self) -> f64 {
@@ -2420,11 +2441,11 @@ impl BuildArtifact {
         BunString::static_(<&'static str>::from(self.output_kind))
     }
 
-    pub(crate) fn get_sourcemap<'a>(&self, _: &JsHeap<'a>) -> Option<JsWrapper<'a, Self>> {
+    pub(crate) fn get_sourcemap(&self, _: &JsHeap<'_>) -> JSValue {
         // The value lives in the wrapper's `m_sourcemap` WriteBarrier (seeded
         // by `on_complete`); the C++ getter returns that slot before calling
         // here, so reaching this means no sourcemap was assigned.
-        None
+        JSValue::NULL
     }
 
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(

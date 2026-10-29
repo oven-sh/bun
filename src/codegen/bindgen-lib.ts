@@ -42,7 +42,7 @@ import {
   WrappedType,
 } from "./bindgen-lib-internal.ts";
 
-export type { Capability, SignatureOptions, Type } from "./bindgen-lib-internal.ts";
+export type { Capability, Type } from "./bindgen-lib-internal.ts";
 export { null_ as null, undefined_ as undefined };
 
 /** Strict: only a boolean. `.loose` for `ToBoolean`. */
@@ -109,17 +109,12 @@ export const stringObject = cell("JSC::StringObject", "JavaScriptCore/StringObje
   reportedAs: "String",
   tsType: "String",
 });
+
 /** A BigInt kept as a JS value, as a `JsLocal<'a, JSBigInt>`. */
 export const bigInt = cell("JSC::JSBigInt", "JavaScriptCore/JSBigInt.h", {
   rustPath: "bun_jsc::JSBigInt",
   reportedAs: "bigint",
   tsType: "bigint",
-});
-/** A symbol, as a `JsLocal<'a, Symbol>`. */
-export const symbol = cell("JSC::Symbol", "JavaScriptCore/Symbol.h", {
-  rustPath: "bun_jsc::bindgen::Symbol",
-  reportedAs: "symbol",
-  tsType: "symbol",
 });
 
 /** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
@@ -150,11 +145,11 @@ export const ignored = new UnitType("ignored");
 
 export const array = (element: Type) => new ArrayType(element);
 
-/** The last argument and every one after it, as a `&'a [T]`. `T` is `b.opaque` or `b.string.local`. */
-export const rest = (element: Type) => new RestType(element);
-
 /** A result only: an object with a property for each `(key, value)` the body gives. */
 export const record = (value: Type) => new RecordResultType(value);
+
+/** The last argument: it and every one after it, as a `&'a [T]`. `element` is `b.opaque` or `b.string.local`. */
+export const rest = (element: Type) => new RestType(element);
 
 // A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.
 

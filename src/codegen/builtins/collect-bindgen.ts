@@ -36,6 +36,7 @@ import {
   typeOfKind as typeOfBindgenKind,
   type Builtin,
   type ClassMember,
+  type JSClass,
   type NamespaceDefinition,
   type OverloadDispatch,
   type ValueKind,
@@ -161,39 +162,11 @@ export function cppSymbolOf(fn: FunctionDefinition): string {
 }
 
 function getKindType(kind: Kind): b.TableType {
-  if (typeof kind === "object") {
-    const type = typeOfBindgenKind(kind);
-    if (type === null) throw new GeneratorError(`the class of ${kind.cpp} is unknown: the kind is not a type`);
-    return createStrictType(type);
-  }
-  switch (kind) {
-    case "undefined":
-      return b.union(b.undefined, b.notPassed);
-    case "null":
-      return b.strictNull;
-    case "boolean":
-      return b.bool;
-    case "number":
-      return b.f64;
-    case "bigint":
-      return b.bigint;
-    case "string":
-      return b.string;
-    case "stringObject":
-      return b.instance("String");
-    case "array":
-      return b.instance("Array");
-    case "arrayBuffer":
-      return b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
-    case "typedArray":
-      return b.instance("TypedArray");
-    case "dataView":
-      return b.instance("DataView");
-    case "callable":
-      return createStrictType({ type: "Function" });
-    case "other":
-      return b.any;
-  }
+  if (kind === "undefined") return b.union(b.undefined, b.notPassed);
+  if (kind === "other") return b.any;
+  const type = typeOfBindgenKind(kind);
+  if (type !== null) return createStrictType(type);
+  throw new GeneratorError(`the class of ${(kind as JSClass).cpp} is unknown: the kind is not a type`);
 }
 
 export function typeOfKind(kind: ValueKind | "other"): TypeSpec {

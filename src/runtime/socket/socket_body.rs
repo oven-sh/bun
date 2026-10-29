@@ -5,15 +5,14 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
 use crate::generated_bindgen::socket_body::{
-    AnySocket, BufferedWrite, BunSocket, CipherInfo, DuplexTLSOptions, SocketHandle,
-    UpgradeTLSOptions, js_TCPSocket, js_TLSSocket,
+    AnySocket, BunSocket, CipherInfo, DuplexTLSOptions, SocketHandle, js_TCPSocket, js_TLSSocket,
 };
-use crate::generated_bindgen::socket_config::UpgradeTLS;
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use bun_jsc::bun_string_jsc;
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
@@ -22,9 +21,7 @@ use bun_boringssl_sys::SSL_CTX;
 use bun_collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::SysErrorJsc;
-use bun_jsc::{
-    self as jsc, CommonString, JSGlobalObject, JSString, JSValue, JsRef, JsResult, SystemError,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
@@ -796,12 +793,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `handle.resumeSNI(secureContextOrNull, isError)` - resumes a server
     /// handshake suspended by an asynchronous SNICallback. A no-op when the
     /// socket already closed (the resolution outlived the connection).
-    pub(crate) fn resume_sni(
-        &self,
-        _: &mut JsScope<'_>,
-        context: Option<&SecureContext>,
-        is_error: bool,
-    ) {
+    pub(crate) fn resume_sni(&self, _: &mut JsScope<'_>, context: JsLocal<'_>, is_error: bool) {
         log!("resumeSNI");
         let socket = self.socket.get();
         if socket.is_detached() {
@@ -811,7 +803,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // us_socket_sni_resolve consumes) or null to fall through to the
         // listener's default context.
         let ctx_ptr = if !is_error {
-            if let Some(sc) = context {
+            if let Some(sc) = context
+                .to_js()
+                .as_class_ref::<crate::api::bun_secure_context::SecureContext>()
+            {
                 sc.ctx.clone().into_raw()
             } else {
                 core::ptr::null_mut()
@@ -2396,33 +2391,34 @@ impl<const SSL: bool> NewSocket<SSL> {
         })
     }
 
-    pub(crate) fn get_local_family<'a>(&self, heap: &JsHeap<'a>) -> Option<JsLocal<'a, JSString>> {
+    pub(crate) fn get_local_family(&self, cx: &mut JsScope<'_>) -> JSValue {
+        let global = cx.global();
         if self.socket.get().is_detached() {
-            return None;
+            return JSValue::UNDEFINED;
         }
 
         let mut buf = [0u8; 64];
-        let address_bytes = self.socket.get().local_address(&mut buf)?;
+        let Some(address_bytes) = self.socket.get().local_address(&mut buf) else {
+            return JSValue::UNDEFINED;
+        };
         match address_bytes.len() {
-            4 => Some(heap.common_string(CommonString::IPv4)),
-            16 => Some(heap.common_string(CommonString::IPv6)),
-            _ => None,
+            4 => global.common_strings().ipv4(),
+            16 => global.common_strings().ipv6(),
+            _ => JSValue::UNDEFINED,
         }
     }
 
-    pub(crate) fn get_local_address<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, Option<JsLocal<'a, JSString>>> {
+    pub(crate) fn get_local_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.socket.get().is_detached() {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         }
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
 
         let Some(address_bytes) = self.socket.get().local_address(&mut buf) else {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         };
         // `format_ip` expects `addr:port` / `[addr]:port` shape (it strips
         // `:port` and brackets), so pass a `SocketAddr` — bare `IpAddr` corrupts IPv6.
@@ -2439,44 +2435,45 @@ impl<const SSL: bool> NewSocket<SSL> {
                 0,
             )
             .into(),
-            _ => return Ok(None),
+            _ => return Ok(JSValue::UNDEFINED),
         };
 
         let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        heap.create_utf8_string(text).map(Some)
+        bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     pub(crate) fn get_local_port(&self) -> Option<u16> {
         self.socket.get().local_port()
     }
 
-    pub(crate) fn get_remote_family<'a>(&self, heap: &JsHeap<'a>) -> Option<JsLocal<'a, JSString>> {
+    pub(crate) fn get_remote_family(&self, cx: &mut JsScope<'_>) -> JSValue {
+        let global = cx.global();
         if self.socket.get().is_detached() {
-            return None;
+            return JSValue::UNDEFINED;
         }
 
         let mut buf = [0u8; 64];
-        let address_bytes = self.socket.get().remote_address(&mut buf)?;
+        let Some(address_bytes) = self.socket.get().remote_address(&mut buf) else {
+            return JSValue::UNDEFINED;
+        };
         match address_bytes.len() {
-            4 => Some(heap.common_string(CommonString::IPv4)),
-            16 => Some(heap.common_string(CommonString::IPv6)),
-            _ => None,
+            4 => global.common_strings().ipv4(),
+            16 => global.common_strings().ipv6(),
+            _ => JSValue::UNDEFINED,
         }
     }
 
-    pub(crate) fn get_remote_address<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, Option<JsLocal<'a, JSString>>> {
+    pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.socket.get().is_detached() {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         }
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
 
         let Some(address_bytes) = self.socket.get().remote_address(&mut buf) else {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         };
         let address: std::net::SocketAddr = match address_bytes.len() {
             4 => std::net::SocketAddrV4::new(
@@ -2491,11 +2488,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                 0,
             )
             .into(),
-            _ => return Ok(None),
+            _ => return Ok(JSValue::UNDEFINED),
         };
 
         let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        heap.create_utf8_string(text).map(Some)
+        bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     pub(crate) fn get_remote_port(&self) -> Option<u16> {
@@ -2570,12 +2567,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         cx: &mut JsScope<'_>,
         data: JsLocal<'_>,
         encoding: JsLocal<'_>,
-    ) -> JsResult<BufferedWrite> {
+    ) -> JsResult<JSValue> {
         let global = cx.global();
         if self.socket.get().is_detached() {
             self.buffered_data_for_node_net
                 .with_mut(|b| b.clear_and_free());
-            return Ok(BufferedWrite::Flushed(false));
+            return Ok(JSValue::FALSE);
         }
 
         Ok(
@@ -2586,11 +2583,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                         // Fatal send (peer gone): hand JS the negative errno so
                         // node:net fails the write like Node's onWriteComplete;
                         // -1 stays the legacy closed/shutdown sentinel.
-                        BufferedWrite::Errno(wrote)
+                        JSValue::js_number(f64::from(wrote))
+                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
+                        JSValue::TRUE
                     } else {
-                        BufferedWrite::Flushed(
-                            usize::try_from(wrote.max(0)).expect("int cast") == total,
-                        )
+                        JSValue::FALSE
                     }
                 }
             },
@@ -3250,10 +3247,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn upgrade_tls(
         &self,
         cx: &mut JsScope<'_>,
-        options: Option<UpgradeTLSOptions<'_>>,
-    ) -> JsResult<Option<JSValue>> {
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
         let global = cx.global();
-        self.upgrade_tls_impl(global, options, false)
+        self.upgrade_tls_impl(global, options.to_js(), false)
     }
 
     /// `defers_server_identity`: node:tls owns hostname policy in its JS layer
@@ -3262,11 +3259,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     fn upgrade_tls_impl(
         &self,
         global: &JSGlobalObject,
-        options: Option<UpgradeTLSOptions<'_>>,
+        opts: JSValue,
         defers_server_identity: bool,
-    ) -> JsResult<Option<JSValue>> {
+    ) -> JsResult<JSValue> {
         if SSL {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         }
         // adoptTLS needs a real `*us_socket_t`. `.connecting` (DNS /
         // happy-eyeballs in flight) and `.upgradedDuplex` have no fd to
@@ -3278,9 +3275,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 "upgradeTLS requires an established socket"
             )));
         }
-        let Some(opts) = options else {
+        if !opts.is_object() {
             return Err(global.throw(format_args!("Expected options object")));
-        };
+        }
 
         // Server-side upgrade (`new tls.TLSSocket(socket, { isServer: true })`):
         // adopt the fd into an accept-state SSL so the native read path drives the
@@ -3288,19 +3285,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         // An explicit `isServer` option wins over the underlying socket's mode so
         // an outgoing connection can still be wrapped as the server side, the way
         // Node honors the option regardless of how the socket was created.
-        let is_server = match opts.is_server(global)? {
-            Some(value) => value,
+        let is_server = match opts.get_truthy(global, "isServer")? {
+            Some(value) => value.to_boolean(),
             None => self.is_server(),
         };
 
         let socket_obj = opts
-            .socket(global)?
+            .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
         // Bytes already consumed from the wire before the upgrade (e.g. the
         // ClientHello sitting in the readable buffer of the socket being
         // wrapped); fed into the TLS engine once the upgrade is wired up.
-        let initial_data: Vec<u8> = match opts.initial_data(global)? {
-            Some(v) => StringOrBuffer::from_js(global, v.to_js())?
+        let initial_data: Vec<u8> = match opts.get_truthy(global, "initialData")? {
+            Some(v) => StringOrBuffer::from_js(global, v)?
                 .map(|data| data.slice().to_vec())
                 .unwrap_or_default(),
             None => Vec::new(),
@@ -3309,7 +3306,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // a SocketListener, so these handlers have no listener to release. The
         // server-ness lives in the SSL accept state (adopt_tls
         // is_client=!is_server) + the ServerHandlers JS table, not here.
-        let handlers = Handlers::from_js(global, socket_obj.to_js(), super::SocketMode::Client)?;
+        let handlers = Handlers::from_js(global, socket_obj, super::SocketMode::Client)?;
         // Nothing holds the callback cell until the TLS wrapper below does.
         let _cell_root = handlers.root_cell(global);
 
@@ -3326,41 +3323,50 @@ impl<const SSL: bool> NewSocket<SSL> {
         // node:net wraps the result of `[buntls]` as `opts.tls`, so the
         // SecureContext arrives as `opts.tls.secureContext`. Bun.connect
         // userland may also pass it top-level. Check both.
-        let sc = 'blk: {
-            if let Some(v) = opts.secure_context(global)? {
-                break 'blk Some(v);
+        let sc_js: JSValue = 'blk: {
+            if let Some(v) = opts.get_truthy(global, "secureContext")? {
+                break 'blk v;
             }
-            if let Some(UpgradeTLS::Options(t)) = opts.tls(global)? {
-                if let Some(v) = t.secure_context(global)? {
-                    break 'blk Some(v);
+            if let Some(t) = opts.get_truthy(global, "tls")? {
+                if t.is_object() {
+                    if let Some(v) = t.get_truthy(global, "secureContext")? {
+                        break 'blk v;
+                    }
                 }
             }
-            None
+            JSValue::ZERO
         };
-        if let Some((sc, _)) = sc {
+        if !sc_js.is_empty() {
+            let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
+                return Err(global.throw_invalid_argument_type_value(
+                    b"secureContext",
+                    b"SecureContext",
+                    sc_js,
+                ));
+            };
             owned_ctx = Some(sc.ctx.clone());
             // servername / ALPN still come from the surrounding tls config.
-            if let Some(t) = opts.tls(global)? {
-                if let Some(t) = tls_options_value(t) {
+            if let Some(t) = opts.get_truthy(global, "tls")? {
+                if !t.is_boolean() {
                     ssl_opts = SSLConfig::from_js(
                         // SAFETY: per-thread VM singleton.
                         VirtualMachine::get().as_mut(),
                         global,
-                        t.to_js(),
+                        t,
                         is_server,
                     )?;
                 }
             }
-        } else if let Some(tls_js) = opts.tls(global)? {
-            if let Some(tls_js) = tls_options_value(tls_js) {
+        } else if let Some(tls_js) = opts.get_truthy(global, "tls")? {
+            if !tls_js.is_boolean() {
                 ssl_opts = SSLConfig::from_js(
                     // SAFETY: per-thread VM singleton.
                     VirtualMachine::get().as_mut(),
                     global,
-                    tls_js.to_js(),
+                    tls_js,
                     is_server,
                 )?;
-            } else if matches!(tls_js, UpgradeTLS::Enabled(true)) {
+            } else if tls_js.to_boolean() {
                 ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
             }
             let cfg = ssl_opts
@@ -3399,8 +3405,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let mut default_data = JSValue::ZERO;
-        if let Some(v) = opts.data(global)? {
-            default_data = v.to_js();
+        if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? {
+            default_data = v;
             default_data.ensure_still_alive();
         }
 
@@ -3625,7 +3631,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let array = JSValue::create_empty_array(global, 2)?;
         array.put_index(global, 0, raw_js_value)?;
         array.put_index(global, 1, tls_js_value)?;
-        Ok(Some(array))
+        Ok(array)
     }
 }
 
@@ -3661,11 +3667,7 @@ impl TCPSocket {
     pub(crate) fn get_alpn_protocol(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         Ok(JSValue::FALSE)
     }
-    pub(crate) fn set_key_cert(
-        &self,
-        _: &mut JsScope<'_>,
-        _: Option<&SecureContext>,
-    ) -> JsResult<()> {
+    pub(crate) fn set_key_cert(&self, _: &mut JsScope<'_>, _: JsLocal<'_>) -> JsResult<()> {
         Ok(())
     }
     pub(crate) fn export_keying_material(
@@ -3813,15 +3815,6 @@ impl Flags {
         let mut flags = Flags::default();
         flags.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
         flags
-    }
-}
-
-/// What `SSLConfig` reads, `None` for a boolean.
-fn tls_options_value(tls: UpgradeTLS<'_>) -> Option<JsLocal<'_>> {
-    match tls {
-        UpgradeTLS::Enabled(_) => None,
-        UpgradeTLS::Options(options) => Some(options.object().as_value()),
-        UpgradeTLS::Other(value) => Some(value),
     }
 }
 
@@ -4351,14 +4344,14 @@ impl DuplexUpgradeContext {
 pub(crate) fn upgrade_tls_deferred<'a>(
     cx: &mut JsScope<'a>,
     socket: BunSocket<'a>,
-    options: Option<UpgradeTLSOptions<'a>>,
-) -> JsResult<Option<JSValue>> {
+    options: JsLocal<'a>,
+) -> JsResult<JSValue> {
     match socket {
         BunSocket::Tcp(this) => {
-            NewSocket::<false>::upgrade_tls_impl(this, cx.global(), options, true)
+            NewSocket::<false>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
         }
         BunSocket::Tls(this) => {
-            NewSocket::<true>::upgrade_tls_impl(this, cx.global(), options, true)
+            NewSocket::<true>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
         }
     }
 }
@@ -4426,18 +4419,28 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     // node:net wraps `[buntls]`'s return as `opts.tls.secureContext`; userland
     // may also pass it top-level. Same lookup as `upgradeTLS` above.
     let mut owned_ctx: Option<boringssl_sys::OwnedSslCtx> = None;
-    let sc = 'blk: {
+    let sc_js: JSValue = 'blk: {
         if let Some(v) = options.secure_context {
-            break 'blk Some(v);
+            break 'blk v.to_js();
         }
-        if let Some(UpgradeTLS::Options(t)) = options.tls {
-            if let Some(v) = t.secure_context(global)? {
-                break 'blk Some(v);
+        if let Some(t) = options.tls {
+            let t = t.to_js();
+            if t.is_object() {
+                if let Some(v) = t.get_truthy(global, "secureContext")? {
+                    break 'blk v;
+                }
             }
         }
-        None
+        JSValue::ZERO
     };
-    if let Some((sc, _)) = sc {
+    if !sc_js.is_empty() {
+        let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
+            return Err(global.throw_invalid_argument_type_value(
+                b"secureContext",
+                b"SecureContext",
+                sc_js,
+            ));
+        };
         owned_ctx = Some(sc.ctx.clone());
     }
 
@@ -4446,9 +4449,10 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     let mut ssl_opts: Option<SSLConfig> = None;
     // Drop frees ssl_opts on error.
     if let Some(tls) = options.tls {
-        if let Some(tls) = tls_options_value(tls) {
-            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls.to_js(), is_server)?;
-        } else if matches!(tls, UpgradeTLS::Enabled(true)) {
+        let tls = tls.to_js();
+        if !tls.is_boolean() {
+            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls, is_server)?;
+        } else if tls.to_boolean() {
             ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
         }
     }

@@ -906,6 +906,7 @@ impl BuiltinName {
     // streams.rs / fetch.rs / pretty_format.rs use these).
     pub const Method: Self = Self::method;
     pub const Headers: Self = Self::headers;
+    pub const Url: Self = Self::url;
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
     pub(crate) const InspectCustom: Self = Self::inspectCustom;
@@ -1027,7 +1028,8 @@ pub use self::call_frame::CallFrame;
 
 // `FromJsEnum` impls for the `bun_http_types` Fetch* enums. Orphan rule forces
 // these here (the trait crate) — `bun_http_types` is jsc-free and `bun_http_jsc`
-// owns neither the trait nor the type. The `to_js` direction stays in `bun_http_jsc::fetch_enums_jsc`.
+// owns neither the trait nor the type. The `to_js` direction stays in
+// `bun_http_jsc::fetch_enums_jsc`.
 impl FromJsEnum for bun_http_types::FetchRedirect::FetchRedirect {
     fn from_js_value(
         v: JSValue,

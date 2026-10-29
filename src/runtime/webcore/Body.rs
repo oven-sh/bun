@@ -921,7 +921,7 @@ impl Value {
 
     pub(crate) fn from_js(global_this: &JSGlobalObject, value: BodyInit<'_>) -> JsResult<Value> {
         let value = match value {
-            BodyInit::Undefined | BodyInit::Null => return Ok(Value::Null),
+            BodyInit::Missing | BodyInit::None => return Ok(Value::Null),
 
             BodyInit::String(value) => {
                 let str = value.to_js().to_bun_string(global_this)?;

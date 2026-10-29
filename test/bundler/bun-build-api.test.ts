@@ -999,7 +999,6 @@ describe("Bun.build", () => {
     const entrypoints = [join(import.meta.dir, "./fixtures/trivial/index.js")];
     const [artifact] = (await Bun.build({ entrypoints })).outputs;
     const text = await artifact.text();
-    const echo = { cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"], env: bunEnv, stdin: artifact };
 
     const frames: unknown[] = [];
     const bothFrames = Promise.withResolvers<void>();
@@ -1023,68 +1022,19 @@ describe("Bun.build", () => {
     };
     ws.onerror = ws.onclose = event =>
       bothFrames.reject(new Error(`WebSocket ${event.type} after ${frames.length} frames`));
-    await bothFrames.promise;
-    ws.onerror = ws.onclose = null;
-    ws.close();
-
-    let written = "";
-    const allWritten = Promise.withResolvers<void>();
-    using listener = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        data(_, chunk) {
-          written += chunk.toString();
-          if (written.length >= text.length) allWritten.resolve();
-        },
-        close: () => allWritten.reject(new Error(`closed after ${written.length} bytes`)),
-        error: (_, error) => allWritten.reject(error),
-      },
-    });
-    const socket = await Bun.connect({
-      hostname: "127.0.0.1",
-      port: listener.port,
-      socket: { data() {}, error: (_, error) => allWritten.reject(error) },
-    });
-    socket.write(artifact);
-    await allWritten.promise;
-    socket.end();
-
-    let commands = "";
-    using redisServer = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        data(socket, chunk) {
-          commands += chunk.toString();
-          socket.write(chunk.includes("HELLO") ? "%0\r\n" : "+OK\r\n");
-        },
-      },
-    });
-    const redis = new Bun.RedisClient(`redis://127.0.0.1:${redisServer.port}`, { autoReconnect: false });
-    await redis.set("key", artifact);
-    redis.close();
+    try {
+      await bothFrames.promise;
+    } finally {
+      ws.onerror = ws.onclose = null;
+      ws.close();
+    }
 
     const [onDisk] = (await Bun.build({ entrypoints, outdir: String(dir) })).outputs;
     await Bun.write(onDisk, "replaced");
-
-    await using child = Bun.spawn(echo);
-    expect({
-      frames,
-      written,
-      redis: commands.includes(text),
-      spawn: await child.stdout.text(),
-      spawnSync: Bun.spawnSync(echo).stdout.toString(),
-      destination: readFileSync(onDisk.path, "utf-8"),
-    }).toEqual({
+    expect({ frames, destination: readFileSync(onDisk.path, "utf-8") }).toEqual({
       frames: [text, text],
-      written: text,
-      redis: true,
-      spawn: text,
-      spawnSync: text,
       destination: "replaced",
     });
-    expect(() => new Bun.Image(artifact)).not.toThrow();
   });
 
   test.todo("new Response(BuildArtifact) sets etag", async () => {

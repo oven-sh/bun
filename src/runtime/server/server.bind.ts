@@ -5,7 +5,7 @@ import { Headers, Request } from "../webcore/response.bind.ts";
 
 export const ServerProtocol = b.enumeration(["http", "https"]);
 
-export const UpgradeHeaders = b.union({ missing: b.null, headers: Headers, init: b.object });
+export const UpgradeHeaders = b.union({ none: b.null, headers: Headers, init: b.object });
 /** `server.upgrade` reads them only for a valid handshake. */
 export const UpgradeInit = b.dictionary(
   {
@@ -18,7 +18,7 @@ export const UpgradeInit = b.dictionary(
 /** Told apart without running JavaScript. `other`, where a method takes it, is sent as its `ToString`. */
 export const WebSocketMessage = b.union({
   missing: b.undefined,
-  null: b.null,
+  none: b.null,
   buffer: b.bufferSource.allowShared,
   blob: Blob,
   buildArtifact: BuildArtifact,

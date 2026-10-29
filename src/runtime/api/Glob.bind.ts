@@ -44,7 +44,7 @@ export const Glob = b.class({
     },
     __scanSync: {
       args: { options: GlobScanArgument.nullable },
-      returns: b.jsArray,
+      returns: b.opaque,
       capability: "heap",
       throws: true,
       privateSymbol: "globScanSync",

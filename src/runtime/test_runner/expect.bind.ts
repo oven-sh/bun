@@ -82,7 +82,7 @@ export const ExpectStatic = b.class({
 });
 
 /** `null` and `undefined` are the default message. What is not a string is thrown as it is. */
-export const UnreachableMessage = b.union({ missing: b.null, text: b.string.allowStringObject, thrown: b.opaque });
+export const UnreachableMessage = b.union({ none: b.null, text: b.string.allowStringObject, thrown: b.opaque });
 
 export const Expect = b.class({
   rustPath: "crate::test_runner::Expect",
@@ -170,7 +170,7 @@ export const Expect = b.class({
     toHaveBeenLastCalledWith: matcherWithCallArguments,
     toHaveBeenNthCalledWith: matcherWithNthCallArguments,
     toHaveLastReturnedWith: matcherWithExpected,
-    toHaveLength: { ...matcher, args: { expected: b.f64.otherAsNull.withValue }, length: 1 },
+    toHaveLength: matcherWithExpected,
     toHaveNthReturnedWith: matcherWithNthExpected,
     /** `toHaveProperty("a", undefined)` compares the value, `toHaveProperty("a")` does not. */
     toHaveProperty: { ...matcher, args: { keyPath: b.opaque, value: b.rest(b.opaque) }, length: 2 },
@@ -199,7 +199,7 @@ export const Expect = b.class({
     any: asymmetricMatchers.any,
     anything: asymmetricMatchers.anything,
     arrayContaining: asymmetricMatchers.arrayContaining,
-    assertions: { args: { expected: b.f64.otherAsNull.withValue }, ...js, length: 1 },
+    assertions: { args: { expected: b.opaque }, ...js },
     closeTo: asymmetricMatchers.closeTo,
     extend: { args: { matchers: b.opaque }, ...js },
     hasAssertions: { ...js, length: 1 },
@@ -233,39 +233,6 @@ export const ExpectCustomAsymmetricMatcher = b.class({
   },
 });
 
-const printer = { args: { value: b.opaque }, returns: b.string.utf8, ...js } as const;
-
-/** Only `isNot` changes the hint. The others are converted and not used. */
-export const MatcherHintOptions = b.dictionary(
-  {
-    isNot: b.bool.loose.default(false),
-    comment: b.string.loose.optional,
-    promise: b.string.loose.optional,
-    secondArgument: b.string.loose.optional,
-  },
-  { allowArray: true },
-);
-export const MatcherHintOptionsOrOther = b.union({ options: MatcherHintOptions, other: b.ignored }, { fromJS: true });
-
-/** `this.utils` in a matcher of `expect.extend()`. */
-export const ExpectMatcherUtils = b.class({
-  rustPath: "crate::test_runner::ExpectMatcherUtils",
-  proto: {
-    EXPECTED_COLOR: { ...printer, rustName: "print_expected" },
-    /** `matcherHint("toBe", undefined)` prints no "received", `matcherHint("toBe")` does. */
-    matcherHint: {
-      args: { matcherName: b.string.allowStringObject.otherAsNull, rest: b.rest(b.opaque) },
-      returns: b.string.utf8,
-      ...js,
-      length: 1,
-    },
-    printExpected: printer,
-    printReceived: printer,
-    RECEIVED_COLOR: { ...printer, rustName: "print_received" },
-    stringify: printer,
-  },
-});
-
 /** The `this` of a matcher of `expect.extend()`. */
 export const ExpectMatcherContext = b.class({
   rustPath: "crate::test_runner::ExpectMatcherContext",
@@ -274,7 +241,23 @@ export const ExpectMatcherContext = b.class({
     expand: { getter: b.bool, pure: true },
     isNot: { getter: b.bool, pure: true },
     promise: { getter: b.string },
-    utils: { getter: ExpectMatcherUtils, capability: "js" },
+    utils: { getter: b.opaque.returning("ExpectMatcherUtils"), capability: "js" },
+  },
+});
+
+const printer = { args: { value: b.opaque }, returns: b.string.utf8, ...js } as const;
+
+/** `this.utils` in a matcher of `expect.extend()`. */
+export const ExpectMatcherUtils = b.class({
+  rustPath: "crate::test_runner::ExpectMatcherUtils",
+  proto: {
+    EXPECTED_COLOR: { ...printer, rustName: "print_expected" },
+    /** `matcherHint("toBe", undefined)` prints no "received", `matcherHint("toBe")` does. */
+    matcherHint: { args: { matcherName: b.opaque, rest: b.rest(b.opaque) }, returns: b.string.utf8, ...js },
+    printExpected: printer,
+    printReceived: printer,
+    RECEIVED_COLOR: { ...printer, rustName: "print_received" },
+    stringify: printer,
   },
 });
 

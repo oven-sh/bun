@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::webcore::crypto" });
 
 /** `bytes` is a `Buffer`, for the encoding "buffer". */
-export const EncodedUUID = b.union({ text: b.string, buffer: b.bufferSource });
+export const EncodedUUID = b.union({ text: b.string, bytes: b.bufferSource });
 
 export const randomUUIDv5 = b.fn({
   args: {
@@ -59,13 +59,7 @@ export const Crypto = b.class({
   construct: "illegal",
   proto: {
     /** What is not an integer typed array throws WebCrypto's `TypeMismatchError`, which no type here throws. */
-    getRandomValues: {
-      args: { array: b.bufferSource.allowShared.otherAsNull },
-      returns: b.bufferSource,
-      capability: "js",
-      throws: true,
-      length: 1,
-    },
+    getRandomValues: { args: { array: b.opaque }, returns: b.opaque, capability: "js", throws: true },
     randomUUID: { returns: b.string },
     timingSafeEqual: equal,
   },

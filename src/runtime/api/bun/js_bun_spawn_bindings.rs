@@ -393,7 +393,7 @@ fn spawn_maybe_sync<'a>(
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
     let mut terminal_info = SpawnedTerminal::default();
-    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
+    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
@@ -700,23 +700,8 @@ fn spawn_maybe_sync<'a>(
 
             if !is_sync {
                 if let Some(terminal) = args.terminal(cx.global())? {
-                    let SpawnTerminal::Options(terminal_val) = terminal else {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "terminal must be a Terminal object or options object",
-                        )));
-                    };
                     // Check if it's an existing Terminal object
-                    if let Some(terminal) =
-                        terminal_body::js::from_js(terminal_val.object().to_js())
-                    {
-                        // `from_js` returns the live `Terminal` pointer borrowed
-                        // from the JS wrapper; it stays valid for as long as
-                        // `terminal_val` is reachable (kept alive below via
-                        // `terminal_js_value`), so the `BackRef` invariant
-                        // (pointee outlives holder) holds for this scope.
-                        // SAFETY: `terminal` is the wrapper's live heap pointer
-                        // (write provenance from its original allocation).
-                        let term = unsafe { bun_ptr::BackRef::from_raw_mut(terminal.as_ptr()) };
+                    if let SpawnTerminal::Terminal((term, terminal_val)) = terminal {
                         if term.is_closed() {
                             return Err(cx
                                 .global()
@@ -739,9 +724,9 @@ fn spawn_maybe_sync<'a>(
                                 "terminal pseudoconsole is no longer valid"
                             )));
                         }
-                        existing_terminal = Some(term);
-                        terminal_js_value = terminal_val.object().to_js();
-                    } else {
+                        existing_terminal = Some(bun_ptr::BackRef::new(term));
+                        terminal_js_value = terminal_val.to_js();
+                    } else if let SpawnTerminal::Options(terminal_val) = terminal {
                         // Create a new terminal from options
                         let term_options =
                             TerminalOptions::parse_from_js(cx.global(), terminal_val)?;
@@ -767,6 +752,10 @@ fn spawn_maybe_sync<'a>(
                                 });
                             }
                         }
+                    } else {
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
+                            "terminal must be a Terminal object or options object",
+                        )));
                     }
 
                     #[cfg(unix)]
@@ -1197,7 +1186,7 @@ fn spawn_maybe_sync<'a>(
         stdout_maxbuf: Cell::new(None),
         terminal: Cell::new(
             existing_terminal
-                .map(|t| t.as_ptr())
+                .map(|t| t.as_const_ptr().cast_mut())
                 .or_else(|| terminal_info.0.as_ref().map(|info| info.terminal.as_ptr()))
                 .and_then(NonNull::new),
         ),
@@ -1848,9 +1837,7 @@ fn spawn_maybe_sync<'a>(
             let stderr = subprocess
                 .stderr
                 .with_mut(|s| s.to_buffered_value(cx.global()))?;
-            let resource_usage = subprocess
-                .create_resource_usage_object(cx.global())
-                .unwrap_or(JSValue::UNDEFINED);
+            let resource_usage = subprocess.create_resource_usage_object(cx.global())?;
             Ok((stdout, stderr, resource_usage))
         });
     let exited_due_to_timeout = did_timeout;
@@ -2076,7 +2063,7 @@ impl CgroupTarget {
     fn from_js(global: &JSGlobalObject, value: SpawnCgroupTarget) -> JsResult<Self> {
         match value {
             SpawnCgroupTarget::Fd(fd) => {
-                // NaN: there is no default fd.
+                // -1 is `.nanAs(-1)`.
                 if fd < 0 {
                     return Err(global.throw_range_error(
                         f64::NAN,

@@ -1,5 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { Response } from "../webcore/response.bind.ts";
+import { BodyInit, Response } from "../webcore/response.bind.ts";
 
 const text = b.bytes({ from: ["string"], otherwise: "toString", refuse: ["undefined", "null"] });
 
@@ -163,13 +163,7 @@ export const ElementHandlers = b.dictionary(
   { deferred: true, reportedAs: "" },
 );
 
-export const RewriterInput = b.union({
-  response: Response,
-  string: b.stringLike,
-  dataView: b.dataView,
-  buffer: b.bufferSource.allowShared,
-  other: b.ignored,
-});
+export const RewriterInput = b.union({ response: Response, body: BodyInit });
 
 export const HTMLRewriter = b.class({
   rustPath: "crate::api::html_rewriter::HTMLRewriter",

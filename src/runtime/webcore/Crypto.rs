@@ -1,5 +1,5 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, StringOrJsBytes};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSType, JSValue, JsClass as _};
@@ -13,13 +13,13 @@ impl Crypto {
     pub(crate) fn get_random_values<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        array: Option<JsLocal<'a, BufferSource>>,
-    ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
+        array: JsLocal<'a>,
+    ) -> bindgen::Result<'a, JsLocal<'a>> {
         let global = cx.global();
         // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
         // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
         // all pass `as_array_buffer` but must still raise TypeMismatchError.
-        let array = array.filter(|array| {
+        let array_buffer = array.to_js().as_array_buffer(global).filter(|_| {
             matches!(
                 array.to_js().js_type(),
                 JSType::Int8Array
@@ -33,7 +33,7 @@ impl Crypto {
                     | JSType::BigUint64Array
             )
         });
-        let Some(array) = array else {
+        let Some(mut array_buffer) = array_buffer else {
             return Err(global
                 .throw_dom_exception(
                     bun_jsc::DOMExceptionCode::TypeMismatchError,
@@ -42,7 +42,7 @@ impl Crypto {
                 .into());
         };
 
-        random_data(global, array.as_array_buffer(global).byte_slice_mut());
+        random_data(global, array_buffer.byte_slice_mut());
 
         Ok(array)
     }
@@ -183,7 +183,7 @@ pub(crate) fn random_uuid_v7<'a>(
             );
             Ok(EncodedUUID::Text(str))
         }
-        Encoding::Buffer => Ok(EncodedUUID::Buffer(heap.create_buffer(&uuid.bytes)?)),
+        Encoding::Buffer => Ok(EncodedUUID::Bytes(heap.create_buffer(&uuid.bytes)?)),
         encoding => Ok(EncodedUUID::Text(crate::webcore::encoding::to_bun_string(
             &uuid.bytes,
             encoding,
@@ -238,7 +238,7 @@ pub(crate) fn random_uuid_v5<'a>(
             );
             Ok(EncodedUUID::Text(str))
         }
-        Encoding::Buffer => Ok(EncodedUUID::Buffer(
+        Encoding::Buffer => Ok(EncodedUUID::Bytes(
             heap.create_buffer_from_box(Box::from(uuid.bytes))?,
         )),
         encoding => Ok(EncodedUUID::Text(crate::webcore::encoding::to_bun_string(

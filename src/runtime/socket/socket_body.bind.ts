@@ -1,15 +1,14 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
-import { SecureContext } from "../api/bun/SecureContext.bind.ts";
 import { ServerWebSocket } from "../server/server.bind.ts";
 import { Listener } from "./Listener.bind.ts";
-import { SocketHandler, UpgradeTLS } from "./SocketConfig.bind.ts";
+import { SocketHandler } from "./SocketConfig.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::socket_body" });
 
 const js = { capability: "js", throws: true } as const;
-const textIfOpen = b.string.local.optional;
-const cached = { getter: textIfOpen, cache: true, capability: "heap", throws: true } as const;
+const textIfOpen = b.opaque.returning("string", "undefined");
+const cached = { ...js, getter: textIfOpen, cache: true } as const;
 const write = {
   ...js,
   args: { data: b.opaque, byteOffset: b.opaque, byteLength: b.opaque, encoding: b.opaque },
@@ -19,29 +18,6 @@ const write = {
 const buffered = { ...js, args: { data: b.opaque, encoding: b.opaque } } as const;
 const bufferIfAny = { returns: b.opaque.returning("Buffer", "undefined"), ...js } as const;
 const objectIfAny = { returns: b.opaque.returning("object", "undefined"), ...js } as const;
-/** Whether all of it was written, or the negative errno of a fatal send. */
-export const BufferedWrite = b.union({ flushed: b.bool, errno: b.i32 });
-
-export const coercedInt32 = b.i32.allowBigInt.wrap;
-
-const secureContext = { type: SecureContext.withValue.emptyStringAsNull, expected: ["SecureContext"] } as const;
-/** `secureContext` can also be in `tls`. */
-export const UpgradeTLSOptions = b.dictionary(
-  {
-    /** Unset, the role of the socket. */
-    isServer: b.bool.loose.emptyStringAsNull,
-    /** Read as `SocketHandler`. */
-    socket: b.opaque.optional,
-    /** Bytes of the handshake that were already read. */
-    initialData: b.opaque.emptyStringAsNull,
-    secureContext,
-    tls: UpgradeTLS.emptyStringAsNull,
-    data: b.opaque.optional,
-  },
-  { deferred: true, reportedAs: "options" },
-);
-/** Returns the raw and the TLS halves, or `undefined` for a `TLSSocket`. */
-const upgradeTLS = { ...js, returns: b.jsArray.optional } as const;
 
 export const CipherInfo = b.dictionary({
   name: b.string.local.nullable,
@@ -96,18 +72,18 @@ function socket<SSL extends boolean>(ssl: SSL) {
       isSessionReused: { returns: b.bool },
       listener: { getter: Listener.optional, capability: "heap" },
       localAddress: cached,
-      localFamily: { getter: textIfOpen, cache: true, capability: "heap" },
+      localFamily: { getter: textIfOpen, cache: true, capability: "js" },
       localPort: { getter: b.u16.optional, cache: true },
       pause: { capability: "js" },
       readyState: { getter: b.i32 },
       ref: { rustName: "js_ref" },
       reload: { ...js, args: { options: b.opaque } },
       remoteAddress: cached,
-      remoteFamily: { getter: textIfOpen, cache: true, capability: "heap" },
+      remoteFamily: { getter: textIfOpen, cache: true, capability: "js" },
       remotePort: { getter: b.u16.optional },
       renegotiate: js,
       resume: { capability: "js" },
-      resumeSNI: { args: { context: SecureContext.otherAsNull, isError: b.bool.loose }, capability: "js" },
+      resumeSNI: { args: { context: b.opaque, isError: b.bool.loose }, capability: "js" },
       setKeepAlive: {
         args: {
           enable: b.bool.loose,
@@ -120,7 +96,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
         returns: b.bool,
         length: 2,
       },
-      setKeyCert: { ...js, args: { context: SecureContext.otherAsNull }, length: 1 },
+      setKeyCert: { ...js, args: { context: b.opaque } },
       setMaxSendFragment: { ...js, args: { size: b.f64.otherAsNull }, returns: b.bool, length: 1 },
       /** No argument enables it, `undefined` disables it. */
       setNoDelay: { args: { noDelay: b.bool.loose.ifPassed }, returns: b.bool, length: 1 },
@@ -136,11 +112,11 @@ function socket<SSL extends boolean>(ssl: SSL) {
       terminate: { capability: "js" },
       timeout: { ...js, args: { seconds: b.opaque } },
       unref: { rustName: "js_unref" },
-      upgradeTLS: { ...upgradeTLS, args: { options: UpgradeTLSOptions.otherAsNull }, length: 1 },
+      upgradeTLS: { ...js, args: { options: b.opaque }, returns: b.opaque.returning("Array", "undefined") },
       write,
       "@@dispose": { ...write, rustName: "end", length: 0 },
       endBuffered: { ...buffered, returns: b.bool, privateSymbol: "end" },
-      writeBuffered: { ...buffered, returns: BufferedWrite, privateSymbol: "write" },
+      writeBuffered: { ...buffered, returns: b.opaque.returning("boolean", "number"), privateSymbol: "write" },
     },
   });
 }
@@ -153,21 +129,22 @@ export const BunSocket = b.union({ tcp: TCPSocket, tls: TLSSocket });
 export const SocketHandle = b.union({ tcp: TCPSocket, tls: TLSSocket, other: b.ignored });
 
 export const upgradeTLSDeferred = b.fn({
-  ...upgradeTLS,
-  args: { socket: BunSocket, options: UpgradeTLSOptions.otherAsNull },
-  length: 2,
+  args: { socket: BunSocket, options: b.opaque },
+  returns: b.opaque,
+  capability: "js",
+  throws: true,
 });
 export const releaseHeldFlight = b.fn({ args: { socket: SocketHandle } });
 export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandle, inHandshake: b.bool } });
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
-/** `secureContext` can also be in `tls`. */
+/** `tls` is `true` or what `SSLConfig` takes, and can hold the `secureContext`. */
 export const DuplexTLSOptions = b.dictionary({
   socket: SocketHandler,
   isServer: b.bool.loose.default(false),
-  secureContext,
-  tls: UpgradeTLS.emptyStringAsNull,
+  secureContext: b.opaque.emptyStringAsNull,
+  tls: b.opaque.emptyStringAsNull,
   data: b.opaque.optional,
 });
 /** Returns the `TLSSocket` and the listeners for the duplex's `data`, `end`, `drain` and `close`. */

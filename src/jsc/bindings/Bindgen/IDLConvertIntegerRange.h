@@ -15,7 +15,7 @@ template<std::integral T, T Min, T Max>
 struct IDLValidateInteger : WebCore::IDLInteger<T> {};
 
 // `.validateIntegerRange(min, max)`: what is not a number, and a fraction, is ERR_INVALID_ARG_TYPE.
-// `NaN` is that of `.nanAs(value)`, if any.
+// `NaN` is the value of `.nanAs(value)`, if there is one.
 template<std::integral T, T Min, T Max, T... NaN>
     requires(sizeof...(NaN) <= 1)
 struct IDLValidateIntegerRange : WebCore::IDLInteger<T> {};

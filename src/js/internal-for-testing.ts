@@ -363,6 +363,8 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   lengthOf: $bindgen("bindgen_test.bind.ts", "lengthOf"),
   describeAbsent: $bindgen("bindgen_test.bind.ts", "describeAbsent"),
   describeAbsentDeferred: $bindgen("bindgen_test.bind.ts", "describeAbsentDeferred"),
+  describeConverted: $bindgen("bindgen_test.bind.ts", "describeConverted"),
+  describeConvertedDeferred: $bindgen("bindgen_test.bind.ts", "describeConvertedDeferred"),
   describeDeferred: $bindgen("bindgen_test.bind.ts", "describeDeferred"),
   namesOfDeferred: $bindgen("bindgen_test.bind.ts", "namesOfDeferred"),
   viewLengthOrNone: $bindgen("bindgen_test.bind.ts", "viewLengthOrNone"),
@@ -371,7 +373,6 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   deferredCountOrOne: $bindgen("bindgen_test.bind.ts", "deferredCountOrOne"),
   deferredCountOrTwo: $bindgen("bindgen_test.bind.ts", "deferredCountOrTwo"),
   nameOrKind: $bindgen("bindgen_test.bind.ts", "nameOrKind"),
-  takeSymbol: $bindgen("bindgen_test.bind.ts", "takeSymbol"),
   isStringLike: $bindgen("bindgen_test.bind.ts", "isStringLike"),
   takeNumber: $bindgen("bindgen_test.bind.ts", "takeNumber"),
   countOfMaybe: $bindgen("bindgen_test.bind.ts", "countOfMaybe"),
@@ -379,7 +380,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   echoNested: $bindgen("bindgen_test.bind.ts", "echoNested"),
   wrapToInt32: $bindgen("bindgen_test.bind.ts", "wrapToInt32"),
   readsPrivateMember: $bindgen("bindgen_test.bind.ts", "readsPrivateMember"),
-  describeFlagOrRest: $bindgen("bindgen_test.bind.ts", "describeFlagOrRest"),
+  describeFlagOrOther: $bindgen("bindgen_test.bind.ts", "describeFlagOrOther"),
   describeOwnIfPassed: $bindgen("bindgen_test.bind.ts", "describeOwnIfPassed"),
 };
 

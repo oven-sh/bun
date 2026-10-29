@@ -31,9 +31,9 @@ use bun_jsc::{
 use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::h2_frame_parser::{
-    FlagSetting, H2FrameCounters, H2FrameParserOptions, H2Handlers, H2NativeSocket, H2Origins,
-    H2SessionState, H2Settings, H2SettingsOption, H2StreamState, H2WriteResult, NumberSetting,
-    OptionalStreamId, RequestOptionsArgument, StreamResetBurst, js_H2FrameParser as js,
+    FlagSetting, H2FrameCounters, H2FrameParserOptions, H2Handlers, H2NativeSocket, H2SessionState,
+    H2Settings, H2SettingsOption, H2StreamState, H2WriteResult, OptionalNumber,
+    RequestOptionsArgument, js_H2FrameParser as js,
 };
 
 bun_output::declare_scope!(H2FrameParser, visible);
@@ -4326,7 +4326,7 @@ impl H2FrameParser {
         macro_rules! number_setting {
             ($key:literal, $setting:ident, $field:ident, $bit:expr, $min:expr, $max:expr, $err:literal) => {{
                 match options.$setting(global_object)? {
-                    NumberSetting::Number(value) => {
+                    OptionalNumber::Number(value) => {
                         if value < ($min as f64) || value > $max {
                             return global_object
                                 .err_http2_invalid_setting_value_range_error($err)
@@ -4335,8 +4335,8 @@ impl H2FrameParser {
                         local_settings.$field = value as u32;
                         explicit_settings |= $bit;
                     }
-                    NumberSetting::Missing => {}
-                    NumberSetting::Other => {
+                    OptionalNumber::None => {}
+                    OptionalNumber::Other => {
                         return global_object
                             .err_http2_invalid_setting_value_range_error(concat!(
                                 "Expected ",
@@ -4373,7 +4373,7 @@ impl H2FrameParser {
         }
 
         match options.initial_window_size(global_object)? {
-            NumberSetting::Number(value) => {
+            OptionalNumber::Number(value) => {
                 if value < 0.0 || value > MAX_WINDOW_SIZE_F64 {
                     return global_object
                         .err_http2_invalid_setting_value_range_error(
@@ -4385,8 +4385,8 @@ impl H2FrameParser {
                 local_settings.initial_window_size = value as u32;
                 explicit_settings |= SETTING_BIT_INITIAL_WINDOW_SIZE;
             }
-            NumberSetting::Missing => {}
-            NumberSetting::Other => {
+            OptionalNumber::None => {}
+            OptionalNumber::Other => {
                 return global_object
                     .err_http2_invalid_setting_value_range_error(
                         "Expected initialWindowSize to be a number",
@@ -4667,7 +4667,7 @@ impl H2FrameParser {
         &self,
         cx: &mut JsScope<'a>,
         code: Option<f64>,
-        last_stream_id: OptionalStreamId,
+        last_stream_id: OptionalNumber,
         opaque_data: Option<JsLocal<'a, BufferSource>>,
     ) -> JsResult<()> {
         let global_object = cx.global();
@@ -4677,9 +4677,9 @@ impl H2FrameParser {
         let error_code = code as i32;
 
         let id = match last_stream_id {
-            OptionalStreamId::Missing => 0,
-            OptionalStreamId::Id(id) => id as i32,
-            OptionalStreamId::Other => {
+            OptionalNumber::None => 0,
+            OptionalNumber::Number(id) => id as i32,
+            OptionalNumber::Other => {
                 return Err(
                     global_object.throw(format_args!("Expected lastStreamId to be a number"))
                 );
@@ -4730,93 +4730,91 @@ impl H2FrameParser {
             .throw(format_args!("Expected payload to be a Buffer")))
     }
 
-    pub(crate) fn origin(&self, cx: &mut JsScope<'_>, origin: H2Origins<'_>) -> JsResult<()> {
+    pub(crate) fn origin(&self, cx: &mut JsScope<'_>, origin: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
-        match origin {
-            H2Origins::Missing => {
-                // empty origin frame
-                let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
-                let mut stream = FixedBufferStream::new(&mut buffer);
+        let origin = origin.to_js();
+        if origin.is_undefined_or_null() {
+            // empty origin frame
+            let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
+            let mut stream = FixedBufferStream::new(&mut buffer);
 
-                let frame = FrameHeader {
-                    type_: FrameType::HTTP_FRAME_ORIGIN as u8,
-                    flags: 0,
-                    stream_identifier: 0,
-                    length: 0,
-                };
-                let _ = frame.write(&mut stream, &self.frames_sent_legacy);
-                let _ = self.write(&buffer);
+            let frame = FrameHeader {
+                type_: FrameType::HTTP_FRAME_ORIGIN as u8,
+                flags: 0,
+                stream_identifier: 0,
+                length: 0,
+            };
+            let _ = frame.write(&mut stream, &self.frames_sent_legacy);
+            let _ = self.write(&buffer);
+            return Ok(());
+        }
+
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L486-L489
+        if origin.is_string() {
+            let origin_view = origin.to_js_string_view(global_object)?;
+            let origin_bytes = header_value_bytes(&origin_view);
+            let slice: &[u8] = &origin_bytes;
+            if slice.len() + 2 > 16384 {
+                let exception = global_object.to_type_error(
+                    bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
+                    format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
+                );
+                return Err(global_object.throw_value(exception));
             }
-            // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L486-L489
-            H2Origins::One(origin) => {
-                let origin_bytes = header_value_bytes(&origin);
-                let slice: &[u8] = &origin_bytes;
-                if slice.len() + 2 > 16384 {
+
+            let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
+            let mut stream = FixedBufferStream::new(&mut buffer);
+
+            let frame = FrameHeader {
+                type_: FrameType::HTTP_FRAME_ORIGIN as u8,
+                flags: 0,
+                stream_identifier: 0,
+                length: u32::try_from(slice.len() + 2).expect("int cast"),
+            };
+            let _ = frame.write(&mut stream, &self.frames_sent_legacy);
+            let _ = stream.write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes());
+            let _ = self.write(&buffer);
+            if !slice.is_empty() {
+                let _ = self.write(slice);
+            }
+        } else if origin.is_array() {
+            let mut buffer = vec![0u8; FrameHeader::BYTE_SIZE + 16384];
+            // Heap-allocated to avoid a 16K stack frame.
+            let mut stream = FixedBufferStream::new(&mut buffer);
+            stream.seek_to(FrameHeader::BYTE_SIZE);
+            let mut value_iter = origin.array_iterator(global_object)?;
+
+            while let Some(item) = value_iter.next()? {
+                if !item.is_string() {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Expected origin to be a string or an array of strings"
+                    )));
+                }
+                let origin_view = item.to_js_string_view(global_object)?;
+                let origin_bytes = header_value_bytes(&origin_view);
+                let slice = origin_bytes.as_ref();
+                let fits = u16::try_from(slice.len()).is_ok_and(|len| {
+                    stream.write_all(&len.to_be_bytes()).is_ok() && stream.write_all(slice).is_ok()
+                });
+                if !fits {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
                         format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
                     );
                     return Err(global_object.throw_value(exception));
                 }
-
-                let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
-                let mut stream = FixedBufferStream::new(&mut buffer);
-
-                let frame = FrameHeader {
-                    type_: FrameType::HTTP_FRAME_ORIGIN as u8,
-                    flags: 0,
-                    stream_identifier: 0,
-                    length: u32::try_from(slice.len() + 2).expect("int cast"),
-                };
-                let _ = frame.write(&mut stream, &self.frames_sent_legacy);
-                let _ =
-                    stream.write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes());
-                let _ = self.write(&buffer);
-                if !slice.is_empty() {
-                    let _ = self.write(slice);
-                }
             }
-            H2Origins::List(origin) => {
-                let mut buffer = vec![0u8; FrameHeader::BYTE_SIZE + 16384];
-                // Heap-allocated to avoid a 16K stack frame.
-                let mut stream = FixedBufferStream::new(&mut buffer);
-                stream.seek_to(FrameHeader::BYTE_SIZE);
-                let mut value_iter = origin.to_js().array_iterator(global_object)?;
 
-                while let Some(item) = value_iter.next()? {
-                    if !item.is_string() {
-                        return Err(global_object.throw_invalid_arguments(format_args!(
-                            "Expected origin to be a string or an array of strings"
-                        )));
-                    }
-                    let origin_view = item.to_js_string_view(global_object)?;
-                    let origin_bytes = header_value_bytes(&origin_view);
-                    let slice = origin_bytes.as_ref();
-                    let fits = u16::try_from(slice.len()).is_ok_and(|len| {
-                        stream.write_all(&len.to_be_bytes()).is_ok()
-                            && stream.write_all(slice).is_ok()
-                    });
-                    if !fits {
-                        let exception = global_object.to_type_error(
-                            bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
-                            format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
-                        );
-                        return Err(global_object.throw_value(exception));
-                    }
-                }
-
-                let total_length: u32 = u32::try_from(stream.pos).expect("int cast");
-                let frame = FrameHeader {
-                    type_: FrameType::HTTP_FRAME_ORIGIN as u8,
-                    flags: 0,
-                    stream_identifier: 0,
-                    length: total_length - FrameHeader::BYTE_SIZE as u32, // payload length
-                };
-                stream.reset();
-                let _ = frame.write(&mut stream, &self.frames_sent_legacy);
-                let _ = self.write(&buffer[0..total_length as usize]);
-            }
-            H2Origins::Other => {}
+            let total_length: u32 = u32::try_from(stream.pos).expect("int cast");
+            let frame = FrameHeader {
+                type_: FrameType::HTTP_FRAME_ORIGIN as u8,
+                flags: 0,
+                stream_identifier: 0,
+                length: total_length - FrameHeader::BYTE_SIZE as u32, // payload length
+            };
+            stream.reset();
+            let _ = frame.write(&mut stream, &self.frames_sent_legacy);
+            let _ = self.write(&buffer[0..total_length as usize]);
         }
         Ok(())
     }
@@ -4826,13 +4824,13 @@ impl H2FrameParser {
         cx: &mut JsScope<'_>,
         origin: Option<StringView<'_>>,
         value: Option<StringView<'_>>,
-        stream_id: OptionalStreamId,
+        stream_id: OptionalNumber,
     ) -> JsResult<()> {
         let global_object = cx.global();
         let stream_id: u32 = match stream_id {
-            OptionalStreamId::Missing => 0,
-            OptionalStreamId::Id(id) => id as u32,
-            OptionalStreamId::Other => {
+            OptionalNumber::None => 0,
+            OptionalNumber::Number(id) => id as u32,
+            OptionalNumber::Other => {
                 return Err(global_object.throw(format_args!("Expected streamId to be a number")));
             }
         };
@@ -5728,13 +5726,13 @@ impl H2FrameParser {
         data: JsLocal<'_>,
         encoding: JsLocal<'_>,
         close: bool,
-        callback: Option<JsLocal<'_, Callable>>,
+        callback: JsLocal<'_>,
         defer_callback: bool,
     ) -> JsResult<H2WriteResult> {
         let global_object = cx.global();
         let data = data.to_js();
         let encoding = encoding.to_js();
-        let callback = callback.map_or(JSValue::UNDEFINED, JsLocal::to_js);
+        let callback = callback.to_js();
 
         let stream_ptr = self.stream_from_js(global_object, stream_id)?;
         // Coercing `data` (a String subclass's toString) can run user JS while `stream`
@@ -5868,7 +5866,7 @@ impl H2FrameParser {
         parent_id: Option<f64>,
         promised_id: Option<f64>,
         headers: Option<JsLocal<'_, JSObject>>,
-        sensitive_headers: Option<JsLocal<'_, JSObject>>,
+        sensitive_headers: JsLocal<'_>,
     ) -> JsResult<f64> {
         let global_object = cx.global();
         if !self.is_server.get() {
@@ -5876,7 +5874,7 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Push streams can only be created by servers"))
             );
         }
-        let sensitive_headers = sensitive_headers.map_or(JSValue::UNDEFINED, JsLocal::to_js);
+        let sensitive_headers = sensitive_headers.to_js();
         let Some(parent_id) = parent_id else {
             return Err(global_object.throw(format_args!("Expected parentId to be a number")));
         };
@@ -7261,7 +7259,7 @@ impl H2FrameParser {
             H2NativeSocket::Other => {}
         }
         match options.settings(global_object)? {
-            H2SettingsOption::Missing => {}
+            H2SettingsOption::None => {}
             H2SettingsOption::Other => {
                 return Err(global_object.throw(format_args!("Expected settings to be a object")));
             }
@@ -7317,13 +7315,17 @@ impl H2FrameParser {
                     this_ref.strict_field_whitespace.set(strict);
                 }
                 // node: MathMax(1, x) per key (util.js), applied when both are given (node_http2.cc).
-                let reset_burst = settings_js.stream_reset_burst(global_object)?;
-                if !matches!(reset_burst, StreamResetBurst::Missing)
+                if let Some(reset_burst) = settings_js.stream_reset_burst(global_object)?
                     && let Some(reset_rate) = settings_js.stream_reset_rate(global_object)?
-                    && let StreamResetBurst::Number(reset_burst) = reset_burst
+                    && reset_burst.to_js().is_number()
+                    && reset_rate.to_js().is_number()
                 {
-                    this_ref.stream_reset_burst.set((reset_burst as u32).max(1));
-                    this_ref.stream_reset_rate.set((reset_rate as u32).max(1));
+                    this_ref
+                        .stream_reset_burst
+                        .set(reset_burst.to_js().to_u32().max(1));
+                    this_ref
+                        .stream_reset_rate
+                        .set(reset_rate.to_js().to_u32().max(1));
                 }
                 if let Some(max_outstanding_settings) =
                     settings_js.max_outstanding_settings(global_object)?

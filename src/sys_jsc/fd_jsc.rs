@@ -6,9 +6,10 @@ use bun_sys::{Fd, FdExt};
 
 use crate::{JSGlobalObject, JSValue};
 
-/// `from_js` and `to_js` for `bun_sys::Fd`.
+/// Extension trait wiring `to_js` / `from_js` onto `bun_sys::Fd`;
+/// the `*_jsc` crate provides them as trait methods.
 pub trait FdJsc: Sized {
-    /// Of a file descriptor that a schema validated.
+    /// The `Fd` of a file descriptor number that JS passed.
     fn from_js(fd: i32) -> Self;
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
     fn to_number_without_making_lib_uv_owned(self) -> i64;

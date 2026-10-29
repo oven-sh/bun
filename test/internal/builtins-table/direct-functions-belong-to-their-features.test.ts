@@ -72,7 +72,7 @@ test.skipIf(generated === undefined)(
         ([, symbol]) => symbol,
       ),
     );
-    expect(pointers.length).toBeGreaterThan(200);
+    expect(pointers.length).toBeGreaterThan(500);
     expect(
       pointers
         .filter(({ className, symbol }) => removableClasses.has(className) && !recorded.has(symbol))

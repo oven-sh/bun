@@ -4,6 +4,7 @@ use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::socket_body::CipherInfo;
 use bun_boringssl_sys as boringssl;
 use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_jsc::JsClass as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
@@ -798,16 +799,12 @@ impl TLSSocket {
     /// `tlsSocket.setKeyCert(secureContext)` - serve this connection's identity
     /// from the given context: SSL_set_SSL_CTX swaps the cert/key/chain used for
     /// the rest of the handshake (Node calls it from ALPNCallback / SNICallback).
-    pub(crate) fn set_key_cert(
-        &self,
-        cx: &mut JsScope<'_>,
-        context: Option<&SecureContext>,
-    ) -> JsResult<()> {
+    pub(crate) fn set_key_cert(&self, cx: &mut JsScope<'_>, context: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         if self.socket.get().is_detached() {
             return Ok(());
         }
-        let Some(sc) = context else {
+        let Some(sc) = SecureContext::from_js(context.to_js()) else {
             return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
         };
         let Some(ssl_ptr) = self.socket.get().ssl() else {
@@ -815,7 +812,7 @@ impl TLSSocket {
         };
         // SAFETY: `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
         unsafe {
-            let ctx = &sc.ctx;
+            let ctx = &(*sc).ctx;
             ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
             // A client keeps no session id context (see `us_internal_ssl_attach`).
             if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {

@@ -1244,7 +1244,7 @@ impl UpgradeOptions {
             this.data = data.to_js();
         }
         match options.headers(global)? {
-            UpgradeHeaders::Missing => return Ok(this),
+            UpgradeHeaders::None => return Ok(this),
             UpgradeHeaders::Headers((headers, headers_value)) => {
                 this.headers = Some(NonNull::from(headers));
                 this._headers_object = jsc::EnsureStillAlive(headers_value.to_js());

@@ -1,7 +1,6 @@
 import * as b from "../codegen/bindgen-lib.ts";
 import { MySQLConnection } from "./mysql/JSMySQLConnection.bind.ts";
 import { MySQLQuery } from "./mysql/JSMySQLQuery.bind.ts";
-import { ConnectionTLS } from "./shared/ConnectionCtorArgs.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
 const text = b.string.loose.utf8;
@@ -27,7 +26,10 @@ export const binding = b.namespace({
     returns: MySQLQuery,
     rustPath: "crate::mysql::js_my_sql_query::JSMySQLQuery::create_query",
   },
-  /** The arguments of `NativeCreateConnection` in `src/js/internal/sql/pool.ts`. The ones that are `b.opaque` are for Postgres. */
+  /**
+   * The arguments of `NativeCreateConnection` in `src/js/internal/sql/pool.ts`. The ones that are `b.opaque`, except
+   * `tls`, are for Postgres.
+   */
   createConnection: {
     ...js,
     args: {
@@ -37,7 +39,7 @@ export const binding = b.namespace({
       password: text,
       database: text,
       sslMode: b.u8.validateInteger(0, 4),
-      tls: ConnectionTLS,
+      tls: b.opaque,
       query: b.opaque,
       path: text,
       onConnected: b.callable,

@@ -416,23 +416,10 @@ impl HTMLRewriter {
             return Ok(out);
         }
 
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        enum ResponseKind {
-            String,
-            ArrayBuffer,
-        }
-        let body = match input {
-            RewriterInput::String(string) => Some((ResponseKind::String, BodyInit::String(string))),
-            RewriterInput::DataView(view) => {
-                Some((ResponseKind::ArrayBuffer, BodyInit::DataView(view)))
-            }
-            RewriterInput::Buffer(buffer) => {
-                Some((ResponseKind::ArrayBuffer, BodyInit::Buffer(buffer)))
-            }
-            RewriterInput::Response(_) | RewriterInput::Other => None,
-        };
-
-        if let Some((kind, body)) = body {
+        if let RewriterInput::Body(
+            body @ (BodyInit::String(_) | BodyInit::DataView(_) | BodyInit::Buffer(_)),
+        ) = input
+        {
             let body_value = webcore::body::extract(cx.global(), body)?;
             let resp = RefPtr::new(Response::init(
                 webcore::response::Init {
@@ -445,7 +432,7 @@ impl HTMLRewriter {
             ));
 
             // Carries its own article: "an ArrayBuffer", not "a ArrayBuffer".
-            let noun = if kind == ResponseKind::String {
+            let noun = if matches!(body, BodyInit::String(_)) {
                 "a string"
             } else {
                 "an ArrayBuffer"
@@ -469,9 +456,9 @@ impl HTMLRewriter {
                 .get_body_value()
                 .use_as_any_blob_allow_non_utf8_string();
 
-            return match kind {
-                ResponseKind::String => blob.to_string(&cx, webcore::Lifetime::Transfer),
-                ResponseKind::ArrayBuffer => blob.to_array_buffer(&cx, webcore::Lifetime::Transfer),
+            return match body {
+                BodyInit::String(_) => blob.to_string(&cx, webcore::Lifetime::Transfer),
+                _ => blob.to_array_buffer(&cx, webcore::Lifetime::Transfer),
             };
         }
 

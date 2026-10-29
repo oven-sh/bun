@@ -95,8 +95,7 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
 // the receiver itself throws (a `constructor`/`name` getter), that exception is left instead.
 void throwInvalidThisError(JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue thisValue, const ASCIILiteral typeName);
 // throwInvalidThisError(callFrame->thisValue()) and returns the empty value; one call at each generated host-function's invalid-this branch.
-// Out of line: LTO would otherwise copy it into every host function.
-NEVER_INLINE JSC::EncodedJSValue throwInvalidThisCallError(JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName);
+JSC::EncodedJSValue throwInvalidThisCallError(JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);

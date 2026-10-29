@@ -6,14 +6,7 @@ const js = { capability: "js", throws: true } as const;
 /** What is not a number gets the error of the function it is passed to. */
 const streamId = b.f64.otherAsNull;
 const stream = { ...js, args: { streamId }, length: 1 } as const;
-export const OptionalStreamId = b.union({ missing: b.null, id: b.f64, other: b.ignored });
-/** The elements of `list` are strings. */
-export const H2Origins = b.union({
-  missing: b.null,
-  one: b.string.allowStringObject.view,
-  list: b.jsArray,
-  other: b.ignored,
-});
+export const OptionalNumber = b.union({ none: b.null, number: b.f64, other: b.ignored });
 
 export const H2FrameCounters = b.dictionary({ framesReceived: b.f64, framesSent: b.f64 });
 
@@ -55,23 +48,21 @@ export const H2RequestOptions = b.dictionary(
   },
   { deferred: true, reportedAs: "options" },
 );
-export const RequestOptionsArgument = b.union({ missing: b.null, options: H2RequestOptions, other: b.ignored });
+export const RequestOptionsArgument = b.union({ none: b.null, options: H2RequestOptions, other: b.ignored });
 
 export const H2NativeSocket = b.union({ tls: TLSSocket.withValue, tcp: TCPSocket.withValue, other: b.ignored });
 
-export const NumberSetting = b.union({ missing: b.null, number: b.f64, other: b.ignored });
 export const FlagSetting = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
-export const StreamResetBurst = b.union({ missing: b.undefined, number: b.f64, other: b.ignored });
 /** From `maxOutstandingPings` on: the limits of a session, which only the constructor reads. A wrong type is ignored. */
 export const H2Settings = b.dictionary(
   {
-    headerTableSize: NumberSetting,
+    headerTableSize: OptionalNumber,
     enablePush: FlagSetting,
-    initialWindowSize: NumberSetting,
-    maxFrameSize: NumberSetting,
-    maxConcurrentStreams: NumberSetting,
-    maxHeaderListSize: NumberSetting,
-    maxHeaderSize: NumberSetting,
+    initialWindowSize: OptionalNumber,
+    maxFrameSize: OptionalNumber,
+    maxConcurrentStreams: OptionalNumber,
+    maxHeaderListSize: OptionalNumber,
+    maxHeaderSize: OptionalNumber,
     enableConnectProtocol: FlagSetting,
     customSettings: b.opaque.optional,
     remoteCustomSettings: b.jsArray.otherAsNull,
@@ -82,8 +73,8 @@ export const H2Settings = b.dictionary(
     maxSessionRejectedStreams: b.jsNumber.otherAsNull,
     maxSessionInvalidFrames: b.jsNumber.otherAsNull,
     strictFieldWhitespaceValidation: b.bool.otherAsNull,
-    streamResetBurst: StreamResetBurst,
-    streamResetRate: b.f64.otherAsNull,
+    streamResetBurst: b.opaque.optional,
+    streamResetRate: b.opaque.optional,
     maxOutstandingSettings: b.jsNumber.otherAsNull,
     maxSendHeaderBlockLength: b.f64.otherAsNull,
     strictSingleValueFields: b.bool.otherAsNull,
@@ -118,7 +109,7 @@ export const H2Handlers = b.dictionary(
   { deferred: true, reportedAs: "handlers" },
 );
 
-export const H2SettingsOption = b.union({ missing: b.null, settings: H2Settings, other: b.ignored });
+export const H2SettingsOption = b.union({ none: b.null, settings: H2Settings, other: b.ignored });
 export const H2FrameParserOptions = b.dictionary(
   {
     context: b.opaque.optional,
@@ -174,7 +165,7 @@ export const H2FrameParser = b.class({
       args: {
         origin: b.string.allowStringObject.view.nullable,
         value: b.string.allowStringObject.view.nullable,
-        streamId: OptionalStreamId,
+        streamId: OptionalNumber,
       },
       expected: { origin: ["string"], value: ["string"] },
     },
@@ -194,13 +185,13 @@ export const H2FrameParser = b.class({
       ...js,
       args: {
         code: b.f64.otherAsNull,
-        lastStreamID: OptionalStreamId,
+        lastStreamID: OptionalNumber,
         opaqueData: b.bufferSource.allowShared.otherAsNull,
       },
       length: 3,
     },
     noTrailers: stream,
-    origin: { ...js, args: { origin: H2Origins } },
+    origin: { ...js, args: { origin: b.opaque } },
     ping: { ...js, args: { payload: b.bufferSource.allowShared.otherAsNull }, returns: b.bool, length: 0 },
     pushPromise: {
       ...js,
@@ -208,7 +199,7 @@ export const H2FrameParser = b.class({
         parentId: streamId,
         promisedId: streamId,
         headers: b.object.otherAsNull,
-        sensitiveHeaders: b.object.otherAsNull,
+        sensitiveHeaders: b.opaque,
       },
       returns: b.f64,
       length: 4,
@@ -249,7 +240,7 @@ export const H2FrameParser = b.class({
         data: b.opaque,
         encoding: b.opaque,
         close: b.bool.loose,
-        callback: b.callable.otherAsNull,
+        callback: b.opaque,
         deferCallback: b.bool.loose.default(false),
       },
       returns: H2WriteResult,

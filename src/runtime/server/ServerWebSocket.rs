@@ -183,7 +183,6 @@ pub(super) enum Accept {
     Control,
 }
 
-/// A converted message argument.
 pub(super) enum Payload<'a> {
     Buffer(ArrayBuffer),
     Bytes(&'a [u8]),
@@ -218,27 +217,20 @@ pub(super) fn payload_from_js<'a, 'call: 'a>(
     value: WebSocketMessage<'call>,
     accept: Accept,
 ) -> JsResult<Payload<'a>> {
-    let expects = |expected| Err(global_this.throw(format_args!("{fn_name} expects {expected}")));
-    let text = match (value, accept) {
-        (WebSocketMessage::Missing | WebSocketMessage::Null, Accept::Control) => {
+    let text = match value {
+        WebSocketMessage::Missing | WebSocketMessage::None if accept == Accept::Control => {
             return Ok(Payload::Bytes(&[]));
         }
-        (WebSocketMessage::Missing | WebSocketMessage::Null, Accept::Any) => {
+        WebSocketMessage::Missing | WebSocketMessage::None if accept == Accept::Any => {
             return Err(global_this.throw(format_args!("{fn_name} requires a non-empty message")));
         }
-        (WebSocketMessage::Missing, Accept::AnyOrNullish) => JSValue::UNDEFINED,
-        (WebSocketMessage::Null, Accept::AnyOrNullish) => JSValue::NULL,
-        (
-            WebSocketMessage::Buffer(buffer),
-            Accept::Any | Accept::AnyOrNullish | Accept::Binary | Accept::Control,
-        ) => {
+        WebSocketMessage::Buffer(buffer) if accept != Accept::Text => {
             return Ok(Payload::Buffer(buffer.as_array_buffer(global_this)));
         }
-        (
-            WebSocketMessage::Blob(blob)
-            | WebSocketMessage::BuildArtifact(BuildArtifact { blob, .. }),
-            Accept::Any | Accept::AnyOrNullish | Accept::Binary | Accept::Control,
-        ) => {
+        WebSocketMessage::Blob(blob)
+        | WebSocketMessage::BuildArtifact(BuildArtifact { blob, .. })
+            if accept != Accept::Text =>
+        {
             let Some(bytes) = blob.in_memory_view() else {
                 return Err(global_this.throw(format_args!(
                     "{fn_name} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
@@ -246,14 +238,20 @@ pub(super) fn payload_from_js<'a, 'call: 'a>(
             };
             return Ok(Payload::Bytes(bytes));
         }
-        (
-            WebSocketMessage::String(value),
-            Accept::Any | Accept::AnyOrNullish | Accept::Text | Accept::Control,
-        ) => value.to_js(),
-        (WebSocketMessage::Other(value), Accept::Any | Accept::AnyOrNullish) => value.to_js(),
-        (_, Accept::Text) => return expects("a string"),
-        (_, Accept::Binary) => return expects("a Blob or BufferSource"),
-        (_, Accept::Control) => return expects("a string, Blob, or BufferSource"),
+        WebSocketMessage::String(value) if accept != Accept::Binary => value.to_js(),
+        WebSocketMessage::Missing if accept == Accept::AnyOrNullish => JSValue::UNDEFINED,
+        WebSocketMessage::None if accept == Accept::AnyOrNullish => JSValue::NULL,
+        WebSocketMessage::Other(value) if matches!(accept, Accept::Any | Accept::AnyOrNullish) => {
+            value.to_js()
+        }
+        _ => {
+            let expected = match accept {
+                Accept::Text => "a string",
+                Accept::Binary => "a Blob or BufferSource",
+                _ => "a string, Blob, or BufferSource",
+            };
+            return Err(global_this.throw(format_args!("{fn_name} expects {expected}")));
+        }
     };
     Ok(Payload::Text(text.to_js_string_view(global_this)?))
 }

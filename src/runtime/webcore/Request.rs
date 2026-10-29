@@ -9,9 +9,7 @@ use enumset::EnumSet;
 
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
-use crate::generated_bindgen::response::{
-    BodyInit, RequestInit, ResponseInit, SignalInit, js_Request as js,
-};
+use crate::generated_bindgen::response::{BodyInit, ResponseInit, js_Request as js};
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
@@ -1065,8 +1063,6 @@ impl Request {
             &values_to_try_[0..((!is_first_argument_a_url) as usize + init.is_object() as usize)];
 
         for &value in values_to_try {
-            let object = JsLocal::<bun_jsc::JSObject>::from_js(cx.global(), value).unwrap();
-            let options = RequestInit::new(object);
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
                 && matches!(
@@ -1190,30 +1186,29 @@ impl Request {
             }
 
             if !fields.contains(Fields::Body) {
-                match options.body(cx.global()) {
-                    Ok(BodyInit::Undefined) => {}
-                    Ok(body_) => {
+                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Body) {
+                    Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
-                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
-                        // body throws before body extraction (Node's message is "keepalive").
-                        if matches!(body_, BodyInit::ReadableStream(_)) {
-                            match value.get(cx.global(), "keepalive") {
-                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(cx
-                                        .global()
-                                        .throw_type_error(format_args!("keepalive"))));
-                                }
-                                Ok(_) => {}
-                                Err(e) => bail!(Err(e)),
+                        match BodyInit::from_js(cx.global(), body_, |body_| {
+                            // fetch spec Request(init): `keepalive: true` with a ReadableStream
+                            // body throws before body extraction (Node's message is "keepalive").
+                            if matches!(body_, BodyInit::ReadableStream(_))
+                                && let Some(keepalive) = value.get(cx.global(), "keepalive")?
+                                && keepalive.to_boolean()
+                            {
+                                return Err(cx
+                                    .global()
+                                    .throw_type_error(format_args!("keepalive")));
                             }
-                        }
-                        match BodyValue::from_js(cx.global(), body_) {
+                            BodyValue::from_js(cx.global(), body_)
+                        }) {
                             Ok(v) => {
                                 *req.body_value_mut() = v;
                             }
                             Err(e) => bail!(Err(e)),
                         }
                     }
+                    Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
 
@@ -1224,9 +1219,12 @@ impl Request {
             }
 
             if !fields.contains(Fields::Url) {
-                match options.url(cx.global()) {
+                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Url) {
                     Ok(Some(url)) => {
-                        req.url.set(url);
+                        match BunString::from_js(url, cx.global()) {
+                            Ok(s) => req.url.set(s),
+                            Err(e) => bail!(Err(e)),
+                        }
                         if !req.url.get().is_empty() {
                             fields.insert(Fields::Url);
                         }
@@ -1263,27 +1261,31 @@ impl Request {
 
             if !fields.contains(Fields::Signal) {
                 // WebIDL `AbortSignal?`: present iff the member is not undefined.
-                // `null` means "present, detach" (no fallback to the input Request's signal).
-                match options.signal(cx.global()) {
-                    Ok(SignalInit::Missing) => {}
-                    Ok(SignalInit::Null) => {
-                        // explicit detach; leave `req.signal` as None
+                // `fast_get` maps absent/undefined → None; `null` is Some(null) and
+                // means "present, detach" (no fallback to the input Request's signal).
+                match value.fast_get(cx.global(), bun_jsc::BuiltinName::signal) {
+                    Ok(Some(signal_)) => {
                         fields.insert(Fields::Signal);
+                        if signal_.is_null() {
+                            // explicit detach; leave `req.signal` as None
+                        } else if let Some(signal) = AbortSignal::ref_from_js(signal_) {
+                            // Keep it alive
+                            signal_.ensure_still_alive();
+                            // `ref_from_js` already ref'd.
+                            req.signal.set(Some(signal));
+                        } else {
+                            bail!(Err(cx.global().throw_type_error(format_args!(
+                                "Failed to construct 'Request': signal is not of type AbortSignal."
+                            ))));
+                        }
                     }
-                    Ok(SignalInit::Signal(signal)) => {
-                        fields.insert(Fields::Signal);
-                        req.signal.set(Some(signal));
-                    }
-                    Ok(SignalInit::Other) => {
-                        bail!(Err(cx.global().throw_type_error(format_args!(
-                            "Failed to construct 'Request': signal is not of type AbortSignal."
-                        ))));
-                    }
+                    Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
+                let object = JsLocal::<bun_jsc::JSObject>::from_js(cx.global(), value).unwrap();
                 match crate::webcore::response::Init::init(cx.global(), ResponseInit::new(object)) {
                     Ok(response_init) => {
                         let header_check = !explicit_check

@@ -61,7 +61,7 @@ template<std::integral T, AllowBigInt = AllowBigInt::No>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
 // `BigInt.asIntN(64, value)` of a BigInt.
 struct IDLBigIntAsInt64 : WebCore::IDLInteger<int64_t> {};
-// As `IDL`, which wraps a number modulo its width, and a BigInt wraps too.
+// `IDL` wraps a number modulo its width. This wraps a BigInt too.
 template<typename IDL>
 struct IDLWrapOrBigInt : IDL {};
 struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
@@ -199,7 +199,7 @@ struct IDLRawNumber : IDLRawAny {};
 template<typename JSClass, auto name>
 struct IDLRawCell : IDLRawAny {};
 
-// An instance of a wrapper class, as a reference on what it wraps.
+// An instance of a wrapper class, as a `Ref` to what it wraps.
 template<typename JSClass, auto name>
 struct IDLWrappedRef : IDLRef<typename JSClass::DOMWrapped> {};
 

@@ -94,6 +94,7 @@ impl JSMySQLQuery {
         let _guard = self.ref_guard();
 
         let global_object = cx.global();
+        let query = query.to_js();
         // A connection that failed or closed answers nothing: a query queued on it would hold the
         // event loop for ever. The pool hears of a close through `onclose` and stops handing the
         // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
@@ -107,7 +108,7 @@ impl JSMySQLQuery {
         if self.is_completed() {
             return Ok(());
         }
-        js::target_set_cached(this_value.to_js(), global_object, query.to_js());
+        js::target_set_cached(this_value.to_js(), global_object, query);
         // Until it ends: the wrapper holds the target, the parameters and the rows.
         self.this_value.with_mut(|v| v.upgrade(global_object));
         connection.enqueue_request(self.ref_guard());
@@ -123,22 +124,22 @@ impl JSMySQLQuery {
         );
     }
 
-    pub fn set_mode(
-        &self,
-        cx: &mut JsScope<'_>,
-        (mode, js_mode): (f64, JsLocal<'_>),
-    ) -> JsResult<()> {
+    pub fn set_mode(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
-        let mode = match mode as i32 {
+        let js_mode = mode.to_js();
+        if !js_mode.is_number() {
+            return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
+        }
+
+        let mode_value = js_mode.coerce::<i32>(global_object)?;
+        let mode = match mode_value {
             0 => SQLQueryResultMode::Objects,
             1 => SQLQueryResultMode::Values,
             2 => SQLQueryResultMode::Raw,
             _ => {
-                return Err(global_object.throw_invalid_argument_type_value(
-                    b"mode",
-                    b"Number",
-                    js_mode.to_js(),
-                ));
+                return Err(
+                    global_object.throw_invalid_argument_type_value(b"mode", b"Number", js_mode)
+                );
             }
         };
         self.query.with_mut(|q| q.set_result_mode(mode));
@@ -178,11 +179,14 @@ impl JSMySQLQuery {
         }
     }
 
-    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: f64) -> JsResult<Option<JSValue>> {
-        self.undescribed
-            .with_mut(|results| results.take(number))
-            .map(|columns| describe(cx.global(), self.query.get().text(), &[], &columns))
-            .transpose()
+    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
+        match self
+            .undescribed
+            .with_mut(|results| results.take(number.to_js()))
+        {
+            Some(columns) => describe(cx.global(), self.query.get().text(), &[], &columns),
+            None => Ok(JSValue::NULL),
+        }
     }
 
     pub(crate) fn resolve(&self, result: &MySQLQueryResult) {

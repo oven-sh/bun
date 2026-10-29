@@ -19,18 +19,11 @@ const methods = {
   },
 } as const;
 
-export const ResolveMessageCode = b.enumeration([
-  "ERR_UNKNOWN_BUILTIN_MODULE",
-  "MODULE_NOT_FOUND",
-  "ERR_MODULE_NOT_FOUND",
-  "RESOLVE_ERROR",
-]);
-
 export const ResolveMessage = b.class({
   ...errorClass,
   rustPath: "crate::ResolveMessage",
   proto: {
-    code: { getter: ResolveMessageCode.optional, cache: true },
+    code: { getter: b.opaque.returning("string", "undefined"), cache: true, ...js },
     column: coordinate,
     importKind: label,
     level: label,

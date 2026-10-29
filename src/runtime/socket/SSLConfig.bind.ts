@@ -1,22 +1,22 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
 export const TLSOptionsSingleFile = b.union({
-  text: b.string,
+  string: b.string,
   buffer: b.bufferSource.arrayBuffer,
   file: b.blob,
 });
 
 export const TLSOptionsFile = b.union({
-  missing: b.null,
-  text: b.string,
+  none: b.null,
+  string: b.string,
   buffer: b.bufferSource.arrayBuffer,
   file: b.blob,
   array: b.array(TLSOptionsSingleFile),
 });
 
 export const ALPNProtocols = b.union({
-  missing: b.null,
-  text: b.string,
+  none: b.null,
+  string: b.string,
   buffer: b.bufferSource.arrayBuffer,
 });
 

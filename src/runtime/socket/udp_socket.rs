@@ -7,9 +7,7 @@ use bun_core::{String as BunString, Utf8Bytes};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::bindgen::{
-    self, Deferred, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper,
-};
+use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc, SysErrorJsc,
@@ -792,7 +790,7 @@ impl UDPSocket {
     pub(crate) fn set_broadcast<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        enabled: (bool, JsLocal<'a>),
+        enabled: JsLocal<'a>,
     ) -> JsResult<JsLocal<'a>> {
         self.set_any_flag(cx.global(), enabled, uws::udp::Socket::set_broadcast)
     }
@@ -800,7 +798,7 @@ impl UDPSocket {
     pub(crate) fn set_multicast_loopback<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        enabled: (bool, JsLocal<'a>),
+        enabled: JsLocal<'a>,
     ) -> JsResult<JsLocal<'a>> {
         self.set_any_flag(
             cx.global(),
@@ -812,7 +810,7 @@ impl UDPSocket {
     fn set_any_flag<'a>(
         &self,
         global_this: &JSGlobalObject,
-        (enabled, enabled_value): (bool, JsLocal<'a>),
+        enabled: JsLocal<'a>,
         function: fn(&mut uws::udp::Socket, bool) -> c_int,
     ) -> JsResult<JsLocal<'a>> {
         if self.closed.get() {
@@ -824,13 +822,16 @@ impl UDPSocket {
             return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = function(uws::udp::Socket::opaque_mut(socket), enabled);
+        let res = function(
+            uws::udp::Socket::opaque_mut(socket),
+            enabled.to_js().to_boolean(),
+        );
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
-        Ok(enabled_value)
+        Ok(enabled)
     }
 
     fn set_membership(
@@ -1056,29 +1057,33 @@ impl UDPSocket {
         Ok(true)
     }
 
-    pub(crate) fn set_ttl(&self, cx: &mut JsScope<'_>, ttl: Deferred<'_, i32>) -> JsResult<i32> {
-        self.set_any_ttl(cx.global(), ttl, uws::udp::Socket::set_unicast_ttl)
+    pub(crate) fn set_ttl(&self, cx: &mut JsScope<'_>, ttl: JsLocal<'_>) -> JsResult<i32> {
+        self.set_any_ttl(cx.global(), ttl.to_js(), uws::udp::Socket::set_unicast_ttl)
     }
 
     pub(crate) fn set_multicast_ttl(
         &self,
         cx: &mut JsScope<'_>,
-        ttl: Deferred<'_, i32>,
+        ttl: JsLocal<'_>,
     ) -> JsResult<i32> {
-        self.set_any_ttl(cx.global(), ttl, uws::udp::Socket::set_multicast_ttl)
+        self.set_any_ttl(
+            cx.global(),
+            ttl.to_js(),
+            uws::udp::Socket::set_multicast_ttl,
+        )
     }
 
     fn set_any_ttl(
         &self,
         global_this: &JSGlobalObject,
-        ttl: Deferred<'_, i32>,
+        ttl: JSValue,
         function: fn(&mut uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<i32> {
         if self.closed.get() {
             return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
-        let ttl = ttl.convert(global_this)?;
+        let ttl = ttl.coerce_to_i32(global_this)?;
         let Some(socket) = self.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
@@ -1535,19 +1540,19 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         address_bytes: &[u8],
         port: u16,
-    ) -> JsResult<Option<JSValue>> {
+    ) -> JsResult<JSValue> {
         let Ok(sockaddr) = SocketAddress::init(address_bytes, port) else {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         };
-        sockaddr.into_dto(global_this).map(Some)
+        sockaddr.into_dto(global_this)
     }
 
-    pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
+    pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         if self.closed.get() {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         }
         let Some(socket) = self.socket.get() else {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -1564,15 +1569,15 @@ impl UDPSocket {
         )
     }
 
-    pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
+    pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         if self.closed.get() {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         }
         let Some(connect_info) = self.connect_info.get() else {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         };
         let Some(socket) = self.socket.get() else {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -2000,7 +2005,7 @@ pub(crate) fn dgram_bind_fd(fd: i32, address: &[u8], port: i32, flags: i32) -> b
 pub(crate) fn dgram_get_sock_name_fd<'a>(
     cx: &mut JsScope<'a>,
     fd: i32,
-) -> bindgen::Result<'a, Option<JSValue>> {
+) -> bindgen::Result<'a, JSValue> {
     #[cfg(not(windows))]
     {
         let fd = dgram_known_fd(fd).map_err(|err| err.into_error(&cx.heap))?;

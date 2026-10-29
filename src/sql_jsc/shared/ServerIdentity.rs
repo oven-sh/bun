@@ -3,7 +3,6 @@
 use crate::jsc::{
     EventLoopSqlExt as _, JSGlobalObject, JSValue, JsResult, VirtualMachine, bun_string_jsc,
 };
-use crate::shared::connection_ctor_args::ConnectionTLS;
 use bun_boringssl_sys::X509;
 use bun_jsc::ErrorCode;
 use bun_uws::AnySocket;
@@ -13,16 +12,13 @@ unsafe extern "C" {
     safe fn Bun__X509__toJSLegacyEncoding(cert: &mut X509, global: &JSGlobalObject) -> JSValue;
 }
 
-pub(crate) fn callback_of(
-    global: &JSGlobalObject,
-    tls: ConnectionTLS<'_>,
-) -> JsResult<Option<JSValue>> {
-    let ConnectionTLS::Object(tls) = tls else {
+pub(crate) fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
+    if !tls.is_object() {
         return Ok(None);
-    };
+    }
     Ok(tls
-        .check_server_identity(global)?
-        .map(|callback| callback.to_js()))
+        .get(global, "checkServerIdentity")?
+        .filter(|callback| callback.is_callable()))
 }
 
 /// `Err` is what the connection fails with. Runs user code, which can close the connection.

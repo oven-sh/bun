@@ -16,7 +16,6 @@ use bun_threading::{Guarded, Mutex};
 /// cannot smuggle an arbitrary address through tag 251.
 static SERIALIZED_REFS: Guarded<Vec<(u64, usize)>> = Guarded::new(Vec::new());
 
-use crate::generated_bindgen::block_list::BlockListAddress;
 use crate::node::util::validators;
 use crate::socket::socket_address::{SocketAddress, sockaddr};
 
@@ -33,14 +32,13 @@ fn z(s: &ZStr) -> &str {
 /// The address of a `SocketAddress`, or of an address string in `family`.
 fn sockaddr_from_js(
     global: &JSGlobalObject,
-    value: BlockListAddress<'_>,
+    value: JSValue,
     name: &str,
     family: JSValue,
 ) -> JsResult<sockaddr> {
-    let value = match value {
-        BlockListAddress::Address(sa) => return Ok(sa._addr),
-        BlockListAddress::Other(value) => value.to_js(),
-    };
+    if let Some(sa) = value.as_class_ref::<SocketAddress>() {
+        return Ok(sa._addr);
+    }
     validators::validate_string(global, value, name)?;
     validators::validate_string(global, family, "family")?;
     Ok(SocketAddress::init_from_addr_family(global, value, family)?._addr)
@@ -113,15 +111,15 @@ impl BlockList {
     pub(crate) fn add_address(
         &self,
         cx: &mut JsScope<'_>,
-        address: BlockListAddress<'_>,
+        address: JsLocal<'_>,
         family: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
-        let mut family_js = family.to_js();
+        let (address_js, mut family_js) = (address.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let address = sockaddr_from_js(global, address, "address", family_js)?;
+        let address = sockaddr_from_js(global, address_js, "address", family_js)?;
 
         self.add_rule(Rule::Addr(address));
         Ok(())
@@ -130,22 +128,22 @@ impl BlockList {
     pub(crate) fn add_range(
         &self,
         cx: &mut JsScope<'_>,
-        (start, start_js): (BlockListAddress<'_>, JsLocal<'_>),
-        end: BlockListAddress<'_>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
         family: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
-        let mut family_js = family.to_js();
+        let (start_js, end_js, mut family_js) = (start.to_js(), end.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let start = sockaddr_from_js(global, start, "start", family_js)?;
-        let end = sockaddr_from_js(global, end, "end", family_js)?;
+        let start = sockaddr_from_js(global, start_js, "start", family_js)?;
+        let end = sockaddr_from_js(global, end_js, "end", family_js)?;
         if let Some(ord) = compare(&start, &end) {
             if ord == Ordering::Greater {
                 return Err(global.throw_invalid_argument_value_custom(
                     b"start",
-                    start_js.to_js(),
+                    start_js,
                     b"must come before end",
                 ));
             }
@@ -157,16 +155,17 @@ impl BlockList {
     pub(crate) fn add_subnet(
         &self,
         cx: &mut JsScope<'_>,
-        network: BlockListAddress<'_>,
+        network: JsLocal<'_>,
         prefix: JsLocal<'_>,
         family: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
-        let (prefix_js, mut family_js) = (prefix.to_js(), family.to_js());
+        let (network_js, prefix_js, mut family_js) =
+            (network.to_js(), prefix.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let network = sockaddr_from_js(global, network, "network", family_js)?;
+        let network = sockaddr_from_js(global, network_js, "network", family_js)?;
         let mut prefix: u8 = 0;
         let fam = network.family_raw();
         if fam == AF_INET as inet::sa_family_t {
@@ -204,31 +203,29 @@ impl BlockList {
     pub(crate) fn check(
         &self,
         cx: &mut JsScope<'_>,
-        address: BlockListAddress<'_>,
+        address: JsLocal<'_>,
         family: JsLocal<'_>,
     ) -> JsResult<bool> {
         let global = cx.global();
-        let mut family_js = family.to_js();
+        let (address_js, mut family_js) = (address.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
         let address_val;
-        let address: &sockaddr = match address {
-            BlockListAddress::Address(sa) => &sa._addr,
-            BlockListAddress::Other(address_js) => {
-                let address_js = address_js.to_js();
-                validators::validate_string(global, address_js, format_args!("address"))?;
-                validators::validate_string(global, family_js, format_args!("family"))?;
-                match SocketAddress::init_from_addr_family(global, address_js, family_js) {
-                    Ok(sa) => {
-                        address_val = sa._addr;
-                        &address_val
-                    }
-                    Err(err) => {
-                        debug_assert!(err == bun_jsc::JsError::Thrown);
-                        global.clear_exception();
-                        return Ok(false);
-                    }
+        let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
+            &sa._addr
+        } else {
+            validators::validate_string(global, address_js, format_args!("address"))?;
+            validators::validate_string(global, family_js, format_args!("family"))?;
+            match SocketAddress::init_from_addr_family(global, address_js, family_js) {
+                Ok(sa) => {
+                    address_val = sa._addr;
+                    &address_val
+                }
+                Err(err) => {
+                    debug_assert!(err == bun_jsc::JsError::Thrown);
+                    global.clear_exception();
+                    return Ok(false);
                 }
             }
         };

@@ -1,6 +1,6 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 import { KillSignal, Subprocess } from "./subprocess.bind.ts";
-import { TerminalOptions } from "./Terminal.bind.ts";
+import { Terminal, TerminalOptions } from "./Terminal.bind.ts";
 
 export default b.module({ rustPath: "crate::api::js_bun_spawn_bindings" });
 
@@ -11,8 +11,7 @@ export const SpawnCgroupTarget = b.union({
   path: b.string.allowStringObject.utf8.owned,
 });
 
-/** `options` is also a `Terminal`. */
-export const SpawnTerminal = b.union({ options: TerminalOptions, other: b.ignored });
+export const SpawnTerminal = b.union({ terminal: Terminal.withValue, options: TerminalOptions, other: b.ignored });
 export const SpawnOptionsObject = b.dictionary(
   {
     /** Walked by `length` and index. */

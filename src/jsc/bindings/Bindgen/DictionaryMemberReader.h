@@ -34,7 +34,4 @@ private:
     const JSC::Identifier* m_memberNames;
 };
 
-// As `DictionaryMemberReader::get`, by index into Tables::memberNames: for a conversion that reads one member.
-JSC::JSValue getDictionaryMember(JSC::JSGlobalObject*, JSC::JSObject*, unsigned memberNameIndex);
-
 }

@@ -5,7 +5,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 use std::collections::VecDeque;
 
-use bun_jsc::bindgen::{BufferSource, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, JSGlobalObject, JSValue, JsCell, JsClass as _, JsRef, JsResult, StringJsc, Strong,
@@ -13,7 +13,7 @@ use bun_jsc::{
 
 use bun_lsquic_sys as lsquic;
 
-use crate::generated_bindgen::quic::{EphemeralKey, QuicCloseOptions, SessionOptions};
+use crate::generated_bindgen::quic::EphemeralKey;
 
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
@@ -617,25 +617,30 @@ impl QuicSession {
     pub(super) fn handle(&self) -> JSValue {
         self.this_value.get().get()
     }
-    pub(super) fn apply_options(
-        &self,
-        global: &JSGlobalObject,
-        options: SessionOptions<'_>,
-    ) -> JsResult<()> {
-        if let Some(v) = options.datagram_drop_policy(global)? {
+    pub(super) fn apply_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
+        if !options.is_object() {
+            return Ok(());
+        }
+        if let Some(v) = options
+            .get(global, "datagramDropPolicy")?
+            .filter(|v| v.is_string())
+        {
             self.datagram_drop_newest
-                .set(v.to_owned_slice() == b"drop-newest");
+                .set(bun_core::String::from_js(v, global)?.to_owned_slice() == b"drop-newest");
         }
-        if let Some(v) = options.qlog(global)? {
-            self.qlog_enabled.set(v);
+        if let Some(v) = options.get(global, "qlog")? {
+            self.qlog_enabled.set(v.to_boolean());
         }
-        if let Some(v) = options.verify_peer(global)? {
+        if let Some(v) = options.get(global, "verifyPeer")?.filter(|v| v.is_string()) {
             self.reject_unverified_peer
-                .set(v.to_owned_slice() != b"manual");
+                .set(bun_core::String::from_js(v, global)?.to_owned_slice() != b"manual");
         }
-        if let Some(app) = options.application(global)? {
+        if let Some(app) = options
+            .get(global, "application")?
+            .filter(|v| v.is_object())
+        {
             self.application_options_js
-                .set(Some(Strong::create(app.object().to_js(), global)));
+                .set(Some(Strong::create(app, global)));
         }
         Ok(())
     }
@@ -1865,19 +1870,26 @@ impl QuicSession {
     fn parse_close_options(
         &self,
         global: &JSGlobalObject,
-        options: Option<QuicCloseOptions<'_>>,
+        options: JSValue,
     ) -> JsResult<(bool, u64, Vec<u8>)> {
         let mut app = false;
         let mut code = 0u64;
         let mut reason = Vec::new();
-        if let Some(options) = options {
+        if options.is_object() {
             app = options
-                .r#type(global)?
-                .is_some_and(|s| s.to_owned_slice() == b"application");
-            code = super::endpoint::read_u64_option(options.code(global)?).unwrap_or(0);
+                .get(global, "type")?
+                .map(|v| {
+                    bun_core::String::from_js(v, global)
+                        .map(|s| s.to_owned_slice() == b"application")
+                })
+                .transpose()?
+                .unwrap_or(false);
+            code = super::endpoint::read_u64_option(global, options, "code")?.unwrap_or(0);
             reason = options
-                .reason(global)?
-                .map(|s| s.to_owned_slice())
+                .get(global, "reason")?
+                .filter(|v| v.is_string())
+                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
+                .transpose()?
                 .unwrap_or_default();
             self.self_close.with_mut(|s| {
                 *s = Some((app, code, reason.clone()));
@@ -1935,12 +1947,8 @@ impl QuicSession {
         }
     }
 
-    fn close_with_options(
-        &self,
-        global: &JSGlobalObject,
-        options: QuicCloseOptions<'_>,
-    ) -> JsResult<()> {
-        let (app, code, reason) = self.parse_close_options(global, Some(options))?;
+    fn close_with_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
+        let (app, code, reason) = self.parse_close_options(global, options)?;
         self.apply_close(app, code, &reason);
         Ok(())
     }
@@ -1980,14 +1988,14 @@ impl QuicSession {
     pub(crate) fn graceful_close(
         &self,
         cx: &mut JsScope<'_>,
-        options: Option<QuicCloseOptions<'_>>,
+        options: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
         if !self.destroyed.get() {
             // Parse before the latch: a throw here must leave the session
             // untouched, not marked gracefully-closing with no close sent.
             // All three branches below want the same values.
-            let (app, code, reason) = self.parse_close_options(global, options)?;
+            let (app, code, reason) = self.parse_close_options(global, options.to_js())?;
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
                 if self.is_server.get() && !self.close_reported.get() {
@@ -2010,18 +2018,15 @@ impl QuicSession {
         }
         Ok(())
     }
-    pub(crate) fn destroy(
-        &self,
-        cx: &mut JsScope<'_>,
-        options: Option<QuicCloseOptions<'_>>,
-    ) -> JsResult<()> {
+    pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         if self.destroyed.get() {
             return Ok(());
         }
         let mut parse_error = None;
         if !self.close_reported.get() && !self.conn.get().is_null() {
-            if let Some(options) = options {
+            let options = options.to_js();
+            if options.is_object() {
                 // Node's Destroy with close options. JS has already latched
                 // `inner.destroying` and finished its half before reaching
                 // here, so teardown() MUST run; a parse failure is taken off
@@ -2060,12 +2065,13 @@ impl QuicSession {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         direction: Option<f64>,
-        body: Option<JsLocal<'_, BufferSource>>,
-    ) -> JsResult<Option<JSValue>> {
+        body: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
         let global = cx.global();
         if self.destroyed.get() || self.conn.get().is_null() {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         }
+        let body = body.to_js();
         let unidirectional = direction == Some(1.0);
         let (key, qs, handle) = self.create_stream(global, this_value.to_js(), null_mut())?;
         if unidirectional {
@@ -2074,7 +2080,7 @@ impl QuicSession {
             self.pending_local_bidi.with_mut(|q| q.push_back(key));
         }
         self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
-        if let Some(buf) = body.map(|body| body.as_array_buffer(global)) {
+        if let Some(buf) = body.as_array_buffer(global) {
             // SAFETY: `qs` was just created.
             unsafe {
                 (*qs).outbound.with_mut(|o| {
@@ -2097,18 +2103,15 @@ impl QuicSession {
             }
         }
         self.schedule_process();
-        Ok(Some(handle))
+        Ok(handle)
     }
-    pub(crate) fn send_datagram(
-        &self,
-        cx: &mut JsScope<'_>,
-        data: Option<JsLocal<'_, BufferSource>>,
-    ) -> JsResult<u64> {
+    pub(crate) fn send_datagram(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<u64> {
         let global = cx.global();
         if self.destroyed.get() || self.conn.get().is_null() {
             return Ok(0);
         }
-        let Some(buf) = data.map(|data| data.as_array_buffer(global)) else {
+        let data = data.to_js();
+        let Some(buf) = data.as_array_buffer(global) else {
             return Ok(0);
         };
         // HTTP/3: the peer must have advertised SETTINGS_H3_DATAGRAM

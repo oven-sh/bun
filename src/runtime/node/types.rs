@@ -19,7 +19,6 @@ use crate::api::js_bundler::BuildArtifact;
 use crate::generated_bindgen::blob;
 use crate::generated_bindgen::node_fs_binding as generated;
 use crate::node::util::validators;
-use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, Request, Response};
 
 pub(crate) use jsc::MarkedArrayBuffer as Buffer;
@@ -137,24 +136,6 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file(global, value, FileBlobs::Reject)
     }
 
-    /// The body of a `Request` or a `Response`.
-    pub(crate) fn from_body_value(
-        global: &JSGlobalObject,
-        body_value: &mut BodyValue,
-    ) -> JsResult<BlobOrStringOrBuffer> {
-        body_value.to_blob_if_possible();
-
-        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-            let blob = any_blob.to_blob(global);
-            any_blob.detach();
-            return Ok(Self::Blob(Box::new(blob)));
-        }
-
-        Err(global.throw_invalid_arguments(format_args!(
-            "Only buffered Request/Response bodies are supported for now.",
-        )))
-    }
-
     pub(crate) fn from_js_with_encoding_value_allow_request_response(
         global: &JSGlobalObject,
         value: JSValue,
@@ -171,11 +152,33 @@ impl BlobOrStringOrBuffer {
                 }
                 if allow_request_response {
                     if let Some(request) = value.as_class_ref::<Request>() {
-                        return Self::from_body_value(global, request.get_body_value()).map(Some);
+                        let body_value = request.get_body_value();
+                        body_value.to_blob_if_possible();
+
+                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
+                            let blob = any_blob.to_blob(global);
+                            any_blob.detach();
+                            return Ok(Some(Self::Blob(Box::new(blob))));
+                        }
+
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Only buffered Request/Response bodies are supported for now.",
+                        )));
                     }
 
                     if let Some(response) = value.as_class_ref::<Response>() {
-                        return Self::from_body_value(global, response.get_body_value()).map(Some);
+                        let body_value = response.get_body_value();
+                        body_value.to_blob_if_possible();
+
+                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
+                            let blob = any_blob.to_blob(global);
+                            any_blob.detach();
+                            return Ok(Some(Self::Blob(Box::new(blob))));
+                        }
+
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Only buffered Request/Response bodies are supported for now.",
+                        )));
                     }
                 }
             }
@@ -727,25 +730,6 @@ pub(crate) trait PathLikeExt {
     where
         Self: Sized;
 
-    /// For a path that is stored rather than opened, like the target of a symlink: a relative one stays relative.
-    fn from_js_as_written(
-        ctx: &JSGlobalObject,
-        path: generated::PathLike<'_>,
-        parsing: &mut Parsing,
-        name: &str,
-    ) -> JsResult<PathLike<'static>>
-    where
-        Self: Sized;
-
-    fn from_js_resolved_by(
-        ctx: &JSGlobalObject,
-        path: generated::PathLike<'_>,
-        parsing: &mut Parsing,
-        relative_paths: RelativePaths,
-    ) -> JsResult<Option<PathLike<'static>>>
-    where
-        Self: Sized;
-
     /// `from_js` + Node's `ERR_INVALID_ARG_VALUE` "<name> must be a string
     /// or TypedArray" throw on `None`. Collapses the open-coded
     /// `?.ok_or_else(|| ctx.throw_invalid_arguments(...))?` repeated 22× in
@@ -765,6 +749,24 @@ pub(crate) trait PathLikeExt {
         })
     }
 
+    /// For a path that is stored rather than opened, like the target of a symlink: a relative one stays relative.
+    fn from_js_as_written(
+        ctx: &JSGlobalObject,
+        path: generated::PathLike<'_>,
+        parsing: &mut Parsing,
+        name: &str,
+    ) -> JsResult<PathLike<'static>>
+    where
+        Self: Sized;
+
+    fn from_js_resolved_by(
+        ctx: &JSGlobalObject,
+        path: generated::PathLike<'_>,
+        parsing: &mut Parsing,
+        relative_paths: RelativePaths,
+    ) -> JsResult<Option<PathLike<'static>>>
+    where
+        Self: Sized;
     /// Throws ENAMETOOLONG too; [`Self::from_js`] defers it for async bindings instead.
     fn from_bun_string(
         global: &JSGlobalObject,
@@ -775,7 +777,8 @@ pub(crate) trait PathLikeExt {
         Self: Sized;
 }
 
-/// The value that [`PathLikeExt::from_js`] returned `None` for, which the caller's error reports as received.
+/// The value that [`PathLikeExt::from_js`] returned `None` for, which the caller's error
+/// reports as received.
 pub(crate) fn refused_value(path: generated::PathLike<'_>) -> JSValue {
     match path {
         generated::PathLike::Buffer(buffer) => buffer.to_js(),
@@ -1363,11 +1366,10 @@ impl VectorArrayBuffer {
     /// [`write_back`](Self::write_back) after it.
     pub(crate) fn from_js(
         global_object: &JSGlobalObject,
-        val: JsLocal<'_, jsc::JSArray>,
+        val: JSValue,
         pin: bool,
         read: bool,
     ) -> JsResult<VectorArrayBuffer> {
-        let val = val.to_js();
         let mut out = VectorArrayBuffer {
             value: val,
             buffers: Vec::new(),
@@ -1764,19 +1766,18 @@ impl PathOrBlob {
             | blob::PathOrBlob::BuildArtifact(BuildArtifact { blob, .. }) => {
                 return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
             }
-            blob::PathOrBlob::Path(path) => path,
+            blob::PathOrBlob::Path(generated::PathOrFileDescriptor::Fd(fd)) => {
+                return Ok(PathOrBlob::Path(PathOrFileDescriptor::Fd(Fd::from_js(fd))));
+            }
+            blob::PathOrBlob::Path(generated::PathOrFileDescriptor::Path(path)) => path,
         };
-        PathOrFileDescriptor::from_js(ctx, path, &mut Parsing::new(Flavor::Sync))?
-            .map(PathOrBlob::Path)
-            .ok_or_else(|| {
-                let generated::PathOrFileDescriptor::Path(path) = path else {
-                    unreachable!("a number is a file descriptor")
-                };
-                ctx.throw_invalid_argument_type_value(
-                    b"destination",
-                    b"path, file descriptor, or Blob",
-                    refused_value(path),
-                )
-            })
+        match PathLike::from_js(ctx, path, &mut Parsing::new(Flavor::Sync))? {
+            Some(path) => Ok(PathOrBlob::Path(PathOrFileDescriptor::Path(path))),
+            None => Err(ctx.throw_invalid_argument_type_value(
+                b"destination",
+                b"path, file descriptor, or Blob",
+                refused_value(path),
+            )),
+        }
     }
 }

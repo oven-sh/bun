@@ -10,7 +10,7 @@ use crate::jsc::{
 };
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
-use crate::shared::connection_ctor_args::{ConnectionCtorArgs, ConnectionTLS};
+use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection};
 use crate::shared::server_identity;
 use bun_core::fmt::ConnTimeoutKind;
@@ -258,7 +258,7 @@ impl JSMySQLConnection {
         password: &[u8],
         database: &[u8],
         ssl_mode: u8,
-        tls: ConnectionTLS<'a>,
+        tls: JsLocal<'a>,
         _: JsLocal<'a>,
         path: &[u8],
         on_connected: JsLocal<'a, Callable>,
@@ -283,7 +283,7 @@ impl JSMySQLConnection {
             &mut *vm,
             hostname,
             ssl_mode,
-            tls,
+            tls.to_js(),
             idle_timeout,
             connection_timeout,
             max_lifetime,
@@ -292,7 +292,7 @@ impl JSMySQLConnection {
             return Ok(JSValue::ZERO);
         };
         let (secure, tls_config) = (args.secure, args.tls_config);
-        let check_server_identity = server_identity::callback_of(global_object, tls)?;
+        let check_server_identity = server_identity::callback_of(global_object, tls.to_js())?;
 
         let username: Box<[u8]> = Box::from(username);
         let password: Box<[u8]> = Box::from(password);

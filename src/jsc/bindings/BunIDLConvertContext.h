@@ -92,8 +92,7 @@ struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
         derived().throwTypeMustBe(global, scope, "a Blob"_s);
     }
 
-    // Out of line: one copy for each context, not one for each class.
-    NEVER_INLINE void throwNotInstanceOf(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, WTF::ASCIILiteral className) const
+    void throwNotInstanceOf(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, WTF::ASCIILiteral className) const
     {
         derived().throwTypeMustBe(global, scope, WTF::makeString("an instance of "_s, className));
     }
@@ -135,9 +134,8 @@ struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
         derived().throwTypeErrorWithPredicate(global, scope, "is of an unsupported type"_s);
     }
 
-    // Out of line: one copy for each context, not one for each IDL type.
     template<typename String>
-    NEVER_INLINE void throwTypeMustBe(
+    void throwTypeMustBe(
         JSC::JSGlobalObject& global,
         JSC::ThrowScope& scope,
         String&& expectedNounPhrase) const

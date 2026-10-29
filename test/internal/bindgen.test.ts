@@ -1004,11 +1004,11 @@ describe("privateSymbol", () => {
 
 describe(".emptyStringAsNull on a union that takes every value", () => {
   it("undefined, null and the empty string are None", () => {
-    for (const absent of [undefined, null, ""]) expect(bindgen.describeFlagOrRest(absent)).toBe("absent");
-    expect(bindgen.describeFlagOrRest(true)).toBe("on");
-    expect(bindgen.describeFlagOrRest(false)).toBe("off");
-    expect(bindgen.describeFlagOrRest({})).toBe("options");
-    for (const other of [0, 5, "x", Symbol(), 1n]) expect(bindgen.describeFlagOrRest(other)).toBe("other");
+    for (const absent of [undefined, null, ""]) expect(bindgen.describeFlagOrOther(absent)).toBe("absent");
+    expect(bindgen.describeFlagOrOther(true)).toBe("on");
+    expect(bindgen.describeFlagOrOther(false)).toBe("off");
+    expect(bindgen.describeFlagOrOther({})).toBe("options");
+    for (const other of [0, 5, "x", Symbol(), 1n]) expect(bindgen.describeFlagOrOther(other)).toBe("other");
   });
 });
 
@@ -1130,6 +1130,95 @@ describe(".deferred of undefined", () => {
   });
 });
 
+describe("a value that Rust converts without C++", () => {
+  it("converts the same as without .deferred", () => {
+    const detached = new ArrayBuffer(2);
+    const viewOfDetached = new Uint8Array(detached);
+    structuredClone(detached, { transfer: [detached] });
+    const resizable = new ArrayBuffer(2, { maxByteLength: 4 });
+    const half = 0.5;
+    const values = [
+      undefined,
+      null,
+      true,
+      false,
+      0,
+      -0,
+      1,
+      -1,
+      9,
+      10,
+      1.5,
+      4.5 + half,
+      255,
+      256,
+      NaN,
+      Infinity,
+      -Infinity,
+      2 ** 31 - 1,
+      2 ** 31,
+      -(2 ** 31),
+      -(2 ** 31) - 1,
+      2 ** 32 - 1,
+      2 ** 32,
+      2 ** 53 - 1,
+      2 ** 53,
+      -(2 ** 53),
+      1e21,
+      0n,
+      -1n,
+      2n ** 64n,
+      "",
+      "1",
+      Symbol(),
+      {},
+      { name: "a" },
+      [],
+      [1],
+      () => {},
+      class {},
+      new Number(1),
+      new String("1"),
+      new Boolean(false),
+      Object(1n),
+      new Date(0),
+      new Proxy({}, {}),
+      new Proxy(() => {}, {}),
+      new Proxy([], {}),
+      { valueOf: () => 3 },
+      new Uint8Array(2),
+      new Uint8Array(new SharedArrayBuffer(2)),
+      new ArrayBuffer(2),
+      new SharedArrayBuffer(2),
+      new DataView(new ArrayBuffer(2)),
+      detached,
+      viewOfDetached,
+      resizable,
+      new Uint8Array(resizable),
+      Buffer.from("a"),
+      new Float64Array(1),
+    ];
+    const outcome = (fn: (...args: unknown[]) => string, args: unknown[]) => {
+      try {
+        return fn(...args);
+      } catch (error) {
+        return `${error.name} ${error.code} ${error.message}`;
+      }
+    };
+    const argumentCount = 16;
+    for (let i = 0; i < argumentCount; i++) {
+      for (const value of values) {
+        const args = [...Array(i).fill(undefined), value];
+        expect([i, value, outcome(bindgen.describeConvertedDeferred, args)]).toEqual([
+          i,
+          value,
+          outcome(bindgen.describeConverted, args),
+        ]);
+      }
+    }
+  });
+});
+
 describe("b.opaque", () => {
   it("is handed back as it is", () => {
     const object = {};
@@ -1232,12 +1321,6 @@ describe("b.cell", () => {
   itAlways("two alternatives of one class are refused", () => {
     const promise = b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h", { rustPath: "bun_jsc::JSPromise" });
     expect(() => b.union({ first: b.promise, promise })).toThrow("promise is never chosen");
-  });
-
-  it('a value that is not a symbol "must be a symbol", not an instance of one', () => {
-    const symbol = Symbol();
-    expect(bindgen.takeSymbol(symbol)).toBe(symbol);
-    expect(() => bindgen.takeSymbol("a")).toThrow(new TypeError("symbol must be a symbol"));
   });
 
   it("b.stringLike is a string or a String object", () => {
@@ -1558,7 +1641,12 @@ describe("functions", () => {
     expect(bindgen.counterOfMember({ counter })).toBe(counter);
     expect(counter.count).toBe(2);
     // Only the member holds this one.
-    expect(bindgen.counterOfMember({ get counter() { return new bindgen.TestCounter(4); } }).count).toBe(5); // prettier-ignore
+    const options = {
+      get counter() {
+        return new bindgen.TestCounter(4);
+      },
+    };
+    expect(bindgen.counterOfMember(options).count).toBe(5);
     expect(() => bindgen.counterOfMember({ counter: {} })).toThrow(TypeError);
   });
 

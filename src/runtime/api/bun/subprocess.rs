@@ -59,66 +59,6 @@ bun_output::declare_scope!(IPC, visible);
 use crate::generated_bindgen::subprocess::KillSignal;
 pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
 
-pub(crate) fn signal_code(
-    global_this: &JSGlobalObject,
-    signal: KillSignal,
-) -> JsResult<SignalCode> {
-    match signal {
-        KillSignal::Number(sig64) => {
-            // Node does this:
-            if sig64.is_nan() {
-                return Ok(SignalCode::DEFAULT);
-            }
-
-            // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
-            if sig64.is_infinite() || sig64.trunc() != sig64 {
-                return Err(global_this.throw_invalid_arguments(format_args!("Unknown signal")));
-            }
-
-            if sig64 < 0.0 {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("Invalid signal: must be >= 0")));
-            }
-
-            if sig64 > 31.0 {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("Invalid signal: must be < 32")));
-            }
-
-            // SignalCode is non-exhaustive over `u8`, so construct via the public
-            // ctor instead of a transmute.
-            Ok(SignalCode(sig64 as u8))
-        }
-        KillSignal::Name(name) => {
-            if name.length() == 0 {
-                return Ok(SignalCode::DEFAULT);
-            }
-            if let Some(code) = bun_core::SignalCode::from_name(name.to_utf8().slice()) {
-                return Ok(SignalCode::of(code));
-            }
-            // Expected-names list
-            // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
-            // canonical signal X-macro so names are never re-spelled.
-            let names = bun_core::SignalCode::ALL;
-            let mut one_of = std::string::String::from("'");
-            for (i, entry) in names.iter().enumerate() {
-                one_of.push_str(entry.name());
-                one_of.push('\'');
-                if i < names.len() - 2 {
-                    one_of.push_str(", '");
-                } else if i == names.len() - 2 {
-                    one_of.push_str(" or '");
-                }
-            }
-            Err(global_this.throw_invalid_arguments(format_args!("signal must be one of {one_of}")))
-        }
-        KillSignal::Missing => Ok(SignalCode::DEFAULT),
-        KillSignal::Other => Err(global_this.throw_invalid_arguments(format_args!(
-            "Invalid signal: must be a string or an integer"
-        ))),
-    }
-}
-
 /// Platform-dependent stdio result type.
 pub(crate) use bun_spawn::subprocess::StdioResult;
 
@@ -358,14 +298,14 @@ impl Subprocess<'_> {
         self.abort_handle.signal()
     }
 
-    pub(crate) fn resource_usage(&self, cx: &mut JsScope<'_>) -> Option<JSValue> {
+    pub(crate) fn resource_usage(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.create_resource_usage_object(cx.global())
     }
 
     pub(crate) fn create_resource_usage_object(
         &self,
         global_object: &JSGlobalObject,
-    ) -> Option<JSValue> {
+    ) -> JsResult<JSValue> {
         let rusage = 'brk: {
             if let Some(r) = self.pid_rusage.get() {
                 break 'brk r;
@@ -385,9 +325,9 @@ impl Subprocess<'_> {
                 }
             }
 
-            return None;
+            return Ok(JSValue::UNDEFINED);
         };
-        Some(ResourceUsage { rusage }.to_js(global_object))
+        Ok(ResourceUsage { rusage }.to_js(global_object))
     }
 
     pub(crate) fn has_exited(&self) -> bool {
@@ -599,10 +539,10 @@ impl Subprocess<'_> {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-    ) -> JsResult<Option<JSValue>> {
+    ) -> JsResult<JSValue> {
         if self.process().has_exited() {
             // rely on GC to clean everything up in this case
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         }
 
         // unref streams so that this disposed process will not prevent
@@ -620,7 +560,7 @@ impl Subprocess<'_> {
             }
         }
 
-        Ok(Some(self.get_exited(this_value, cx)))
+        Ok(self.get_exited(this_value, cx))
     }
 
     pub(crate) fn set_event_loop_timer_refd(&self, refd: bool) {
@@ -1471,6 +1411,66 @@ impl Subprocess<'_> {
 
     pub(crate) fn ipc(&self) -> Option<&IPC::SendQueue> {
         self.ipc_data.get().as_deref()
+    }
+}
+
+pub(crate) fn signal_code(
+    global_this: &JSGlobalObject,
+    signal: KillSignal,
+) -> JsResult<SignalCode> {
+    match signal {
+        KillSignal::Number(sig64) => {
+            // Node does this:
+            if sig64.is_nan() {
+                return Ok(SignalCode::DEFAULT);
+            }
+
+            // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
+            if sig64.is_infinite() || sig64.trunc() != sig64 {
+                return Err(global_this.throw_invalid_arguments(format_args!("Unknown signal")));
+            }
+
+            if sig64 < 0.0 {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Invalid signal: must be >= 0")));
+            }
+
+            if sig64 > 31.0 {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Invalid signal: must be < 32")));
+            }
+
+            // SignalCode is non-exhaustive over `u8`, so construct via the public
+            // ctor instead of a transmute.
+            Ok(SignalCode(sig64 as u8))
+        }
+        KillSignal::Name(name) => {
+            if name.length() == 0 {
+                return Ok(SignalCode::DEFAULT);
+            }
+            if let Some(code) = bun_core::SignalCode::from_name(name.to_utf8().slice()) {
+                return Ok(SignalCode::of(code));
+            }
+            // Expected-names list
+            // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
+            // canonical signal X-macro so names are never re-spelled.
+            let names = bun_core::SignalCode::ALL;
+            let mut one_of = std::string::String::from("'");
+            for (i, entry) in names.iter().enumerate() {
+                one_of.push_str(entry.name());
+                one_of.push('\'');
+                if i < names.len() - 2 {
+                    one_of.push_str(", '");
+                } else if i == names.len() - 2 {
+                    one_of.push_str(" or '");
+                }
+            }
+            Err(global_this.throw_invalid_arguments(format_args!("signal must be one of {one_of}")))
+        }
+        KillSignal::None => Ok(SignalCode::DEFAULT),
+        KillSignal::Other => Err(global_this.throw_invalid_arguments(format_args!(
+            "Invalid signal: must be a string or an integer"
+        ))),
     }
 }
 

@@ -5,7 +5,7 @@ mod _impl {
     use core::ffi::{c_int, c_uint, c_void};
     use core::ptr;
 
-    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper, Number};
+    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper};
     use bun_jsc::{self as jsc, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
@@ -108,9 +108,9 @@ mod _impl {
             &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            init_params_array: Deferred<'_, JsLocal<'_, BufferSource>>,
-            pledged_src_size: Option<JsLocal<'_, Number>>,
-            write_state: Deferred<'_, JsLocal<'_, BufferSource>>,
+            init_params_array: JsLocal<'_>,
+            pledged_src_size: JsLocal<'_>,
+            write_state: JsLocal<'_>,
             process_callback: Deferred<'_, JsLocal<'_, Callable>>,
             dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
         ) -> JsResult<bool> {
@@ -120,10 +120,28 @@ mod _impl {
             // across threads; a closed `Context` cannot be re-initialized.
             self.throw_unless_idle(global)?;
 
-            let write_state = write_state.convert(global)?;
+            let init_params_array_value = init_params_array.to_js();
+            let pledged_src_size_value = pledged_src_size.to_js();
+            let write_state_value = write_state.to_js();
+
+            let Some(mut write_state) = write_state_value.as_array_buffer(global) else {
+                return Err(global.throw_invalid_argument_type_value(
+                    "writeState",
+                    "Uint32Array",
+                    write_state_value,
+                ));
+            };
+            if write_state.typed_array_type != jsc::JSType::Uint32Array {
+                return Err(global.throw_invalid_argument_type_value(
+                    "writeState",
+                    "Uint32Array",
+                    write_state_value,
+                ));
+            }
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            if write_state.as_array_buffer(global).byte_len < 2 * size_of::<u32>() {
+            let write_state_slice = write_state.as_u32();
+            if write_state_slice.len() < 2 {
                 return Err(global
                     .err(
                         jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -131,7 +149,7 @@ mod _impl {
                     )
                     .throw());
             }
-            js::write_result_set_cached(this_value, global, write_state.to_js());
+            js::write_result_set_cached(this_value, global, write_state_value);
 
             let write_js_callback = process_callback.convert(global)?.to_js();
             js::write_callback_set_cached(
@@ -140,15 +158,15 @@ mod _impl {
                 write_js_callback.with_async_context_if_needed(global),
             );
 
-            let pledged_src_size: u64 = match pledged_src_size {
-                Some(size) => u64::from(validators::validate_uint32(
+            let mut pledged_src_size: u64 = u64::MAX;
+            if pledged_src_size_value.is_number() {
+                pledged_src_size = u64::from(validators::validate_uint32(
                     global,
-                    size.to_js(),
+                    pledged_src_size_value,
                     format_args!("pledgedSrcSize"),
                     false,
-                )?),
-                None => u64::MAX,
-            };
+                )?);
+            }
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
@@ -165,7 +183,20 @@ mod _impl {
                 return Ok(false);
             }
 
-            let mut params_ = init_params_array.convert(global)?.as_array_buffer(global);
+            let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
+                return Err(global.throw_invalid_argument_type_value(
+                    "initParamsArray",
+                    "Uint32Array",
+                    init_params_array_value,
+                ));
+            };
+            if params_.typed_array_type != jsc::JSType::Uint32Array {
+                return Err(global.throw_invalid_argument_type_value(
+                    "initParamsArray",
+                    "Uint32Array",
+                    init_params_array_value,
+                ));
+            }
             for (i, x) in params_.as_u32().iter().map(|x| x.get()).enumerate() {
                 if x == u32::MAX {
                     continue;

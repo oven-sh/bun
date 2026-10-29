@@ -1037,7 +1037,7 @@ impl Response {
         | BodyInit::BuildArtifact((BuildArtifact { blob, .. }, _)) = body
         {
             if blob.is_s3() {
-                if !matches!(init, ResponseInitArgument::Missing) {
+                if !matches!(init, ResponseInitArgument::None) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "new Response(s3File) do not support ResponseInit options",
                     )));
@@ -1090,7 +1090,7 @@ impl Response {
             }
         }
         let init: Init = match init {
-            ResponseInitArgument::Missing => Init {
+            ResponseInitArgument::None => Init {
                 status_code: 200,
                 headers: None,
                 ..Default::default()
@@ -1113,7 +1113,7 @@ impl Response {
         mut init: Init,
     ) -> JsResult<RefPtr<Response>> {
         let body: Body = 'brk: {
-            if matches!(body, BodyInit::Undefined | BodyInit::Null) {
+            if matches!(body, BodyInit::Missing | BodyInit::None) {
                 break 'brk Body::new(BodyValue::Null);
             }
             // `Body::extract` is a free fn re-exported as `body::extract`.

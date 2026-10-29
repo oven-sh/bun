@@ -274,7 +274,6 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.stringLike`                           | `JsLocal<'a, StringLike>`        | either of the two, as itself                                  |
 | `b.jsNumber`                             | `JsLocal<'a, Number>`            | a number, as itself; `b.f64` is its value                     |
 | `b.bigInt`                               | `JsLocal<'a, JSBigInt>`          | a BigInt, as itself                                           |
-| `b.symbol`                               | `JsLocal<'a, Symbol>`            | a symbol, as itself                                           |
 | `b.cell(class, header, options)`         | `JsLocal<'a, T>`                 | an instance of that `JSCell` class, as itself                 |
 | `b.wrapped(class, header, options)`      | `&'a T`                          | what an instance of a hand-written C++ wrapper wraps          |
 | `b.opaque`                               | `JsLocal<'a>`                    | anything; see [Opaque values](#opaque-values)                 |
@@ -309,7 +308,7 @@ and `tsType` is its type in the generated `.d.ts`: without it an argument is `ob
 `b.dataView` is one.
 `b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" })` gives what `wrapped()`
 of the instance returns. The argument keeps it alive, so it is an argument or an alternative of one; `.shared` is a
-reference on it, `ExternalShared<T>`, which a dictionary can hold and a body can store. It also names a generated class
+`Ref` to it, `ExternalShared<T>`, which a dictionary can hold and a body can store. It also names a generated class
 whose schema imports this one. `b.abortSignal` is one.
 
 A schema exports a type without a name for others to import: `export const Headers = b.wrapped(..).withValue`.
@@ -327,7 +326,7 @@ These come last, in this order:
 `.withValue` on an argument also gives the body the argument itself, `(T, JsLocal<'a>)`: for a body that reads the
 internal fields of an instance, or returns the argument when there is nothing to change. It comes after all of these,
 and not with `.ifPassed`. The value is as typed as the argument says: `JsLocal<'a, JSObject>` beside an instance of a
-class, `JSValue` beside the context of a reaction.
+class, `JsLocal<'a>` beside the context of a reaction.
 
 Beside an instance, of a class or of `b.wrapped`, the value is the object that keeps the instance alive. So
 `Blob.withValue` is also a member of a dictionary, or an alternative of a union that is one: `(&'a Blob, JsLocal<'a, JSObject>)`.
@@ -383,8 +382,8 @@ export const Expected = b.union(
 ```
 
 With `fromJS: true` a dictionary or a union also converts a value that was not an argument, such as an element of an
-array the body walks: `Expected::from_local(global, value)?`, or `Size::from_js(global, value)?` for a type that holds
-no JS value.
+array the body walks: `Expected::from_js(global, value, |expected| ..)` lends it to the closure, and
+`Size::from_js(global, value)?` returns a type that holds no JS value.
 
 ### Conversion in the body: `.deferred`
 
@@ -407,13 +406,14 @@ pub fn close(&self, cx: &mut JsScope<'_>, code: JsLocal<'_>, reason: Deferred<'_
 
 A conversion can run JavaScript, so like everything else that can it takes the `&JSGlobalObject` and returns a
 `JsResult`. What Rust tells from the value's bits or its cell's type, and the type takes as it is, is answered without a
-call into C++: `undefined` for a type with a default or one that is `.optional`, a boolean, a number, an int32 in range, a
-handle, the object of a `deferred` dictionary.
+call into C++: `undefined` for a type with a default or one that is `.optional`, a boolean, a number, a safe integer in
+range, the object of a `deferred` dictionary, and a handle of a kind that the type byte tells (a string, a BigInt, an
+array, a function that is not a proxy, a buffer with `.allowShared`). `from_js` of a union does the same.
 
-A union of a `deferred` dictionary and handles (`b.stringLike`, `b.bufferSource`) that ends in
-`b.ignored` or `b.opaque` only tells kinds apart: it runs nothing and refuses nothing, so it is not `.deferred`. It is also
-`Copy`, where a union that owns a string is dropped at every early return of every body that takes it. A union that many
-functions hand to one helper takes handles and the helper converts them, as for the paths of `node:fs`.
+A union of a `deferred` dictionary and handles (`b.stringLike`, `b.bufferSource`) that ends in `b.ignored` or `b.opaque`
+only tells kinds apart: it runs nothing and refuses nothing, so it is not `.deferred`. It is also `Copy`, where a union
+that owns a string is dropped at every early return of every body that takes it. A union that many functions hand to one
+helper takes handles and the helper converts them, as for the paths of `node:fs`.
 
 `.deferred` is written last, on an argument, and takes `capability: "js"`. The conversion returns before the body goes on, so
 the type cannot borrow from it: a UTF-8 string is `.owned`, and in place of `b.bytes` there is `b.bufferSource`. Each
@@ -511,8 +511,8 @@ export const BracesOptions = b.dictionary({
 
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
-`{ type, rustName, altNames, expected }` to rename its field, to accept other spellings, or to report a wrong type as
-a function's `expected` does.
+`{ type, rustName, altNames, expected, reportedAs }` to rename its field, to accept other spellings, to report a wrong
+type as a function's `expected` does, or to be called something else than `options.member` in an error.
 A dictionary whose members can all be absent implements `Default`. As an argument, with
 `.default()` or without, the struct stays in the frame of the thunk and the body borrows it:
 `options: &BracesOptions`, or `Option<&BracesOptions>` with one of the modifiers that make it an `Option`. As a member, with `.withValue`, as the value of a setter, or inside a union or an array, it is held by value.
@@ -539,9 +539,9 @@ The second argument of `b.dictionary` takes:
 | `deferred`         | the body reads each member when it chooses, see below; the only other key it goes with is `reportedAs`                                                                                                                               |
 
 A member written `{ type: T, own: true }` is read only if it is an own property of the object: one that it inherits is
-absent. With `{ type: T.ifPassed, own: true }` an own `undefined` is not absent either: `T` converts it, and Rust gets `None`
-only for an object that has no such property. One written `{ type: T, privateSymbol: "sharedFd" }` is read under that private name of `BunBuiltinNames.h`,
-which only Bun's own JavaScript can set, and not under the public one.
+absent. With `{ type: T.ifPassed, own: true }` an own `undefined` is not absent either: `T` converts it, and Rust gets
+`None` only for an object that has no such property. One written `{ type: T, privateSymbol: "sharedFd" }` is read under
+that private name of `BunBuiltinNames.h`, which only Bun's own JavaScript can set, and not under the public one.
 
 Where JavaScript can see something between two members (a check that throws, a callback, a member that is only read
 under a condition), `deferred: true` leaves the reading to the body, as `.deferred` does for an argument. The schema
@@ -594,8 +594,8 @@ in play apart:
 | the cell's `ClassInfo`             | an instance of a class, a `Date`                                               |
 
 An alternative is named for its role (`path`, `encoding`, `ipv4`). One without a role is named for what it is: `string` for
-a string as itself and `text` for its text, `number`, `buffer`, `list`, `options`, `flag`. `b.null` or `b.undefined` is
-`missing`, and a last `b.ignored` or `b.opaque` is `other`.
+a string as itself and `text` for its text, `number`, `buffer`, `list`, `options`, `flag`. `b.undefined` is
+`missing`, `b.null` is `none`, and a last `b.ignored` or `b.opaque` is `other`.
 
 A strict type takes the kinds its row under [Types](#types) says. A `b.cell` of the JSC class of a kind takes that kind:
 `b.cell("JSC::JSDataView", ..)` before `b.bufferSource` gets the `DataView`s. A type that coerces or

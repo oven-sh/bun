@@ -4,16 +4,17 @@ export default b.module({ rustPath: "crate::api::js_bundler" });
 
 const js = { capability: "js", throws: true } as const;
 const read = { returns: b.promise, ...js } as const;
+const cached = { getter: b.string.local, cache: true, ...js } as const;
 
 export const BuildArtifact = b.class({
   rustPath: "crate::api::js_bundler::BuildArtifact",
   internalFields: ["stream"],
   proto: {
     arrayBuffer: read,
-    hash: { getter: b.string.local, cache: true, capability: "heap", throws: true },
+    hash: cached,
     json: read,
     kind: { getter: b.string, cache: true },
-    loader: { getter: b.string.local, cache: true, ...js },
+    loader: cached,
     path: { getter: b.string.utf8, cache: true },
     size: { getter: b.f64 },
     /** Returns a `Blob`, whose schema imports this one. */
@@ -24,7 +25,7 @@ export const BuildArtifact = b.class({
       length: 2,
     },
     /** `Bun.build` fills the field of an output that has a source map. */
-    sourcemap: { getter: b.self.nullable, cache: true, capability: "heap" },
+    sourcemap: { getter: b.opaque.returning("BuildArtifact", "null"), cache: true, capability: "heap" },
     stream: { ...js, args: { chunkSize: b.opaque }, returns: b.object.returning("ReadableStream"), passThis: true },
     text: read,
     type: { getter: b.string.local, cache: true, capability: "js" },
@@ -33,14 +34,11 @@ export const BuildArtifact = b.class({
 
 const text = b.string.allowStringObject.utf8.owned.nullable;
 const flag = b.bool.loose.optional;
-/** An own `undefined` is the text "undefined". */
-const ownText = { type: b.string.loose.utf8.owned.ifPassed, own: true } as const;
 /** The elements are converted to strings while it is walked. */
 const ownList = { type: b.jsArray.optional, own: true } as const;
 const ownRecord = { type: b.object.optional, own: true } as const;
 
 export const BuildOptimize = b.dictionary({ bytecode: flag }, { allowArray: true, reportedAs: "optimize" });
-export const BuildSourceMap = b.union({ enabled: b.bool, name: b.string.allowStringObject.utf8.owned });
 export const BuildEnvBehavior = b.union({
   missing: b.undefined,
   disable: b.null,
@@ -75,48 +73,7 @@ export const BuildMetafile = b.union({
   paths: BuildMetafilePaths,
 });
 
-export const BuildCompileWindows = b.dictionary(
-  {
-    hideConsole: { type: b.bool.loose.ifPassed, own: true },
-    icon: ownText,
-    title: ownText,
-    publisher: ownText,
-    version: ownText,
-    description: ownText,
-    copyright: ownText,
-  },
-  { deferred: true, reportedAs: "compile.windows" },
-);
-/** `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`. */
-export const BytecodeOrder = b.union({
-  missing: b.null,
-  enabled: b.bool,
-  one: b.string.allowStringObject.utf8.owned,
-  list: b.jsArray,
-  other: b.opaque,
-});
-export const BuildCompileOptions = b.dictionary(
-  {
-    target: ownText,
-    execArgv: ownList,
-    executablePath: ownText,
-    windows: { type: BuildCompileWindows.optional, own: true },
-    outfile: ownText,
-    assets: ownList,
-    autoloadDotenv: flag,
-    autoloadBunfig: flag,
-    autoloadTsconfig: flag,
-    autoloadPackageJson: flag,
-    bytecodeOrder: BytecodeOrder,
-    jitPolicy: b.f64.optional,
-  },
-  { deferred: true, reportedAs: "compile" },
-);
-export const BuildCompile = b.union({
-  enabled: b.bool,
-  target: b.string.allowStringObject.utf8.owned,
-  options: BuildCompileOptions,
-});
+export const BuildCompile = b.union({ enabled: b.bool, target: b.stringLike, options: b.object });
 
 export const BuildConfig = b.dictionary(
   {
@@ -135,11 +92,11 @@ export const BuildConfig = b.dictionary(
     tsconfig: text,
     banner: text,
     footer: text,
-    sourcemap: BuildSourceMap.emptyStringAsNull,
+    sourcemap: b.opaque.emptyStringAsNull,
     env: BuildEnvBehavior,
-    packages: text,
+    packages: b.opaque.nullable,
     jsx: BuildJsx.emptyStringAsNull,
-    format: text,
+    format: b.opaque.nullable,
     splitting: flag,
     splitRequire: flag,
     modulePreload: flag,

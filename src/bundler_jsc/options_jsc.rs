@@ -53,6 +53,18 @@ pub fn loader_from_js(
 }
 
 // ── CompileTarget ──────────────────────────────────────────────────────────
+pub fn compile_target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<CompileTarget> {
+    let slice = value.to_utf8(global)?;
+    if !slice.slice().starts_with(b"bun-") {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Expected compile target to start with 'bun-', got {}",
+            bstr::BStr::new(slice.slice())
+        )));
+    }
+
+    compile_target_from_slice(global, slice.slice())
+}
+
 pub fn compile_target_from_slice(
     global: &JSGlobalObject,
     slice_with_bun_prefix: &[u8],

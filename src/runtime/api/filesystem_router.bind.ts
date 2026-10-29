@@ -82,7 +82,12 @@ export const FrameworkFileSystemRouter = b.class({
     length: 0,
   },
   proto: {
-    match: { args: { path: b.string.loose.utf8 }, returns: b.object.nullable, capability: "js", throws: true },
+    match: {
+      args: { path: b.string.loose.utf8 },
+      returns: b.opaque.returning("object", "null"),
+      capability: "js",
+      throws: true,
+    },
     toJSON: { returns: b.object, capability: "js", throws: true },
   },
 });

@@ -150,8 +150,8 @@ mod _impl {
             &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            params: Deferred<'_, JsLocal<'_, BufferSource>>,
-            write_result: Deferred<'_, JsLocal<'_, BufferSource>>,
+            init_params_array: JsLocal<'_>,
+            write_state: JsLocal<'_>,
             write_callback: Deferred<'_, JsLocal<'_, Callable>>,
             dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
         ) -> JsResult<bool> {
@@ -174,8 +174,23 @@ mod _impl {
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result = write_result.convert(global_this)?;
-            if write_result.as_array_buffer(global_this).byte_len < 2 * size_of::<u32>() {
+            let write_result_value = write_state.to_js();
+            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            };
+            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            }
+            let write_result_slice = write_result_buf.as_u32();
+            if write_result_slice.len() < 2 {
                 return Err(global_this
                     .err(
                         ErrorCode::INVALID_ARG_VALUE,
@@ -188,7 +203,21 @@ mod _impl {
             // Validate `params` before any native state is initialized so the
             // error path needs no cleanup. `as_u32` reinterprets the view's
             // bytes, so the element type must actually be Uint32Array.
-            let mut params_buf = params.convert(global_this)?.as_array_buffer(global_this);
+            let params_value = init_params_array.to_js();
+            let Some(mut params_buf) = params_value.as_array_buffer(global_this) else {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "params",
+                    "Uint32Array",
+                    params_value,
+                ));
+            };
+            if params_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "params",
+                    "Uint32Array",
+                    params_value,
+                ));
+            }
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
@@ -197,7 +226,7 @@ mod _impl {
                 .map(|buffer| buffer.as_array_buffer(global_this));
             let dictionary = dictionary_buf.as_ref().map(|buf| buf.byte_slice());
 
-            js::write_result_set_cached(this_value, global_this, write_result.to_js());
+            js::write_result_set_cached(this_value, global_this, write_result_value);
 
             js::write_callback_set_cached(
                 this_value,

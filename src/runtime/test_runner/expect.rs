@@ -6,7 +6,7 @@ use bun_core::Output;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{
     JSGlobalObject, JSValue, JsError, JsResult,
-    ConsoleObject, JSFunction, JSObject, JSPropertyIterator,
+    ConsoleObject, JSFunction, JSObject, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_jsc::js_promise;
@@ -21,7 +21,7 @@ use super::jest::Jest;
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
-    Bun__Expect__applyCustomMatcher, MatcherHintOptionsOrOther, UnreachableMessage, js_ExpectAny,
+    Bun__Expect__applyCustomMatcher, UnreachableMessage, js_ExpectAny,
     js_ExpectArrayContaining, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher,
     js_ExpectObjectContaining, js_ExpectStringContaining, js_ExpectStringMatching,
 };
@@ -1537,23 +1537,22 @@ impl Expect {
         Ok(())
     }
 
-    pub(crate) fn assertions(
-        cx: &mut JsScope<'_>,
-        (expected_assertions, expected): (Option<f64>, JsLocal<'_>),
-    ) -> JsResult<()> {
+    pub(crate) fn assertions(cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
         let expected = expected.to_js();
 
-        let Some(expected_assertions) = expected_assertions else {
+        if !expected.is_number() {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
             return Err(global_this.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
                 expected.to_fmt(&mut fmt),
             )));
-        };
+        }
+
+        let expected_assertions: f64 = expected.to_number(global_this)?;
         if expected_assertions.round() != expected_assertions
             || expected_assertions.is_infinite()
             || expected_assertions.is_nan()
@@ -1617,7 +1616,7 @@ impl Expect {
         let global_this = cx.global();
 
         let error_value = match message {
-            UnreachableMessage::Missing => {
+            UnreachableMessage::None => {
                 global_this.create_error_instance(format_args!("reached unreachable code"))
             }
             UnreachableMessage::Text(message) => message.to_error_instance(global_this),
@@ -2430,39 +2429,55 @@ impl ExpectMatcherUtils {
     pub(crate) fn matcher_hint(
         &self,
         cx: &mut JsScope<'_>,
-        matcher_name: Option<bun_core::String>,
+        matcher_name: JsLocal<'_>,
         rest: &[JsLocal<'_>],
     ) -> JsResult<String> {
         let global_this = cx.global();
+        let matcher_name = matcher_name.to_js();
         let rest = JsLocal::to_js_slice(rest);
 
-        let Some(matcher_name) = matcher_name else {
+        if !matcher_name.is_string() {
             return Err(global_this.throw2(
                 "matcherHint: the first argument (matcher name) must be a string",
                 (),
             ));
-        };
+        }
+        let matcher_name = matcher_name.to_bun_string(global_this)?;
 
         let received = if !rest.is_empty() { rest[0] } else { bun_core::String::static_("received").to_js(global_this)? };
         let expected = if rest.len() > 1 { rest[1] } else { bun_core::String::static_("expected").to_js(global_this)? };
         let options = if rest.len() > 2 { rest[2] } else { JSValue::UNDEFINED };
 
         let mut is_not = false;
-        // TODO support `comment`, `promise` and `secondArgument`
+        let mut comment: Option<&JSString> = None; // TODO support
+        let mut promise: Option<&JSString> = None; // TODO support
+        let mut second_argument: Option<&JSString> = None; // TODO support
         // TODO support "chalk" colors (they are actually functions like: (value: string) => string;)
         //var second_argument_color: ?string = null;
         //var expected_color: ?string = null;
         //var received_color: ?string = null;
 
         if !options.is_undefined_or_null() {
-            let MatcherHintOptionsOrOther::Options(options) = MatcherHintOptionsOrOther::from_js(global_this, options)? else {
+            if !options.is_object() {
                 return Err(global_this.throw2(
                     "matcherHint: options must be an object (or undefined)",
                     (),
                 ));
-            };
-            is_not = options.is_not;
+            }
+            if let Some(val) = options.get(global_this, "isNot")? {
+                is_not = val.to_boolean();
+            }
+            if let Some(val) = options.get(global_this, "comment")? {
+                comment = Some(val.to_js_string(global_this)?);
+            }
+            if let Some(val) = options.get(global_this, "promise")? {
+                promise = Some(val.to_js_string(global_this)?);
+            }
+            if let Some(val) = options.get(global_this, "secondArgument")? {
+                second_argument = Some(val.to_js_string(global_this)?);
+            }
         }
+        let _ = (comment, promise, second_argument);
 
         let diff_formatter = DiffFormatter::new(global_this, received, expected, is_not)?;
 

@@ -130,7 +130,7 @@ impl Start {
                 crate::webcore::PathOrFileDescriptor::Path(path.clone().into_utf8())
             }
             (SinkPath::Other, _) => return error(sys::SystemErrno::EINVAL),
-            (SinkPath::Missing, SinkStartFd::Missing) => {
+            (SinkPath::Missing, SinkStartFd::None) => {
                 crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID)
             }
             (SinkPath::Missing, SinkStartFd::Text(text)) if text.is_empty() => {
@@ -2414,7 +2414,7 @@ impl NetworkSink {
             (*this).done = true;
             (*this).pending.result = Writable::Done;
             (*this).pending.run();
-            if !reason.is_undefined_or_null() {
+            if !reason.is_empty_or_undefined_or_null() {
                 (*this).upstream_error.set(global, reason);
             }
             // Our own ref: `fail` re-enters and may clear `(*this).task`.

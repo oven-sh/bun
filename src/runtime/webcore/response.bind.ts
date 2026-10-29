@@ -24,7 +24,6 @@ const body = {
   textStream: { returns: b.object.returning("ReadableStream"), ...js },
 } as const;
 
-export const JSDOMURL = b.cell("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::JSObject" });
 export const Headers = b.wrapped("WebCore::JSFetchHeaders", "JSFetchHeaders.h", {
   rustPath: "bun_jsc::FetchHeaders",
   reportedAs: "Headers",
@@ -39,13 +38,13 @@ const BuildArtifact = b.wrapped("Bun::Bindgen::Generated::JSBuildArtifact", "Gen
   tsType: "Bun.BuildArtifact",
 });
 /**
- * It is also a member of a dictionary, where an instance comes with its value: `.withValue`.
- * A `DataView` is not among the buffers: like `object`, it is an async iterable or else the parts of a `Blob`, as `other` is.
+ * A `DataView` is not among the buffers: like `object`, it is an async iterable or else the parts of a `Blob`,
+ * as `other` is.
  */
 export const BodyInit = b.union(
   {
-    undefined: b.undefined,
-    null: b.null,
+    missing: b.undefined,
+    none: b.null,
     string: b.stringLike,
     dataView: b.dataView,
     buffer: b.bufferSource.allowShared,
@@ -77,20 +76,15 @@ export const ResponseInit = b.dictionary(
   },
   { deferred: true },
 );
-export const ResponseInitArgument = b.union({ missing: b.null, init: ResponseInit, other: b.ignored });
+export const ResponseInitArgument = b.union({ none: b.null, init: ResponseInit, other: b.ignored });
 export const ResponseInitOrStatus = b.union({ status: b.f64, init: ResponseInit, other: b.ignored });
 
 export const SignalInit = b.union({
   missing: b.undefined,
-  null: b.null,
+  none: b.null,
   signal: b.abortSignal.shared,
   other: b.ignored,
 });
-/** Members of the `RequestInit` of the Fetch standard. */
-export const RequestInit = b.dictionary(
-  { body: BodyInit, url: b.string.loose.optional, signal: SignalInit },
-  { deferred: true },
-);
 
 const clone = { returns: b.self, ...js, passThis: true, rustName: "do_clone", length: 1 } as const;
 

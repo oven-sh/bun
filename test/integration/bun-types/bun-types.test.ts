@@ -319,7 +319,6 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "BunTest.bind.ts": null,
   "ByteStream.bind.ts": null,
   "BytecodeOrderRecorder.bind.ts": null,
-  "ConnectionCtorArgs.bind.ts": null,
   "Counters.bind.ts": null,
   "Crypto.bind.ts":
     'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',
@@ -639,7 +638,6 @@ describe("@types/bun integration test", () => {
       // `undefined` for a Blob without a store or with bytes. What is published is a BunFile.
       "Blob.bind.ts: file().stat() is Promise<unknown> | undefined, not Promise<Stats>",
       // bun.d.ts types the result from the argument.
-      "Crypto.bind.ts: new Crypto().getRandomValues() is ArrayBuffer | ArrayBufferView<ArrayBufferLike>, not T",
       // An `S3File` is a `Blob` to which C++ adds `bucket` and `presign`. `readable` is declared and not implemented.
       "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
       "S3Client.bind.ts: new S3Client().file().stat() is Promise<unknown> | undefined, not Promise<S3Stats>",
@@ -663,8 +661,6 @@ describe("@types/bun integration test", () => {
       "Sink.bind.ts: new NetworkSink().close is not published",
       "Sink.bind.ts: new NetworkSink()._getFd is not published",
       "Sink.bind.ts: new NetworkSink().sinkId is not published",
-      // bun.d.ts types the result from the argument.
-      "TOMLObject.bind.ts: stringify() is string | undefined, not T extends symbol | Function | undefined ? undefined : T extends object ? string : string | undefined",
       // Published, and nothing reads it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
       // `keepalive` and `duplex` are declared on Request but not implemented.
@@ -673,7 +669,7 @@ describe("@types/bun integration test", () => {
       "js_bun_spawn_bindings.bind.ts: spawn().connected is not published",
       "js_bun_spawn_bindings.bind.ts: spawn().writable is not published",
       // `undefined` once the process has exited.
-      "js_bun_spawn_bindings.bind.ts: spawn().[Symbol.asyncDispose]() is Promise<any> | undefined, not PromiseLike<void>",
+      "js_bun_spawn_bindings.bind.ts: spawn().[Symbol.asyncDispose]() is Promise<unknown> | undefined, not PromiseLike<void>",
       "js_bun_spawn_bindings.bind.ts: spawn().connected is not published",
       "js_bun_spawn_bindings.bind.ts: spawn().writable is not published",
       // globals.d.ts does not declare these.
@@ -684,7 +680,7 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new BuildMessage().[Symbol.toPrimitive] is not published",
       "resolve_message.bind.ts: new ResolveMessage().toJSON is not published",
       // `undefined` for a message that is not about resolving.
-      'resolve_message.bind.ts: new ResolveMessage().code is "ERR_UNKNOWN_BUILTIN_MODULE" | "MODULE_NOT_FOUND" | "ERR_MODULE_NOT_FOUND" | "RESOLVE_ERROR" | undefined, not string',
+      "resolve_message.bind.ts: new ResolveMessage().code is string | undefined, not string",
       "resolve_message.bind.ts: new ResolveMessage().column is not published",
       "resolve_message.bind.ts: new ResolveMessage().line is not published",
       "resolve_message.bind.ts: new ResolveMessage().requireStack is not published",

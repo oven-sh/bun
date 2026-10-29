@@ -10,7 +10,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        (expected_length, expected): (Option<f64>, JsLocal<'_>),
+        expected: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) =
@@ -26,13 +26,15 @@ impl Expect {
             )));
         }
 
-        let Some(expected_length) = expected_length else {
+        if !expected.is_number() {
             let mut fmt = super::make_formatter(global);
             return Err(global.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
                 expected.to_fmt(&mut fmt),
             )));
-        };
+        }
+
+        let expected_length: f64 = expected.as_number();
         if expected_length.round() != expected_length
             || expected_length.is_infinite()
             || expected_length.is_nan()

@@ -245,8 +245,8 @@ impl SSLConfigFromJs for SSLConfig {
         }
 
         let protocols: *const c_char = match &generated.alpn_protocols {
-            generated::ALPNProtocols::Missing => core::ptr::null(),
-            generated::ALPNProtocols::Text(val) => zbox_into_raw(&val.to_owned_slice_z()),
+            generated::ALPNProtocols::None => core::ptr::null(),
+            generated::ALPNProtocols::String(val) => zbox_into_raw(&val.to_owned_slice_z()),
             generated::ALPNProtocols::Buffer(val) => {
                 // SAFETY: `generated` holds a ref on the buffer, and nothing else borrows it here.
                 let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
@@ -391,8 +391,8 @@ fn handle_file(
     let single = handle_single_file(
         global,
         match file {
-            generated::TLSOptionsFile::Missing => return Ok(None),
-            generated::TLSOptionsFile::Text(val) => SingleFile::String(val),
+            generated::TLSOptionsFile::None => return Ok(None),
+            generated::TLSOptionsFile::String(val) => SingleFile::String(val),
             generated::TLSOptionsFile::Buffer(val) => {
                 // SAFETY: `file` holds a ref on the buffer, and nothing else borrows it here.
                 SingleFile::Buffer(unsafe { &mut *val.get() })
@@ -431,7 +431,7 @@ fn handle_file_array(
         guard.push(handle_single_file(
             global,
             match elem {
-                generated::TLSOptionsSingleFile::Text(val) => SingleFile::String(val),
+                generated::TLSOptionsSingleFile::String(val) => SingleFile::String(val),
                 generated::TLSOptionsSingleFile::Buffer(val) => {
                     // SAFETY: see `handle_file`.
                     SingleFile::Buffer(unsafe { &mut *val.get() })

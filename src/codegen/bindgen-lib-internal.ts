@@ -149,7 +149,7 @@ export const kindTests: Record<
   null: { ofValue: value => `${value}.isNull()`, inRust: value => `${value}.is_null()` },
   boolean: { ofValue: value => `${value}.isBoolean()`, inRust: value => `${value}.is_boolean()` },
   number: { ofValue: value => `${value}.isNumber()`, inRust: value => `${value}.is_number()` },
-  bigint: { ofCell: "cell->isHeapBigInt()" },
+  bigint: { ofCell: "cell->isHeapBigInt()", inRust: value => `${value}.js_type() == bun_jsc::JSType::HeapBigInt` },
   string: { ofCell: "cell->isString()", inRust: value => `${value}.is_string_literal()` },
   stringObject: {
     ofCell: "cell->inherits<JSC::StringObject>()",
@@ -191,6 +191,9 @@ export function kindsOfCell(cpp: string): readonly ValueKind[] {
   if (!classes.has(cpp)) classes.set(cpp, { cpp });
   return kindsOfClass[cpp] ?? [classes.get(cpp)!];
 }
+
+/** What an error calls an instance of a class, unless `reportedAs` says. */
+const nameOfClass = (cpp: string) => cpp.slice(cpp.lastIndexOf("::") + 2).replace(/^JS/, "");
 
 /** The kind that a class of JSC is only a part of. C++ tests the kind first, so an alternative that takes it hides the class. */
 function kindAroundClass({ cpp }: JSClass): ValueKind | undefined {
@@ -386,7 +389,6 @@ const typesOfKinds: Readonly<Record<Exclude<ValueKind, JSClass>, TypeSpec>> = {
 const typesOfClasses: Readonly<Record<string, TypeSpec>> = {
   "JSC::DateInstance": instanceType("Date"),
   "JSC::JSPromise": instanceType("Promise"),
-  "JSC::Symbol": primitiveType("Symbol"),
 };
 
 /** The values of `kind`. null: the objects of a C++ class that the table has no word for. */
@@ -658,7 +660,10 @@ export abstract class Type {
    * "object" is every object, for a type that takes them all alike.
    */
   rustOfKind(kind: ValueKind | "object", value: string, scope: RustScope): ConvertedInRust | null {
-    return null;
+    if (!this.returnsValueUnchanged) return null;
+    const isTaken =
+      kind === "object" ? refusesNonObjects(this) : !this.refuses && this.valueKinds !== "any" && takes(this, kind);
+    return isTaken ? { converted: this.rustFromExtern(value, scope) } : null;
   }
   /** A C++ expression that converts `value`, for a type whose conversion cannot throw. `ctx` is a conversion context. */
   cppConvert(value: string, ctx: string): string {
@@ -872,15 +877,15 @@ export class IntegerType extends PrimitiveType {
     if (this.#conversion === "Loose" || this.info.size !== 4) return convertingType(accepted, "ToNumber", numberType);
     return convertingType(accepted, this.info.min < 0 ? "ToInt32" : "ToUint32");
   }
-  /** Every conversion gives an int32 that is in range as it is. */
+  /** Every conversion gives a safe integer that is in range as it is. */
   rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
     if (kind !== "number") return null;
-    const [min, max] = [Math.max(Number(this.range[0]), -(2 ** 31)), Math.min(Number(this.range[1]), 2 ** 31 - 1)];
-    if (min > max) return null;
-    const isEveryInt32 = min === -(2 ** 31) && max === 2 ** 31 - 1;
+    const min = Math.max(Number(this.range[0]), Number.MIN_SAFE_INTEGER);
+    const max = Math.min(Number(this.range[1]), Number.MAX_SAFE_INTEGER);
+    const number = `${value}.as_number()`;
     return {
-      test: `${value}.is_int32()${isEveryInt32 ? "" : ` && (${min}..=${max}).contains(&${value}.as_int32())`}`,
-      converted: `${value}.as_int32()${this.info.rust === "i32" ? "" : ` as ${this.info.rust}`}`,
+      test: `${value}.is_number() && ${number}.fract() == 0.0 && (${min}.0..=${max}.0).contains(&${number})`,
+      converted: `${number} as ${this.info.rust}`,
     };
   }
   /** A caller proves of an integer that it is an int32 and no more. */
@@ -1804,11 +1809,6 @@ export class BufferSourceType extends Type {
   get refuses() {
     return this.#allowShared ? null : sharedBuffers;
   }
-  rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
-    return this.#allowShared && kind !== "object" && takes(this, kind)
-      ? { converted: this.rustFromExtern(value) }
-      : null;
-  }
   /** WebIDL's `[AllowShared]`. */
   get allowShared(): BufferSourceType {
     return new BufferSourceType(true);
@@ -1912,10 +1912,6 @@ export class LocalType extends Type {
   get refuses(): string | null {
     return this.#refuses;
   }
-  rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
-    const isTaken = kind === "object" ? refusesNonObjects(this) : this.#valueKinds !== "any" && takes(this, kind);
-    return isTaken ? { converted: this.rustFromExtern(value) } : null;
-  }
   get parameterType(): ParameterType {
     return strictType(this.#accepted ?? { type: "Object" });
   }
@@ -2010,7 +2006,7 @@ export class CellType extends LocalType {
   readonly #hasRustPath: boolean;
   constructor(cpp: string, header: string, options: CellOptions = {}) {
     assert(/^([A-Za-z_]\w*::)+[A-Z]\w*$/.test(cpp), `b.cell: ${cpp} needs its namespace`);
-    const reportedAs = options.reportedAs ?? cpp.slice(cpp.lastIndexOf("::") + 2).replace(/^JS/, "");
+    const reportedAs = options.reportedAs ?? nameOfClass(cpp);
     super(
       `Bun::Bindgen::IDLRawCell<${cpp}, std::to_array("${reportedAs}")>`,
       options.tsType ?? "object",
@@ -2135,13 +2131,6 @@ export class Conversion {
   symbol?: string;
   /** Of the Rust function that calls it, in the file's module. Set by the generator. */
   rustName?: string;
-  /**
-   * The conversions of the file that share its two functions, itself among them. Unset if it shares with none.
-   * Set by the generator.
-   */
-  sharedWith?: readonly Conversion[];
-  /** Its index in `sharedWith`, which the two functions take. */
-  sharedIndex?: number;
   /** It is given the object, and reads the value from this member of it. */
   member?: { of: DeferredDictionaryType; index: number };
   constructor(type: Type, name: string, expected: readonly string[] | string | undefined) {
@@ -2150,10 +2139,6 @@ export class Conversion {
     this.type = type;
     this.name = name;
     this.expected = expected;
-  }
-  /** Rust expression of type `ConvertFn`. */
-  get rustConvertFn(): string {
-    return this.sharedWith ? `|cx, value| ${this.rustName}(cx, value, ${this.sharedIndex})` : this.rustName!;
   }
 }
 
@@ -2228,79 +2213,7 @@ export class DeferredType extends Type {
   }
   rustFromExtern(expr: string): string {
     assert(this.conversion?.rustName, `${this.tsType}: only for an argument`);
-    return `bindgen::Deferred::from_extern(${expr}, heap, ${this.conversion.rustConvertFn})`;
-  }
-}
-
-/** This argument and every one after it, borrowed from the call frame. */
-export class RestType extends Type {
-  readonly idlType = "Bun::Bindgen::IDLVariadicArguments";
-  readonly inner: OpaqueType | LocalStringType;
-  constructor(element: Type) {
-    super();
-    assert(
-      element instanceof OpaqueType || element instanceof LocalStringType,
-      "each argument of the rest stays in the call frame: b.opaque, or a string with .local",
-    );
-    refuseOutsideArgument(element);
-    this.inner = element;
-  }
-  get tsType(): string {
-    return `(${this.inner.tsType})[]`;
-  }
-  get parameterType(): ParameterType {
-    return { ...this.inner.parameterType, mode: "Rest" };
-  }
-  get canRefuse(): boolean {
-    return this.inner.canRefuse;
-  }
-  get directForm(): DirectForm | null {
-    const form = this.inner.directForm;
-    return form && form.value !== "ValueOrEmpty"
-      ? { value: "RestOfValues", cppType: "const JSC::EncodedJSValue*, size_t", type: form.type }
-      : null;
-  }
-  get holdsJSValue(): boolean {
-    return true;
-  }
-  get conversionThrows(): boolean {
-    return false;
-  }
-  get rustIsCopy(): boolean {
-    return true;
-  }
-  get dependencies(): readonly Type[] {
-    return [this.inner];
-  }
-  get isReadInPlace(): boolean {
-    return this.inner.isReadInPlace;
-  }
-  cppPrepare(value: string): string | null {
-    return this.inner.cppPrepare(value);
-  }
-  get refusalOutsideArgument(): string {
-    return "b.rest is only for the last argument";
-  }
-  get takesUndefined(): boolean {
-    return true;
-  }
-  get isOptional(): boolean {
-    return true;
-  }
-  layout(): Layout {
-    return structLayout(this.externStructFields.map(field => field.layout));
-  }
-  rustExternType(): string {
-    return "bindgen::extern_types::ExternVariadicArguments";
-  }
-  get externStructFields(): readonly ExternField[] {
-    return externSliceFields("JSValue");
-  }
-  rustType(): string {
-    return `&'a [${this.inner.rustType()}]`;
-  }
-  rustFromExtern(expr: string): string {
-    return `${expr}.get(heap)`;
+    return `bindgen::Deferred::from_extern(${expr}, heap, ${this.conversion.rustName})`;
   }
 }
 
@@ -2392,9 +2305,9 @@ export class WrappedType extends Type {
     this.options = options;
   }
   get reportedAs(): string {
-    return this.options.reportedAs ?? this.cpp.slice(this.cpp.lastIndexOf("::") + 2).replace(/^JS/, "");
+    return this.options.reportedAs ?? nameOfClass(this.cpp);
   }
-  /** A reference on it, which can be stored: an `ExternalShared<T>`. */
+  /** A `Ref` to it, which can be stored: an `ExternalShared<T>`. */
   get shared(): RefType {
     return new RefType(
       `Bun::Bindgen::IDLWrappedRef<${this.cpp}, std::to_array("${this.reportedAs}")>`,
@@ -2926,6 +2839,78 @@ ${indent(this.inner.cppConvertInto(target, value, ctx, name, failure), 4)}
   }
 }
 
+/** This argument and every one after it, borrowed from the call frame. */
+export class RestType extends Type {
+  readonly idlType = "Bun::Bindgen::IDLVariadicArguments";
+  readonly element: LocalStringType | OpaqueType;
+  constructor(element: Type) {
+    super();
+    assert(
+      element instanceof LocalStringType || element instanceof OpaqueType,
+      "each argument of the rest stays in the call frame: b.opaque, or a string with .local",
+    );
+    refuseOutsideArgument(element);
+    this.element = element;
+  }
+  get tsType(): string {
+    return `(${this.element.tsType})[]`;
+  }
+  get parameterType(): ParameterType {
+    return { ...this.element.parameterType, mode: "Rest" };
+  }
+  get canRefuse(): boolean {
+    return this.element.canRefuse;
+  }
+  get directForm(): DirectForm | null {
+    const form = this.element.directForm;
+    return form && form.value !== "ValueOrEmpty"
+      ? { value: "RestOfValues", cppType: "const JSC::EncodedJSValue*, size_t", type: form.type }
+      : null;
+  }
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  get conversionThrows(): boolean {
+    return false;
+  }
+  get rustIsCopy(): boolean {
+    return true;
+  }
+  get dependencies(): readonly Type[] {
+    return [this.element];
+  }
+  get isReadInPlace(): boolean {
+    return this.element.isReadInPlace;
+  }
+  cppPrepare(value: string): string | null {
+    return this.element.cppPrepare(value);
+  }
+  get refusalOutsideArgument(): string {
+    return "b.rest is only for the last argument";
+  }
+  get takesUndefined(): boolean {
+    return true;
+  }
+  get isOptional(): boolean {
+    return true;
+  }
+  layout(): Layout {
+    return structLayout(this.externStructFields.map(field => field.layout));
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternVariadicArguments";
+  }
+  get externStructFields(): readonly ExternField[] {
+    return externSliceFields("JSValue");
+  }
+  rustType(): string {
+    return `&'a [${this.element.rustType()}]`;
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get(heap)`;
+  }
+}
+
 export class ArrayType extends Type {
   get rustIsCopy(): boolean {
     return false;
@@ -3439,9 +3424,6 @@ export class DeferredDictionaryType extends NamedType {
   }
   get refuses(): string | null {
     return objectType.refuses;
-  }
-  rustOfKind(kind: ValueKind | "object", value: string, scope: RustScope): ConvertedInRust | null {
-    return kind === "object" ? { converted: this.rustFromExtern(value, scope) } : null;
   }
   get parameterType(): ParameterType {
     return { ...convertingType(neverType, "Dictionary", { type: "Object" }), members: this.names };

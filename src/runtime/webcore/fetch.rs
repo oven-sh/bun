@@ -44,40 +44,41 @@ pub(crate) mod proxy_testing;
 // ──────────────────────────────────────────────────────────────────────────
 
 use crate::generated_bindgen::fetch::{
-    CompressInit, FetchInit, FetchInput, FetchVerbose, MaxRedirects,
+    FetchInit, FetchInput, FetchVerbose, FlagOrNumber, MaxRedirects,
 };
-use crate::generated_bindgen::fetch_session::FlagOrNumber;
 use crate::generated_bindgen::response::{BodyInit, HeadersInit, SignalInit};
+use crate::webcore::jsc::{
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
+};
+use bun_core::{String as BunString, StringView, Tag as BunStringTag};
+use bun_http::http_request_body::StreamFraming;
+use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
+use bun_http_types::Method::Method;
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{HTTPHeaderName, SysErrorJsc as _, URLJsc as _};
+use bun_sys::FdExt as _;
+// `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
+// brings the trait impl into scope for `JSValue::to_enum::<FetchRedirect>`.
 use crate::node;
 use crate::node::types::PathLikeExt as _;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
-use crate::webcore::jsc::{
-    self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
-};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{
     Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
 };
 use crate::webcore::{blob, readable_stream, response};
-use bun_core::{String as BunString, StringView, Tag as BunStringTag};
-use bun_http::http_request_body::StreamFraming;
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
-use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
-use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{HTTPHeaderName, SysErrorJsc as _, URLJsc as _};
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
 use bun_resolver::data_url::DataURL;
 use bun_s3_signing::{SignOptions, SignResult};
-use bun_sys::FdExt as _;
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
@@ -313,13 +314,23 @@ impl StringOrURL {
     }
 }
 
+impl FlagOrNumber {
+    fn to_bool(self) -> Option<bool> {
+        match self {
+            FlagOrNumber::Flag(flag) => Some(flag),
+            FlagOrNumber::Number(number) => Some(number as i32 != 0),
+            FlagOrNumber::Other => None,
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // fetch entry point
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 pub(crate) fn fetch<'a>(
-    cx: &mut JsScope<'a>,
+    cx: &mut JsScope<'_>,
     input: FetchInput<'a>,
     init: Option<FetchInit<'a>>,
 ) -> JsResult<JSValue> {
@@ -328,8 +339,8 @@ pub(crate) fn fetch<'a>(
 
 /// What `session.fetch` is bound from: `fetch()` with `this` as its session.
 pub(crate) fn session_fetch<'a>(
-    cx: &mut JsScope<'a>,
-    this_value: JsLocal<'a>,
+    cx: &mut JsScope<'_>,
+    this_value: JsLocal<'_>,
     input: FetchInput<'a>,
     init: Option<FetchInit<'a>>,
 ) -> JsResult<JSValue> {
@@ -440,16 +451,22 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
     // signal/unix_socket_path/url_proxy_buffer/headers/body/range/
     // ssl_config are all owning types whose Drop runs on early return.
 
-    let input_object = match &input {
-        FetchInput::Object(object) => Some(*object),
-        _ => None,
+    let (first_arg, input_object) = match &input {
+        FetchInput::Text(_) => (JSValue::UNDEFINED, None),
+        FetchInput::Init(init) => (init.object().to_js(), Some(*init)),
+        FetchInput::Other(value) => (value.to_js(), None),
     };
-    let first_arg = input_object.map(|object| object.object().to_js());
 
     // kept as raw `*mut Request` because the body re-borrows it
     // multiple times across long-lived option/init reads.
-    let request: Option<*mut Request> =
-        first_arg.and_then(|first_arg| first_arg.as_direct::<Request>());
+    let request: Option<*mut Request> = 'brk: {
+        if first_arg.is_cell() {
+            if let Some(request_) = first_arg.as_direct::<Request>() {
+                break 'brk Some(request_);
+            }
+        }
+        break 'brk None;
+    };
     // Helper macro: short-lived `&mut Request` reborrow of the optional pointer.
     macro_rules! request_mut {
         () => {
@@ -460,17 +477,12 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
     }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-    let url_str_optional = match input {
-        FetchInput::Text(url) => Some(url),
-        FetchInput::Object(object) => {
-            let first_arg = object.object().to_js();
-            if first_arg.as_::<Request>().is_none() {
-                StringOrURL::from_js(first_arg, global_this)?
-            } else {
-                None
-            }
-        }
-        FetchInput::Other(value) => StringOrURL::from_js(value.to_js(), global_this)?,
+    let url_str_optional = if let FetchInput::Text(url) = input {
+        Some(url)
+    } else if first_arg.as_::<Request>().is_none() {
+        StringOrURL::from_js(first_arg, global_this)?
+    } else {
+        None
     };
 
     let request_init_object: Option<FetchInit<'_>> = 'brk: {
@@ -577,9 +589,8 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let objects_to_try = [options_object, request_init_object];
 
         for obj in objects_to_try.into_iter().flatten() {
-            let compress_value = obj.compress(global_this)?;
-            if !matches!(compress_value, CompressInit::Missing) {
-                compress = compress_body::from_js(global_this, compress_value)?;
+            if let Some(compress_value) = obj.compress(global_this)? {
+                compress = compress_body::from_js(global_this, compress_value.to_js())?;
                 break 'extract_compress;
             }
         }
@@ -591,7 +602,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try.into_iter().flatten() {
             let n = match obj.max_redirects(global_this)? {
-                MaxRedirects::Missing => continue,
+                MaxRedirects::None => continue,
                 MaxRedirects::Number(n) => n,
                 MaxRedirects::Other => f64::NAN,
             };
@@ -612,10 +623,10 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         }
         let objects_to_try = [options_object, request_init_object];
         for obj in objects_to_try.into_iter().flatten() {
-            if let Some((_, session)) = obj.session(global_this)? {
+            if let Some(value) = obj.session(global_this)? {
                 break 'extract_session Some(fetch_session::SessionHold::from_js(
                     global_this,
-                    session.to_js(),
+                    value.to_js(),
                 )?);
             }
         }
@@ -631,7 +642,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try.into_iter().flatten() {
             if let Some(tls) = obj.tls(global_this)? {
                 request_has_tls = true;
-                let parsed = fetch_session::parse_tls(vm, global_this, tls)?;
+                let parsed = fetch_session::parse_tls(vm, global_this, tls.to_js())?;
                 if let Some(reject) = parsed.reject_unauthorized {
                     reject_unauthorized = reject;
                 }
@@ -705,23 +716,19 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
                 FlagOrNumber::Flag(timeout_value) => {
                     break 'extract_disable_timeout !timeout_value;
                 }
-                FlagOrNumber::Number(timeout_value) => {
+                FlagOrNumber::Number(ms) => {
                     // A finite positive `timeout` (in ms) also governs the
                     // socket idle deadline, overriding the global
                     // `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default.
-                    let ms = timeout_value.to_js().as_number();
                     if ms.is_finite() && ms > 0.0 {
                         idle_timeout_seconds =
                             Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
                                 as core::ffi::c_uint);
                     }
-                    // `to_int32()` saturates ±Infinity (JSC's
-                    // `coerceJSValueDoubleTruncatingT`, not spec ToInt32),
-                    // so gate on `is_finite()` too so `{timeout: Infinity}`
-                    // disables the timer instead of silently falling back
-                    // to the global default.
-                    break 'extract_disable_timeout !ms.is_finite()
-                        || timeout_value.to_js().to_int32() == 0;
+                    // `as i32` saturates ±Infinity, so gate on `is_finite()`
+                    // too so `{timeout: Infinity}` disables the timer instead
+                    // of silently falling back to the global default.
+                    break 'extract_disable_timeout !ms.is_finite() || ms as i32 == 0;
                 }
                 FlagOrNumber::Other => {}
             }
@@ -800,10 +807,12 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let objects_to_try = [options_object, request_init_object];
         for obj in objects_to_try.into_iter().flatten() {
             if proxy_option.is_none() {
-                if let fetch_session::ProxyArg::Policy(policy) =
-                    fetch_session::parse_proxy(global_this, obj.proxy(global_this)?)?
-                {
-                    proxy_option = Some(policy);
+                if let Some(proxy_arg) = obj.proxy(global_this)? {
+                    if let fetch_session::ProxyArg::Policy(policy) =
+                        fetch_session::parse_proxy(global_this, proxy_arg.to_js())?
+                    {
+                        proxy_option = Some(policy);
+                    }
                 }
             }
         }
@@ -871,7 +880,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
             }
         }
         match signal_init {
-            SignalInit::Missing | SignalInit::Null => None,
+            SignalInit::Missing | SignalInit::None => None,
             SignalInit::Signal(signal) => Some(signal),
             SignalInit::Other => {
                 let err = ctx.to_type_error(
@@ -898,7 +907,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
     let mut body = 'extract_body: {
         if let Some(options) = options_object {
             let body__ = options.body(global_this)?;
-            if !matches!(body__, BodyInit::Undefined) {
+            if !matches!(body__, BodyInit::Missing) {
                 break 'extract_body Some(HTTPRequestBody::from_js(
                     &ctx.js_thread(context),
                     body__,
@@ -912,8 +921,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
                 BodyValue::Used => true,
                 BodyValue::Locked(locked) => {
                     locked.action != BodyValueLockedAction::None
-                        || locked
-                            .is_disturbed::<Request>(global_this, first_arg.unwrap_or_default())
+                        || locked.is_disturbed::<Request>(global_this, first_arg)
                 }
                 _ => false,
             };
@@ -974,7 +982,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
 
         if let Some(req) = request_init_object {
             let body__ = req.body(global_this)?;
-            if !matches!(body__, BodyInit::Undefined) {
+            if !matches!(body__, BodyInit::Missing) {
                 break 'extract_body Some(HTTPRequestBody::from_js(
                     &ctx.js_thread(context),
                     body__,

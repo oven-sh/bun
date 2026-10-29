@@ -109,7 +109,7 @@ impl JSFrameworkRouter {
         Ok(jsfr)
     }
 
-    pub(crate) fn r#match(&self, cx: &mut JsScope<'_>, path: &[u8]) -> JsResult<Option<JSValue>> {
+    pub(crate) fn r#match(&self, cx: &mut JsScope<'_>, path: &[u8]) -> JsResult<JSValue> {
         let global = cx.global();
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),
@@ -137,10 +137,10 @@ impl JSFrameworkRouter {
                 },
             );
             obj.put(global, b"route", self.route_to_json_inverse(global, index)?);
-            return Ok(Some(obj));
+            return Ok(obj);
         }
 
-        Ok(None)
+        Ok(JSValue::NULL)
     }
 
     pub(crate) fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {

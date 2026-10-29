@@ -14,7 +14,7 @@ export const SinkChunk = b.union({
 export const SinkPath = b.union({ missing: b.undefined, path: b.string.allowStringObject, other: b.ignored });
 
 /** An empty `text` is `missing`. `start` fails with `EBADF` for what is not an integer from 0 that fits an `i32`. */
-export const SinkStartFd = b.union({ missing: b.null, number: b.f64, text: b.string, other: b.ignored });
+export const SinkStartFd = b.union({ none: b.null, number: b.f64, text: b.string, other: b.ignored });
 
 const highWaterMark = b.f64.otherAsNull;
 const fileMembers = {

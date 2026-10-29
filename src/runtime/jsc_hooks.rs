@@ -1752,7 +1752,7 @@ pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
 }
 
 /// `RuntimeHooks::stop_active_handles_for_vm_teardown`.
-pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
+fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
     stop_active_handles(vm, bun_jsc::StopReason::VmTeardown)
 }
 

@@ -89,7 +89,7 @@ unsafe extern "Rust" {
     /// Compile `pattern` with no flags. `None` ⇔ the pattern does not compile.
     /// Initializes JSC first (idempotent), so it must only run from
     /// [`RegularExpression::matches`]; see the type's docs.
-    fn __bun_regex_compile(pattern: &BunString) -> Option<NonNull<()>>;
+    safe fn __bun_regex_compile(pattern: &BunString) -> Option<NonNull<()>>;
     fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
     fn __bun_regex_drop(regex: NonNull<()>);
 }
@@ -128,8 +128,7 @@ pub struct RegularExpression {
 impl RegularExpression {
     fn matches(&self, input: &BunString) -> bool {
         let compiled = self.compiled.get_or_init(|| {
-            // SAFETY: link-time extern; Yarr compiles the pattern and does not retain it.
-            unsafe { __bun_regex_compile(&StringView::borrow_utf8(&self.source)) }
+            __bun_regex_compile(&StringView::borrow_utf8(&self.source))
                 .map(CompiledRegularExpression)
         });
         match compiled {

@@ -110,13 +110,7 @@ impl Id {
         hasher.update(b"npm-package:");
         hasher.update(package_name);
         hasher.update(b"@");
-        // SAFETY: reading raw bytes of a POD value for hashing
-        hasher.update(unsafe {
-            bun_core::ffi::slice(
-                (&raw const package_version).cast::<u8>(),
-                core::mem::size_of::<semver::Version>(),
-            )
-        });
+        hasher.update(bun_core::bytes_of(&package_version));
         Id(hasher.final_())
     }
 

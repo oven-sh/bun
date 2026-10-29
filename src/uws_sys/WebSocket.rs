@@ -356,7 +356,7 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     /// `id != 0`.
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws::NewAppResponse<SSL>,
+        res: &mut uws::NewAppResponse<SSL>,
         req: &mut Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
@@ -508,7 +508,7 @@ where
             return;
         }
         // SAFETY: `ptr` is the user-data passed to `uws_ws()` at registration
-        // time; uWS passes non-null req/context valid for the duration of the
+        // time; uWS passes non-null res/req/context valid for the duration of the
         // upgrade callback. We forward `ptr` as a *raw* `*mut Server` without
         // creating a `&mut Server` — the actual pointee type is discriminated
         // by `id` inside the implementer (see trait docs), and materializing a
@@ -516,7 +516,7 @@ where
         unsafe {
             Server::on_websocket_upgrade(
                 ptr.cast::<Server>(),
-                res.cast::<uws::NewAppResponse<SSL>>(),
+                &mut *res.cast::<uws::NewAppResponse<SSL>>(),
                 req,
                 context,
                 id,

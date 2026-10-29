@@ -85,8 +85,8 @@ pub(super) fn bake_get_on_module_namespace(
 // (UnsafeCell-backed); C++ allocates and returns a non-null `JSPromise*`.
 // No caller-side precondition for the call itself — declare `safe fn`.
 unsafe extern "C" {
-    pub(super) safe fn BakeRenderRoutesForProdStatic(
-        global: &JSGlobalObject,
+    pub(super) safe fn BakeRenderRoutesForProdStatic<'a>(
+        global: &'a JSGlobalObject,
         // Output directory path (e.g., "./dist")
         out_base: &BunString,
         // Server module paths (e.g., ["bake://page.js", "bake://layout.js"])
@@ -109,7 +109,7 @@ unsafe extern "C" {
         param_information: JSValue,
         // CSS URLs per route (e.g., [["/main.css"], ["/main.css", "/blog.css"]])
         styles: JSValue,
-    ) -> *mut JSPromise;
+    ) -> &'a mut JSPromise;
 }
 
 #[unsafe(no_mangle)]
@@ -174,10 +174,7 @@ extern "C" fn BakeProdResolve(
 
 /// Given a key, returns the source code to load.
 #[unsafe(no_mangle)]
-extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
-    // SAFETY: `pt` is the non-null pointer previously attached via
-    // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
+extern "C" fn BakeProdLoad(pt: &PerThread, key: &BunString) -> BunString {
     let utf8 = key.to_utf8();
     log!("BakeProdLoad: {}\n", BStr::new(utf8.slice()));
     if let Some(source) = pt.module_map.get(utf8.slice()) {

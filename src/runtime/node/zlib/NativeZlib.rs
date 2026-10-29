@@ -218,6 +218,8 @@ pub(crate) struct Context {
     pub flush: c::FlushValue,
     pub dictionary: Vec<u8>,
     pub(crate) gzip_id_bytes_read: u8,
+    /// GZIP only: Node's `output_emitted_ && !stream_complete_` (https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1127-L1137).
+    output_emitted: bool,
 }
 
 impl Default for Context {
@@ -229,6 +231,7 @@ impl Default for Context {
             flush: c::FlushValue::NoFlush,
             dictionary: Vec::new(),
             gzip_id_bytes_read: 0,
+            output_emitted: false,
         }
     }
 }
@@ -253,6 +256,7 @@ impl Context {
         use c::NodeMode::*;
         self.flush = c::FlushValue::NoFlush;
         self.err = c::ReturnCode::Ok;
+        self.output_emitted = false;
 
         let window_bits_actual = match self.mode {
             NONE => unreachable!(),
@@ -364,6 +368,19 @@ impl Context {
     }
 
     pub(crate) fn reset(&mut self) -> Error {
+        // https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1282-L1294
+        if self.output_emitted {
+            return Error::init(
+                c"Cannot reset a gzip stream with an incomplete member; end the stream or start a new gzip compressor".as_ptr(),
+                c::ReturnCode::StreamError as c_int,
+                c"ERR_ZLIB_INCOMPLETE_FRAME".as_ptr(),
+            );
+        }
+        self.reset_z_stream()
+    }
+
+    /// `reset()` without the check for an open gzip member. The gunzip loop over members calls it.
+    fn reset_z_stream(&mut self) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
         match self.mode {
@@ -423,8 +440,11 @@ impl Context {
         // of room.  If there was avail_out left over, then it means
         // that all of the input was consumed.
         match self.mode {
-            DEFLATE | GZIP | DEFLATERAW => {
+            DEFLATE | DEFLATERAW => {
                 return self.do_work_deflate();
+            }
+            GZIP => {
+                return self.do_work_gzip();
             }
             UNZIP => {
                 if self.state.avail_in() > 0 {
@@ -479,6 +499,18 @@ impl Context {
         self.err = unsafe { c::deflate(self.state.as_ptr(), self.flush) };
     }
 
+    // Out of line, so `do_work` stays a tail call for the modes that `reset()` never refuses.
+    #[inline(never)]
+    fn do_work_gzip(&mut self) {
+        let avail_out = self.state.avail_out();
+        self.do_work_deflate();
+        if self.err == c::ReturnCode::StreamEnd {
+            self.output_emitted = false;
+        } else if self.state.avail_out() < avail_out {
+            self.output_emitted = true;
+        }
+    }
+
     fn do_work_inflate(&mut self) {
         // SAFETY: FFI — state is an initialized inflate stream.
         self.err = unsafe { c::inflate(self.state.as_ptr(), self.flush) };
@@ -511,8 +543,8 @@ impl Context {
         {
             // Bytes remain in input buffer. Perhaps this is another compressed member in the same archive, or just trailing garbage.
             // Trailing zero bytes are okay, though, since they are frequently used for padding.
-            let _ = self.reset();
-            // SAFETY: FFI — state was just re-initialized by reset().
+            let _ = self.reset_z_stream();
+            // SAFETY: FFI — state was just re-initialized by reset_z_stream().
             self.err = unsafe { c::inflate(self.state.as_ptr(), self.flush) };
         }
     }

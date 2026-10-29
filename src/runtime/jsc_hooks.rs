@@ -1827,13 +1827,8 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: bun_jsc::StopReason) -> 
 /// debugger test IDs, and emit `reportTestFoundWithLocation` for each.
 /// Returns `next_test_id` advanced past every ID assigned (the caller writes
 /// it back into `TestReporterAgent::next_test_id`).
-///
-/// # Safety
-/// `agent` is a live C++ `Inspector::TestReporterAgent::Handle*` (just stored
-/// into `debugger.test_reporter_agent.handle` by the caller). Called on the JS
-/// thread.
-unsafe fn retroactively_report_discovered_tests(
-    agent: *mut bun_jsc::debugger::TestReporterHandle,
+fn retroactively_report_discovered_tests(
+    agent: &mut bun_jsc::debugger::TestReporterHandle,
     next_test_id: i32,
 ) -> i32 {
     use crate::test_runner::bun_test::{Phase, TestScheduleEntry};
@@ -1883,8 +1878,7 @@ unsafe fn retroactively_report_discovered_tests(
                     let name = bun_core::StringView::from_bytes(
                         describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
                     );
-                    // SAFETY: `agent` is a live C++ handle (fn contract).
-                    unsafe { &mut *agent }.report_test_found_with_location(
+                    agent.report_test_found_with_location(
                         max_id,
                         &name,
                         TestType::Describe,
@@ -1903,8 +1897,7 @@ unsafe fn retroactively_report_discovered_tests(
                     let name = bun_core::StringView::from_bytes(
                         test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
                     );
-                    // SAFETY: `agent` is a live C++ handle (fn contract).
-                    unsafe { &mut *agent }.report_test_found_with_location(
+                    agent.report_test_found_with_location(
                         max_id,
                         &name,
                         TestType::Test,

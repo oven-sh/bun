@@ -408,6 +408,7 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_abort_silent(self.0.as_ptr()) }
     }
+    #[inline]
     pub fn abort_error(&self, is_app: bool, code: c_uint, reason: &core::ffi::CStr) {
         // SAFETY: as above; `reason` is NUL-terminated by construction.
         unsafe { lsquic_conn_abort_error(self.0.as_ptr(), is_app as c_int, code, reason.as_ptr()) }

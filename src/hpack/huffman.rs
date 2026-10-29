@@ -569,6 +569,7 @@ pub(crate) mod test_kernel {
 
     thread_local! {
         pub(crate) static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        pub(crate) static CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
     pub(super) fn has_hpack_huffman_kernel() -> bool {
@@ -580,6 +581,7 @@ pub(crate) mod test_kernel {
         mut bit_pos: usize,
         out: &mut [u8],
     ) -> (usize, usize) {
+        CALLS.set(CALLS.get() + 1);
         let bit = |i: usize| {
             src.get(i / 8)
                 .map_or(1, |byte| u64::from(byte >> (7 - i % 8) & 1))

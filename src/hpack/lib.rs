@@ -466,6 +466,23 @@ mod tests {
     }
 
     #[test]
+    fn when_the_simd_kernel_is_called() {
+        let calls = |string: &[u8]| {
+            let mut coded = Vec::new();
+            huffman::encode(string, &mut coded);
+            huffman::test_kernel::CALLS.set(0);
+            assert_eq!(decode_huffman(&coded, string.len()), Ok(string.to_vec()));
+            huffman::test_kernel::CALLS.get()
+        };
+        // 4 and 5 bytes.
+        assert_eq!((calls(b"aaaaaa"), calls(b"aaaaaaa")), (0, 1));
+        // To the end, as the calls that yield few come after calls that yield many. None yields 29.
+        assert!(calls(&[b'a'; 1000]) > 1000 / 29);
+        // Never before a code of more than 8 bits, and not again after calls that yield one symbol.
+        assert_eq!((calls(&[b'~'; 100]), calls(&b"a~~".repeat(30))), (0, 1));
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore)]
     fn huffman_codes_of_every_byte() {
         let every_byte: Vec<u8> = (0..=255).collect();

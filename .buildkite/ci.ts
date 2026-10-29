@@ -639,12 +639,12 @@ function getBuildCommand(target: Target, options: PipelineOptions): string {
  * deps + C++ + Rust + link on one agent.
  */
 function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
-  const { arch } = platform;
-  // Best-effort nasm for x64 (BoringSSL win-x64); images bake it, and the build's own error is clearer.
+  const { os, arch } = platform;
+  // Best-effort nasm for BoringSSL's win-x64 assembly; images bake it, and the build's own error is clearer.
   const nasmSetup =
-    arch === "x64"
+    os === "windows" && arch === "x64"
       ? [
-          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || brew install nasm || true",
+          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || true",
         ]
       : [];
   return {

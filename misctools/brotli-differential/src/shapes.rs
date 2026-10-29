@@ -1735,6 +1735,49 @@ pub fn run_distance_params(seed0: u64, iters: u64, qualities: u64) {
     println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
 }
 
+/// Qualities 5 to 9 with a large window. The first dictionary, 128 to 256 MiB away, has the first 8 bytes of the input. The
+/// last one, 20 bytes away, which is none of the last distances, has the first 3 of them, two others with which the 5 bytes
+/// fall into the same bucket of its index, and then the bytes of the input again. So the encoder takes a closer look, and
+/// finds a copy that is too short to count, but would score better.
+pub fn run_dictionary_collision(seed0: u64, iters: u64, qualities: u64) {
+    let qs = crate::args::qualities(qualities, 5..10);
+    let bucket = |bytes: &[u8]| (bytes[..5].iter().rev().fold(0u64, |v, &b| v << 8 | u64::from(b)).wrapping_mul(0x1FE3_5A7B_D357_9BD3) >> 47) as usize;
+    let mut totals = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let (mut data, near) = loop {
+            let data: Vec<u8> = (0..20).map(|_| rng.next() as u8).collect();
+            let mut near = data.clone();
+            let found = (0..1 << 16).find(|&i| {
+                near[3] = i as u8;
+                near[4] = (i >> 8) as u8;
+                near[3] != data[3] && bucket(&near) == bucket(&data)
+            });
+            if found.is_some() {
+                break (data, near);
+            }
+        };
+        let mut far = data[..8].to_vec();
+        far.push(!data[8]);
+        // Of 4 bits, or the encoder would store the input as it is.
+        data.extend((0..3000).map(|_| rng.next() as u8 & 15));
+        far.extend((0..20).map(|_| rng.next() as u8));
+        let zeros = (1 << 27) + rng.below(1 << 27) - 100;
+        let dicts = vec![far, vec![0; zeros], near];
+        let case = EncCase { data, params: vec![(6, 1), (1, q), (2, rng.range(16, 30) as u32)], dicts, schedule: 0, misuse: false };
+        let out = enc::compare(&case).unwrap_or_else(|e| panic!("seed {seed} params {:?}: {e}", case.params));
+        if let Err(e) = enc::round_trip(&out, &case.data, &case.dicts, true, 0) {
+            panic!("seed {seed} params {:?}: {e}", case.params);
+        }
+        assert!(out.len() < case.data.len(), "seed {seed}: stored");
+        totals.0 += case.data.len();
+        totals.1 += out.len();
+    }
+    println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
+}
+
 /// The input ends with a few bytes that a dictionary has too, followed there by zeros. The encoder looks a position up in a
 /// dictionary by 5 bytes. With fewer left it takes the bytes after the end of the input, which it has cleared, and so finds
 /// a copy that is shorter than any it finds elsewhere. Only qualities 10 and 11 still look for a copy at the last 4 bytes.

@@ -310,6 +310,7 @@ pub fn run(args: &[String]) -> bool {
         Some("enc-huge-dictionary") => shapes::run_huge_dictionary(num(2, 1), num(3, 0xFE0)),
         Some("enc-large-limit") => shapes::run_large_limit(num(2, 1), num(3, 0xFE0)),
         Some("enc-distance-params") => shapes::run_distance_params(num(2, 1), num(3, 50), num(4, 0xC00)),
+        Some("enc-dictionary-collision") => shapes::run_dictionary_collision(num(2, 1), num(3, 20), num(4, 0x3E0)),
         Some("enc-lazy-end") => shapes::run_lazy_end(num(2, 1), num(3, 200), num(4, 0x3E0)),
         Some("enc-nearly-random") => shapes::run_nearly_random(num(2, 1), num(3, 200), num(4, 0x3E0)),
         Some("enc-commands") => shapes::run_commands(num(2, 1), num(3, 20), num(4, 0x3E0)),

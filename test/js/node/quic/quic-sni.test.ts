@@ -510,6 +510,80 @@ test("a context without `ca` verifies against the default CA store", async () =>
   });
 });
 
+// tls.setDefaultCACertificates() holds for the whole process, so this runs in a child.
+test("a server that verifies clients trusts the default CA list and doesn't announce it", async () => {
+  const script = `
+    import { createPrivateKey } from "node:crypto";
+    import { readFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { connect, listen } from "node:quic";
+    import { rootCertificates, setDefaultCACertificates } from "node:tls";
+
+    const readKey = name => readFileSync(join(${JSON.stringify(keysDir)}, name));
+    const identity = agent => ({
+      keys: [createPrivateKey(readKey(agent + "-key.pem"))],
+      certs: [readKey(agent + "-cert.pem")],
+    });
+
+    // ca1 issued agent1, ca2 issued agent3.
+    async function handshake(serverOptions, agent) {
+      const verdict = Promise.withResolvers();
+      const server = await listen(
+        serverSession => {
+          serverSession.onerror = () => {};
+          serverSession.opened.then(() => verdict.resolve("accepted"), e => verdict.resolve(e.code));
+          serverSession.closed.catch(e => verdict.resolve(e.code));
+        },
+        { sni: { "*": identity("agent1") }, alpn: ["quic-test"], verifyClient: true, ...serverOptions },
+      );
+      const session = await connect(server.address, {
+        alpn: "quic-test",
+        servername: "agent1",
+        ca: [readKey("ca1-cert.pem")],
+        ...identity(agent),
+      });
+      session.onerror = () => {};
+      session.closed.catch(() => {});
+      await session.opened.catch(() => {});
+      const result = { verdict: await verdict.promise, received: Number(session.stats.bytesReceived) };
+      await session.close().catch(() => {});
+      await server.close();
+      return result;
+    }
+
+    const ca2 = readKey("ca2-cert.pem").toString();
+    setDefaultCACertificates([ca2]);
+    const one = await handshake({}, "agent3");
+    const other = await handshake({}, "agent1");
+    setDefaultCACertificates([...rootCertificates, ca2]);
+    const many = await handshake({}, "agent3");
+    const manyAsCa = await handshake({ ca: [...rootCertificates, ca2].map(pem => Buffer.from(pem)) }, "agent3");
+    // A server names the CAs of its \`ca\` in the CertificateRequest. Over a hundred names are several packets.
+    console.log(JSON.stringify({
+      issuedByACAOfTheDefaultList: [one.verdict, many.verdict],
+      issuedByAnotherCA: other.verdict,
+      namesOfCaAreSent: manyAsCa.received > one.received + 4096,
+      namesOfTheDefaultListAreSent: many.received > one.received + 4096,
+    }));
+  `;
+
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      issuedByACAOfTheDefaultList: ["accepted", "accepted"],
+      issuedByAnotherCA: "ERR_QUIC_TRANSPORT_ERROR",
+      namesOfCaAreSent: true,
+      namesOfTheDefaultListAreSent: false,
+    }),
+    stderr: expect.stringContaining(
+      "ExperimentalWarning: quic is an experimental feature and might change at any time",
+    ),
+    exitCode: 0,
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32234
 test("a client verifies an Ed25519 server certificate", async () => {
   const fixtures = join(import.meta.dir, "..", "tls", "fixtures");

@@ -8,6 +8,7 @@ use crate::builtins::{BuiltinPath, Mutability, Resolved, table};
 use crate::ir::generated::{BlockFrequency, ImportPhase};
 use crate::ir::{PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 use crate::lower::member::PropertyName;
+use crate::lower::scope::BindingRef;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
 use crate::modules::{ExportBinding, ImportBinding, ModuleRef, Shape, SyntheticExportId, View};
 
@@ -19,9 +20,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let file = &mut *self.file;
         let binding = file.inputs.modules.import_binding(file.file, symbol);
         if let ImportBinding::BuiltinMember { .. } = binding {
-            let variable = file.ensure_variable(file.imported_copy_key(symbol));
             let path = file.builtins.of_symbol(symbol);
-            let value = self.builder.get_module_variable(variable);
+            let value = match self.scopes.find_local(BindingRef::Symbol(symbol)) {
+                Some(local) => self.builder.read_variable(local.variable),
+                None => {
+                    let variable = file.ensure_variable(file.imported_copy_key(symbol));
+                    self.builder.get_module_variable(variable)
+                }
+            };
             return match path.map(|path| (path.id, path.mutability)) {
                 Some((id, Mutability::AlwaysLocked | Mutability::ConstantUnlessWritten)) => {
                     self.expect_builtin(value, table::canonical_id(id))
@@ -56,6 +62,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
                 _ => continue,
             };
+            if let Some(local) = self.scopes.find_local(BindingRef::Symbol(symbol)) {
+                self.builder.write_variable(local.variable, value);
+                continue;
+            }
             let variable = self.file.ensure_variable(key);
             self.builder.put_module_variable(variable, value);
         }

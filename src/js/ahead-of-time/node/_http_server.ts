@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a02f6c58699da9d67b734e02e2ff9ba8aab19d83d4487648b7e92d14662fb918.
+// Written against that file with the SHA-256 afe29fb2efa84479ced4a04d59fb30de1930442adb75ed02f1e8a3cef0652475.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -3516,15 +3516,13 @@ function handleFor(req: $Node.IncomingMessage, options: $Node.ServerResponseOpti
 }
 
 // A class that extends ServerResponse may have an accessor under any of these names, so each store is made, in this order.
+// Only what `new ServerResponse()` makes has an exchange. An instance of a class below, and an object that ServerResponse is called on, keeps all of its state on itself.
 function initializeStoreByStore(
   res: $Node.ServerResponse,
   req: $Node.IncomingMessage,
   options: $Node.ServerResponseOptions | undefined,
 ): void {
-  const exchange = makeExchange(res, null, noResponseEvents, null);
-  exchange.flags = EXCHANGE_HAS_PENDING_CALLBACKS;
   OutgoingMessage.$call(res, options);
-  res.$exchange = exchange;
 
   res.req = req;
   res.sendDate = true;
@@ -5005,12 +5003,10 @@ const OriginalImplicitHeadFn = (ServerResponse.prototype._implicitHeader = funct
 });
 
 // A response without a native handle (new ServerResponse(req) and assignSocket()) writes through OutgoingMessage, which keeps its own accounting.
-const {
-  writableCorked: { get: outgoingWritableCorked },
-  writableNeedDrain: { get: outgoingWritableNeedDrain },
-  writableFinished: { get: outgoingWritableFinished },
-  writableLength: { get: outgoingWritableLength },
-} = Object.getOwnPropertyDescriptors(OutgoingMessagePrototype);
+const outgoingWritableCorked = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableCorked")!.get;
+const outgoingWritableNeedDrain = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableNeedDrain")!.get;
+const outgoingWritableFinished = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableFinished")!.get;
+const outgoingWritableLength = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableLength")!.get;
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get(this: $Node.ServerResponse) {

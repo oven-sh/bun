@@ -1,7 +1,11 @@
 import * as b from "bun-builtins-table";
+import { pathOfNativeFunction } from "../paths.ts";
 import {
   asyncContextCell,
+  closesChannelCell,
+  coercesEnvironmentValueCell,
   drainMicrotasksCell,
+  editsWindowsEnvironmentCell,
   emitsProcessEventCell,
   emitsWarningCell,
   environmentCell,
@@ -15,6 +19,8 @@ import {
   onWarningCell,
   releaseCell,
   reportsExceptionCell,
+  resetsEnvironmentValueCell,
+  sendsOverChannelCell,
   setModuleWrapperCell,
   standardErrorCell,
   stylizeWithColorCell,
@@ -22,6 +28,8 @@ import {
   throwsWarningCell,
   tickShownToHooksCell,
   versionsCell,
+  windowsEnvironmentNamesCell,
+  windowsEnvironmentStorageCell,
   writeWarningCell,
 } from "./native-cells.ts";
 
@@ -42,15 +50,13 @@ const channelModules = evaluates(
 const standardStreamModules = evaluates("node:tty", "node:fs", "internal/fs/streams");
 
 const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadSpec[]>> = {
-  "Bun.spawn": channelModules,
   "console._stderr": standardStreamModules,
   "console._stdout": standardStreamModules,
   "node:child_process": channelModules,
   "node:fs/promises": evaluates("internal/fifo"),
   "node:repl": standardStreamModules,
   "node:worker_threads": evaluates("internal/worker/stdio"),
-  "process.channel": [...channelModules, ...evaluates("node:events")],
-  "process.disconnect": channelModules,
+  "process.channel": evaluates("node:events"),
   "process.nextTick": [
     {
       module: "internal/process/next_tick_queue",
@@ -61,7 +67,6 @@ const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadS
     },
   ],
   "process.openStdin": standardStreamModules,
-  "process.send": channelModules,
   "process.stderr": standardStreamModules,
   "process.stdin": standardStreamModules,
   "process.stdout": standardStreamModules,
@@ -92,14 +97,25 @@ const channelFunctions = functionsIn(
 
 const whenChannelEvent = b.whenOperandOfCallOn("process", "event", "message", "disconnect");
 
+// What process.send and process.disconnect hold. A read of either property makes the function: a call of the function opens the channel.
+const functionsOfChannel = [
+  pathOfNativeFunction("BunProcess.cpp", "jsSend"),
+  pathOfNativeFunction("BunProcess.cpp", "Bun__Process__disconnect"),
+];
+
+// js_bun_spawn_bindings.rs: the child has a channel where `ipc` of the options is a function. Without one, send() and disconnect() of the Subprocess find no channel and run nothing of the library.
+const spawnsWithChannel = ["commandOrOptions", "options"].map(operand => ({
+  path: "Bun.spawn",
+  when: b.whenOperandHasProperty(operand, "ipc"),
+}));
+
 // Not process.connected: its getter answers a flag of native code and its setter does nothing (BunProcess.cpp processConnected, setProcessConnected): neither opens the channel.
+// Not process.channel: its ref() and unref() say whether the channel keeps the process alive (node_cluster_binding.rs set_ref), open or not.
 const channelUsers: readonly b.CallingEntrySpec[] = [
-  "Bun.spawn",
+  ...spawnsWithChannel,
   "node:child_process",
   "node:cluster",
-  "process.channel",
-  "process.disconnect",
-  "process.send",
+  ...functionsOfChannel.map(path => ({ path, when: b.whenCallRunsOtherCode })),
   ...["addListener", "on", "once", "prependListener", "prependOnceListener"].map(name => ({
     path: `%EventEmitter%.prototype.${name}`,
     when: whenChannelEvent,
@@ -240,7 +256,8 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "console._stderr": standardOutputFunctionsOf(2, "console._stderr", ...writtenByWarnings),
   "console._stdout": standardOutputFunctionsOf(1, "console._stdout"),
   "node:fs/promises": functionsIn("builtins/Fifo", "createFIFO"),
-  "node:module": [
+  "node:module": functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension"),
+  "node:module.wrapper": [
     b.functionUsed(
       b.functionIn("builtins/CommonJS", "getWrapperArrayProxy"),
       b.calledByHost({
@@ -250,7 +267,6 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
         result: [b.isValueOf("node:module.wrapper")],
       }),
     ),
-    ...functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension"),
   ],
   "node:module._initPaths": [heldAs(b.functionIn("builtins/NodeModuleObject", "_initPaths"), "node:module._initPaths")],
   "node:module._cache": requireCacheFunctions,
@@ -278,6 +294,11 @@ const environmentObjects = ["%ImportMeta%.env", "Bun.env", "process.env"].map(pa
 }));
 
 const workerConstructors = ["Worker", "native:Cpp:Worker.cpp:createNodeWorkerConstructor"];
+// Naming the class starts no worker. The binding is read where a worker is made.
+const startedWorkers: readonly b.CallingEntrySpec[] = [
+  { path: "Worker", when: b.whenCallRunsOtherCode },
+  "native:Cpp:Worker.cpp:createNodeWorkerConstructor",
+];
 
 const messagePortSources = ["MessageChannel", "MessagePort", "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding"];
 
@@ -418,6 +439,33 @@ const warningFunctions = [
 ];
 // Of native code that nothing describes, nobody knows what it emits as a warning.
 const warningFunctionsOfUndeclaredCode = [...warningPrinterFunctions, ...tickFunctions];
+
+// On Windows the object is a proxy that the function makes.
+const environmentObjectUsed = (result: readonly b.HostUseSpec[] | undefined) => [
+  b.functionUsed(
+    processInternal("windowsEnv"),
+    b.calledByHost({
+      times: "Once",
+      this: globalObject,
+      args: [
+        b.nativeCell(windowsEnvironmentStorageCell),
+        b.nativeCell(windowsEnvironmentNamesCell),
+        b.nativeCell(editsWindowsEnvironmentCell),
+        b.nativeCell(coercesEnvironmentValueCell),
+        b.nativeCell(resetsEnvironmentValueCell),
+        b.symbol,
+      ],
+      result,
+    }),
+  ),
+];
+const environmentObjectMade = (...otherUses: readonly b.HostUseSpec[]) =>
+  environmentObjectUsed([b.keptIn(environmentCell), ...otherUses]);
+// The report holds the object under `environmentVariables`.
+const environmentObjectHandedOut = environmentObjectUsed(undefined);
+
+// getOwnPropertyNames() of the enumerable names, then get() of each.
+const listedWithValues = b.passedTo("Object.entries", 0);
 
 const nativeCalls = [
   b.nativeCalls({
@@ -569,14 +617,13 @@ const nativeCalls = [
       "m_processEnvObject.getInitializedOnMainThread",
       "processEnvObject",
     ],
-    calls: functionsIn("builtins/ProcessObjectInternals", "windowsEnv"),
+    calls: environmentObjectMade(),
     otherMentions: [
       { file: inBindings("JSEnvironmentVariableMap.cpp"), times: 2 },
       { file: inBindings("JSEnvironmentVariableMap.h") },
       { file: inBindings("JSPropertyIterator.cpp") },
       { file: inBindings("ZigGlobalObject.cpp"), times: 4 },
       { file: inBindings("ZigGlobalObject.h") },
-      { file: inBindings("webcore/JSWorker.cpp") },
     ],
     callers: [
       { file: inBindings("BunObject.cpp"), caller: "constructEnvObject", onBehalfOf: ["Bun.env"] },
@@ -586,11 +633,13 @@ const nativeCalls = [
         file: inBindings("BunProcess.cpp"),
         caller: "constructReportObjectComplete",
         onBehalfOf: ["process.report.getReport"],
+        calls: environmentObjectHandedOut,
       },
       {
         file: inBindings("BunProcessReportObjectWindows.cpp"),
         caller: "constructReportObjectWindows",
         onBehalfOf: ["process.report.getReport"],
+        calls: environmentObjectHandedOut,
       },
       {
         file: inBindings("ImportMetaObject.cpp"),
@@ -600,7 +649,15 @@ const nativeCalls = [
       {
         file: inBindings("JSEnvironmentVariableMap.cpp"),
         caller: "ensureSharedEnvStoreForWorker",
-        onBehalfOf: workerConstructors,
+        onBehalfOf: startedWorkers,
+        calls: environmentObjectMade(listedWithValues),
+      },
+      // It copies the object that the thread has. It makes none.
+      {
+        file: inBindings("webcore/JSWorker.cpp"),
+        caller: "JSWorkerDOMConstructor::construct",
+        onBehalfOf: startedWorkers,
+        calls: environmentObjectMade(listedWithValues),
       },
     ],
   }),
@@ -633,6 +690,9 @@ export default b.declarations(
   callsOfInspect,
   Object.entries(loadedModulesByPath).flatMap(([path, loads]) => b.extend(path, { loads })),
   Object.entries(calledFunctionsByPath).flatMap(([path, callsFunctions]) => b.extend(path, { callsFunctions })),
+  [...functionsOfChannel.map(path => ({ path, when: b.whenCallRunsOtherCode })), ...spawnsWithChannel].flatMap(
+    ({ path, when }) => b.extend(path, { loads: channelModules.map(load => ({ ...load, when })) }),
+  ),
   channelUsers.flatMap(user =>
     typeof user === "string"
       ? b.extend(user, { callsFunctions: channelFunctions })
@@ -642,6 +702,35 @@ export default b.declarations(
   ),
   // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored.
   b.hostObject(environmentCell, { otherNames: b.string, keepsStringsOfStoredValues: true }),
+  b.hostObject(windowsEnvironmentStorageCell, { otherNames: b.string }),
+  b.hostObject(windowsEnvironmentNamesCell, {
+    prototype: "Array.prototype",
+    fields: { length: b.int(0, 2 ** 32 - 1) },
+    otherNames: b.string,
+  }),
+  b.hostFunction(editsWindowsEnvironmentCell, "JSEnvironmentVariableMap.cpp", "jsEditWindowsEnvVar", {
+    args: { name: b.string, value: b.string.or(b.null) },
+    returns: b.undefined,
+    capability: "heap",
+    throws: true,
+    implementation: b.hostCall,
+  }),
+  b.hostFunction(coercesEnvironmentValueCell, "JSEnvironmentVariableMap.cpp", "jsProcessEnvCoerceForWrite", {
+    args: { name: b.any.optional, value: b.any.optional },
+    returns: b.string,
+    capability: "js",
+    throws: true,
+    uses: { name: b.inspected, value: [b.runs("ToPrimitive")] },
+    implementation: b.hostCall,
+  }),
+  b.hostFunction(resetsEnvironmentValueCell, "JSEnvironmentVariableMap.cpp", "jsProcessEnvResetForDelete", {
+    args: { name: b.any.optional },
+    returns: b.undefined,
+    capability: "heap",
+    throws: true,
+    uses: { name: b.inspected },
+    implementation: b.hostCall,
+  }),
   // BunProcess.cpp constructVersions, constructProcessReleaseObject, constructFeatures: ordinary objects. Which versions and features there are differs between platforms and builds.
   b.hostObject(versionsCell, { otherNames: b.string }),
   b.hostObject(releaseCell, { fields: { name: b.string, sourceUrl: b.string, headersUrl: b.string } }),
@@ -698,6 +787,22 @@ export default b.declarations(
     capability: "js",
     throws: true,
     uses: { operands: [b.retained] },
+    implementation: b.hostCall,
+  }),
+  // ipc_host.rs send: it opens the channel, has the library turn a handle into what goes over it, writes the message as JSON.stringify or the structured clone does, and queues the callback.
+  b.hostFunction(sendsOverChannelCell, "BunProcess.cpp", "jsSend", {
+    args: { message: b.any.optional, handle: b.any.optional, options: b.any.optional, callback: b.any.optional },
+    returns: b.bool,
+    capability: "js",
+    throws: true,
+    uses: { message: [b.retained], handle: [b.retained], options: [b.retained], callback: [b.retained] },
+    implementation: b.hostCall,
+  }),
+  // It opens the channel to close it, or emits an error on process where the channel is closed already.
+  b.hostFunction(closesChannelCell, "BunProcess.cpp", "Bun__Process__disconnect", {
+    returns: b.undefined,
+    capability: "js",
+    throws: true,
     implementation: b.hostCall,
   }),
   // It emits the event: the listeners of the program get the warning like anything that native code holds.

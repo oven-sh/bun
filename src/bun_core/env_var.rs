@@ -74,6 +74,10 @@ new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIM
 // Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
 new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
+// Canary builds only: an executable built with `--aot` starts with this entry point, given as its path below the root of the
+// build, in place of the first.
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_START_AT: string, "BUN_AOT_START_AT", {});
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
 #[cfg(not(bun_locked_environment))]
@@ -96,6 +100,9 @@ new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 // size limit of the embedded module graph (`StandaloneModuleGraph::to_bytes`)
 // so a test can reach it without a 4 GiB input.
 new!(pub BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: unsigned, "BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES", {});
+// Testing hook for `bun build --compile --aot --trim`: the build also writes, under this name, the executable that the
+// same command line makes without `--trim`, so a test that holds the two against each other compiles its program once.
+new!(pub BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: string, "BUN_DEBUG_TEST_UNTRIMMED_OUTFILE", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});

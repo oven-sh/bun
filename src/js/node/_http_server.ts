@@ -3530,12 +3530,10 @@ ServerResponse.prototype._implicitHeader = function () {
 };
 
 // A response without a native handle (new ServerResponse(req) and assignSocket()) writes through OutgoingMessage, which keeps its own accounting.
-const {
-  writableCorked: { get: outgoingWritableCorked },
-  writableNeedDrain: { get: outgoingWritableNeedDrain },
-  writableFinished: { get: outgoingWritableFinished },
-  writableLength: { get: outgoingWritableLength },
-} = Object.getOwnPropertyDescriptors(OutgoingMessagePrototype);
+const outgoingWritableCorked = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableCorked")!.get;
+const outgoingWritableNeedDrain = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableNeedDrain")!.get;
+const outgoingWritableFinished = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableFinished")!.get;
+const outgoingWritableLength = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableLength")!.get;
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {

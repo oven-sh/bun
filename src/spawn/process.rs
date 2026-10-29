@@ -1219,14 +1219,10 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub(crate) fn append(&self, process: *mut T) {
-            // freshly boxed `TaskQueueEntry`; `into_raw` yields a valid owned pointer.
-            let entry = bun_core::heap::into_raw(Box::new(TaskQueueEntry {
+            self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
                 process,
                 next: bun_threading::Link::new(),
             }));
-            // SAFETY: `entry` was just `into_raw`'d from a live Box (non-null).
-            self.queue
-                .push(unsafe { core::ptr::NonNull::new_unchecked(entry) });
         }
 
         pub(crate) fn loop_(&self) {

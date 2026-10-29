@@ -1,0 +1,114 @@
+# -- source: read-finds-what-was-stored.ts
+# // A field that every object of a type is born with is surely found by a read, and what the read finds is what was stored.
+# type Pair = { left: number; right: string };
+#
+# function leftOf(pair: Pair): number {
+#   const left = pair.left;
+#   return left + 1;
+# }
+#
+# function rightOf(pair: Pair): string {
+#   const right = pair.right;
+#   return right + "!";
+# }
+#
+# const first: Pair = { left: 1, right: "one" };
+# const second: Pair = { left: 2, right: "two" };
+# console.log(leftOf(first), rightOf(first), leftOf(second), rightOf(second));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="read-finds-what-was-stored.ts" displayPath="read-finds-what-was-stored.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=353 kind=Variable
+typesite w1 module=m0 position=400 kind=Variable
+typesite w2 module=m0 position=185 kind=Parameter
+typesite w3 module=m0 position=169 kind=Result
+typesite w4 module=m0 position=272 kind=Parameter
+typesite w5 module=m0 position=255 kind=Result
+typesite w6 module=m0 position=454 kind=CallResult
+typesite w7 module=m0 position=469 kind=CallResult
+typesite w8 module=m0 position=485 kind=CallResult
+typesite w9 module=m0 position=501 kind=CallResult
+typesite w10 module=m0 position=215 kind=Variable
+typesite w11 module=m0 position=302 kind=Variable
+layout L0 name="Pair" module=m0 position=128 fields=[{key="left" declared={type=number} flags=[IsRequired]}, {key="right" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L0 members=[{key="left" value=Number{value=1}}, {key="right" value=String{value="one"}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="left" value=Number{value=2}}, {key="right" value=String{value="two"}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Data data=d0
+    v5 = Convert v4 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v6 = Data data=d1
+    v7 = Convert v6 declared={type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="console" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]}
+    v11 = PropGet v10 key="log"
+    v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v13 = Call v1, -, v5 calleeName="leftOf"
+    v14 = Convert v13 declared={type=number site=w6}
+    v15 = Call v3, -, v5 calleeName="rightOf"
+    v16 = Convert v15 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}
+    v17 = Call v1, -, v7 calleeName="leftOf"
+    v18 = Convert v17 declared={type=number site=w8}
+    v19 = Call v3, -, v7 calleeName="rightOf"
+    v20 = Convert v19 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]}
+    v21 = Call v12, v10, v14, v16, v18, v20 calleeKey="log" calleeName="console.log"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="leftOf" module=m0 position=169 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="left"
+    v2 = Convert v1 declared={type=number site=w10}
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    v5 = Convert v4 declared={type=number site=w3}
+    Return v5
+}
+function f2 name="rightOf" module=m0 position=255 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="right"
+    v2 = Convert v1 declared={type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]}
+    v3 = String string="!"
+    v4 = Add v2, v3
+    v5 = Convert v4 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]}
+    Return v5
+}
+# -- generated: f0 rightOf
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f5 callPosition=255 parent=1 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f4 callPosition=169 parent=3 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f5 callPosition=255 parent=5 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f4 callPosition=169 parent=7 module=m0}, {callee=f4 callPosition=4294967295 parent=7 isTailCall=true module=m0}, {callee=f4 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "one" = String string="one"
+# CHECK-NEXT: v1: "two" = String string="two"
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: v3: string = CallDirect v0 function=f5 @0:5 tail
+# CHECK-NEXT: v4: 3 = Integer integer=3
+# CHECK-NEXT: v5: string = CallDirect v1 function=f5 @0:1 tail
+# CHECK-NEXT: v6: undefined = CallBuiltin -, v2, v3, v4, v5 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="rightOf"
+# CHECK: module=m0 position=255 role=ParameterWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f5}
+# CHECK-LABEL: function {{*}}name="rightOf"
+# CHECK: module=m0 position=255 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}]} {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: "!" = String string="!"
+# CHECK-NEXT: v2: string = Add v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

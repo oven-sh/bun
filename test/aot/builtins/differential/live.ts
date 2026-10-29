@@ -1,29 +1,10 @@
 // Instances that only a running server or an open connection gives: each set gets its own.
-import { everyCandidate, operandOrigin, Unavailable, type Candidate } from "./instances";
+import { everyCandidate, openedCandidate, type Opened } from "./instances";
 import type { Realm } from "./members";
 
-type Connection = { value: object; close(): void };
+type Connection = Opened;
 
-function liveCandidate(instanceOf: string, open: () => Promise<Connection>): Candidate {
-  let current: Connection | undefined;
-  return {
-    name: `live:${instanceOf}`,
-    kind: "Pristine",
-    instanceOf,
-    async prepare() {
-      current = await open();
-    },
-    create(log, operand) {
-      if (!current) throw new Unavailable(`no ${instanceOf} is open`);
-      log.identify(current.value, operandOrigin(operand));
-      return current.value;
-    },
-    release() {
-      current?.close();
-      current = undefined;
-    },
-  };
-}
+const liveCandidate = (instanceOf: string, open: () => Promise<Connection>) => openedCandidate(`live:${instanceOf}`, instanceOf, open);
 
 function createServer(onRequest: (request: Request) => void, onOpen: (socket: object) => void) {
   return Bun.serve({

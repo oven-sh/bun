@@ -1,0 +1,14 @@
+{
+  "features": [
+    "StringLocaleCase",
+    "NumberPrecisionMethods",
+    "StringPadding",
+    "StringHTML",
+    "StringNormalize",
+    "StringWellFormed",
+    "StringRepeat",
+    "StringLastIndexOf",
+    "EscapeUnescape",
+    "URICoding"
+  ]
+}

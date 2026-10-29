@@ -400,25 +400,11 @@ Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
-`bun compile`, which is short for `bun build --compile --aot`, compiles your program to machine code at build time. It uses your TypeScript types to do that. The executable has no JIT and no bytecode, so it starts faster and uses less memory.
+```bash icon="terminal" terminal
+bun compile ./app.ts --outfile myapp
+```
 
-<Tabs>
-  <Tab title="CLI">
-    ```bash icon="terminal" terminal
-    bun compile ./app.ts --outfile myapp
-    ```
-  </Tab>
-  <Tab title="JavaScript">
-    ```ts build.ts icon="/icons/typescript.svg"
-    await Bun.build({
-      entrypoints: ["./app.ts"],
-      compile: { outfile: "./myapp", aot: true },
-    });
-    ```
-  </Tab>
-</Tabs>
-
-A few things differ from `bun run`. Start with [Ahead-of-time compilation](/compiler/aot). If an error message sent you here, see [Troubleshooting](/compiler/troubleshooting).
+`bun compile` is short for `bun build --compile --aot`. It compiles your program to machine code at build time, so the executable starts faster and uses less memory. See [Ahead-of-time compilation](/compiler/aot).
 
 ---
 
@@ -452,33 +438,11 @@ console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
 
 ### Turn off `eval` and `new Function`
 
-**`--disallow-code-generation-from-strings`** - In the executable, `eval()`, `new Function()` and the constructors of async and generator functions throw an `EvalError`, as they do in Node.js with the flag of the same name. `node:vm` is not affected.
-
-<Tabs>
-  <Tab title="CLI">
-    ```bash icon="terminal" terminal
-    bun build --compile --disallow-code-generation-from-strings ./app.ts --outfile myapp
-    ```
-  </Tab>
-  <Tab title="JavaScript">
-    ```ts build.ts icon="/icons/typescript.svg"
-    await Bun.build({
-      entrypoints: ["./app.ts"],
-      compile: {
-        disallowCodeGenerationFromStrings: true,
-        outfile: "./myapp",
-      },
-    });
-    ```
-  </Tab>
-</Tabs>
-
-```ts app.ts icon="/icons/typescript.svg"
-eval("1 + 1"); // EvalError: Code generation from strings disallowed for this context
-console.log(process.execArgv); // ["--disallow-code-generation-from-strings"]
+```bash icon="terminal" terminal
+bun build --compile --disallow-code-generation-from-strings ./app.ts --outfile myapp
 ```
 
-It is Bun's [runtime flag](/runtime/code-generation-from-strings), placed in front of what `--compile-exec-argv` gives. `=strict` (`"strict"` in `Bun.build`) turns off every other way a string becomes code as well. With `bun compile --trim`, the flag also makes the executable smaller: see [Turn off code from strings](/compiler/size#turn-off-code-from-strings).
+In this executable, `eval()` and `new Function()` throw an `EvalError`. It's Bun's [runtime flag](/runtime/code-generation-from-strings) of the same name, embedded in the executable. In `Bun.build`, the option is `compile: { disallowCodeGenerationFromStrings: true }`.
 
 ### Runtime arguments via `BUN_OPTIONS`
 
@@ -495,7 +459,7 @@ BUN_OPTIONS="--heap-prof-md" ./myapp
 BUN_OPTIONS="--smol --cpu-prof-md" ./myapp
 ```
 
-With `bun compile` or `--aot`, two build flags matter here. An executable built with `--no-compile-function-source` rejects flags that load code, such as `--preload`. `--inspect` needs `--compile-inspector`. See [Options that load code](/compiler/compatibility#options-that-load-code).
+An executable built with `bun compile` only takes `--inspect` if you built it with [`--compile-inspector`](/compiler/debugging#the-inspector).
 
 ---
 
@@ -608,7 +572,7 @@ Checked 63 installs across 64 packages (no changes) [5.00ms]
 
 CLI tools built on top of Bun can use this to install packages, bundle dependencies, or run other files without downloading a separate binary or installing Bun.
 
-An executable built with `bun compile` or `--aot` doesn't include the `bun` CLI. With `BUN_BE_BUN=1` it tells you to run `bun` instead, and exits with code `70`. See [Tools](/compiler/size#tools).
+An executable built with `bun compile` doesn't include the `bun` CLI, so `BUN_BE_BUN=1` doesn't work there.
 
 ---
 
@@ -616,25 +580,11 @@ An executable built with `bun compile` or `--aot` doesn't include the `bun` CLI.
 
 <Warning>`--trim` is experimental.</Warning>
 
-A standalone executable is a copy of `bun` with your program attached, so it also contains the tools that only the `bun` command uses: the package manager, the test runner, the type checker. `--trim` removes them. With [`bun compile`](/compiler/aot), it also removes the Bun and Node.js APIs your code never calls.
+```bash icon="terminal" terminal
+bun build --compile --trim ./app.ts --outfile myapp
+```
 
-<Tabs>
-  <Tab title="CLI">
-    ```bash icon="terminal" terminal
-    bun build --compile --trim ./app.ts --outfile myapp
-    ```
-  </Tab>
-  <Tab title="JavaScript">
-    ```ts build.ts icon="/icons/typescript.svg"
-    await Bun.build({
-      entrypoints: ["./app.ts"],
-      compile: { outfile: "./myapp", trim: true },
-    });
-    ```
-  </Tab>
-</Tabs>
-
-[Smaller executables](/compiler/size) has sizes, what a trimmed executable no longer does, and how to make it smaller still.
+A standalone executable is a copy of `bun` with your program attached, so it also contains the package manager, the test runner and the type checker. `--trim` removes them. With [`bun compile`](/compiler/aot), it also removes the Bun and Node.js APIs your code never calls. See [Smaller executables](/compiler/size).
 
 ---
 
@@ -977,7 +927,7 @@ console.log(addon.hello());
 
 If you're using `@mapbox/node-pre-gyp` or similar tools, require the `.node` file directly, or it won't bundle correctly.
 
-Some addons load a shared library that ships beside them. `sharp` is one: its `.node` file needs `libvips` from a neighboring package. With `--aot`, embed the folder that holds both, and the addon finds the library:
+Some addons load a shared library that ships beside them. The `.node` file of `sharp` needs `libvips` from a neighboring package. With `--aot`, embed the folder that holds both:
 
 ```bash terminal icon="terminal"
 bun build --compile --aot ./index.ts --asset node_modules/@img --outfile mycli
@@ -1021,18 +971,9 @@ const html = await Bun.file(path.join(publicDir, "index.html")).text();
 
 Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
 
-With `--aot`, modules keep their places relative to one another, and so do the files you embed. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`, and `--asset node_modules/@img` is at `node_modules/@img`. A file or folder from outside of the working directory keeps only its own name: `--asset ../shared` is at `shared`, at the top of the embedded files.
+With `--aot`, your modules and the files you embed keep their places relative to one another. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`.
 
-`process.chdir()` works on an embedded directory. After it, `process.cwd()`, `path.resolve()` and the relative paths that you pass to `node:fs`, `Bun.file()`, `Bun.mmap()` and `Bun.Glob` start there.
-
-```ts index.ts icon="/icons/typescript.svg"
-process.chdir(import.meta.dir);
-const html = fs.readFileSync("public/index.html", "utf8");
-```
-
-The operating system has no such directory. A child process or a `Bun.$` command starts in the directory that the executable was started from, unless you pass `cwd`, and reads files from disk only. There is nothing above `import.meta.dir`: `process.chdir("..")` throws `ENOENT` there.
-
-Embedded files are read-only. Writing, creating, renaming or deleting anything under `import.meta.dir` fails with `EROFS`, as on a read-only file system.
+Embedded files are read-only, and writing to one fails with `EROFS`. `process.chdir()` works on an embedded directory.
 
 You can also embed individual files via the `with { type: "file" }` import attribute or, for files that use the `file` loader (images, fonts, and so on) as well as `.wasm` and `.node` files, by adding them as extra entry points. With `--aot` an extra entry point is always compiled as code, so use `--asset` for these. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
 
@@ -1405,17 +1346,13 @@ interface CompileBuildOptions {
   bytecodeOrder?: string | string[] | false | null; // Order file(s) to lay the bytecode out by (requires bytecode: true)
   jitPolicy?: number; // JIT tier-up threshold scale at startup (default: 1 = normal)
   aot?: boolean; // Compile the program to machine code ahead of time (default: false)
-  aotLogTypeMismatches?: boolean; // With aot: log every value that doesn't match its declared type (default: false)
-  aotExplain?: AotReport | AotReport[]; // With aot: reports to add to BuildOutput.logs, such as "guards" or "trim"
-  aotDisable?: string | string[]; // With aot: steps of the compiler to build without, such as "pass:PlaceTypeTests"
-  aotHeat?: AotHeat; // With aot: replaces the estimate of how often code runs, such as "everything-is-cold"
-  functionSource?: boolean; // With aot: embed function source code, so that fn.toString() returns it (default: true)
-  allowCodeFromDisk?: boolean; // With aot: let import() and require() load code that isn't in the executable from disk (default: false)
+  aotLogTypeMismatches?: boolean; // With aot: log values that don't match their declared type (default: false)
+  aotExplain?: AotReport | AotReport[]; // With aot: reports to add to BuildOutput.logs, such as "guards"
+  functionSource?: boolean; // With aot: embed function source code for fn.toString() (default: true)
+  allowCodeFromDisk?: boolean; // With aot: let import() and require() load code from disk (default: false)
   inspector?: boolean; // With aot: let a debugger attach to the executable (default: false)
-  obfuscate?: boolean; // With aot: strip function names and file names, and write a source map next to the executable. Same as sourcemap: "external" (default: false)
-  trim?:
-    boolean | { allow?: Bun.Build.TrimFeature[]; remove?: Bun.Build.TrimFeature[]; locales?: string[]; log?: boolean }; // Remove the Bun and Node.js APIs your code never calls (default: false)
-  disallowCodeGenerationFromStrings?: boolean | "strict"; // eval() and new Function() throw in the executable (default: false)
+  trim?: boolean | TrimOptions; // Remove the Bun and Node.js APIs your code never calls (default: false)
+  disallowCodeGenerationFromStrings?: boolean | "strict"; // eval() and new Function() throw (default: false)
   windows?: {
     icon?: string; // Path to .ico file
     hideConsole?: boolean; // Hide console window

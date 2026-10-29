@@ -8,11 +8,11 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
 
 // Methods of many lengths that are taken off their objects. Each has an entry that tests `this`, throws by a call if it is not
 // an object of the class, and goes on into the method, which is laid next: the shape that once ended in a call.
-const program = join(import.meta.dir, "programs", "typed-objects", "detached-methods-many-lengths.ts");
+const program = join(import.meta.dir, "parallel", "typed-objects", "detached-methods-many-lengths.ts");
 
 function codeOf(executable: Buffer) {
   const magic = Buffer.from("BUNAOT01", "latin1");

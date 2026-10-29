@@ -5,8 +5,13 @@ const { StringDecoder } = require("node:string_decoder");
 
 const NumberIsInteger = Number.isInteger;
 const MathFloor = Math.floor;
-const ObjectDefineProperties = Object.defineProperties;
-const ObjectDefineProperty = Object.defineProperty;
+// Object lists a member from when it is first read. The modules that are loaded behind this one read the first two ahead of the third.
+const {
+  setPrototypeOf: _ObjectSetPrototypeOf,
+  getPrototypeOf: _ObjectGetPrototypeOf,
+  defineProperties: ObjectDefineProperties,
+  defineProperty: ObjectDefineProperty,
+} = Object;
 const ArrayPrototypeSlice = Array.prototype.slice;
 type Key = string; // do we need to allow symbols?
 type int32 = import("bun").int32;

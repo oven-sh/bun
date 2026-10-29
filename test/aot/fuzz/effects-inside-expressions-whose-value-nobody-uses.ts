@@ -190,7 +190,8 @@ const places: readonly ((S: string, n: number) => string)[] = [
   (S, n) => `function often${n}() {\n${indented(S)}\n}\nfor (let run = 0; run < 3; run++) attempt(often${n});`,
   (S, n) => `const arrow${n} = () => {\n${indented(S)}\n};\nattempt(arrow${n});`,
   (S, n) => `class In${n} {\n  method() {\n${indented(indented(S))}\n  }\n}\nattempt(() => new In${n}().method());`,
-  (S, n) => `async function later${n}() {\n  await null;\n${indented(S)}\n}\nawait later${n}().catch(error => log.push(error.name));`,
+  (S, n) =>
+    `async function later${n}() {\n  await null;\n${indented(S)}\n}\nawait later${n}().catch(error => log.push(error.name));`,
   (S, n) => `function* steps${n}() {\n  yield 1;\n${indented(S)}\n}\nattempt(() => [...steps${n}()]);`,
 ];
 

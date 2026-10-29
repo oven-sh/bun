@@ -622,7 +622,7 @@ fn send_sync_callback(
     // `read_item`.
     unsafe {
         result.body_into(&mut (*(*this).response_buffer).list);
-        (*this).write_item(result.detach_lifetime());
+        (*this).write_item(result.without_borrowed_body());
     }
 }
 

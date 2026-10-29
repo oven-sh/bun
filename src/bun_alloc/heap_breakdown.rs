@@ -25,9 +25,6 @@ bun_opaque::opaque_ffi! {
 // SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing
 // `&Zone` across threads is the documented usage.
 unsafe impl Sync for Zone {}
-// SAFETY: `Zone` is an opaque libmalloc handle with no thread-affine state; the
-// zone API is callable from any thread, so transferring the handle is sound.
-unsafe impl Send for Zone {}
 
 impl Zone {
     /// # Safety

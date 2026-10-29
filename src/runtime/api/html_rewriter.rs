@@ -1918,8 +1918,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     ) -> bun_sys::Result<JSValue> {
         use streams::PendingState;
         if self.pending.get().state == PendingState::Pending {
-            let prom = self.pending.with_mut(|p| p.promise(cx));
-            let prom_js = JSPromise::opaque_ref(prom).to_js();
+            let prom_js = self.pending.with_mut(|p| p.promise(cx));
             if let Some(cell) = self.cell.try_get() {
                 js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
             }
@@ -1937,11 +1936,10 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
                 || self.output_backpressured()
                 || self.background_pull_armed.get())
         {
-            let prom = self.pending.with_mut(|p| {
+            let prom_js = self.pending.with_mut(|p| {
                 p.result = Writable::Owned(0);
                 p.promise(cx)
             });
-            let prom_js = JSPromise::opaque_ref(prom).to_js();
             if let Some(cell) = self.cell.try_get() {
                 js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
             }

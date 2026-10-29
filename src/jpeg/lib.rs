@@ -1,4 +1,4 @@
-//! JPEG, bit for bit like libjpeg-turbo 3.2.0 on x86-64. The modules name the files that they derive from (LICENSE.md).
+//! libjpeg-turbo 3.2.0 on x86-64, bit for bit but for `Error::RedundantScan`. Modules name their sources (LICENSE.md).
 
 #![feature(allocator_api)]
 #![forbid(unsafe_code)]

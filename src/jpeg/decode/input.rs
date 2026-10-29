@@ -144,7 +144,7 @@ impl Restarts {
         self.interval != 0
     }
 
-    /// Called before each MCU. Returns whether a restart marker was due, which has then been read.
+    /// Counts an MCU, or a row of them if lossless, that is about to be decoded. True if it has read a restart marker.
     #[inline(always)]
     pub(crate) fn due(&mut self, input: &mut Input) -> bool {
         if self.interval == 0 {

@@ -1,4 +1,4 @@
-// The row kernels of src/jpeg (jdcolor.c, jccolor.c, jcsample.c, jdsample.c, jdcolext-sse2.asm, jccolext-sse2.asm).
+// Row kernels of src/jpeg, from jdcolor.c, jccolor.c, jcsample.c, jdsample.c, j[cd]colext-sse2.asm: src/jpeg/NOTICE.md.
 
 // Left are SSSE3, AVX2 and one kind of NEON. The others make these kernels no faster, and SVE2_128 makes them slower.
 #undef HWY_DISABLED_TARGETS

@@ -228,7 +228,7 @@ impl<'a> Decoder<'a> {
         !self.lossless && self.precision == 8 && self.subsampling_known()
     }
 
-    /// Whether TurboJPEG 3.1 has a name for the sampling factors: 4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1, 4:4:1 or gray.
+    /// Whether TurboJPEG has a name for the sampling factors: 4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1, 4:4:1 or gray.
     fn subsampling_known(&self) -> bool {
         let Some((first, others)) = self.components.split_first() else {
             return false;

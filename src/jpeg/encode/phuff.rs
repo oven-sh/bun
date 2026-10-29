@@ -231,7 +231,7 @@ impl AcEncoder {
         if run > 0 || correction.len > 0 {
             self.eob_run += 1;
             if correction.len > 0 {
-                // Within the capacity: each entry has a bit or more, and there are never `MAX_CORR_BITS` bits.
+                // Within the capacity: an entry has a bit or more, and at most `MAX_CORR_BITS - 63` bits are waiting.
                 self.waiting.push(correction);
                 self.waiting_bits += correction.len as usize;
             }

@@ -305,7 +305,7 @@ describe("Floyd–Steinberg dither", () => {
 
 // src/jsc/bindings/highway_jpeg.cpp against the formulas of libjpeg's jdcolor.c, jccolor.c, jcsample.c and jdsample.c.
 describe("JPEG row kernels", () => {
-  // Every length up to two of the widest vectors (64 bytes) and a tail, then a few long ones.
+  // Every length up to four of the widest vectors (32 bytes) and a tail, then a few long ones.
   const lengths = [...Array(150).keys(), 255, 256, 257, 1000, 1029];
   const guard = 0xa5;
   const fix = (x: number) => Math.floor(x * 65536 + 0.5);

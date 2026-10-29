@@ -69,7 +69,7 @@ pub enum Error {
         "Invalid restart interval {0}; must be an integer multiple of the number of MCUs in an MCU row ({1})"
     )]
     BadRestart(u32, u32),
-    #[error("Requested feature was omitted at compile time")]
+    #[error("Sorry, arithmetic coding is not implemented")]
     ArithNotImpl,
     #[error("DCT coefficient (lossy) or spatial difference (lossless) out of range")]
     BadDctCoef,

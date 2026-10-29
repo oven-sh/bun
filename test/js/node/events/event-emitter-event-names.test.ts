@@ -192,6 +192,39 @@ describe("eventNames() skips a name whose slot in _events holds undefined", () =
   });
 });
 
+describe("eventNames() returns [] early only when _eventsCount is 0", () => {
+  test("throws a TypeError for a receiver that has no _eventsCount and no _events", () => {
+    // The text of the message is the engine's.
+    const message =
+      typeof Bun === "undefined"
+        ? "Reflect.ownKeys called on non-object"
+        : "Reflect.ownKeys requires the first argument be an object";
+    const receivers = [{}, Object.create(null), new (class Other {})(), new Proxy({}, {}), 1, "string"];
+    for (const receiver of receivers) {
+      const call = () => EventEmitter.prototype.eventNames.call(receiver);
+      assert.throws(call, TypeError);
+      assert.throws(call, { message });
+    }
+  });
+
+  test("gives [] for an heir of the prototype, for the prototype, and for a copy of its properties", () => {
+    const receivers = [
+      Object.create(EventEmitter.prototype),
+      EventEmitter.prototype,
+      Object.assign({}, EventEmitter.prototype),
+    ];
+    for (const receiver of receivers) assert.deepStrictEqual(EventEmitter.prototype.eventNames.call(receiver), []);
+  });
+
+  test('lists the names when the count is -1, NaN or "0"', () => {
+    for (const count of [-1, NaN, "0"]) {
+      const emitter = new EventEmitter().on("a", fn);
+      (emitter as any)._eventsCount = count;
+      assert.deepStrictEqual(emitter.eventNames(), ["a"]);
+    }
+  });
+});
+
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { bunEnv, nodeExeAtLeast } = await import("harness");

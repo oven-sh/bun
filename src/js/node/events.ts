@@ -833,7 +833,7 @@ shared.originals.eventEmitter = {
 
 // https://github.com/nodejs/node/blob/v26.12.1/lib/events.js#L872-L883
 EventEmitterPrototype.eventNames = function eventNames(this: $Node.EventEmitter) {
-  if (!(this._eventsCount > 0)) return [];
+  if (this._eventsCount === 0) return [];
   const events = this._events!;
   const keys = ReflectOwnKeys(events);
   const { length } = keys;

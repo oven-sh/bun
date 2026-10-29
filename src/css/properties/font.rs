@@ -48,7 +48,7 @@ impl FontWeight {
             return Ok(FontWeight::Absolute(v));
         }
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"bolder" => Ok(FontWeight::Bolder),
             b"lighter" => Ok(FontWeight::Lighter),
@@ -100,7 +100,7 @@ impl AbsoluteFontWeight {
             return Ok(AbsoluteFontWeight::Weight(n));
         }
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"normal" => Ok(AbsoluteFontWeight::Normal),
             b"bold" => Ok(AbsoluteFontWeight::Bold),
@@ -330,7 +330,7 @@ pub enum FontFamily {
 
 impl FontFamily {
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if let Ok(value) = input.try_parse(|p| p.expect_string().map(std::ptr::from_ref::<[u8]>)) {
+        if let Ok(value) = input.try_parse(|p| p.expect_string()) {
             // arena-owned: parser slice lives for 'bump
             return Ok(FontFamily::FamilyName(value));
         }
@@ -342,11 +342,10 @@ impl FontFamily {
         // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
         let bump: &'static bun_alloc::Arena =
             unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
-        let value = input.expect_ident_cloned()?;
+        let value = input.expect_ident()?;
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
-        while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(std::ptr::from_ref::<[u8]>))
-        {
+        while let Ok(ident) = input.try_parse(|p| p.expect_ident()) {
             if string.is_none() {
                 let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
                 s.extend_from_slice(value);
@@ -355,8 +354,7 @@ impl FontFamily {
 
             if let Some(s) = string.as_mut() {
                 s.push(b' ');
-                // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { crate::arena_str(ident) });
+                s.extend_from_slice(ident);
             }
         }
 
@@ -501,7 +499,7 @@ impl FontStyle {
 
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<FontStyle> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"normal" => Ok(FontStyle::Normal),
             b"italic" => Ok(FontStyle::Italic),

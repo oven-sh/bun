@@ -230,7 +230,7 @@ pub mod enum_property_util {
 
     pub fn parse<T: EnumProperty>(input: &mut Parser) -> CssResult<T> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         if let Some(x) = T::from_ascii_case_insensitive(ident) {
             return Ok(x);
         }
@@ -290,7 +290,7 @@ fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) 
 
 fn parse_at_rule<P: AtRuleParser>(
     start: &ParserState,
-    name: &[u8],
+    name: &'static [u8],
     input: &mut Parser,
     parser: &mut P,
 ) -> CssResult<P::AtRule> {
@@ -334,7 +334,7 @@ fn parse_at_rule<P: AtRuleParser>(
 }
 
 fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
-    name: &[u8],
+    name: &'static [u8],
     input: &mut Parser,
     options: &ParserOptions,
     at_rule_parser: &mut T,
@@ -353,11 +353,6 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
         }
     }
 
-    // TODO: lifetime — `name` borrows the input arena. The detach is the
-    // same `'static` erasure already applied to `Token`/`AtRulePrelude::Unknown`.
-    // SAFETY: `name` points into the parser's source/arena, which outlives every
-    // `AtRulePrelude`/warning produced from this parser (see `src_str`).
-    let name: &'static [u8] = unsafe { src_str(name) };
     options.warn(&input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
     let tokens = TokenListFns::parse(input, options, 0)?;
@@ -644,7 +639,7 @@ pub trait CustomAtRuleParser {
 
     fn parse_prelude(
         this: &mut Self,
-        name: &[u8],
+        name: &'static [u8],
         input: &mut Parser,
         options: &ParserOptions,
     ) -> CssResult<Self::Prelude>;
@@ -691,7 +686,7 @@ pub trait AtRuleParser {
 
     fn parse_prelude(
         _this: &mut Self,
-        name: &[u8],
+        name: &'static [u8],
         input: &mut Parser,
     ) -> CssResult<Self::Prelude> {
         Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
@@ -740,7 +735,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
     fn parse_prelude(
         _this: &mut Self,
-        name: &[u8],
+        name: &'static [u8],
         input: &mut Parser,
         _: &ParserOptions,
     ) -> CssResult<Self::Prelude> {
@@ -1083,7 +1078,7 @@ pub trait DeclarationParser {
     type Declaration;
     fn parse_value(
         this: &mut Self,
-        name: &[u8],
+        name: &'static [u8],
         input: &mut Parser,
     ) -> CssResult<Self::Declaration>;
 }
@@ -1118,7 +1113,7 @@ where
             self.input.skip_cdc_and_cdo();
 
             let start = self.input.state();
-            let at_keyword: Option<&[u8]> = match self.input.next_byte()? {
+            let at_keyword: Option<&'static [u8]> = match self.input.next_byte()? {
                 b'@' => 'brk: {
                     let at_keyword: &Token =
                         match self.input.next_including_whitespace_and_comments() {
@@ -1195,7 +1190,7 @@ mod rule_parsers {
 
         fn parse_prelude(
             this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> CssResult<Self::Prelude> {
             // Case-insensitive dispatch on at-rule name.
@@ -1204,11 +1199,7 @@ mod rule_parsers {
                     if (this.state as u8) > (TopLevelState::Imports as u8) {
                         return Err(input.new_custom_error(ParserError::unexpected_import_rule));
                     }
-                    // TODO: lifetime — arena-owned slice; same `'static` erasure
-                    // as `Token` payloads.
-                    // SAFETY: the returned slice borrows `input.src`/arena, which outlives
-                    // the `AtRulePrelude` it is stored in (see `src_str`).
-                    let url_str: &'static [u8] = unsafe { src_str(input.expect_url_or_string()?) };
+                    let url_str = input.expect_url_or_string()?;
 
                     let layer: Option<Option<LayerName>> =
                         if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
@@ -1247,19 +1238,8 @@ mod rule_parsers {
                     if (this.state as u8) > (TopLevelState::Namespaces as u8) {
                         return Err(input.new_custom_error(ParserError::unexpected_namespace_rule));
                     }
-                    let prefix = input
-                        .try_parse(|p| {
-                            p.expect_ident().map(|s| -> &'static [u8] {
-                                // SAFETY: `s` borrows the parser's source/arena, which
-                                // outlives the `AtRulePrelude` it is stored in (see
-                                // `src_str`).
-                                unsafe { src_str(s) }
-                            })
-                        })
-                        .ok();
-                    // SAFETY: the returned slice borrows `input.src`/arena, which outlives
-                    // the `AtRulePrelude` it is stored in (see `src_str`).
-                    let namespace: &'static [u8] = unsafe { src_str(input.expect_url_or_string()?) };
+                    let prefix = input.try_parse(|p| p.expect_ident()).ok();
+                    let namespace = input.expect_url_or_string()?;
                     return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
                 },
                 b"charset" => {
@@ -1553,15 +1533,9 @@ mod rule_parsers {
 
         fn parse_prelude(
             this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> CssResult<Self::Prelude> {
-            // TODO: lifetime — `name` borrows the input arena. Detach to
-            // `'static` to feed `BasicParseErrorKind::at_rule_invalid` (matches the
-            // `Token` payload erasure throughout this file).
-            // SAFETY: `name` points into the parser's source/arena, which outlives
-            // every prelude/error produced from this parser (see `src_str`).
-            let name: &'static [u8] = unsafe { src_str(name) };
             let result: Self::Prelude = 'brk: {
                 crate::match_ignore_ascii_case! { name, {
                     b"media" => break 'brk AtRulePrelude::Media(parse_media_list(input, this.options)?),
@@ -2115,7 +2089,7 @@ mod rule_parsers {
     impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
         type Declaration = ();
 
-        fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<()> {
+        fn parse_value(this: &mut Self, name: &'static [u8], input: &mut Parser) -> CssResult<()> {
             // Note: split-borrow — see `NestedComposesCtx` above.
             // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
             // detach that borrow so `input` can be re-borrowed mutably below. The
@@ -2673,10 +2647,7 @@ mod stylesheet_impl {
                     Token::Whitespace(_) => {}
                     Token::Comment(comment) => {
                         if comment.first() == Some(&b'!') {
-                            // TODO: lifetime — arena slice; see erasure note.
-                            // SAFETY: `comment` borrows `parser.src`, which outlives
-                            // `license_comments` (consumed before `parser` drops).
-                            license_comments.push(unsafe { src_str(comment) });
+                            license_comments.push(comment);
                         }
                     }
                     _ => break,
@@ -3148,13 +3119,6 @@ impl<'a> Parser<'a> {
         let local_scope = &mut extra.local_scope;
         let source_index = extra.source_index.get();
 
-        // SAFETY: `name` is a slice into the parser source / arena, both of
-        // which outlive the symbol table (`ParserExtra` is consumed into
-        // `StylesheetExtra` alongside the same arena). Detach the borrow so it
-        // satisfies `Symbol.original_name: &'static [u8]` (the parser's
-        // crate-wide lifetime erasure — see PORTING.md §Lifetimes).
-        let name_static: &'static [u8] = unsafe { src_str(name) };
-
         // Borrowed probe so a repeated class/id name doesn't box a fresh key
         // per selector; `StringArrayHashMap::get_or_put` boxes on miss only.
         let gop = local_scope.get_or_put(name).expect("unreachable");
@@ -3169,7 +3133,8 @@ impl<'a> Parser<'a> {
             let inner_index = u32::try_from(symbols.len()).unwrap();
             symbols.push(bun_ast::Symbol {
                 kind: bun_ast::SymbolKind::LocalCss,
-                original_name: name_static.into(),
+                // `name` points into the parser source or arena, which outlive the symbol table.
+                original_name: name.into(),
                 ..Default::default()
             });
             *entry = LocalEntry {
@@ -3186,7 +3151,7 @@ impl<'a> Parser<'a> {
     /// an error about the import underlines.
     pub(crate) fn add_import_record(
         &mut self,
-        url: &[u8],
+        url: &'static [u8],
         start_position: usize,
         end_position: usize,
         kind: ImportKind,
@@ -3196,12 +3161,8 @@ impl<'a> Parser<'a> {
             // for this scope; provenance shared only with raw-pointer aliases.
             let import_records = unsafe { &mut *ptr.as_ptr() };
             let idx = u32::try_from(import_records.len()).unwrap();
-            // SAFETY: `url` borrows the parser source / arena which outlives
-            // every `ImportRecord` produced by this parse; the lifetime
-            // is erased to 'static (see PORTING.md §Lifetimes).
-            let url_static: &'static [u8] = unsafe { src_str(url) };
             import_records.push(ImportRecord {
-                path: ast::fs::path_init(url_static),
+                path: ast::fs::path_init(url),
                 kind,
                 range: bun_ast::Range {
                     loc: bun_ast::Loc {
@@ -3217,10 +3178,7 @@ impl<'a> Parser<'a> {
             });
             Ok(idx)
         } else {
-            // SAFETY: same lifetime erasure as above; the error token is only
-            // used for diagnostics borrowing the same source.
-            let url_static: &'static [u8] = unsafe { src_str(url) };
-            Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url_static)))
+            Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url)))
         }
     }
 
@@ -3286,7 +3244,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Return a slice of the CSS input, from the given position to the current one.
-    pub(crate) fn slice_from(&self, start_position: usize) -> &[u8] {
+    pub(crate) fn slice_from(&self, start_position: usize) -> &'static [u8] {
         self.input.tokenizer.slice_from(start_position)
     }
 
@@ -3531,7 +3489,8 @@ impl<'a> Parser<'a> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_string(&mut self) -> CssResult<&[u8]> {
+    /// `'static` here and below is `Token`'s placeholder for the source and arena lifetime.
+    pub(crate) fn expect_string(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::QuotedString(s) = tok {
@@ -3541,7 +3500,7 @@ impl<'a> Parser<'a> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_ident(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_ident(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Ident(s) = tok {
@@ -3553,7 +3512,7 @@ impl<'a> Parser<'a> {
 
     /// Parse either a `<ident-token>` or a `<string-token>`, and return the
     /// unescaped value.
-    pub(crate) fn expect_ident_or_string(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_ident_or_string(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         match tok {
@@ -3577,7 +3536,7 @@ impl<'a> Parser<'a> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_function(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_function(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Function(fn_name) = tok {
@@ -3610,14 +3569,14 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a `<url-token>` and return the unescaped value.
-    pub(crate) fn expect_url(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_url(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         match tok {
             Token::UnquotedUrl(value) => return Ok(*value),
             Token::Function(name) => {
                 if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string_cloned());
+                    return self.parse_nested_block(|parser| parser.expect_string());
                 }
             }
             _ => {}
@@ -3628,7 +3587,7 @@ impl<'a> Parser<'a> {
 
     /// Parse either a `<url-token>` or a `<string-token>`, and return the
     /// unescaped value.
-    pub(crate) fn expect_url_or_string(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_url_or_string(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         match tok {
@@ -3636,77 +3595,13 @@ impl<'a> Parser<'a> {
             Token::QuotedString(value) => return Ok(*value),
             Token::Function(name) => {
                 if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string_cloned());
+                    return self.parse_nested_block(|parser| parser.expect_string());
                 }
             }
             _ => {}
         }
         let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
-    }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // `*_cloned` helpers — C-7 in PORT_NOTES_PLAN.
-    //
-    // These wrap `expect_*` / `slice_from` and return the slice with its
-    // lifetime detached from `&mut self` (to `'static`, matching `Token`'s
-    // current `&'static [u8]` payload). All `unsafe { src_str(..) }` call
-    // sites in the CSS parser route through here instead of laundering the
-    // lifetime locally.
-    //
-    // Once C-9 threads `'i` through `Token<'i>`, these become safe
-    // `-> CssResult<&'i [u8]>` and the body drops the `unsafe` — no caller
-    // changes needed.
-    // ──────────────────────────────────────────────────────────────────────
-
-    /// `expect_ident` with the borrow detached from `&mut self` so the parser
-    /// is reusable while the slice is held (and the slice fits `Token::Ident`).
-    #[inline]
-    pub(crate) fn expect_ident_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_ident()?;
-        // SAFETY: `s` is a sub-slice of `self.input.tokenizer.src` (`&'a [u8]`)
-        // or arena-owned; the returned reference is only ever stored in
-        // structures reachable through the same `Parser<'a>`. See `src_str`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `expect_function` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn expect_function_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_function()?;
-        // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `expect_string` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn expect_string_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_string()?;
-        // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `expect_ident_or_string` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn expect_ident_or_string_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_ident_or_string()?;
-        // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `expect_url` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn expect_url_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_url()?;
-        // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `slice_from` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn slice_from_cloned(&self, start_position: usize) -> &'static [u8] {
-        // SAFETY: see `expect_ident_cloned`.
-        unsafe { src_str(self.slice_from(start_position)) }
     }
 
     pub(crate) fn position(&self) -> usize {
@@ -3725,7 +3620,7 @@ impl<'a> Parser<'a> {
         ) {
             return None;
         }
-        let text = self.slice_from_cloned(cached.start_position);
+        let text = self.slice_from(cached.start_position);
         let before = &self.input.tokenizer.src[..cached.start_position];
         let touches_a_number = self.next_byte() == Some(b'.')
             || text.starts_with(b"+")
@@ -4275,9 +4170,9 @@ const MAX_THREE_B: u32 = 0x10000;
 // SAFETY: every call site below feeds either (a) a sub-slice of `self.src`
 // (`&'a [u8]`) or (b) an arena-allocated `CopyOnWriteStr::to_slice()` whose
 // backing storage lives in `self.arena: &'a Bump`. The returned reference
-// is only ever stored in a `Token` reachable through that same `Parser<'a>`.
+// ends up in the AST, import records, symbols and errors; source and arena must outlive them.
 #[inline(always)]
-pub(crate) unsafe fn src_str(s: &[u8]) -> &'static [u8] {
+unsafe fn src_str(s: &[u8]) -> &'static [u8] {
     // SAFETY: caller upholds the invariant documented on this function above.
     unsafe { bun_collections::detach_lifetime(s) }
 }

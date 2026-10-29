@@ -31,7 +31,7 @@ impl Url {
     pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
         let start_pos = input.position();
         let loc = input.current_source_location();
-        let url = input.expect_url_cloned()?;
+        let url = input.expect_url()?;
         let end_pos = input.position();
         let import_record_idx =
             input.add_import_record(url, start_pos, end_pos, bun_ast::ImportKind::Url)?;

@@ -140,13 +140,7 @@ impl Specifier {
     pub fn parse(input: &mut Parser) -> css::Result<Specifier> {
         input.skip_whitespace();
         let start_position = input.position();
-        if let Ok(file) = input.try_parse(|i| {
-            let s = i.expect_url_or_string()?;
-            // SAFETY: `s` borrows the parser source/arena which outlives the
-            // `add_import_record` call. Detach the borrow so `input` is reusable
-            // (same trick as `css_parser::src_str` — Token payloads are arena-static).
-            Ok::<&'static [u8], _>(unsafe { &*std::ptr::from_ref::<[u8]>(s) })
-        }) {
+        if let Ok(file) = input.try_parse(|i| i.expect_url_or_string()) {
             let end_position = input.position();
             let import_record_index = input.add_import_record(
                 file,

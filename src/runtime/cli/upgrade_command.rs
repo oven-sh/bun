@@ -1319,13 +1319,14 @@ impl UpgradeCommand {
 pub(crate) mod upgrade_js_bindings {
     #[cfg(windows)]
     use super::*;
+    #[cfg(windows)]
+    use core::sync::atomic::{AtomicPtr, Ordering};
 
     // Process-global, not threadlocal: if open/close are invoked from different
     // threads (main vs worker VM) a `thread_local!` would make the close see
-    // `None` and leak the HANDLE. Use a `RacyCell`; access is test-only and
-    // effectively single-threaded.
+    // null and leak the HANDLE.
     #[cfg(windows)]
-    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
+    static TEMPDIR_HANDLE: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
@@ -1389,11 +1390,7 @@ pub(crate) mod upgrade_js_bindings {
 
             match sys::windows::Win32Error::from_nt_status(rc) {
                 sys::windows::Win32Error::SUCCESS => {
-                    // System-kind handle on Windows.
-                    // SAFETY: test-only helper; access is single-threaded (JS thread).
-                    unsafe {
-                        TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
-                    }
+                    TEMPDIR_HANDLE.store(fd, Ordering::Relaxed);
                 }
                 _ => {}
             }
@@ -1404,11 +1401,11 @@ pub(crate) mod upgrade_js_bindings {
         #[cfg(windows)]
         {
             use bun_sys::FdExt as _;
-            // SAFETY: test-only helper; access is single-threaded (JS thread).
-            // Consume (`take`) the stored fd so a repeat call cannot
+            // Consume (`swap`) the stored handle so a repeat call cannot
             // `CloseHandle` a stale, possibly-reissued HANDLE value.
-            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
-                fd.close();
+            let handle = TEMPDIR_HANDLE.swap(core::ptr::null_mut(), Ordering::Relaxed);
+            if !handle.is_null() {
+                sys::Fd::from_system(handle).close();
             }
         }
     }

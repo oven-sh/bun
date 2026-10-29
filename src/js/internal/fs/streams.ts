@@ -440,7 +440,7 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
   }
 
   const fd = stream.fd;
-  // A descriptor 0 that the stream did not open stays open, as in node (process.stdin is such a stream).
+  // A descriptor 0 that the stream did not open stays open: process.stdin is such a stream. Node closes it since v26.11 (nodejs/node#66131).
   if (fd == null || (fd === 0 && stream[kOpenedFd] !== 0)) {
     cb(err);
   } else if (stream.flush) {

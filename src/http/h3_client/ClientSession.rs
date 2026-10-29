@@ -469,7 +469,7 @@ pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPCli
 /// argument's connection (live for the callback), or a `ClientSession.qsocket` field (set
 /// by `ClientContext::connect`, valid until `on_conn_close`). The handle is an
 /// FFI-owned allocation distinct from any Rust struct holding it. All access
-/// is HTTP-thread-only, so the returned `&mut` is the sole live borrow.
+/// is HTTP-thread-only. `quic::Socket` is zero-sized, so two `&mut` to one handle cannot conflict.
 /// Centralises the raw `&mut *qs` upgrade shared by `callbacks::on_stream_open`
 /// and `ClientSession::qsocket_mut`.
 #[inline(always)]

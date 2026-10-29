@@ -16,11 +16,9 @@ pub(super) enum DevHandlerId {
     Request,
 }
 
-/// DNS-rebinding guard for `/_bun/...` internal routes, the HTML routes, the
-/// HMR WebSocket, and the Chrome DevTools `/.well-known/...` route. A rebound
-/// origin (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`;
-/// rejecting non-loopback / non-IP / non-configured hostnames prevents the
-/// attacker's page from reading bundled source via same-origin fetch.
+/// DNS-rebinding guard for `/_bun/...`, the HTML routes, the HMR WebSocket and
+/// the DevTools `/.well-known/...` route. A rebound origin (`attacker.com` →
+/// 127.0.0.1) presents `Host: attacker.com`, so only known hostnames pass.
 /// `allowedHosts` extends the list; it does not relax `is_allowed_dev_origin`.
 pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
     is_allowed_host_header(req, dev.server.as_ref().map(|server| server.config()))

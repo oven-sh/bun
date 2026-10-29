@@ -41,8 +41,7 @@ pub(crate) struct ServerConfig {
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,
     pub(crate) broadcast_console_log_from_browser_to_server_for_bake: bool,
-    /// Extra `Host` values the dev server's host check accepts. From
-    /// `development.allowedHosts`, else `[serve.static] allowedHosts` in bunfig.
+    /// `development.allowedHosts`, else `[serve.static] allowedHosts` from bunfig.
     pub(crate) allowed_hosts: AllowedHosts,
 
     /// Enable automatic workspace folders for Chrome DevTools
@@ -719,8 +718,7 @@ impl ServerConfig {
             args.reuse_port = args.development == DevelopmentOption::Production;
         }
 
-        // The bunfig list only matters to a dev server, and `development.allowedHosts` wins
-        // over it, so the clone is skipped on every other path.
+        // Only a dev server reads the bunfig list, and `development.allowedHosts` wins over it.
         if !allowed_hosts_set_from_js && args.development.is_development() {
             args.allowed_hosts = vm
                 .transpiler

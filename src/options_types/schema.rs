@@ -47,8 +47,7 @@ pub mod api {
             __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP(());
     }
 
-    /// `allowedHosts` for the dev server's `Host` header check, from
-    /// `[serve.static]` in bunfig.toml or `development` in `Bun.serve()`.
+    /// `allowedHosts`: the dev server's `Host` check, from bunfig or `Bun.serve()`.
     #[derive(Clone, Debug, Default)]
     pub enum AllowedHosts {
         /// Only `localhost`, `*.localhost`, IP literals, and the bound `hostname`.
@@ -61,8 +60,7 @@ pub mod api {
     }
 
     impl AllowedHosts {
-        /// Rejects `""` and `"."`, which would match a malformed `Host`, and
-        /// entries with a scheme, port, path, or glob, which never match.
+        /// Rejects `""`, `"."`, and entries with a scheme, port, path, or glob.
         pub fn is_valid_entry(entry: &[u8]) -> bool {
             !entry.is_empty()
                 && entry != b"."

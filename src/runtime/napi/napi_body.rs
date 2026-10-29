@@ -1684,10 +1684,8 @@ extern "C" fn napi_create_promise(
         promise: JSPromiseStrong::init(env.to_js()),
         context: env.to_js().bun_vm().context_of_caller().id(),
     });
-    let strong_ptr = bun_core::heap::into_raw(strong);
-    *deferred = strong_ptr;
-    // SAFETY: strong_ptr was just created from heap::alloc and is non-null.
-    let prom_value = unsafe { (*strong_ptr).promise.get() }.as_value(env.to_js());
+    let prom_value = strong.promise.value();
+    *deferred = bun_core::heap::into_raw(strong);
     promise.set(env, prom_value);
     env.ok()
 }
@@ -2076,8 +2074,7 @@ impl napi_async_work {
         let data = self.data;
         env_ref.complete_in_context(self.context, || complete(env, status as napi_status, data));
 
-        // SAFETY: env is valid for the duration of this call.
-        unsafe { &*env }.surface_exception(global)
+        env_ref.surface_exception(global)
     }
 }
 
@@ -2102,11 +2099,8 @@ struct napi_node_version {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
-    pub release: *const c_char,
+    pub release: &'static [u8; 5],
 }
-
-// SAFETY: napi_node_version is POD; the *const c_char points at a static literal.
-unsafe impl Sync for napi_node_version {}
 
 // Splits "MAJOR.MINOR.PATCH" into u32 components at compile time.
 const fn parse_semver_component(s: &str, idx: usize) -> u32 {
@@ -2133,7 +2127,7 @@ static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
     major: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 0),
     minor: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 1),
     patch: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 2),
-    release: c"node".as_ptr(),
+    release: b"node\0",
 };
 
 bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
@@ -2524,10 +2518,9 @@ pub(crate) struct Finalizer {
 impl Finalizer {
     /// Run the addon's finalizer. What it raised through napi (latched on the
     /// env) or left on the VM is the `Err`, for the caller's dispatcher to fold.
-    pub(crate) fn run(&mut self) -> JsResult<()> {
-        let env = self.env.get();
-        // SAFETY: env is valid for the duration of this call.
-        let env_ref = unsafe { &*env };
+    pub(crate) fn run(&self) -> JsResult<()> {
+        let env_ref: &NapiEnv = &self.env;
+        let env = env_ref.as_mut_ptr();
         let _hs = NapiHandleScope::open_scoped(env_ref);
 
         (self.fun)(env, self.data, self.hint);
@@ -3107,7 +3100,7 @@ impl ThreadSafeFunction {
         };
 
         // Before anything is released, as in Node and `env_teardown`.
-        if let Some(mut finalizer) = finalizer {
+        if let Some(finalizer) = finalizer {
             crate::dispatch::fold(finalizer.run());
         }
 
@@ -3206,7 +3199,7 @@ impl ThreadSafeFunction {
                 data: self.finalizer_data,
                 hint: self.ctx,
             });
-        if let Some(mut finalizer) = finalizer {
+        if let Some(finalizer) = finalizer {
             // The env's cleanup hook is this finalizer's landing frame: what it
             // leaves is folded here so the next function's teardown starts clean.
             crate::dispatch::fold(finalizer.run());
@@ -5447,8 +5440,7 @@ impl NapiFinalizerTask {
             // already torn down the finalizer can never run; free the task but
             // not the env ref — the env's count is not atomic and the env goes
             // with its VM — as the cleanup-hooks-already-ran case below does.
-            // SAFETY: env is valid (held by NapiEnvRef).
-            let handle = unsafe { &*self.finalizer.env.get() }.vm_handle().clone();
+            let handle = self.finalizer.env.vm_handle().clone();
             let this = bun_core::heap::into_raw(self);
             let ct = ConcurrentTask::create(Task::init(this));
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
@@ -5464,9 +5456,7 @@ impl NapiFinalizerTask {
             return;
         }
 
-        // SAFETY: env is valid (held by NapiEnvRef).
-        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
-        let vm: &VirtualMachine = global_this.bun_vm();
+        let vm: &VirtualMachine = self.finalizer.env.to_js().bun_vm();
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {
@@ -5483,7 +5473,7 @@ impl NapiFinalizerTask {
             }
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             let this = bun_core::heap::into_raw(self);
-            global_this.bun_vm().as_mut().rare_data().push_cleanup_hook(
+            vm.as_mut().rare_data().push_cleanup_hook(
                 vm.global(),
                 this.cast::<c_void>(),
                 Self::run_as_cleanup_hook,
@@ -5496,7 +5486,7 @@ impl NapiFinalizerTask {
 
     pub(crate) fn run_on_js_thread(this: *mut NapiFinalizerTask) -> JsResult<()> {
         // SAFETY: `this` was created by heap::alloc in `schedule`.
-        let mut this_box = unsafe { bun_core::heap::take(this) };
+        let this_box = unsafe { bun_core::heap::take(this) };
         this_box.finalizer.run()
         // finalizer.deinit() runs via Drop on NapiEnvRef when this_box drops.
     }

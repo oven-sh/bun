@@ -188,9 +188,9 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f14 name="flatIntoArray" module=m1 position=8579 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=5 enclosingRuntimeFunction=40 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f15 name="flatIntoArrayWithCallback" module=m1 position=9316 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=41 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f16 name="flatMap" module=m1 position=10078 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=42 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f14 name="flatIntoArray" module=m1 position=8579 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=5 enclosingRuntimeFunction=39 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f15 name="flatIntoArrayWithCallback" module=m1 position=9316 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=40 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f16 name="flatMap" module=m1 position=10078 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=41 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = ToObject v0 message="Array.prototype.flatMap requires that |this| not be null or undefined"
     v4 = PropGet v3 key="length"
@@ -403,9 +403,9 @@ function f23 name="traverseArray" module=m2 position=2337 kind=Method role=Libra
     v173 = Convert v172 declared={type=number site=w68}
     Jump -> next b30(v165, v166, v167, v168, v169, v170, v171, v173)
 }
-runtimefunction id=40 function=f14 visibility=Private
-runtimefunction id=41 function=f15 visibility=Private
-runtimefunction id=42 function=f16
+runtimefunction id=39 function=f14 visibility=Private
+runtimefunction id=40 function=f15 visibility=Private
+runtimefunction id=41 function=f16
 runtimefunction id=131091 function=f23 visibility=Private
 # -- generated: f0 use walk flatMap
 # CHECK-LABEL: function f0 module=
@@ -455,7 +455,7 @@ runtimefunction id=131091 function=f23 visibility=Private
 # CHECK-NEXT: ReturnCall v1 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="flatMap"
-# CHECK: module=m1 position=10078 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=42 thisType={type=Array flags=[IsExpected]} parameters=[{type=function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK: module=m1 position=10078 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=41 thisType={type=Array flags=[IsExpected]} parameters=[{type=function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
 # CHECK-NEXT: b0(v0: anything ~ Array, v1: anything ~ function, v2: anything):
 # CHECK-NEXT: v3: object ~ Array = ToObject v0 message="Array.prototype.flatMap requires that |this| not be null or undefined"
 # CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array
@@ -482,7 +482,7 @@ runtimefunction id=131091 function=f23 visibility=Private
 # CHECK-NEXT: ReturnCall v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="flatMap"
-# CHECK: module=m1 position=10078 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=42 captures=[{type=f16}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
+# CHECK: module=m1 position=10078 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=41 captures=[{type=f16}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f16, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: anything = CallDirect v1, v2, v3 function=f16
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed

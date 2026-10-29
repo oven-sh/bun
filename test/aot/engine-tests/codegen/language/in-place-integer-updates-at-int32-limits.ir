@@ -794,7 +794,7 @@ function f17 module=m1 position=72 kind=Initializer flags=[HasThis, IsChecked, I
 function f18 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f19 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f20 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
-function f21 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f21 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -805,7 +805,7 @@ function f21 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsCh
     v7 = CreateIteratorResult v4, v6
     Return v7
 }
-runtimefunction id=69 function=f21
+runtimefunction id=68 function=f21
 # -- generated: anonymous increment subtractAnySign addToVariables makeCounter show f16 f17
 # CHECK-LABEL: function {{*}}name="anonymous"
 # CHECK: module=m0 position=1 flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1|f16}] results=[{type=L1|f16}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

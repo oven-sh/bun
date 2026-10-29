@@ -804,8 +804,8 @@ function f42 module=m1 role=Signature thisType={type=anything} results=[{type=an
 function f43 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f44 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f45 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
-function f46 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f47 name="reduce" module=m3 position=1398 kind=Method role=Library flags=[HasThis, HasArgumentCount, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=82 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f46 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f47 name="reduce" module=m3 position=1398 kind=Method role=Library flags=[HasThis, HasArgumentCount, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=81 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything):
     v4 = ToObject v0 message="Array.prototype.reduce requires that |this| not be null or undefined"
     v5 = PropGet v4 key="length"
@@ -952,8 +952,8 @@ function f91 module=m9 kind=Module role=Library flags=[IsChecked] thisType={type
 }
 function f92 name="matchesGlob" module=m9 position=3105 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=boolean site=w252}, {type=undefined|null|string site=w253 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w254 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w255}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 runtimefunction id=0 function=f48
-runtimefunction id=69 function=f46
-runtimefunction id=82 function=f47
+runtimefunction id=68 function=f46
+runtimefunction id=81 function=f47
 runtimefunction id=65574 function=f28
 runtimefunction id=65580 function=f27
 # -- generated: f0 nine mixed closes f15

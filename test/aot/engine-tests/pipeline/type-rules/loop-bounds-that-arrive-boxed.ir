@@ -640,7 +640,7 @@ function f10 name="nearTheTop" module=m0 position=1842 flags=[IsChecked, HasExpl
     v28 = Convert v27 declared={type=number site=w13}
     Return v28
 }
-function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -663,7 +663,7 @@ function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-runtimefunction id=69 function=f11
+runtimefunction id=68 function=f11
 # -- generated: setBound below atMost above atLeast boundOnLeftAbove boundOnLeftAtLeast boundOnLeftBelow boundOnLeftAtMost nearTheTop
 # CHECK-LABEL: function {{*}}name="setBound"
 # CHECK: module=m0 position=482 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|object}, {type=int|whole site=w0}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

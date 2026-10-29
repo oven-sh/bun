@@ -330,7 +330,7 @@ function f2 name="readFrom" module=m0 position=754 flags=[IsChecked, HasExplicit
     v3 = ElemGet v2, v1
     Return v3
 }
-function f3 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f3 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -1393,7 +1393,7 @@ function f10 name="traverseArray" module=m2 position=2337 kind=Method role=Libra
   b252(v555):
     Return v555
 }
-runtimefunction id=69 function=f3
+runtimefunction id=68 function=f3
 runtimefunction id=131091 function=f10 visibility=Private
 # -- generated: f0 readUnder readFrom finishReduce
 # CHECK-LABEL: function f0 module=

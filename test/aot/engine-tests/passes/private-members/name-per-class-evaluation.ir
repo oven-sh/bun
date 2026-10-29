@@ -752,7 +752,7 @@ function f45 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f46 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f47 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f48 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f49 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f49 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = ToBoolean v1
@@ -864,7 +864,7 @@ function f51 name="apply" module=m2 position=1161 kind=Method role=Library flags
 }
 runtimefunction id=4 function=f51
 runtimefunction id=12 function=f50
-runtimefunction id=69 function=f49
+runtimefunction id=68 function=f49
 # -- generated: makeBox
 # CHECK-LABEL: function {{*}}name="makeBox"
 # CHECK: role=Source

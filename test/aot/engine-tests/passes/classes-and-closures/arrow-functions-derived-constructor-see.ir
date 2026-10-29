@@ -634,7 +634,7 @@ function f135 module=m1 role=Signature thisType={type=anything} results=[{type=a
 function f136 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f137 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f138 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
-function f139 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f139 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f140 module=m3 kind=Module role=Library flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0():
     v0 = Data data=d3
@@ -747,7 +747,7 @@ function f180 module=m7 kind=Module role=Library flags=[IsChecked] thisType={typ
     Return v35
 }
 function f181 name="matchesGlob" module=m7 position=3105 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=boolean site=w125}, {type=undefined|null|string site=w126 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w127 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w128}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=69 function=f139
+runtimefunction id=68 function=f139
 runtimefunction id=65574 function=f121
 runtimefunction id=65580 function=f120
 # -- generated: f0 Base say Twice f25 Below f34 Throws f36 f49 f121 writeOut f143

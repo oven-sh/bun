@@ -161,7 +161,7 @@ function f3 name="Held" module=m0 position=201 kind=BaseConstructor flags=[HasNe
     v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
     Return v3
 }
-function f4 name="fromEntries" module=m1 position=1528 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=51 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|object site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f4 name="fromEntries" module=m1 position=1528 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=50 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|object site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -252,7 +252,7 @@ function f5 name="fromEntries" module=m2 position=248 kind=Method role=Model fla
     IteratorClose v6 completion=Throw
     Rethrow v20
 }
-runtimefunction id=51 function=f4
+runtimefunction id=50 function=f4
 runtimefunction id=131082 function=f5
 # -- generated: f0 scene Held fromEntries
 # CHECK-LABEL: function f0 module=
@@ -335,7 +335,7 @@ runtimefunction id=131082 function=f5
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fromEntries"
-# CHECK: module=m1 position=1528 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=51 thisType={type=anything} parameters=[{type=anything}] results=[{type=Object site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK: module=m1 position=1528 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=50 thisType={type=anything} parameters=[{type=anything}] results=[{type=Object site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: object = NewDictionary
 # CHECK-NEXT: v2: anything ~ undefined|null|Array<undefined|null|object> = Upcast v0 castType=anything
@@ -464,7 +464,7 @@ runtimefunction id=131082 function=f5
 # CHECK-LABEL: function {{*}}name="fromEntries"
 # CHECK: module=m2 position=248 kind=Method role=Model flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=131082 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
 # CHECK-LABEL: function {{*}}name="fromEntries"
-# CHECK: module=m1 position=1528 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=51 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+# CHECK: module=m1 position=1528 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=50 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything):
 # CHECK-NEXT: v3: Object = CallDirect v2 function=f4
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed

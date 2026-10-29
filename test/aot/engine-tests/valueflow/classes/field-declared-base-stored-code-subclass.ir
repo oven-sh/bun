@@ -614,7 +614,7 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f24]
 function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f24]
 function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f33]
-function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = ToBoolean v1
@@ -631,7 +631,7 @@ function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-runtimefunction id=69 function=f45
+runtimefunction id=68 function=f45
 # -- generated: Base
 # CHECK-LABEL: function {{*}}name="Base"
 # CHECK: role=Source

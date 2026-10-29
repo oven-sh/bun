@@ -507,12 +507,12 @@ function f27 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f28]
 function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f28]
-function f31 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f31 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     Unreachable
 }
-runtimefunction id=69 function=f31
+runtimefunction id=68 function=f31
 # -- generated: withFirst withSecond withThird Base Other BelowFirst BelowSecond BelowThird BelowBoth f14 f18
 # CHECK-LABEL: function {{*}}name="withFirst"
 # CHECK: module=m0 position=750 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f5|f14}] results=[{type=f13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

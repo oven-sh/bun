@@ -224,8 +224,8 @@ function f2 module=m1 position=145 role=Library flags=[IsChecked] length=3 enclo
     v94 = Call v89, -, v90, v91, v92, v93
     Throw v94
 }
-function f3 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-runtimefunction id=69 function=f3
+function f3 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+runtimefunction id=68 function=f3
 runtimefunction id=65565 function=f2
 # -- generated: f0
 # CHECK-LABEL: function f0 role=

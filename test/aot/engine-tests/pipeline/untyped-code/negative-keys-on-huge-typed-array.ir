@@ -190,7 +190,7 @@ function f4 module=m0 position=423 kind=Arrow flags=[IsChecked] length=1 capture
 }
 function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
 function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f7 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f7 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f8 name="clampToLength" module=m2 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w13}, {type=number site=w14}] results=[{type=number site=w15}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f9 name="storeInNewArray" module=m2 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w16 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w17}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f10 name="appendParts" module=m2 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w18 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w19}, {type=anything}] results=[{type=number site=w20}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
@@ -555,7 +555,7 @@ function f14 name="traverseArray" module=m2 position=2337 kind=Method role=Libra
   b113(v273):
     Return v273
 }
-runtimefunction id=65 function=f7
+runtimefunction id=64 function=f7
 runtimefunction id=131091 function=f14 visibility=Private
 # -- generated: f0 read f4 finishJoin report
 # CHECK-LABEL: function f0 module=

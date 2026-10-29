@@ -3295,7 +3295,7 @@ function f170 module=m0 role=Signature thisType={type=anything} results=[{type=a
 function f171 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f133]
 function f172 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f173 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f174 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f174 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -3318,7 +3318,7 @@ function f174 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsC
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-function f175 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f175 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -4421,8 +4421,8 @@ function f182 name="traverseArray" module=m3 position=2337 kind=Method role=Libr
   b252(v555):
     Return v555
 }
-runtimefunction id=65 function=f175
-runtimefunction id=69 function=f174
+runtimefunction id=64 function=f175
+runtimefunction id=68 function=f174
 runtimefunction id=131091 function=f182 visibility=Private
 # -- generated: say keyText flagsOf describe pair five computed namesOfAccessor methodUnder getterUnder arrowUnder classUnder get Shape area f46 unit name f88 Members f96 getter f107 f108 b one two three four f116 f122
 # CHECK-LABEL: function {{*}}name="say"

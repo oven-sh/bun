@@ -738,7 +738,7 @@ function f35 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
     v0 = Undefined
     Return v0
 }
-function f36 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f36 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = ToBoolean v1
@@ -1437,7 +1437,7 @@ function f43 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
   b147(v544):
     Return v544
 }
-runtimefunction id=69 function=f36
+runtimefunction id=68 function=f36
 runtimefunction id=131091 function=f43 visibility=Private
 # -- generated: f1
 # CHECK-LABEL: function f1 role=

@@ -735,8 +735,8 @@ function f124 module=m1 role=Signature thisType={type=anything} results=[{type=a
 function f125 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f126 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f127 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
-function f128 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f129 name="map" module=m3 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f128 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f129 name="map" module=m3 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -1050,8 +1050,8 @@ function f136 name="traverseArray" module=m5 position=2337 kind=Method role=Libr
     v245 = TruncateNewArray v243, v244
     Return v245
 }
-runtimefunction id=65 function=f129
-runtimefunction id=69 function=f128
+runtimefunction id=64 function=f129
+runtimefunction id=68 function=f128
 runtimefunction id=131091 function=f136 visibility=Private
 # -- generated: say Plain again DeletesInBetween f16 ClosedInBetween f20 f29 f31 f38 run
 # CHECK-LABEL: function {{*}}name="say"

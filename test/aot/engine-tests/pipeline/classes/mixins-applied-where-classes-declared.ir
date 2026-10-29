@@ -1646,7 +1646,7 @@ function f77 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f78 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f76]
 function f79 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f47]
 function f80 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f47]
-function f81 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f81 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -1669,7 +1669,7 @@ function f81 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-function f82 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f82 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -1846,7 +1846,7 @@ function f84 name="apply" module=m3 position=1161 kind=Method role=Library flags
     v10 = Call v9, v0, v1, v2
     ReturnCall v10
 }
-function f85 name="fromEntries" module=m4 position=1528 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=51 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|object site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f85 name="fromEntries" module=m4 position=1528 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=50 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|object site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -2979,9 +2979,9 @@ function f93 name="traverseArray" module=m6 position=2337 kind=Method role=Libra
 }
 runtimefunction id=4 function=f84
 runtimefunction id=12 function=f83
-runtimefunction id=51 function=f85
-runtimefunction id=65 function=f82
-runtimefunction id=69 function=f81
+runtimefunction id=50 function=f85
+runtimefunction id=64 function=f82
+runtimefunction id=68 function=f81
 runtimefunction id=131082 function=f86
 runtimefunction id=131091 function=f93 visibility=Private
 # -- generated: Base Other attempt Timed Tagged A B C D f14 f15 f16 f17 f22 f23 f25 f26 f28 f29 f30 f36 Tag size self f44 f45

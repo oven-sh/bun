@@ -877,8 +877,8 @@ function f73 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f74 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f68, f69]
 function f75 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f68, f69]
 function f76 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f77 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f78 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f77 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f78 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -1138,8 +1138,8 @@ function f85 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
     v200 = Convert v199 declared={type=number site=w314}
     Jump -> next b30(v192, v193, v194, v195, v196, v197, v198, v200)
 }
-runtimefunction id=65 function=f78
-runtimefunction id=69 function=f77
+runtimefunction id=64 function=f78
+runtimefunction id=68 function=f77
 runtimefunction id=131091 function=f85 visibility=Private
 # -- generated: sumAbs bumpAll f30
 # CHECK-LABEL: function {{*}}name="sumAbs"

@@ -385,7 +385,7 @@ function f73 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f74 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f75 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f74]
 function f76 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f75]
-function f77 name="has" module=m1 position=2204 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=61 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f77 name="has" module=m1 position=2204 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=60 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]}
     v3 = Convert v2 declared={type=undefined|null|object} illTypedCause=Assertion
@@ -393,7 +393,7 @@ function f77 name="has" module=m1 position=2204 kind=Method role=Library flags=[
     v5 = Convert v4 declared={type=boolean site=w0}
     Return v5
 }
-runtimefunction id=61 function=f77
+runtimefunction id=60 function=f77
 # -- generated: f31
 # CHECK-LABEL: function f31 role=
 # CHECK: Source

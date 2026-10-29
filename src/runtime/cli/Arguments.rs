@@ -1050,9 +1050,9 @@ pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::Atom
     core::sync::atomic::AtomicBool::new(false);
 
 /// Node parity: `--cpu-prof-name` supports a `${pid}` placeholder.
-fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
+fn replace_pid_placeholder(name: &'static [u8]) -> &'static [u8] {
     if !bun_core::strings::contains(name, b"${pid}") {
-        return name.into();
+        return name;
     }
     let pid = std::process::id().to_string();
     let mut out = Vec::with_capacity(name.len() + pid.len());
@@ -1066,7 +1066,7 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
             i += 1;
         }
     }
-    out.into_boxed_slice()
+    out.leak()
 }
 
 use crate::generated_bindgen::node_tls_binding::CAStore;
@@ -1574,7 +1574,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
-        ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
+        ctx.runtime_options.preconnect = args.options(b"--fetch-preconnect").to_vec();
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
@@ -1680,7 +1680,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 ctx.runtime_options.cpu_prof.name = replace_pid_placeholder(name);
             }
             if let Some(dir) = args.option(b"--cpu-prof-dir") {
-                ctx.runtime_options.cpu_prof.dir = dir.into();
+                ctx.runtime_options.cpu_prof.dir = dir;
             }
             // md_format is true if --cpu-prof-md is passed (regardless of --cpu-prof)
             ctx.runtime_options.cpu_prof.md_format = cpu_prof_md_flag;
@@ -1731,10 +1731,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = true;
             if let Some(name) = args.option(b"--heap-prof-name") {
-                ctx.runtime_options.heap_prof.name = name.into();
+                ctx.runtime_options.heap_prof.name = name;
             }
             if let Some(dir) = args.option(b"--heap-prof-dir") {
-                ctx.runtime_options.heap_prof.dir = dir.into();
+                ctx.runtime_options.heap_prof.dir = dir;
             }
         } else if heap_prof_v8 || heap_prof_md {
             // --heap-prof-interval is accepted for node CLI parity but unused:
@@ -1742,10 +1742,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
             if let Some(name) = args.option(b"--heap-prof-name") {
-                ctx.runtime_options.heap_prof.name = name.into();
+                ctx.runtime_options.heap_prof.name = name;
             }
             if let Some(dir) = args.option(b"--heap-prof-dir") {
-                ctx.runtime_options.heap_prof.dir = dir.into();
+                ctx.runtime_options.heap_prof.dir = dir;
             }
         } else {
             // Node parity: heap-profiler-scoped options without a profiler flag

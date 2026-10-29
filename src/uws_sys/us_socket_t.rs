@@ -1,6 +1,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_core::Fd;
 
 use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t};
@@ -210,8 +211,8 @@ impl us_socket_t {
 
     /// Resume a handshake suspended by an asynchronous SNICallback. `ctx`
     /// carries an owned SSL_CTX reference that the call consumes (may be
-    /// null = fall through to the default context); `error` aborts instead.
-    pub(crate) fn sni_resolve(&mut self, ctx: *mut SslCtx, error: bool) {
+    /// `None` = fall through to the default context); `error` aborts instead.
+    pub(crate) fn sni_resolve(&mut self, ctx: Option<OwnedSslCtx>, error: bool) {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
@@ -531,7 +532,7 @@ mod c {
         pub(super) safe fn us_socket_get_tos(s: &mut us_socket_t) -> c_int;
         pub(super) safe fn us_socket_sni_resolve(
             s: &mut us_socket_t,
-            ctx: *mut SslCtx,
+            ctx: Option<OwnedSslCtx>,
             error: c_int,
         );
         pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);

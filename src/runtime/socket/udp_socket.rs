@@ -151,11 +151,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     event_loop.exit();
 }
 
-extern "C" fn on_data(
-    socket: *mut uws::udp::Socket,
-    buf: *mut uws::udp::PacketBuffer,
-    packets: c_int,
-) {
+extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: &uws::udp::PacketBuffer, packets: c_int) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
     let _context = udp_socket.enter_owners_context();
     let Some(this_value) = udp_socket.this_value.get().try_get() else {
@@ -181,10 +177,7 @@ extern "C" fn on_data(
             break;
         }
 
-        // SAFETY: `buf` is valid for the duration of this callback per uws
-        // contract; each access reborrows it per-statement so no reference
-        // spans the JS calls below.
-        let peer = unsafe { (*buf).get_peer(i) };
+        let peer = buf.get_peer(i);
 
         let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
         let hostname: Option<&[u8]>;
@@ -228,11 +221,9 @@ extern "C" fn on_data(
             continue;
         }
 
-        // SAFETY: see `get_peer` above; per-statement reborrows.
-        let truncated = unsafe { (*buf).get_truncated(i) };
-        // SAFETY: see `get_peer` above; `slice`'s borrow ends at the
-        // `binary_type.to_js` copy below, before user JS runs.
-        let slice = unsafe { (*buf).get_payload(i) };
+        let truncated = buf.get_truncated(i);
+        // `slice`'s borrow ends at the `binary_type.to_js` copy below, before user JS runs.
+        let slice = buf.get_payload(i);
 
         let span = hostname.unwrap();
         #[allow(unused_labels)]

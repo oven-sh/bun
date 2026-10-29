@@ -16,7 +16,7 @@ bun_opaque::opaque_ffi! {
 impl Socket {
     pub fn create(
         loop_: *mut Loop,
-        data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
+        data_cb: extern "C" fn(*mut Socket, &PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
@@ -51,7 +51,7 @@ impl Socket {
     /// instead of creating a new one. See `us_create_udp_socket_from_fd`.
     pub fn create_from_fd(
         loop_: *mut Loop,
-        data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
+        data_cb: extern "C" fn(*mut Socket, &PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
@@ -198,7 +198,7 @@ impl Socket {
 unsafe extern "C" {
     fn us_create_udp_socket(
         loop_: *mut Loop,
-        data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
+        data_cb: extern "C" fn(*mut Socket, &PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
@@ -232,7 +232,7 @@ unsafe extern "C" {
     safe fn us_udp_socket_fd(socket: &mut Socket) -> LIBUS_SOCKET_DESCRIPTOR;
     fn us_create_udp_socket_from_fd(
         loop_: *mut Loop,
-        data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
+        data_cb: extern "C" fn(*mut Socket, &PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
@@ -301,40 +301,35 @@ bun_opaque::opaque_ffi! {
 }
 
 impl PacketBuffer {
-    pub fn get_peer(&mut self, index: c_int) -> &mut sockaddr_storage {
+    pub fn get_peer(&self, index: c_int) -> &sockaddr_storage {
         // SAFETY: uSockets guarantees a non-null, properly-aligned peer pointer for
         // indices < packet count. The returned storage lives inside the C-owned packet
-        // buffer, which is exclusively loaned to the data callback for its duration; no
-        // other Rust or C path holds a reference to it. The reborrow of `&mut self`
-        // ties the returned lifetime to this handle, so the borrow checker prevents
-        // obtaining a second overlapping `&mut` via `get_peer`/`get_payload`.
-        unsafe { &mut *us_udp_packet_buffer_peer(self, index) }
+        // buffer, which is loaned to the data callback for its duration; C does not
+        // write to it before the callback returns. The returned lifetime is tied to
+        // this handle.
+        unsafe { &*us_udp_packet_buffer_peer(self, index) }
     }
 
-    pub fn get_payload(&mut self, index: c_int) -> &mut [u8] {
+    pub fn get_payload(&self, index: c_int) -> &[u8] {
         // SAFETY: for `index < packet_count`, uSockets returns a non-null
-        // pointer to `len` initialized bytes inside the C-owned packet buffer,
-        // exclusively loaned to the data callback for its duration. The
-        // returned borrow is tied to `&mut self`, so the borrow checker
-        // prevents overlapping `&mut` via `get_peer`/`get_payload`.
+        // pointer to `len` initialized bytes inside the loop's receive buffer,
+        // which C writes again at the next receive on this loop. The returned
+        // borrow is tied to `&self`.
         unsafe {
             let payload = us_udp_packet_buffer_payload(self, index);
             let len = us_udp_packet_buffer_payload_length(self, index);
-            core::slice::from_raw_parts_mut(payload, usize::try_from(len).expect("int cast"))
+            core::slice::from_raw_parts(payload, usize::try_from(len).expect("int cast"))
         }
     }
 
-    pub fn get_truncated(&mut self, index: c_int) -> bool {
+    pub fn get_truncated(&self, index: c_int) -> bool {
         us_udp_packet_buffer_truncated(self, index) != 0
     }
 }
 
 unsafe extern "C" {
-    safe fn us_udp_packet_buffer_peer(
-        buf: &mut PacketBuffer,
-        index: c_int,
-    ) -> *mut sockaddr_storage;
-    safe fn us_udp_packet_buffer_payload(buf: &mut PacketBuffer, index: c_int) -> *mut u8;
-    safe fn us_udp_packet_buffer_payload_length(buf: &mut PacketBuffer, index: c_int) -> c_int;
-    safe fn us_udp_packet_buffer_truncated(buf: &mut PacketBuffer, index: c_int) -> c_int;
+    safe fn us_udp_packet_buffer_peer(buf: &PacketBuffer, index: c_int) -> *mut sockaddr_storage;
+    safe fn us_udp_packet_buffer_payload(buf: &PacketBuffer, index: c_int) -> *mut u8;
+    safe fn us_udp_packet_buffer_payload_length(buf: &PacketBuffer, index: c_int) -> c_int;
+    safe fn us_udp_packet_buffer_truncated(buf: &PacketBuffer, index: c_int) -> c_int;
 }

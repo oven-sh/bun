@@ -36,7 +36,7 @@ pub(crate) struct PHuffDecoder {
     blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
 }
 
-/// libjpeg's limit. The standard has none.
+/// Table B.3 of the standard.
 const MAX_AL: u8 = 13;
 
 /// Checks the parameters of a progressive scan and records it in `coef_bits`.

@@ -1449,7 +1449,7 @@ where
 
     pub(crate) fn create(
         this: &mut core::mem::MaybeUninit<Self>,
-        server: *mut ThisServer,
+        server: &ThisServer,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -1469,9 +1469,7 @@ where
                 resp: Cell::new(Some(resp)),
                 req: Cell::new(Some(req)),
                 method: resolved_method,
-                server: Cell::new(
-                    NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw(p.as_ptr())),
-                ),
+                server: Cell::new(Some(bun_ptr::BackRef::new(server))),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range,
                 if_range,

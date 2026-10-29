@@ -166,12 +166,8 @@ impl DevelopmentOption {
 fn allowed_hosts_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AllowedHosts> {
     const EXPECTED: &str =
         "Bun.serve() expects 'development.allowedHosts' to be an array of hostnames or true";
-    if value.is_boolean() {
-        return Ok(if value == JSValue::TRUE {
-            AllowedHosts::Any
-        } else {
-            AllowedHosts::BuiltIn
-        });
+    if value == JSValue::TRUE {
+        return Ok(AllowedHosts::Any);
     }
     if !value.is_array() {
         return Err(global.throw_invalid_arguments(format_args!("{EXPECTED}")));

@@ -236,7 +236,7 @@ Bun sends the logs over the existing HMR WebSocket connection.
 
 ### Allowed hosts
 
-In development, HTML routes, their bundled assets under `/_bun/*`, and the HMR WebSocket only answer requests whose `Host` header is `localhost`, a `*.localhost` name, an IP address, or the `hostname` you passed to `Bun.serve()`. Any other `Host` gets a `403 Forbidden` response. This stops a DNS rebinding attack, where a web page points its own domain at `127.0.0.1` and reads your bundled source code from the dev server.
+When HMR is on (the default in development), HTML routes, their bundled assets under `/_bun/*`, and the HMR WebSocket only answer requests whose `Host` header is `localhost`, a `*.localhost` name, an IP address, or the `hostname` you passed to `Bun.serve()`. Any other `Host` gets a `403 Forbidden` response. This stops a DNS rebinding attack, where a web page points its own domain at `127.0.0.1` and reads your bundled source code from the dev server. With `hmr: false` there is no dev server, and no `Host` check.
 
 If you reach the dev server through another name, such as an mDNS name (`mybox.local`), a tunnel (ngrok, Cloudflare Tunnel), or an entry in `/etc/hosts`, list that name in `allowedHosts`:
 

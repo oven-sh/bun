@@ -1707,12 +1707,8 @@ impl<'a> Parser<'a, '_> {
         }
 
         if let Some(allowed_hosts) = serve_obj.get(b"allowedHosts") {
-            if let Some(v) = allowed_hosts.as_bool() {
-                self.ctx.args.serve_allowed_hosts = if v {
-                    api::AllowedHosts::Any
-                } else {
-                    api::AllowedHosts::BuiltIn
-                };
+            if allowed_hosts.as_bool() == Some(true) {
+                self.ctx.args.serve_allowed_hosts = api::AllowedHosts::Any;
             } else if let ExprData::EArray(arr) = &allowed_hosts.data {
                 let raw = arr.items.slice();
                 let mut hosts: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());

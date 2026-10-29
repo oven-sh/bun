@@ -670,11 +670,13 @@ declare module "bun" {
           /**
            * Extra `Host` header values the development server answers for.
            *
-           * In development, HTML routes, their bundled assets under `/_bun/*`
-           * and the hot-reload WebSocket only answer requests whose `Host`
-           * header is `localhost`, a `*.localhost` name, an IP address, or
-           * the configured `hostname`. Other requests get a `403`. This
-           * protects the bundled source code from DNS rebinding attacks.
+           * When HMR is on (the default in development), HTML routes, their
+           * bundled assets under `/_bun/*` and the hot-reload WebSocket only
+           * answer requests whose `Host` header is `localhost`, a
+           * `*.localhost` name, an IP address, or the configured `hostname`.
+           * Other requests get a `403`. This protects the bundled source code
+           * from DNS rebinding attacks. With `hmr: false` there is no dev
+           * server and no `Host` check.
            *
            * Add the hostnames you use to reach the server through an mDNS
            * name, a tunnel, or an `/etc/hosts` entry. An entry with a leading

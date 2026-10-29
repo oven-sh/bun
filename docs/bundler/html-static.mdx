@@ -368,7 +368,7 @@ Internally, Bun reuses the existing WebSocket connection from hot module replace
 
 ## Reach the dev server by another name
 
-The dev server only answers requests whose `Host` header is `localhost`, a `*.localhost` name, an IP address, or the `--host` you passed. Any other `Host` gets a `403 Forbidden` response. This protects your bundled source code from DNS rebinding attacks.
+When HMR is on (the default), the dev server only answers requests whose `Host` header is `localhost`, a `*.localhost` name, an IP address, or the `--host` you passed. Any other `Host` gets a `403 Forbidden` response. This protects your bundled source code from DNS rebinding attacks.
 
 To open the dev server through an mDNS name (`mybox.local`), a tunnel (ngrok, cloudflared), or an entry in `/etc/hosts`, list that name in `bunfig.toml`:
 

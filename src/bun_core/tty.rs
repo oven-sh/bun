@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 
 /// Terminal size as reported by the tty (`struct winsize` on POSIX).
 #[repr(C)]
@@ -51,15 +51,12 @@ impl State {
 
     #[inline]
     pub fn set_mode(&mut self, fd: c_int, mode: Mode, when: SetAttrWhen) -> c_int {
-        // SAFETY: layout matches C++'s `BunTTYState`; `self` outlives the call.
-        unsafe {
-            Bun__ttySetMode(
-                fd,
-                mode as c_int,
-                core::ptr::from_mut(self).cast(),
-                (when == SetAttrWhen::Drain) as c_int,
-            )
-        }
+        Bun__ttySetMode(
+            fd,
+            mode as c_int,
+            self,
+            (when == SetAttrWhen::Drain) as c_int,
+        )
     }
 }
 
@@ -89,5 +86,6 @@ impl Drop for RawModeGuard {
 }
 
 unsafe extern "C" {
-    unsafe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: *mut c_void, drain: c_int) -> c_int;
+    // C++ copies `state` in and out, keeps no pointer, and takes any `fd`, `mode` and `drain`.
+    safe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: &mut State, drain: c_int) -> c_int;
 }

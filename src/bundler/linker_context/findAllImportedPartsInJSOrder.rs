@@ -8,7 +8,7 @@ use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk,
 use bun_core::perf;
 
 pub(crate) fn find_all_imported_parts_in_js_order<'a>(
-    this: &mut LinkerContext<'a>,
+    this: &LinkerContext<'a>,
     chunks: &mut [Chunk<'a>],
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
@@ -51,7 +51,7 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
     // server-component files, that file's `entry_point_chunk_index` slot (a
     // file belongs to exactly one chunk), and reads the graph columns.
     let ctx = Ctx {
-        c: &*this,
+        c: this,
         chunk_of_file: &chunk_of_file,
         order: &order,
     };
@@ -328,7 +328,7 @@ impl WalkPlan {
     /// walks of the first such entry point by rank, each with the chunks that it lays out in place of their owner.
     fn find_safe_walks<'a>(
         &mut self,
-        this: &mut LinkerContext<'a>,
+        this: &LinkerContext<'a>,
         chunks: &[Chunk<'a>],
         walks: &[EntryWalk],
     ) -> Vec<EntryWalk> {

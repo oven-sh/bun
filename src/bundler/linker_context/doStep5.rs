@@ -49,10 +49,6 @@ impl LinkerContext<'_> {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
-        // Shared-ref view for all read-only access. Multiple worker threads may
-        // hold `&LinkerContext` simultaneously; the SoA buffers live behind raw
-        // pointers inside `MultiArrayList`, so this borrow does not assert
-        // immutability over the heap cells we write below.
         let c: &LinkerContext<'_> = self;
 
         let id = source_index;

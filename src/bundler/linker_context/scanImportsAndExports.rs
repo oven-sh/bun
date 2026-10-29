@@ -655,7 +655,7 @@ pub(crate) fn scan_imports_and_exports(
         //
         // `do_step5` only touches distinct SoA rows per `source_index` (the
         // columns are pre-sized and never reallocate during this step).
-        // The callee uses `&LinkerContext` (shared)
+        // The tasks share one `&LinkerContext`; the callee uses it
         // for reads and writes per-row cells via raw `split_raw()` pointers —
         // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
         // forms `&mut LinkerContext`).

@@ -629,16 +629,11 @@ pub fn page_size() -> usize {
 
 /// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
 ///
-/// `m_ref_count` / `m_hash_and_flags` are `Cell<u32>` (not bare `u32`) because
-/// `r#ref`/`deref`/`ensure_hash` hand a `*const Self` derived from `&self` to
-/// C++ FFI that **writes** those fields. Without `UnsafeCell` the struct is
-/// `Freeze`, the `&self` borrow asserts the whole pointee is read-only, and
-/// the FFI write is a Stacked-Borrows violation (LLVM may also CSE the
-/// pre-/post-FFI `ref_count()` loads). `Cell<u32>` is `repr(transparent)` over
-/// `UnsafeCell<u32>`, so the C ABI layout is unchanged.
+/// `m_ref_count` and `m_hash_and_flags` are interior-mutable: Rust, C++ and other threads write them behind a `&Self`.
 #[repr(C)]
 pub struct WTFStringImplStruct {
-    pub(crate) m_ref_count: core::cell::Cell<u32>,
+    /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:162).
+    pub(crate) m_ref_count: AtomicU32,
     pub(crate) m_length: u32,
     pub m_ptr: WTFStringImplPtr,
     pub(crate) m_hash_and_flags: core::cell::Cell<u32>,
@@ -688,25 +683,11 @@ impl WTFStringImplStruct {
     }
     #[inline]
     pub fn ref_count(&self) -> u32 {
-        self.m_ref_count.get() / Self::S_REF_COUNT_INCREMENT
-    }
-    /// Atomic view of `m_ref_count`. The C++ field is
-    /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:163); we model it as
-    /// `Cell<u32>` for the read-only accessors above but `ref`/`deref` must
-    /// issue real atomic RMWs to match `WTF::StringImpl::ref`/`deref` exactly.
-    /// `Cell<u32>` is `repr(transparent)` over `UnsafeCell<u32>` and
-    /// `AtomicU32` is `repr(C, align(4))` over `UnsafeCell<u32>`: same size,
-    /// same alignment (`m_ref_count` is the first field of a `#[repr(C)]`
-    /// struct so it is 4-aligned), so the in-place reborrow is sound.
-    #[inline(always)]
-    fn ref_count_atomic(&self) -> &AtomicU32 {
-        // SAFETY: layout-compatible reborrow of `UnsafeCell<u32>` as
-        // `AtomicU32`; see doc comment above.
-        unsafe { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
+        self.m_ref_count.load(Ordering::Relaxed) / Self::S_REF_COUNT_INCREMENT
     }
     #[inline(always)]
     fn is_static(&self) -> bool {
-        let count = self.ref_count_atomic().load(Ordering::Relaxed);
+        let count = self.m_ref_count.load(Ordering::Relaxed);
         count & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
     }
     /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
@@ -723,7 +704,7 @@ impl WTFStringImplStruct {
             return;
         }
         let old = self
-            .ref_count_atomic()
+            .m_ref_count
             .fetch_add(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
         debug_assert!(old > 0); // hasAtLeastOneRef — also true for static (flag bit set)
         debug_assert!(
@@ -743,7 +724,7 @@ impl WTFStringImplStruct {
             return;
         }
         let old = self
-            .ref_count_atomic()
+            .m_ref_count
             .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
         debug_assert!(old > 0); // hasAtLeastOneRef
         if old != Self::S_REF_COUNT_INCREMENT {
@@ -814,7 +795,7 @@ impl WTFStringImplStruct {
 unsafe extern "C" {
     // `&WTFStringImplStruct` is ABI-identical to the C++ `StringImpl*` (thin
     // non-null pointer to a `#[repr(C)]` struct). C++-side mutation lands in
-    // `m_ref_count` / `m_hash_and_flags`, both `Cell<u32>`, so writes through
+    // `m_ref_count` / `m_hash_and_flags`, both interior-mutable, so writes through
     // a `&`-derived pointer are sound. The type encodes the only validity
     // precondition, so `safe fn` discharges the link-time proof.
     // `ref`/`deref` are inlined in Rust above; only the cold last-ref

@@ -3,6 +3,7 @@
 
 #![warn(unused_must_use)]
 use core::ffi::{c_int, c_void};
+use core::mem::MaybeUninit;
 use core::net::IpAddr;
 use core::ptr;
 use std::cell::Cell;
@@ -515,10 +516,9 @@ fn match_dot_subdomain(pattern: &[u8], host: &[u8], single_label: bool) -> bool 
     eq_nocase(&pattern[skip.len()..], host)
 }
 
-fn set_peer(name: &[u8], out_peer: *mut bun_core::String) {
-    if !out_peer.is_null() {
-        // SAFETY: caller contract of `Bun__X509__checkHost`: `out_peer` is writable and holds no string.
-        unsafe { out_peer.write(bun_core::String::clone_utf8(name)) };
+fn set_peer(name: &[u8], out_peer: Option<&mut MaybeUninit<bun_core::String>>) {
+    if let Some(out_peer) = out_peer {
+        out_peer.write(bun_core::String::clone_utf8(name));
     }
 }
 
@@ -536,14 +536,13 @@ fn set_peer(name: &[u8], out_peer: *mut bun_core::String) {
 /// readable, and `out_peer` must be null or point to an empty string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__X509__checkHost(
-    x509: *mut boring::X509,
+    x509: Option<&mut boring::X509>,
     host_ptr: *const u8,
     host_len: usize,
     flags: u32,
-    out_peer: *mut bun_core::String,
+    out_peer: Option<&mut MaybeUninit<bun_core::String>>,
 ) -> c_int {
-    // SAFETY: caller contract — `x509` is null or a live BoringSSL certificate.
-    let Some(x509) = (unsafe { x509.as_mut() }) else {
+    let Some(x509) = x509 else {
         return 0;
     };
     if host_ptr.is_null() {

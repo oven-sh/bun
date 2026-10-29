@@ -774,9 +774,7 @@ pub mod store {
             // Route through the existing accessor instead of re-deriving the
             // slice from raw parts here: `allocated_slice` already encapsulates
             // the `(ptr, cap)` → `&[u8]` invariant (and the `None` ⇒ `&[]`
-            // case), and `StdAllocator::free` is `raw_free` with byte alignment
-            // plus an empty-slice early-out — identical to the previous
-            // open-coded `raw_free(.., Alignment::of::<u8>(), 0)`.
+            // case).
             self.allocator.free(self.allocated_slice());
         }
     }

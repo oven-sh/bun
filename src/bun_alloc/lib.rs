@@ -34,12 +34,12 @@ impl Alignment {
 }
 
 pub struct AllocatorVTable {
-    pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
+    pub free: unsafe fn(*mut core::ffi::c_void, *mut [u8], Alignment, usize),
 }
 impl AllocatorVTable {
     /// Each call site keeps its own `static`: the vtable address is the `is_instance` tag.
     pub const fn free_only(
-        free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
+        free: unsafe fn(*mut core::ffi::c_void, *mut [u8], Alignment, usize),
     ) -> Self {
         Self { free }
     }
@@ -68,22 +68,15 @@ impl Default for StdAllocator {
 }
 
 impl StdAllocator {
-    #[inline]
-    pub(crate) fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
-        // SAFETY: vtable invariant — `free` callee respects the (ptr, buf, alignment, ra) contract.
-        unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
-    }
-    /// `raw_free` with `ret_addr = 0`, byte-aligned.
+    /// The vtable's `free` with `ret_addr = 0`, byte-aligned.
     #[inline]
     pub fn free(&self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
         }
-        // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
-        // callee treats it as opaque.
-        let buf =
-            unsafe { core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len()) };
-        self.raw_free(buf, Alignment::from_byte_units(1), 0);
+        let buf = core::ptr::from_ref(bytes).cast_mut();
+        // SAFETY: vtable invariant — `free` callee respects the (ptr, buf, alignment, ra) contract.
+        unsafe { (self.vtable.free)(self.ptr, buf, Alignment::from_byte_units(1), 0) }
     }
 }
 

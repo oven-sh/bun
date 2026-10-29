@@ -12,9 +12,9 @@ function intoShorts(text) { const view = new Uint16Array(4); try { return encode
 function intoBigIntegers(text) { const view = new BigInt64Array(1); try { return encoder.encodeInto(text, view).written + " written " + bytesOf(view); } catch (error) { return told(error) + " " + bytesOf(view); } }
 function intoAPartOfSignedBytes(text) { const view = new Int8Array(8); try { return encoder.encodeInto(text, view.subarray(2)).written + " written " + bytesOf(view); } catch (error) { return told(error) + " " + bytesOf(view); } }
 function convertedFirst(view) { const order = []; try { encoder.encodeInto({ toString() { order.push("text"); return "hi"; } }, view); } catch (error) { order.push(error.name); } return order.join(); }
-function nobodyReadsTheCounts() { const view = new Float64Array(2); encoder.encodeInto("hi", view); return "returned " + bytesOf(view); }
+function nobodyReadsTheCounts() { const view = new Float64Array(2); try { encoder.encodeInto("hi", view); return "returned " + bytesOf(view); } catch (error) { return told(error) + " " + bytesOf(view); } }
 const lines = [];
 for (const text of texts) for (const into of [intoFloats, intoADataView, intoClampedBytes, intoSignedBytes, intoShorts, intoBigIntegers, intoAPartOfSignedBytes]) lines.push(into.name + " " + JSON.stringify(text) + " " + into(text));
 lines.push("converted first " + convertedFirst(new Float64Array(2)));
-try { lines.push(nobodyReadsTheCounts()); } catch (error) { lines.push("nobody reads the counts: " + told(error)); }
+lines.push("nobody reads the counts: " + nobodyReadsTheCounts());
 console.log(lines.join("\n"));

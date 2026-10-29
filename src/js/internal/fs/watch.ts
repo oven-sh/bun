@@ -100,7 +100,6 @@ function makeWatchUVException(status: number, filename: unknown) {
 class FSEvent {
   #owner: FSWatcher;
   // An own key that holds a function, as in node, so structured clone refuses a watcher that has a handle: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L256
-  // Node has one arrow function per watcher there. This is one function for all handles, and it finds its watcher through `this`.
   onchange = onFSEventChange;
   constructor(owner: FSWatcher) {
     this.#owner = owner;
@@ -229,8 +228,7 @@ class FSWatcher extends EventEmitter {
     const handle = this._handle;
     if (handle === null) return;
     assertFSEventHandle(handle);
-    // Node's `!handle.initialized`: a watcher that never started, or whose handle is closed, keeps its handle. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L346
-    // Read from the watcher that owns the handle: `this` can be an object that inherits from it.
+    // Node's `!handle.initialized`, read from the watcher of the handle because `this` can be an object that inherits from it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L346
     if (ownerOfFSEvent(handle).#watcher == null) return;
     handle.close();
     this._handle = null;

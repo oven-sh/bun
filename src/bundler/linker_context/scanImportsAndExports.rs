@@ -661,9 +661,6 @@ pub(crate) fn scan_imports_and_exports(
         // forms `&mut LinkerContext`).
         {
             let ctx: &LinkerContext<'_> = this;
-            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
-            // the link step); `pool` is the arena-allocated bundler ThreadPool
-            // set in `BundleV2::init`.
             let worker_pool = this.worker_pool();
             // `each` requires `&mut [V]`; `reachable` is a private snapshot Vec
             // so reborrow it mutably (not actually mutated by the by-value

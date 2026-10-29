@@ -362,11 +362,9 @@ pub(crate) fn encode(
     // was malformed — drop it rather than fail the encode; a JPEG without a
     // profile is still a valid JPEG (implicitly sRGB). See #30197.
     if let Some(p) = icc_profile {
-        if !p.is_empty() {
-            // SAFETY: `h` is live; ptr/len come from a valid `&[u8]`; the
-            // library copies the bytes so the borrow need only outlive the call.
-            unsafe { tj3SetICCProfile(h, p.as_ptr(), p.len()) };
-        }
+        // SAFETY: `h` is live; ptr/len come from a valid `&[u8]`; the
+        // library copies the bytes so the borrow need only outlive the call.
+        unsafe { tj3SetICCProfile(h, p.as_ptr(), p.len()) };
     }
     let mut out_ptr: *mut u8 = core::ptr::null_mut();
     let mut out_len: usize = 0;

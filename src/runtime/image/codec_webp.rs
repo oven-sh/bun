@@ -282,12 +282,6 @@ pub(crate) fn encode(
             free: encoded_wrap_free!(WebPFree),
         });
     };
-    if profile.is_empty() {
-        return Ok(codecs::Encoded {
-            bytes: NonNull::from(bitstream),
-            free: encoded_wrap_free!(WebPFree),
-        });
-    }
 
     // Wrap the bitstream in a VP8X container with an ICCP chunk. libwebpmux
     // builds a new RIFF file from the image + chunk and allocates the

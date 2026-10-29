@@ -638,16 +638,7 @@ impl AnyRoute {
             return Ok(None);
         };
         let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
-        let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
-            }
-        });
-
-        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-        let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
-        let route = Self::from_options(init_ctx.global, headers_ref, &mut path)?;
+        let route = Self::from_options(init_ctx.global, fetch_headers.as_deref(), &mut path)?;
 
         if is_index_route {
             return Ok(Some(route));
@@ -1254,7 +1245,7 @@ impl UpgradeOptions {
             this._headers_object = jsc::EnsureStillAlive(headers_value);
         } else if headers_value.is_object() {
             // `None` for an empty HeadersInit.
-            this._headers_converted = HeadersRef::create_from_js(global, headers_value)?;
+            this._headers_converted = FetchHeaders::create_from_js(global, headers_value)?;
             this.headers = this
                 ._headers_converted
                 .as_ref()
@@ -2051,12 +2042,10 @@ where
                     if let Some(headers__) = FetchHeaders::cast_(headers_, global.vm()) {
                         // Copy the headers like `new Request(url, { headers })` does.
                         // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
-                        headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
-                            .clone_this(global)?
-                            // SAFETY: `clone_this` returns a +1 ref.
-                            .map(|p| unsafe { HeadersRef::adopt(p) });
+                        headers =
+                            Some(bun_opaque::opaque_deref(headers__.as_ptr()).clone_this(global)?);
                     } else {
-                        headers = HeadersRef::create_from_js(global, headers_)?;
+                        headers = FetchHeaders::create_from_js(global, headers_)?;
                     }
                 }
 
@@ -2696,12 +2685,9 @@ where
         // eagerly so the rest of the pipeline never needs to know which
         // transport delivered the bytes.
         if Ctx::IS_MUX {
-            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
-            request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
-                    std::ptr::from_mut(req).cast::<c_void>(),
-                ))
-            }));
+            request_object.set_fetch_headers(Some(FetchHeaders::create_from_h3(
+                std::ptr::from_mut(req).cast::<c_void>(),
+            )));
             // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
             // returned slices alias the same uWS-owned header buffer. Format
             // the `https://{host}` prefix while `host` is borrowed so the
